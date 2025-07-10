@@ -1,0 +1,73 @@
+name: GitHub Pages
+
+on:
+  push:
+    tags: ["v*"]
+
+  # This lets us publish the workflow
+  # manually from the GitHub Actions UI.
+  #
+  # It expects a single input:
+  # the Git ref we want to build and publish the docs for.
+  workflow_dispatch:
+    inputs:
+      head:
+        description: "Git commitish to check out."
+        required: true
+        type: string
+
+# Run at most one publish job at a time,
+# cancelling others if a new one starts.
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+env:
+  UV_VERSION: 0.3.3
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # We have two checkout steps running based on
+      # whether the workflow was manually triggered.
+      # If manually triggered, we use the provided ref,
+      # otherwise we use the default ref.
+      - name: Checkout (on release)
+        if: github.event_name != 'workflow_dispatch'
+        uses: actions/checkout@v4
+      - name: Checkout (manual)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.head }}
+
+      - name: Install uv
+        run: |
+          curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | sh
+
+      - name: Build
+        run: make docs
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/_site
+
+  deploy:
+    needs: build # run only after a successful build
+
+    permissions:
+      pages: write # to deploy to Pages
+      id-token: write # to verify the deployment originates from an appropriate source
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

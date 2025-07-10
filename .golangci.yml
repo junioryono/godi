@@ -1,0 +1,80 @@
+run:
+  timeout: 5m
+  go: "1.24.3"
+
+linters:
+  enable:
+    - gofmt
+    - govet
+    - errcheck
+    - staticcheck
+    - unused
+    - gosimple
+    - ineffassign
+    - typecheck
+    - gocritic
+    - gocyclo
+    - copyloopvar
+  disable:
+    - exhaustive
+    - nestif
+    - gochecknoglobals
+    - gochecknoinits
+
+linters-settings:
+  funlen:
+    lines: 100
+    statements: 50
+  govet:
+    enable:
+      - shadow
+  gocyclo:
+    min-complexity: 20
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - experimental
+      - opinionated
+      - performance
+      - style
+  gomodguard:
+    blocked:
+      modules:
+        - github.com/pkg/errors:
+            recommendations:
+              - errors
+              - fmt
+            reason: "use standard library errors package"
+
+issues:
+  exclude-rules:
+    # Exclude some linters from running on tests files
+    - path: _test\.go
+      linters:
+        - gocyclo
+        - errcheck
+        - gosec
+        - funlen
+        - goconst
+        - gochecknoglobals
+
+    # Exclude known issues in dig dependency
+    - path: vendor/
+      linters:
+        - typecheck
+        - unused
+
+    # Allow unused parameters in interfaces
+    - linters:
+        - unused
+      text: "is unused"
+      source: "^\\s*\\w+\\s+interface\\s*{"
+
+  # Maximum issues count per one linter. Set to 0 to disable
+  max-issues-per-linter: 0
+
+  # Maximum count of issues with the same text. Set to 0 to disable
+  max-same-issues: 0
+
+  # Show only new issues
+  new: false
