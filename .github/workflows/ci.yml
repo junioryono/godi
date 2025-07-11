@@ -33,7 +33,7 @@ jobs:
         run: go mod download
 
       - name: Test
-        run: make cover
+        run: make test-cover
 
       - name: Upload coverage to codecov.io
         uses: codecov/codecov-action@v4
