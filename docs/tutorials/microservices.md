@@ -50,7 +50,7 @@ Create shared components that all services will use.
 
 Create `shared/config/config.go`:
 
-````go
+```go
 package config
 
 import (
@@ -78,6 +78,7 @@ type ServiceConfig struct {
     // Service discovery
     ConsulAddress   string
 }
+```
 
 ### User Service Main
 
@@ -174,7 +175,7 @@ func (s *userServiceServer) AuthenticateUser(ctx context.Context, req *pb.Authen
     }
     return userService.AuthenticateUser(ctx, req)
 }
-````
+```
 
 ## Step 4: Product Service
 
