@@ -507,9 +507,9 @@ func TestServiceProviderScope_Invoke(t *testing.T) {
 			t.Fatal("expected error when registering same type with different lifetime")
 		}
 
-		expectedError := "already registered with Singleton lifetime, cannot register with Scoped lifetime"
-		if !strings.Contains(err.Error(), expectedError) {
-			t.Errorf("expected error containing %q, got %q", expectedError, err.Error())
+		var lifetimeErr godi.LifetimeConflictError
+		if !errors.As(err, &lifetimeErr) {
+			t.Errorf("expected ErrBothConstructorAndDecorator, got %v", err)
 		}
 	})
 

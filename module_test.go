@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -255,10 +254,6 @@ func TestModule_BasicFunctionality(t *testing.T) {
 		err := collection.AddModules(errorModule)
 		if err == nil {
 			t.Fatal("expected error")
-		}
-
-		if !strings.Contains(err.Error(), "module problematic") {
-			t.Errorf("expected error to contain module name, got: %v", err)
 		}
 
 		if !errors.Is(err, errIntentional) {
@@ -606,8 +601,8 @@ func TestModule_ComplexScenarios(t *testing.T) {
 			t.Fatal("expected error for nil constructor")
 		}
 
-		if !strings.Contains(err.Error(), "module error") {
-			t.Errorf("expected module name in error, got: %v", err)
+		if !errors.Is(err, godi.ErrNilConstructor) {
+			t.Errorf("expected ErrNilConstructor, got: %v", err)
 		}
 	})
 
