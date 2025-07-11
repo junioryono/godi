@@ -7,27 +7,27 @@ This guide explains how godi works internally and how to architect applications 
 ### Core Components
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    ServiceCollection                     │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐    │
-│  │ Descriptor 1 │  │ Descriptor 2 │  │ Descriptor 3 │    │
-│  │  Singleton   │  │   Scoped     │  │  Transient   │    │
-│  └─────────────┘  └─────────────┘  └─────────────┘    │
-└─────────────────────────┬───────────────────────────────┘
+┌─────────────────────────────────────────────────────┐
+│                    ServiceCollection                │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  │
+│  │ Descriptor 1│  │ Descriptor 2│  │ Descriptor 3│  │
+│  │  Singleton  │  │   Scoped    │  │  Transient  │  │
+│  └─────────────┘  └─────────────┘  └─────────────┘  │
+└─────────────────────────┬───────────────────────────┘
                           │ Build
                           ▼
-┌─────────────────────────────────────────────────────────┐
-│                    ServiceProvider                       │
-│  ┌─────────────────────────────────────────────────┐   │
-│  │                  dig.Container                    │   │
-│  │  (Singleton and Scoped Service Definitions)       │   │
-│  └─────────────────────────────────────────────────┘   │
-│                                                         │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐   │
-│  │    Scope 1   │  │    Scope 2   │  │    Scope 3   │   │
-│  │  (Request 1) │  │  (Request 2) │  │  (Request 3) │   │
-│  └─────────────┘  └─────────────┘  └─────────────┘   │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────┐
+│                    ServiceProvider                  │
+│  ┌──────────────────────────────────────────────┐   │
+│  │                  dig.Container               │   │
+│  │  (Singleton and Scoped Service Definitions)  │   │
+│  └──────────────────────────────────────────────┘   │
+│                                                     │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  │
+│  │   Scope 1   │  │   Scope 2   │  │   Scope 3   │  │
+│  │ (Request 1) │  │ (Request 2) │  │ (Request 3) │  │
+│  └─────────────┘  └─────────────┘  └─────────────┘  │
+└─────────────────────────────────────────────────────┘
 ```
 
 ### Lifetime Management
@@ -59,17 +59,17 @@ godi implements Microsoft-style DI lifetimes on top of Uber's dig:
 
 ```
 ┌─────────────────────────────────────────────┐
-│              Presentation Layer              │
+│              Presentation Layer             │
 │         (HTTP Handlers, CLI, gRPC)          │
 ├─────────────────────────────────────────────┤
-│             Application Layer                │
+│             Application Layer               │
 │        (Use Cases, Business Logic)          │
 ├─────────────────────────────────────────────┤
-│               Domain Layer                   │
+│               Domain Layer                  │
 │        (Entities, Domain Services)          │
 ├─────────────────────────────────────────────┤
-│           Infrastructure Layer               │
-│     (Repositories, External Services)        │
+│           Infrastructure Layer              │
+│     (Repositories, External Services)       │
 └─────────────────────────────────────────────┘
 ```
 
@@ -110,19 +110,19 @@ var PresentationModule = godi.Module("presentation",
 
 ```
            ┌─────────────────┐
-           │   HTTP Adapter   │
+           │  HTTP Adapter   │
            └────────┬────────┘
                     │
 ┌──────────────┐    ▼    ┌──────────────┐
-│ gRPC Adapter │◄────────►│     Core     │
+│ gRPC Adapter │◄───────►│     Core     │
 └──────────────┘         │   Business   │
                          │    Logic     │
 ┌──────────────┐         │              │
-│  CLI Adapter │◄────────►│   (Ports)    │
+│  CLI Adapter │◄───────►│   (Ports)    │
 └──────────────┘         └──────┬───────┘
                                 │
-           ┌────────────────────┴────────┐
-           │                             │
+           ┌────────────────────┴───────┐
+           │                            │
     ┌──────▼──────┐            ┌────────▼────────┐
     │  Database   │            │ Message Queue   │
     │   Adapter   │            │    Adapter      │
@@ -288,7 +288,7 @@ func NewUserService(
 ```
 ┌─────────────┐
 │   Handler   │ ──depends on──> UserService interface
-└─────────────┘                         ▲
+└─────────────┘                        ▲
                                        │
 ┌─────────────┐                        │
 │ UserService │ ────implements─────────┘
