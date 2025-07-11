@@ -1,0 +1,107 @@
+/* godi custom styles */
+
+.wy-side-nav-search {
+  background-color: #2980b9;
+}
+
+.wy-side-nav-search img {
+  padding: 5px 40px !important;
+  max-width: 200px;
+}
+
+.wy-nav-content {
+  max-width: 1200px;
+}
+
+/* Better code blocks */
+.highlight {
+  background: #f5f5f5;
+  border: 1px solid #e1e4e5;
+  border-radius: 4px;
+}
+
+.highlight-go {
+  margin: 1em 0;
+}
+
+/* Banner for announcements */
+#announcement {
+  text-align: center;
+  background: #2980b9;
+  border: 1px solid rgb(52, 49, 49);
+  color: #f0f0f4;
+  padding: 10px;
+  margin-bottom: 1.618em;
+}
+
+#announcement > div > a {
+  color: #f0f0f4;
+  text-decoration: underline;
+}
+
+/* Feature boxes */
+.feature-box {
+  border: 1px solid #e1e4e5;
+  border-radius: 4px;
+  padding: 20px;
+  margin: 20px 0;
+  background: #f8f8f8;
+}
+
+.feature-box h3 {
+  margin-top: 0;
+  color: #2980b9;
+}
+
+/* Warning and note boxes */
+.admonition {
+  border-radius: 4px;
+}
+
+.admonition.note {
+  background-color: #e3f2fd;
+  border-left: 4px solid #2196f3;
+}
+
+.admonition.warning {
+  background-color: #fff3e0;
+  border-left: 4px solid #ff9800;
+}
+
+.admonition.tip {
+  background-color: #e8f5e9;
+  border-left: 4px solid #4caf50;
+}
+
+/* Improve tables */
+.wy-table-responsive table td,
+.wy-table-responsive table th {
+  white-space: normal;
+}
+
+/* Version selector */
+.version-selector {
+  margin: 10px 0;
+  padding: 10px;
+  background: #f0f0f0;
+  border-radius: 4px;
+}
+
+/* Copy button styling */
+.copybtn {
+  transition: opacity 0.3s;
+}
+
+/* Sponsorship section */
+#sponsorship {
+  margin-top: 20px;
+  padding: 15px;
+  background: #f8f8f8;
+  border-radius: 4px;
+  text-align: center;
+}
+
+#sponsorship > img {
+  width: 100%;
+  max-width: 200px;
+}

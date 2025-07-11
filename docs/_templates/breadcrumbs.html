@@ -1,0 +1,10 @@
+{% extends "!breadcrumbs.html" %}
+
+{% block breadcrumbs %}
+{% if announcement %}
+<div id="announcement">
+    <div>{{ announcement | safe }}</div>
+</div>
+{% endif %}
+{{ super() }}
+{% endblock %}

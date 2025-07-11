@@ -1,4 +1,4 @@
-.PHONY: all test test-verbose test-race test-cover bench lint fmt clean help
+.PHONY: all test test-verbose test-race test-cover bench lint fmt clean help docs
 
 # Default target
 all: test
@@ -69,6 +69,10 @@ verify:
 ci: fmt lint test-race test-cover
 	@echo "All CI checks passed!"
 
+docs:
+	@echo "Building documentation..."
+	@$(MAKE) -C docs build
+
 # Show help
 help:
 	@echo "Available targets:"
@@ -84,4 +88,5 @@ help:
 	@echo "  make update-deps   - Update dependencies"
 	@echo "  make verify        - Verify module"
 	@echo "  make ci            - Run all CI checks"
+	@echo "  make docs          - Build documentation"
 	@echo "  make help          - Show this help message"
