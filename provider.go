@@ -543,14 +543,15 @@ func determineServiceType[T any]() (reflect.Type, error) {
 	tType := reflect.TypeOf((*T)(nil)).Elem()
 
 	// Determine the actual service type to resolve
-	if tType.Kind() == reflect.Interface {
+	switch tType.Kind() {
+	case reflect.Interface:
 		// For interfaces, use the interface type directly
 		return tType, nil
-	} else if tType.Kind() == reflect.Ptr {
+	case reflect.Ptr:
 		// T is already a pointer type (e.g., *UserService)
 		// So we use T directly as the service type
 		return tType, nil
-	} else {
+	default:
 		// T is a non-pointer concrete type
 		// Services are typically registered as pointers, so look for *T
 		return reflect.PointerTo(tType), nil
