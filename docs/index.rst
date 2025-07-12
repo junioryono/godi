@@ -26,15 +26,11 @@ That's it! No annotations, no reflection magic, just functions.
 Why godi?
 ---------
 
-* ✅ **Never update constructors everywhere** - Change once, godi handles the rest
-
-* ✅ **Perfect for web apps** - Request isolation with scopes
-
-* ✅ **Testing made easy** - Swap implementations instantly
-
-* ✅ **Start simple** - Use only what you need
-
-* ✅ **Type-safe** - Compile-time checking with generics
+- ✅ **Never update constructors everywhere** - Change once, godi handles the rest
+- ✅ **Perfect for web apps** - Request isolation with scopes
+- ✅ **Testing made easy** - Swap implementations instantly
+- ✅ **Start simple** - Use only what you need
+- ✅ **Type-safe** - Compile-time checking with generics
 
 .. toctree::
    :maxdepth: 2
