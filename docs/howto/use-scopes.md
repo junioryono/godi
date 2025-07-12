@@ -396,10 +396,10 @@ batchScope := jobScope.ServiceProvider().CreateScope(ctx)
 
 Scoped services solve real problems:
 
-✅ **Automatic transaction management** - No more passing tx everywhere  
-✅ **Request context propagation** - User info available everywhere  
-✅ **Multi-tenancy isolation** - Each request in its own bubble  
-✅ **Performance tracking** - Metrics collected automatically  
+✅ **Automatic transaction management** - No more passing tx everywhere
+✅ **Request context propagation** - User info available everywhere
+✅ **Multi-tenancy isolation** - Each request in its own bubble
+✅ **Performance tracking** - Metrics collected automatically
 ✅ **Clean code** - No manual wiring of request-specific data
 
 The key insight: **Scoped services let you share state within an operation while keeping operations isolated from each other.**

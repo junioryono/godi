@@ -316,9 +316,9 @@ Ready for more? Check out:
 
 ## Key Takeaways
 
-✅ **Start simple** - You don't need every feature right away  
-✅ **Use scopes for requests** - Each request gets isolated instances  
-✅ **Let godi wire dependencies** - Just describe what you need  
+✅ **Start simple** - You don't need every feature right away
+✅ **Use scopes for requests** - Each request gets isolated instances
+✅ **Let godi wire dependencies** - Just describe what you need
 ✅ **Test easily** - Swap real services for mocks
 
 Remember: The goal is to write less boilerplate and focus on your business logic!
