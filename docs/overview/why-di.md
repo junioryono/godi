@@ -1,235 +1,324 @@
-# Why Dependency Injection?
+# Why Use Dependency Injection?
 
-Dependency Injection (DI) is a design pattern that has transformed how developers build maintainable, testable, and scalable applications. While Go's simplicity is one of its greatest strengths, as applications grow, managing dependencies becomes increasingly complex.
+Let's be honest - Go developers are skeptical of dependency injection. "It's too complex!" "Go is simple!" "I can wire things manually!"
 
-## The Problem: Dependency Management at Scale
+They're not wrong. But here's what changes when your app grows...
 
-Consider a typical web application without DI:
+## The Problem: A Real Example
+
+You start with a simple app:
 
 ```go
 func main() {
-    // Manual dependency wiring
-    config := loadConfig()
     logger := log.New(os.Stdout, "", log.LstdFlags)
+    db := openDatabase()
 
-    db, err := sql.Open("postgres", config.DatabaseURL)
-    if err != nil {
-        logger.Fatal(err)
-    }
-    defer db.Close()
+    userRepo := &UserRepository{db: db, logger: logger}
+    emailService := &EmailService{logger: logger}
+    userService := &UserService{repo: userRepo, email: emailService, logger: logger}
 
-    cache := redis.NewClient(&redis.Options{
-        Addr: config.RedisURL,
-    })
-    defer cache.Close()
-
-    emailClient := email.NewClient(config.SMTPHost, config.SMTPPort)
-
-    userRepo := repository.NewUserRepository(db, logger)
-    authService := service.NewAuthService(userRepo, emailClient, logger)
-    userService := service.NewUserService(userRepo, cache, logger)
-
-    handlers := api.NewHandlers(authService, userService, logger)
-
-    // ... more services and wiring
+    handler := &Handler{userService: userService, logger: logger}
+    http.ListenAndServe(":8080", handler)
 }
 ```
 
-### Problems with this approach:
+Looks fine, right? Now your boss says: "We need to add caching."
 
-1. **Constructor Changes Cascade** - Add a parameter to `NewUserRepository`, and you must update every place it's constructed
-2. **Testing is Difficult** - Creating a service for testing requires constructing all its dependencies
-3. **No Lifecycle Management** - Manual cleanup with multiple `defer` statements
-4. **Hidden Dependencies** - Hard to see the full dependency graph
-5. **Boilerplate Explosion** - As the app grows, main() becomes unwieldy
+## The Cascade of Changes
 
-## The Solution: Dependency Injection with godi
-
-Here's the same application with godi:
+You add a cache parameter to UserRepository:
 
 ```go
-func main() {
-    // Define services
-    services := godi.NewServiceCollection()
-
-    // Register infrastructure
-    services.AddSingleton(loadConfig)
-    services.AddSingleton(newLogger)
-    services.AddSingleton(newDatabase)
-    services.AddSingleton(newCache)
-    services.AddSingleton(newEmailClient)
-
-    // Register repositories
-    services.AddScoped(repository.NewUserRepository)
-
-    // Register services
-    services.AddScoped(service.NewAuthService)
-    services.AddScoped(service.NewUserService)
-
-    // Register handlers
-    services.AddScoped(api.NewHandlers)
-
-    // Build the container
-    provider, err := services.BuildServiceProvider()
-    if err != nil {
-        log.Fatal(err)
-    }
-    defer provider.Close() // Automatic cleanup!
-
-    // Start the application
-    handlers, _ := godi.Resolve[*api.Handlers](provider)
-    http.ListenAndServe(":8080", handlers)
+type UserRepository struct {
+    db     *sql.DB
+    logger Logger
+    cache  Cache  // NEW!
 }
 ```
 
-## Key Benefits
-
-### 1. Never Touch Constructors Again
-
-When you add a new dependency, you only change two places:
-
-- The constructor that needs it
-- The service registration
-
-Everyone else gets the updated dependencies automatically!
+Now you have to update EVERYWHERE that creates a UserRepository:
 
 ```go
-// Before: Add metrics to UserService
-func NewUserService(repo UserRepository, cache Cache, logger Logger) *UserService
+// main.go
+cache := createCache()  // Add this
+userRepo := &UserRepository{db: db, logger: logger, cache: cache}  // Update this
 
-// After: Just add the parameter
-func NewUserService(repo UserRepository, cache Cache, logger Logger, metrics Metrics) *UserService
+// user_test.go - Update 15 test files
+repo := &UserRepository{db: mockDB, logger: testLogger, cache: mockCache}
 
-// That's it! No need to update callers
+// integration_test.go - Update integration tests
+repo := &UserRepository{db: testDB, logger: logger, cache: testCache}
+
+// benchmarks_test.go - Update benchmarks too
+repo := &UserRepository{db: benchDB, logger: perfLogger, cache: benchCache}
 ```
 
-### 2. Request Scoping for Web Applications
+**You just wanted to add caching, but you touched 20 files!**
 
-One of godi's killer features is request scoping:
+## The DI Solution
+
+With godi, you change exactly ONE place:
 
 ```go
-func middleware(provider godi.ServiceProvider) http.HandlerFunc {
-    return func(w http.ResponseWriter, r *http.Request) {
-        // Create a scope for this request
-        scope := provider.CreateScope(r.Context())
-        defer scope.Close()
+// Just update the constructor
+func NewUserRepository(db *sql.DB, logger Logger, cache Cache) *UserRepository {
+    return &UserRepository{db: db, logger: logger, cache: cache}
+}
 
-        // All services resolved in this scope share the same instances
-        // Perfect for request-scoped database transactions!
+// That's it. Seriously. godi handles the rest.
+```
 
-        handler, _ := godi.Resolve[*MyHandler](scope.ServiceProvider())
-        handler.ServeHTTP(w, r)
-    }
+## Real-World Benefits
+
+### 1. Testing Becomes Trivial
+
+**Without DI:**
+
+```go
+func TestUserService(t *testing.T) {
+    // Oh no, I need to create the entire dependency tree!
+    logger := &MockLogger{}
+    db := createTestDB()
+    cache := &MockCache{}
+    emailClient := &MockEmailClient{}
+
+    userRepo := &UserRepository{db: db, logger: logger, cache: cache}
+    emailService := &EmailService{client: emailClient, logger: logger}
+    userService := &UserService{repo: userRepo, email: emailService, logger: logger}
+
+    // Finally can test...
 }
 ```
 
-### 3. Testability Built-In
-
-Testing becomes trivial with DI:
+**With DI:**
 
 ```go
 func TestUserService(t *testing.T) {
     services := godi.NewServiceCollection()
 
-    // Register mocks
-    services.AddSingleton(func() UserRepository {
-        return &MockUserRepository{
-            users: []User{{ID: 1, Name: "Test"}},
-        }
-    })
-    services.AddSingleton(func() Cache { return &MockCache{} })
-    services.AddSingleton(func() Logger { return &MockLogger{} })
+    // Just register mocks
+    services.AddSingleton(func() UserRepository { return &MockUserRepository{} })
+    services.AddSingleton(func() EmailService { return &MockEmailService{} })
+    services.AddScoped(NewUserService)
 
     provider, _ := services.BuildServiceProvider()
-    defer provider.Close()
-
-    // Test with real service but mock dependencies
     userService, _ := godi.Resolve[*UserService](provider)
-    user, err := userService.GetUser(1)
 
-    assert.NoError(t, err)
-    assert.Equal(t, "Test", user.Name)
+    // Test away!
 }
 ```
 
-### 4. Automatic Resource Management
+### 2. Request Isolation in Web Apps
 
-godi automatically handles cleanup for services implementing `Disposable`:
+**Without DI:**
 
 ```go
-type DatabaseConnection struct {
-    db *sql.DB
-}
+// Dangerous! Shared transaction across requests
+var globalTx *sql.Tx
 
-func (d *DatabaseConnection) Close() error {
-    return d.db.Close()
-}
+func HandleRequest(w http.ResponseWriter, r *http.Request) {
+    tx, _ := db.Begin()
+    globalTx = tx  // Race condition!
 
-// When the provider is closed, all disposable services are cleaned up
-// in reverse order of creation (LIFO)
+    // ... do work ...
+
+    tx.Commit()
+}
 ```
 
-### 5. Clear Dependency Graph
-
-With godi, dependencies are explicit and centralized:
+**With DI:**
 
 ```go
-// Easy to see what depends on what
-services.AddSingleton(NewLogger)                    // No dependencies
-services.AddSingleton(NewDatabase)                  // Depends on: Config, Logger
-services.AddScoped(NewUserRepository)               // Depends on: Database, Logger
-services.AddScoped(NewUserService)                  // Depends on: UserRepository, Cache, Logger
+func HandleRequest(provider godi.ServiceProvider) http.HandlerFunc {
+    return func(w http.ResponseWriter, r *http.Request) {
+        // Each request gets its own scope
+        scope := provider.CreateScope(r.Context())
+        defer scope.Close()
+
+        // Automatic transaction per request!
+        service, _ := godi.Resolve[*UserService](scope.ServiceProvider())
+        service.CreateUser(...)  // Uses this request's transaction
+    }
+}
 ```
 
-## Real-World Benefits
+### 3. Clean Architectural Boundaries
 
-### Large Team Development
+**Without DI:**
 
-- **Parallel Development**: Teams can work on different services without coordination
-- **Clear Contracts**: Interfaces define boundaries between team responsibilities
-- **Easy Integration**: New services plug in without modifying existing code
+```go
+// Everything knows about everything
+type UserService struct {
+    db       *sql.DB        // Knows about database
+    logger   *log.Logger    // Knows about logging
+    smtp     *smtp.Client   // Knows about email
+    redis    *redis.Client  // Knows about caching
+    config   *Config        // Knows about config
+}
+```
 
-### Microservices
+**With DI:**
 
-- **Consistent Pattern**: Same DI pattern across all services
-- **Easy Testing**: Test services in isolation
-- **Configuration Management**: Centralized service configuration
+```go
+// Clean interfaces
+type UserService struct {
+    repo    UserRepository  // Just interfaces!
+    email   EmailSender
+    cache   Cache
+    logger  Logger
+}
 
-### Growing Applications
+// Easy to swap implementations
+services.AddSingleton(func() EmailSender {
+    if config.Dev {
+        return &MockEmailSender{}
+    }
+    return &SMTPEmailSender{}
+})
+```
 
-- **Add Features**: New services integrate seamlessly
-- **Refactor Safely**: Change implementations without touching consumers
-- **Scale Gradually**: Start simple, add complexity as needed
+### 4. Resource Management
+
+**Without DI:**
+
+```go
+func main() {
+    logger := createLogger()
+    defer logger.Close()  // Don't forget!
+
+    db := createDB()
+    defer db.Close()  // Don't forget!
+
+    cache := createCache()
+    defer cache.Close()  // Don't forget!
+
+    queue := createQueue()
+    defer queue.Close()  // Getting error-prone...
+
+    // ... 20 more resources
+}
+```
+
+**With DI:**
+
+```go
+func main() {
+    services := godi.NewServiceCollection()
+    services.AddSingleton(NewLogger)
+    services.AddSingleton(NewDatabase)
+    services.AddSingleton(NewCache)
+    services.AddSingleton(NewQueue)
+
+    provider, _ := services.BuildServiceProvider()
+    defer provider.Close()  // Closes EVERYTHING in the right order!
+}
+```
 
 ## Common Concerns Addressed
 
-### "But Go is simple! This adds complexity!"
+### "But I like Go's simplicity!"
 
-godi embraces Go's simplicity:
+godi IS simple. Look at this:
 
-- Uses standard Go functions as constructors
-- No reflection magic or struct tags
-- Clear, explicit registration
-- Type-safe with compile-time checking
+```go
+// 1. Say what you have
+services.AddSingleton(NewLogger)
+services.AddScoped(NewUserService)
 
-### "I can just pass dependencies manually"
+// 2. Get what you need
+userService, _ := godi.Resolve[*UserService](provider)
 
-True for small apps, but consider:
+// That's it. No magic, no reflection, no struct tags.
+```
 
-- A service with 10 dependencies, each with 5 dependencies
-- That's 50 manual wirings to maintain
-- Add one dependency, update 50 places
-- With DI: update 1 place
+### "I don't want a framework!"
 
-### "What about performance?"
+godi isn't a framework. It's a container. Your services don't know about godi:
 
-- Service resolution is optimized and cached
-- Overhead is negligible compared to benefits
-- Most resolution happens at startup
-- Runtime performance identical to manual wiring
+```go
+// This is just a normal Go function
+func NewUserService(repo UserRepository, logger Logger) *UserService {
+    return &UserService{repo: repo, logger: logger}
+}
 
-## Conclusion
+// No imports from godi, no base classes, no annotations
+```
 
-Dependency Injection with godi isn't about adding complexity—it's about managing complexity that already exists in your application. It provides structure and patterns that make large Go applications maintainable, testable, and enjoyable to work with.
+### "It's overkill for small apps!"
 
-Ready to get started? Check out our [Getting Started Tutorial](../tutorials/getting-started.md)!
+True! If your entire app is 200 lines, you don't need DI. But when you have:
+
+- Multiple services
+- Unit tests
+- Integration tests
+- Different environments
+- Team members
+
+...DI pays for itself quickly.
+
+## The Real Magic: Examples
+
+### Adding Multi-Tenancy
+
+Without DI: Rewrite half your app to pass tenant context everywhere.
+
+With DI: Add one scoped service:
+
+```go
+services.AddScoped(NewTenantContext)
+// Now every service in that scope has access to the tenant!
+```
+
+### Adding Request Tracing
+
+Without DI: Add traceID parameter to 50 functions.
+
+With DI: Add one scoped service:
+
+```go
+services.AddScoped(NewRequestTracing)
+// Every service automatically includes trace IDs in logs!
+```
+
+### Switching Databases
+
+Without DI: Find and update every place that creates connections.
+
+With DI: Change one line:
+
+```go
+// From
+services.AddSingleton(NewMySQLDatabase)
+// To
+services.AddSingleton(NewPostgresDatabase)
+```
+
+## When You Really Need DI
+
+You **need** DI when:
+
+- ✅ Adding a dependency means updating 10+ files
+- ✅ Testing requires complex setup
+- ✅ You have request-scoped state (transactions, user context)
+- ✅ Different environments need different implementations
+- ✅ You're copying setup code between tests
+
+You **don't need** DI when:
+
+- ❌ Your app is a single file
+- ❌ You have no tests
+- ❌ You never change dependencies
+- ❌ It's a simple CLI tool
+
+## Summary: The 80/20 of DI
+
+**80% of DI value comes from these 20% of features:**
+
+1. **Automatic Wiring** - Change constructors, not callers
+2. **Easy Testing** - Swap implementations trivially
+3. **Request Scoping** - Isolate operations from each other
+4. **Lifecycle Management** - Automatic cleanup
+
+That's it. Not complex. Not magic. Just solving real problems.
+
+**Ready to try it?** Start with the [Getting Started Tutorial](../tutorials/getting-started.md). You'll be productive in 10 minutes.

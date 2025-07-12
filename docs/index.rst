@@ -1,58 +1,54 @@
 godi Documentation
 ==================
 
-  "Dependency injection is not about the tools, it's about the design.
-  But having great tools makes great design achievable."
+**godi** brings type-safe dependency injection to Go with zero magic. 
+Start simple, scale seamlessly.
 
-**godi** brings modern, type-safe dependency injection to Go, making your applications 
-more **maintainable**, **testable**, and **scalable**. Built on Uber's dig with a 
-Microsoft-inspired API, it provides the power you need with the simplicity you want.
+Quick Start
+-----------
+
+.. code-block:: go
+
+   // 1. Register your services
+   services := godi.NewServiceCollection()
+   services.AddSingleton(NewLogger)
+   services.AddScoped(NewUserService)
+
+   // 2. Build the container
+   provider, _ := services.BuildServiceProvider()
+   defer provider.Close()
+
+   // 3. Use your services
+   userService, _ := godi.Resolve[*UserService](provider)
+
+That's it! No annotations, no reflection magic, just functions.
 
 Why godi?
 ---------
 
-1. **Never touch constructors again** when adding dependencies
-2. **Automatic lifecycle management** for resources
-3. **Request scoping** for web applications
-4. **Zero boilerplate** dependency wiring
-5. **Type-safe** with compile-time verification
-6. **Testable** by design
-
-Quick Example
--------------
-
-.. code-block:: go
-
-   // Define your services
-   services := godi.NewServiceCollection()
-   services.AddSingleton(NewLogger)
-   services.AddScoped(NewDatabase)
-   services.AddTransient(NewEmailService)
-
-   // Build the container
-   provider, _ := services.BuildServiceProvider()
-   defer provider.Close()
-
-   // Resolve and use
-   logger, _ := godi.Resolve[Logger](provider)
-   logger.Log("Application started!")
+✅ **Never update constructors everywhere** - Change once, godi handles the rest  
+✅ **Perfect for web apps** - Request isolation with scopes  
+✅ **Testing made easy** - Swap implementations instantly  
+✅ **Start simple** - Use only what you need  
+✅ **Type-safe** - Compile-time checking with generics  
 
 .. toctree::
    :maxdepth: 2
-   :caption: Overview
+   :caption: Get Started
    :hidden:
 
    overview/install.md
+   tutorials/quick-start.md
+   tutorials/getting-started.md
    overview/why-di.md
-   overview/concepts.md
-   overview/comparison.md
 
 .. toctree::
    :maxdepth: 2
-   :caption: Tutorials
+   :caption: Learn
    :hidden:
 
-   tutorials/getting-started.md
+   overview/concepts.md
+   tutorials/simple-vs-modules.md
    tutorials/web-application.md
    tutorials/testing.md
    tutorials/microservices.md
@@ -93,3 +89,4 @@ Quick Example
    guides/migration.md
    guides/performance.md
    guides/troubleshooting.md
+   overview/comparison.md

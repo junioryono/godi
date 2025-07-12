@@ -1,92 +1,58 @@
 # Getting Started with godi
 
-This tutorial will walk you through creating your first application using godi. We'll build a simple task management system to demonstrate core dependency injection concepts.
+Let's build something real - a web API that needs database connections, logging, and user sessions. This tutorial will show you why dependency injection makes your life easier.
 
-## Prerequisites
+## Why Use Dependency Injection?
 
-- Go 1.21 or later installed
-- Basic familiarity with Go
-- A text editor or IDE
+Imagine you're building a web app. Without DI, you might write:
 
-## Setting Up
+```go
+func main() {
+    // Manual setup - everything depends on everything else
+    logger := NewLogger()
+    db := NewDatabase(logger)
+    userRepo := NewUserRepository(db, logger)
+    authService := NewAuthService(userRepo, logger)
+    handler := NewHandler(authService, logger)
 
-Create a new directory for our project:
-
-```bash
-mkdir godi-tutorial
-cd godi-tutorial
+    // What if you need to add email service to authService?
+    // You'd have to update EVERY place that creates authService!
+}
 ```
 
-Initialize a new Go module:
+With godi, you just describe what you need:
 
-```bash
-go mod init tutorial/taskapp
+```go
+func main() {
+    services := godi.NewServiceCollection()
+
+    // Tell godi about your services
+    services.AddSingleton(NewLogger)
+    services.AddSingleton(NewDatabase)
+    services.AddScoped(NewUserRepository)
+    services.AddScoped(NewAuthService)
+
+    // godi figures out the wiring for you!
+    provider, _ := services.BuildServiceProvider()
+
+    // Get what you need
+    handler, _ := godi.Resolve[*Handler](provider)
+}
 ```
 
-Install godi:
+## Your First App: A Simple API
+
+Let's build a real API with users and sessions. Create a new project:
 
 ```bash
+mkdir my-api && cd my-api
+go mod init my-api
 go get github.com/junioryono/godi
 ```
 
-## Step 1: Define Our Services
+### Step 1: Define Your Services
 
-First, let's define the interfaces and types for our task management system.
-
-Create a file named `types.go`:
-
-```go
-package main
-
-import (
-    "context"
-    "time"
-)
-
-// Task represents a task in our system
-type Task struct {
-    ID          string
-    Title       string
-    Description string
-    Completed   bool
-    CreatedAt   time.Time
-    UpdatedAt   time.Time
-}
-
-// Logger interface for logging
-type Logger interface {
-    Info(msg string, args ...interface{})
-    Error(msg string, err error, args ...interface{})
-}
-
-// TaskRepository interface for data access
-type TaskRepository interface {
-    Create(ctx context.Context, task *Task) error
-    GetByID(ctx context.Context, id string) (*Task, error)
-    List(ctx context.Context) ([]*Task, error)
-    Update(ctx context.Context, task *Task) error
-    Delete(ctx context.Context, id string) error
-}
-
-// TaskService interface for business logic
-type TaskService interface {
-    CreateTask(ctx context.Context, title, description string) (*Task, error)
-    GetTask(ctx context.Context, id string) (*Task, error)
-    ListTasks(ctx context.Context) ([]*Task, error)
-    CompleteTask(ctx context.Context, id string) error
-    DeleteTask(ctx context.Context, id string) error
-}
-
-// NotificationService interface for notifications
-type NotificationService interface {
-    NotifyTaskCreated(task *Task) error
-    NotifyTaskCompleted(task *Task) error
-}
-```
-
-## Step 2: Implement Our Services
-
-Now let's implement these interfaces. Create a file named `services.go`:
+Create `main.go`:
 
 ```go
 package main
@@ -98,432 +64,261 @@ import (
     "sync"
     "time"
 
-    "github.com/google/uuid"
-)
-
-// ConsoleLogger implements Logger
-type ConsoleLogger struct {
-    prefix string
-}
-
-func NewConsoleLogger() Logger {
-    return &ConsoleLogger{prefix: "[TASK-APP]"}
-}
-
-func (l *ConsoleLogger) Info(msg string, args ...interface{}) {
-    log.Printf("%s INFO: %s %v", l.prefix, msg, args)
-}
-
-func (l *ConsoleLogger) Error(msg string, err error, args ...interface{}) {
-    log.Printf("%s ERROR: %s - %v %v", l.prefix, msg, err, args)
-}
-
-// InMemoryTaskRepository implements TaskRepository
-type InMemoryTaskRepository struct {
-    mu    sync.RWMutex
-    tasks map[string]*Task
-}
-
-func NewInMemoryTaskRepository() TaskRepository {
-    return &InMemoryTaskRepository{
-        tasks: make(map[string]*Task),
-    }
-}
-
-func (r *InMemoryTaskRepository) Create(ctx context.Context, task *Task) error {
-    r.mu.Lock()
-    defer r.mu.Unlock()
-
-    task.ID = uuid.New().String()
-    task.CreatedAt = time.Now()
-    task.UpdatedAt = time.Now()
-
-    r.tasks[task.ID] = task
-    return nil
-}
-
-func (r *InMemoryTaskRepository) GetByID(ctx context.Context, id string) (*Task, error) {
-    r.mu.RLock()
-    defer r.mu.RUnlock()
-
-    task, exists := r.tasks[id]
-    if !exists {
-        return nil, fmt.Errorf("task not found: %s", id)
-    }
-
-    return task, nil
-}
-
-func (r *InMemoryTaskRepository) List(ctx context.Context) ([]*Task, error) {
-    r.mu.RLock()
-    defer r.mu.RUnlock()
-
-    tasks := make([]*Task, 0, len(r.tasks))
-    for _, task := range r.tasks {
-        tasks = append(tasks, task)
-    }
-
-    return tasks, nil
-}
-
-func (r *InMemoryTaskRepository) Update(ctx context.Context, task *Task) error {
-    r.mu.Lock()
-    defer r.mu.Unlock()
-
-    if _, exists := r.tasks[task.ID]; !exists {
-        return fmt.Errorf("task not found: %s", task.ID)
-    }
-
-    task.UpdatedAt = time.Now()
-    r.tasks[task.ID] = task
-    return nil
-}
-
-func (r *InMemoryTaskRepository) Delete(ctx context.Context, id string) error {
-    r.mu.Lock()
-    defer r.mu.Unlock()
-
-    delete(r.tasks, id)
-    return nil
-}
-
-// DefaultTaskService implements TaskService
-type DefaultTaskService struct {
-    repo   TaskRepository
-    notif  NotificationService
-    logger Logger
-}
-
-func NewTaskService(
-    repo TaskRepository,
-    notif NotificationService,
-    logger Logger,
-) TaskService {
-    return &DefaultTaskService{
-        repo:   repo,
-        notif:  notif,
-        logger: logger,
-    }
-}
-
-func (s *DefaultTaskService) CreateTask(ctx context.Context, title, description string) (*Task, error) {
-    task := &Task{
-        Title:       title,
-        Description: description,
-        Completed:   false,
-    }
-
-    if err := s.repo.Create(ctx, task); err != nil {
-        s.logger.Error("Failed to create task", err)
-        return nil, err
-    }
-
-    s.logger.Info("Task created", "id", task.ID, "title", title)
-
-    if err := s.notif.NotifyTaskCreated(task); err != nil {
-        s.logger.Error("Failed to send notification", err)
-    }
-
-    return task, nil
-}
-
-func (s *DefaultTaskService) GetTask(ctx context.Context, id string) (*Task, error) {
-    return s.repo.GetByID(ctx, id)
-}
-
-func (s *DefaultTaskService) ListTasks(ctx context.Context) ([]*Task, error) {
-    return s.repo.List(ctx)
-}
-
-func (s *DefaultTaskService) CompleteTask(ctx context.Context, id string) error {
-    task, err := s.repo.GetByID(ctx, id)
-    if err != nil {
-        return err
-    }
-
-    task.Completed = true
-    if err := s.repo.Update(ctx, task); err != nil {
-        return err
-    }
-
-    s.logger.Info("Task completed", "id", id)
-
-    if err := s.notif.NotifyTaskCompleted(task); err != nil {
-        s.logger.Error("Failed to send notification", err)
-    }
-
-    return nil
-}
-
-func (s *DefaultTaskService) DeleteTask(ctx context.Context, id string) error {
-    if err := s.repo.Delete(ctx, id); err != nil {
-        return err
-    }
-
-    s.logger.Info("Task deleted", "id", id)
-    return nil
-}
-
-// EmailNotificationService implements NotificationService
-type EmailNotificationService struct {
-    logger Logger
-}
-
-func NewEmailNotificationService(logger Logger) NotificationService {
-    return &EmailNotificationService{logger: logger}
-}
-
-func (s *EmailNotificationService) NotifyTaskCreated(task *Task) error {
-    s.logger.Info("Email notification: Task created", "title", task.Title)
-    return nil
-}
-
-func (s *EmailNotificationService) NotifyTaskCompleted(task *Task) error {
-    s.logger.Info("Email notification: Task completed", "title", task.Title)
-    return nil
-}
-```
-
-## Step 3: Wire Everything with godi
-
-Now comes the magic! Let's use godi to wire all these services together. Create `main.go`:
-
-```go
-package main
-
-import (
-    "context"
-    "fmt"
-    "log"
-
     "github.com/junioryono/godi"
 )
 
-func main() {
-    // Create a service collection
-    services := godi.NewServiceCollection()
-
-    // Register our services
-    // Logger is a singleton - one instance for the entire app
-    services.AddSingleton(NewConsoleLogger)
-
-    // Repository is a singleton - shared data store
-    services.AddSingleton(NewInMemoryTaskRepository)
-
-    // Notification service is scoped - could have per-request config
-    services.AddScoped(NewEmailNotificationService)
-
-    // Task service is scoped - new instance per scope
-    services.AddScoped(NewTaskService)
-
-    // Build the service provider
-    provider, err := services.BuildServiceProvider()
-    if err != nil {
-        log.Fatal("Failed to build service provider:", err)
-    }
-    defer provider.Close()
-
-    // Create a scope (in a real app, this would be per-request)
-    scope := provider.CreateScope(context.Background())
-    defer scope.Close()
-
-    // Resolve our task service - godi automatically injects all dependencies!
-    taskService, err := godi.Resolve[TaskService](scope.ServiceProvider())
-    if err != nil {
-        log.Fatal("Failed to resolve task service:", err)
-    }
-
-    // Use our service
-    fmt.Println("=== Task Management System ===")
-
-    // Create some tasks
-    task1, err := taskService.CreateTask(context.Background(),
-        "Learn godi",
-        "Understand dependency injection in Go")
-    if err != nil {
-        log.Fatal("Failed to create task:", err)
-    }
-
-    task2, err := taskService.CreateTask(context.Background(),
-        "Build an app",
-        "Create a real application using godi")
-    if err != nil {
-        log.Fatal("Failed to create task:", err)
-    }
-
-    // List all tasks
-    fmt.Println("\nAll tasks:")
-    tasks, err := taskService.ListTasks(context.Background())
-    if err != nil {
-        log.Fatal("Failed to list tasks:", err)
-    }
-
-    for _, task := range tasks {
-        status := "Pending"
-        if task.Completed {
-            status = "Completed"
-        }
-        fmt.Printf("- [%s] %s: %s\n", status, task.Title, task.Description)
-    }
-
-    // Complete a task
-    fmt.Printf("\nCompleting task: %s\n", task1.Title)
-    err = taskService.CompleteTask(context.Background(), task1.ID)
-    if err != nil {
-        log.Fatal("Failed to complete task:", err)
-    }
-
-    // List tasks again
-    fmt.Println("\nUpdated task list:")
-    tasks, err = taskService.ListTasks(context.Background())
-    if err != nil {
-        log.Fatal("Failed to list tasks:", err)
-    }
-
-    for _, task := range tasks {
-        status := "Pending"
-        if task.Completed {
-            status = "Completed"
-        }
-        fmt.Printf("- [%s] %s\n", status, task.Title)
-    }
+// Logger - everyone needs logging
+type Logger interface {
+    Info(msg string)
+    Error(msg string)
 }
-```
 
-## Step 4: Run the Application
+type ConsoleLogger struct{}
 
-Run your application:
-
-```bash
-go run .
-```
-
-You should see output like:
-
-```
-[TASK-APP] INFO: Task created [id <uuid> title Learn godi]
-[TASK-APP] INFO: Email notification: Task created [title Learn godi]
-[TASK-APP] INFO: Task created [id <uuid> title Build an app]
-[TASK-APP] INFO: Email notification: Task created [title Build an app]
-
-All tasks:
-- [Pending] Learn godi: Understand dependency injection in Go
-- [Pending] Build an app: Create a real application using godi
-
-Completing task: Learn godi
-[TASK-APP] INFO: Task completed [id <uuid>]
-[TASK-APP] INFO: Email notification: Task completed [title Learn godi]
-
-Updated task list:
-- [Completed] Learn godi
-- [Pending] Build an app
-```
-
-## What Just Happened?
-
-Let's understand the magic that godi performed:
-
-1. **Automatic Wiring**: We never manually created instances or passed dependencies. godi analyzed the constructor functions and automatically provided the required dependencies.
-
-2. **Lifetime Management**:
-
-   - The logger and repository are singletons (one instance)
-   - The services are scoped (new instances per scope)
-
-3. **Clean Separation**: Our services don't know about godi - they're just regular Go types with constructor functions.
-
-4. **Type Safety**: Using generics, we get compile-time type checking when resolving services.
-
-## Step 5: Add a New Feature
-
-Let's see how easy it is to add new functionality. We'll add a statistics service:
-
-Add to `types.go`:
-
-```go
-// StatsService interface for statistics
-type StatsService interface {
-    GetTaskStats(ctx context.Context) (total, completed int, err error)
+func NewLogger() Logger {
+    return &ConsoleLogger{}
 }
-```
 
-Add to `services.go`:
+func (l *ConsoleLogger) Info(msg string) {
+    log.Printf("[INFO] %s", msg)
+}
 
-```go
-// TaskStatsService implements StatsService
-type TaskStatsService struct {
-    repo   TaskRepository
+func (l *ConsoleLogger) Error(msg string) {
+    log.Printf("[ERROR] %s", msg)
+}
+
+// Database - shared connection
+type Database struct {
+    logger Logger
+    // In real app: *sql.DB
+}
+
+func NewDatabase(logger Logger) *Database {
+    logger.Info("Connecting to database...")
+    return &Database{logger: logger}
+}
+
+// UserRepository - data access
+type UserRepository struct {
+    db     *Database
     logger Logger
 }
 
-func NewTaskStatsService(repo TaskRepository, logger Logger) StatsService {
-    return &TaskStatsService{
-        repo:   repo,
-        logger: logger,
-    }
+func NewUserRepository(db *Database, logger Logger) *UserRepository {
+    return &UserRepository{db: db, logger: logger}
 }
 
-func (s *TaskStatsService) GetTaskStats(ctx context.Context) (total, completed int, err error) {
-    tasks, err := s.repo.List(ctx)
-    if err != nil {
-        return 0, 0, err
-    }
+func (r *UserRepository) GetUser(id string) string {
+    r.logger.Info(fmt.Sprintf("Getting user %s", id))
+    return fmt.Sprintf("User-%s", id)
+}
 
-    total = len(tasks)
-    for _, task := range tasks {
-        if task.Completed {
-            completed++
-        }
-    }
+// AuthService - business logic
+type AuthService struct {
+    repo   *UserRepository
+    logger Logger
+}
 
-    s.logger.Info("Stats calculated", "total", total, "completed", completed)
-    return total, completed, nil
+func NewAuthService(repo *UserRepository, logger Logger) *AuthService {
+    return &AuthService{repo: repo, logger: logger}
+}
+
+func (s *AuthService) Login(userID string) string {
+    user := s.repo.GetUser(userID)
+    s.logger.Info(fmt.Sprintf("User %s logged in", user))
+    return fmt.Sprintf("session-for-%s", user)
 }
 ```
 
-Update `main.go` - just add one line to register the service:
+### Step 2: Wire Everything with godi
+
+Add to your `main.go`:
 
 ```go
-// Add this line with the other service registrations
-services.AddScoped(NewTaskStatsService)
+func main() {
+    // Create service collection
+    services := godi.NewServiceCollection()
 
-// And use it after creating the scope:
-statsService, err := godi.Resolve[StatsService](scope.ServiceProvider())
-if err != nil {
-    log.Fatal("Failed to resolve stats service:", err)
+    // Register services - order doesn't matter!
+    services.AddSingleton(NewLogger)        // One logger for entire app
+    services.AddSingleton(NewDatabase)      // One DB connection
+    services.AddScoped(NewUserRepository)   // New repo per request
+    services.AddScoped(NewAuthService)      // New service per request
+
+    // Build the container
+    provider, err := services.BuildServiceProvider()
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer provider.Close()
+
+    // Simulate handling requests
+    simulateRequests(provider)
 }
 
-// Display stats
-total, completed, err := statsService.GetTaskStats(context.Background())
-if err != nil {
-    log.Fatal("Failed to get stats:", err)
+func simulateRequests(provider godi.ServiceProvider) {
+    // Simulate 3 concurrent requests
+    var wg sync.WaitGroup
+
+    for i := 1; i <= 3; i++ {
+        wg.Add(1)
+        go func(requestID int) {
+            defer wg.Done()
+
+            // Each request gets its own scope
+            scope := provider.CreateScope(context.Background())
+            defer scope.Close()
+
+            // Get the auth service - godi injects all dependencies!
+            authService, _ := godi.Resolve[*AuthService](scope.ServiceProvider())
+
+            // Use the service
+            session := authService.Login(fmt.Sprintf("user-%d", requestID))
+            fmt.Printf("Request %d: %s\n", requestID, session)
+        }(i)
+    }
+
+    wg.Wait()
 }
-fmt.Printf("\nStatistics: %d/%d tasks completed\n", completed, total)
 ```
 
-Notice how we:
+Run it:
 
-1. Added the new service and constructor
-2. Registered it with one line
-3. Started using it immediately
+```bash
+go run main.go
+```
 
-No changes to existing code were needed!
+You'll see the logger and database are created once (singleton), but each request gets its own service instances (scoped).
+
+## Understanding Service Lifetimes
+
+### Singleton - Shared Across Everything
+
+Use for:
+
+- Loggers
+- Database connections
+- Configuration
+- Caches
+
+```go
+services.AddSingleton(NewLogger)     // Created once, shared by all
+services.AddSingleton(NewDatabase)   // One connection pool
+```
+
+### Scoped - One Per Request/Operation
+
+Use for:
+
+- Database transactions
+- Request context
+- User sessions
+- Unit of work
+
+```go
+services.AddScoped(NewUserRepository)  // Fresh instance per request
+services.AddScoped(NewAuthService)     // Isolated from other requests
+```
+
+### Transient - New Every Time
+
+Use for:
+
+- Temporary objects
+- Unique operations
+- Stateful helpers
+
+```go
+services.AddTransient(NewEmailMessage)  // New instance each time
+```
+
+## Real Example: Why Scoped Services Matter
+
+Here's a real scenario showing why scoped services are powerful:
+
+```go
+// Session holds user info for current request
+type Session struct {
+    UserID    string
+    UserName  string
+    StartTime time.Time
+}
+
+func NewSession() *Session {
+    return &Session{
+        StartTime: time.Now(),
+    }
+}
+
+// AuditLogger logs with session context
+type AuditLogger struct {
+    session *Session
+    logger  Logger
+}
+
+func NewAuditLogger(session *Session, logger Logger) *AuditLogger {
+    return &AuditLogger{session: session, logger: logger}
+}
+
+func (a *AuditLogger) LogAction(action string) {
+    a.logger.Info(fmt.Sprintf("[User: %s] %s (session time: %v)",
+        a.session.UserName, action, time.Since(a.session.StartTime)))
+}
+
+// UserService uses the audit logger
+type UserServiceV2 struct {
+    audit *AuditLogger
+}
+
+func NewUserServiceV2(audit *AuditLogger) *UserServiceV2 {
+    return &UserServiceV2{audit: audit}
+}
+
+func (s *UserServiceV2) UpdateProfile(name string) {
+    s.audit.LogAction(fmt.Sprintf("Updated profile to %s", name))
+}
+
+// Usage
+func handleRequest(provider godi.ServiceProvider, userID, userName string) {
+    // Create scope for this request
+    scope := provider.CreateScope(context.Background())
+    defer scope.Close()
+
+    // Get session and populate it
+    session, _ := godi.Resolve[*Session](scope.ServiceProvider())
+    session.UserID = userID
+    session.UserName = userName
+
+    // Get service - it automatically has access to this request's session!
+    userService, _ := godi.Resolve[*UserServiceV2](scope.ServiceProvider())
+    userService.UpdateProfile("New Name")
+
+    // The audit log shows: [User: John] Updated profile to New Name (session time: 50ms)
+}
+```
+
+The magic: Every service in this request's scope automatically shares the same Session instance!
 
 ## Next Steps
 
-Congratulations! You've learned the basics of dependency injection with godi. Here's what to explore next:
+Now you understand the basics:
 
-1. **[Web Application Tutorial](web-application.md)** - Build a REST API with godi
-2. **[Testing with godi](testing.md)** - Learn how DI makes testing easy
-3. **[Service Scopes](../howto/use-scopes.md)** - Deep dive into scope management
-4. **[Advanced Patterns](../howto/advanced-patterns.md)** - Modules, decorators, and more
+1. **Services** are just regular Go types
+2. **Constructors** are functions that godi calls
+3. **Lifetimes** control when instances are created
+4. **Scopes** isolate requests from each other
+
+Ready for more? Check out:
+
+- [Building a Web API](web-application.md) - Real HTTP server with DI
+- [Using Modules](../howto/modules.md) - Organize services into groups
+- [Testing with DI](testing.md) - Mock services easily
 
 ## Key Takeaways
 
-- **Services** are just interfaces and types - no special requirements
-- **Constructors** are regular functions that godi calls with dependencies
-- **Registration** tells godi about your services and their lifetimes
-- **Resolution** gets instances with all dependencies automatically injected
-- **Adding features** is as simple as creating and registering new services
+✅ **Start simple** - You don't need every feature right away  
+✅ **Use scopes for requests** - Each request gets isolated instances  
+✅ **Let godi wire dependencies** - Just describe what you need  
+✅ **Test easily** - Swap real services for mocks
 
-Happy coding with godi!
+Remember: The goal is to write less boilerplate and focus on your business logic!
