@@ -488,15 +488,9 @@ func Resolve[T any](sp ServiceProvider) (T, error) {
 		return zero, ErrNilServiceProvider
 	}
 
-	var serviceType reflect.Type
-	tType := reflect.TypeOf((*T)(nil)).Elem()
-
-	if tType.Kind() == reflect.Interface {
-		// For interfaces, use the interface type directly
-		serviceType = tType
-	} else {
-		// For concrete types, use pointer to the type
-		serviceType = reflect.TypeOf((*T)(nil))
+	serviceType, err := determineServiceType[T]()
+	if err != nil {
+		return zero, err
 	}
 
 	service, err := sp.Resolve(serviceType)
@@ -504,34 +498,7 @@ func Resolve[T any](sp ServiceProvider) (T, error) {
 		return zero, fmt.Errorf("unable to resolve service of type %s: %w", formatType(serviceType), err)
 	}
 
-	if service == nil {
-		return zero, ResolutionError{ServiceType: serviceType, Cause: ErrServiceNotFound}
-	}
-
-	// Handle the conversion based on whether T is an interface or not
-	if tType.Kind() == reflect.Interface {
-		// For interfaces, the service should implement the interface
-		if svc, ok := service.(T); ok {
-			return svc, nil
-		}
-
-		return zero, TypeMismatchError{
-			Expected: serviceType,
-			Actual:   reflect.TypeOf(service),
-			Context:  "interface implementation",
-		}
-	} else {
-		// For concrete types, we expect a pointer to T
-		if ptr, ok := service.(*T); ok {
-			return *ptr, nil
-		}
-
-		return zero, TypeMismatchError{
-			Expected: serviceType,
-			Actual:   reflect.TypeOf(service),
-			Context:  "type assertion",
-		}
-	}
+	return assertServiceType[T](service, serviceType, nil)
 }
 
 // ResolveKeyed gets the service object of the specified type with the specified key.
@@ -558,49 +525,76 @@ func ResolveKeyed[T any](sp ServiceProvider, serviceKey interface{}) (T, error) 
 		return zero, ErrNilServiceProvider
 	}
 
-	var serviceType reflect.Type
-	tType := reflect.TypeOf((*T)(nil)).Elem()
-
-	if tType.Kind() == reflect.Interface {
-		// For interfaces, use the interface type directly
-		serviceType = tType
-	} else {
-		// For concrete types, use pointer to the type
-		serviceType = reflect.TypeOf((*T)(nil))
+	serviceType, err := determineServiceType[T]()
+	if err != nil {
+		return zero, err
 	}
 
 	service, err := sp.ResolveKeyed(serviceType, serviceKey)
 	if err != nil {
-		return zero, fmt.Errorf("unable to resolve keyed service of type %s with key %v: %w", formatType(serviceType), serviceKey, err)
+		return zero, fmt.Errorf("unable to resolve service of type %s: %w", formatType(serviceType), err)
 	}
+
+	return assertServiceType[T](service, serviceType, serviceKey)
+}
+
+// determineServiceType determines the actual service type to resolve based on the generic type T.
+func determineServiceType[T any]() (reflect.Type, error) {
+	tType := reflect.TypeOf((*T)(nil)).Elem()
+
+	// Determine the actual service type to resolve
+	if tType.Kind() == reflect.Interface {
+		// For interfaces, use the interface type directly
+		return tType, nil
+	} else if tType.Kind() == reflect.Ptr {
+		// T is already a pointer type (e.g., *UserService)
+		// So we use T directly as the service type
+		return tType, nil
+	} else {
+		// T is a non-pointer concrete type
+		// Services are typically registered as pointers, so look for *T
+		return reflect.PointerTo(tType), nil
+	}
+}
+
+// assertServiceType performs type assertion and returns the service as type T.
+func assertServiceType[T any](service interface{}, serviceType reflect.Type, serviceKey interface{}) (T, error) {
+	var zero T
 
 	if service == nil {
 		return zero, ResolutionError{ServiceType: serviceType, ServiceKey: serviceKey, Cause: ErrServiceNotFound}
 	}
 
-	// Handle the conversion based on whether T is an interface or not
-	if tType.Kind() == reflect.Interface {
-		// For interfaces, the service should implement the interface
-		if svc, ok := service.(T); ok {
-			return svc, nil
-		}
+	// Type assertion to T
+	if svc, ok := service.(T); ok {
+		return svc, nil
+	}
 
-		return zero, TypeMismatchError{
-			Expected: serviceType,
-			Actual:   reflect.TypeOf(service),
-			Context:  "keyed interface implementation",
+	// If T is a non-pointer type and service is a pointer to T, dereference it
+	tType := reflect.TypeOf((*T)(nil)).Elem()
+	if tType.Kind() != reflect.Ptr && tType.Kind() != reflect.Interface {
+		// T is a value type, check if service is *T
+		serviceValue := reflect.ValueOf(service)
+		if serviceValue.Kind() == reflect.Ptr && serviceValue.Elem().Type() == tType {
+			// Service is *T and we want T, so dereference
+			if serviceValue.IsNil() {
+				return zero, ResolutionError{ServiceType: serviceType, ServiceKey: serviceKey, Cause: ErrServiceNotFound}
+			}
+			return serviceValue.Elem().Interface().(T), nil
 		}
+	}
+
+	var msg string
+	if serviceKey != nil {
+		msg = "keyed type assertion"
 	} else {
-		// For concrete types, we expect a pointer to T
-		if ptr, ok := service.(*T); ok {
-			return *ptr, nil
-		}
+		msg = "type assertion"
+	}
 
-		return zero, TypeMismatchError{
-			Expected: serviceType,
-			Actual:   reflect.TypeOf(service),
-			Context:  "keyed type assertion",
-		}
+	return zero, TypeMismatchError{
+		Expected: serviceType,
+		Actual:   reflect.TypeOf(service),
+		Context:  msg,
 	}
 }
 

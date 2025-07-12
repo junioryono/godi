@@ -2065,6 +2065,180 @@ func TestServiceProvider_KeyedServiceEdgeCases(t *testing.T) {
 	})
 }
 
+func TestServiceProvider_ResolveGenericTypes(t *testing.T) {
+	t.Run("resolves pointer type directly", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+		collection.AddSingleton(func() *providerTestService {
+			return &providerTestService{ID: "test-pointer"}
+		})
+
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		defer provider.Close()
+
+		// Resolve using pointer type directly (was causing **Type issue)
+		service, err := godi.Resolve[*providerTestService](provider)
+		if err != nil {
+			t.Fatalf("unexpected error resolving *providerTestService: %v", err)
+		}
+
+		if service == nil {
+			t.Fatal("expected non-nil service")
+		}
+
+		if service.ID != "test-pointer" {
+			t.Errorf("expected ID 'test-pointer', got %s", service.ID)
+		}
+	})
+
+	t.Run("resolves non-pointer type by dereferencing", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+		collection.AddSingleton(func() *providerTestService {
+			return &providerTestService{ID: "test-value"}
+		})
+
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		defer provider.Close()
+
+		// Resolve using value type (should find *Type and return Type)
+		service, err := godi.Resolve[providerTestService](provider)
+		if err != nil {
+			t.Fatalf("unexpected error resolving providerTestService: %v", err)
+		}
+
+		if service.ID != "test-value" {
+			t.Errorf("expected ID 'test-value', got %s", service.ID)
+		}
+	})
+
+	t.Run("resolves interface type", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+		collection.AddSingleton(newProviderTestLogger)
+
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		defer provider.Close()
+
+		// Resolve using interface type
+		logger, err := godi.Resolve[providerTestLogger](provider)
+		if err != nil {
+			t.Fatalf("unexpected error resolving interface: %v", err)
+		}
+
+		if logger == nil {
+			t.Fatal("expected non-nil logger")
+		}
+
+		logger.Log("interface test")
+		logs := logger.GetLogs()
+		if len(logs) != 1 || logs[0] != "interface test" {
+			t.Error("logger not working correctly through interface")
+		}
+	})
+
+	t.Run("resolves keyed pointer type", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+		collection.AddSingleton(func() *providerTestService {
+			return &providerTestService{ID: "keyed-pointer"}
+		}, godi.Name("test-key"))
+
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		defer provider.Close()
+
+		// Resolve keyed service using pointer type
+		service, err := godi.ResolveKeyed[*providerTestService](provider, "test-key")
+		if err != nil {
+			t.Fatalf("unexpected error resolving keyed *providerTestService: %v", err)
+		}
+
+		if service == nil {
+			t.Fatal("expected non-nil service")
+		}
+
+		if service.ID != "keyed-pointer" {
+			t.Errorf("expected ID 'keyed-pointer', got %s", service.ID)
+		}
+	})
+
+	t.Run("resolves keyed interface type", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+		collection.AddSingleton(func() providerTestDatabase {
+			return &providerTestDatabaseImpl{name: "keyed-interface"}
+		}, godi.Name("db-key"))
+
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		defer provider.Close()
+
+		// Resolve keyed service using interface type
+		db, err := godi.ResolveKeyed[providerTestDatabase](provider, "db-key")
+		if err != nil {
+			t.Fatalf("unexpected error resolving keyed interface: %v", err)
+		}
+
+		if db == nil {
+			t.Fatal("expected non-nil database")
+		}
+
+		result := db.Query("SELECT 1")
+		if !strings.Contains(result, "keyed-interface") {
+			t.Errorf("expected 'keyed-interface' in result, got %s", result)
+		}
+	})
+
+	t.Run("error when service not found", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		defer provider.Close()
+
+		// Try to resolve non-existent service
+		_, err = godi.Resolve[*providerTestService](provider)
+		if err == nil {
+			t.Error("expected error for non-existent service")
+		}
+
+		// Verify error message contains type information
+		if !strings.Contains(err.Error(), "providerTestService") {
+			t.Errorf("expected error to mention providerTestService, got: %v", err)
+		}
+	})
+
+	t.Run("type mismatch error", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+		// Register as one interface but try to resolve as another
+		collection.AddSingleton(func() providerTestLogger {
+			return &providerTestLoggerImpl{}
+		})
+
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		defer provider.Close()
+
+		// This should fail with type mismatch
+		_, err = godi.Resolve[providerTestDatabase](provider)
+		if err == nil {
+			t.Error("expected type mismatch error")
+		}
+	})
+}
+
 // Benchmark for scope creation and disposal
 func BenchmarkServiceProvider_ScopeLifecycle(b *testing.B) {
 	collection := godi.NewServiceCollection()
