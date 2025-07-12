@@ -31,7 +31,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Nothing yet
 
-## [1.0.0] - 2025-01-15
+## [1.0.1] - 2025-07-12
+
+### Fixed
+
+- Improved type resolution for generic service resolution
+- Fixed resolution of value types (non-pointer types) when services are registered as pointers
+- Refactored `Resolve[T]` and `ResolveKeyed[T]` to use shared helper functions for better maintainability
+
+### Changed
+
+- Internal refactoring: extracted `determineServiceType[T]()` and `assertServiceType[T]()` helper functions
+- Better handling of pointer vs non-pointer type resolution
+
+### Added
+
+- Support for resolving services as value types: `Resolve[UserService](provider)` now works when service is registered as `*UserService`
+
+## [1.0.0] - 2025-07-10
 
 ### Added
 
