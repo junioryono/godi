@@ -774,6 +774,29 @@ func TestServiceProvider_CreateScope(t *testing.T) {
 
 		provider.CreateScope(context.Background())
 	})
+
+	t.Run("singleton services accessible in scope", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+		collection.AddSingleton(newProviderTestLogger)
+
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		defer provider.Close()
+
+		scope := provider.CreateScope(context.Background())
+		defer scope.Close()
+
+		logger, err := scope.ServiceProvider().Resolve(reflect.TypeOf((*providerTestLogger)(nil)).Elem())
+		if err != nil {
+			t.Fatalf("unexpected error resolving logger in scope: %v", err)
+		}
+
+		if logger == nil {
+			t.Fatal("expected non-nil logger in scope")
+		}
+	})
 }
 
 func TestServiceProvider_Invoke(t *testing.T) {

@@ -2,6 +2,8 @@ package godi
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"reflect"
@@ -10,7 +12,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/google/uuid"
 	"go.uber.org/dig"
 )
 
@@ -110,82 +111,93 @@ type ServiceScopeFactory interface {
 
 // serviceProviderScope implements Scope, ServiceProvider, ServiceScopeFactory.
 type serviceProviderScope struct {
-	// Dig scope for this service scope
-	digScope *dig.Scope
-
-	// Parent provider
-	rootProvider *serviceProvider
-
-	// State
-	disposed    int32
-	disposables []Disposable
-	isRootScope bool
-	ctx         context.Context
-	sync        sync.RWMutex
-
-	// Scope tracking
+	ctx     context.Context
 	scopeID string
-	parent  *serviceProviderScope
 
-	// Track services created in this scope for disposal
-	scopedInstances map[reflect.Type][]interface{}
+	digScope        *dig.Scope
+	parentScope     *serviceProviderScope
+	serviceProvider *serviceProvider
+
+	disposed      int32
+	disposables   []DisposableWithContext
+	disposablesMu sync.RWMutex
 }
 
 // newServiceProviderScope creates a new ServiceProvider scope.
-func newServiceProviderScope(provider *serviceProvider, isRootScope bool, ctx context.Context) *serviceProviderScope {
+func newServiceProviderScope(provider *serviceProvider, ctx context.Context) *serviceProviderScope {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
 	scope := &serviceProviderScope{
-		rootProvider:    provider,
-		isRootScope:     isRootScope,
 		ctx:             ctx,
-		scopeID:         uuid.NewString(),
-		scopedInstances: make(map[reflect.Type][]interface{}),
+		scopeID:         generateID(),
+		serviceProvider: provider,
 	}
 
 	scope.ctx = withCurrentScope(ctx, scope)
 
-	if isRootScope {
-		// Root scope uses the main container directly
-		scope.digScope = &dig.Scope{} // This is a placeholder - we use provider.digContainer
-	} else {
-		// Create a dig scope for non-root scopes - must hold provider's digMutex
-		provider.digMutex.Lock()
-		scope.digScope = provider.digContainer.Scope(scope.scopeID)
+	// Create a dig scope for non-root scopes - must hold provider's mutex
+	provider.scopesMu.Lock()
+	defer provider.scopesMu.Unlock()
 
-		if scope.digScope == nil {
-			panic(ErrFailedToCreateScope)
+	provider.scopes[scope.scopeID] = scope
+	scope.digScope = provider.digContainer.Scope(scope.scopeID)
+
+	if scope.digScope == nil {
+		panic(ErrFailedToCreateScope)
+	}
+
+	// Register context in the dig scope
+	if err := scope.digScope.Provide(func() context.Context { return ctx }); err != nil {
+		panic(ErrFailedToCreateScope)
+	}
+
+	// Register the ServiceProvider in the dig scope (override the root registration)
+	if err := scope.digScope.Provide(func() ServiceProvider { return scope }); err != nil {
+		panic(fmt.Errorf("failed to register context in dig scope %s: %w", scope.scopeID, err))
+	}
+
+	// Register ServiceScopeFactory in the dig scope
+	if err := scope.digScope.Provide(func() ServiceScopeFactory { return scope }); err != nil {
+		panic(fmt.Errorf("failed to register ServiceProvider in dig scope %s: %w", scope.scopeID, err))
+	}
+
+	// Register scoped services in this dig scope
+	for _, desc := range provider.descriptors {
+		if desc.Lifetime != Scoped {
+			continue
 		}
 
-		// Register context in the dig scope
-		if err := scope.digScope.Provide(func() context.Context { return ctx }); err != nil {
-			provider.digMutex.Unlock()
-			panic(ErrFailedToCreateScope)
+		// Create provider options
+		opts := []ProvideOption{}
+
+		if desc.isKeyedService() {
+			opts = append(opts, Name(fmt.Sprintf("%v", desc.ServiceKey)))
 		}
 
-		// Register the ServiceProvider in the dig scope (override the root registration)
-		if err := scope.digScope.Provide(func() ServiceProvider { return scope }); err != nil {
-			provider.digMutex.Unlock()
-			panic(fmt.Errorf("failed to register context in dig scope %s: %w", scope.scopeID, err))
+		// Handle groups if specified in metadata
+		if group, ok := desc.Metadata["group"].(string); ok && group != "" {
+			opts = append(opts, Group(group))
 		}
 
-		// Register ServiceScopeFactory in the dig scope
-		if err := scope.digScope.Provide(func() ServiceScopeFactory { return scope }); err != nil {
-			provider.digMutex.Unlock()
-			panic(fmt.Errorf("failed to register ServiceProvider in dig scope %s: %w", scope.scopeID, err))
+		// Handle 'as' interfaces if specified
+		if interfaces, ok := desc.Metadata["as"].([]interface{}); ok {
+			opts = append(opts, As(interfaces...))
 		}
-		provider.digMutex.Unlock()
 
-		// Register scoped services in this dig scope
-		for _, desc := range provider.descriptors {
-			if desc.Lifetime == Scoped {
-				if err := scope.registerScopedService(desc); err != nil {
-					// Log error but continue - this is during initialization
-					fmt.Printf("Warning: failed to register scoped service %s: %v\n", formatType(desc.ServiceType), err)
-				}
-			}
+		// Use the constructor from the descriptor
+		if desc.Constructor == nil {
+			// This shouldn't happen if descriptor is validated
+			err := MissingConstructorError{ServiceType: desc.ServiceType, Context: "descriptor"}
+			panic(fmt.Errorf("failed to register scoped service %s: %w", desc.ServiceType, err))
+		}
+
+		// Wrap the constructor to track instances for disposal
+		wrappedConstructor := scope.wrapConstructorForTracking(desc.Constructor)
+		err := scope.digScope.Provide(wrappedConstructor, opts...)
+		if err != nil {
+			panic(fmt.Errorf("failed to register scoped service %s: %w", desc.ServiceType, err))
 		}
 	}
 
@@ -224,7 +236,7 @@ func (scope *serviceProviderScope) IsRootScope() bool {
 		panic(ErrScopeDisposed)
 	}
 
-	return scope.isRootScope
+	return scope.parentScope == nil
 }
 
 func (scope *serviceProviderScope) GetRootScope() Scope {
@@ -232,14 +244,10 @@ func (scope *serviceProviderScope) GetRootScope() Scope {
 		panic(ErrScopeDisposed)
 	}
 
-	if scope.isRootScope {
-		return scope
-	}
-
 	// Traverse up to find the root scope
 	current := scope
-	for current.parent != nil {
-		current = current.parent
+	for current.parentScope != nil {
+		current = current.parentScope
 	}
 
 	return current
@@ -250,46 +258,14 @@ func (scope *serviceProviderScope) Parent() Scope {
 		panic(ErrScopeDisposed)
 	}
 
-	if scope.parent == nil {
+	if scope.parentScope == nil {
 		return nil
 	}
 
-	return scope.parent
+	return scope.parentScope
 }
 
-func (scope *serviceProviderScope) registerScopedService(desc *serviceDescriptor) error {
-	// Create provider options
-	opts := []ProvideOption{}
-
-	if desc.isKeyedService() {
-		opts = append(opts, Name(fmt.Sprintf("%v", desc.ServiceKey)))
-	}
-
-	// Handle groups if specified in metadata
-	if group, ok := desc.Metadata["group"].(string); ok && group != "" {
-		opts = append(opts, Group(group))
-	}
-
-	// Handle 'as' interfaces if specified
-	if interfaces, ok := desc.Metadata["as"].([]interface{}); ok {
-		opts = append(opts, As(interfaces...))
-	}
-
-	// Use the constructor from the descriptor
-	if desc.Constructor != nil {
-		// Wrap the constructor to track instances for disposal
-		wrappedConstructor := scope.wrapConstructorForTracking(desc.Constructor, desc.ServiceType)
-		scope.rootProvider.digMutex.Lock()
-		err := scope.digScope.Provide(wrappedConstructor, opts...)
-		scope.rootProvider.digMutex.Unlock()
-		return err
-	}
-
-	// This shouldn't happen if descriptor is validated
-	return MissingConstructorError{ServiceType: desc.ServiceType, Context: "descriptor"}
-}
-
-func (scope *serviceProviderScope) wrapConstructorForTracking(constructor interface{}, serviceType reflect.Type) interface{} {
+func (scope *serviceProviderScope) wrapConstructorForTracking(constructor interface{}) interface{} {
 	fnType := reflect.TypeOf(constructor)
 	fnValue := reflect.ValueOf(constructor)
 
@@ -300,11 +276,7 @@ func (scope *serviceProviderScope) wrapConstructorForTracking(constructor interf
 		// Track the instance if successful
 		if len(results) > 0 && results[0].IsValid() {
 			instance := results[0].Interface()
-
-			scope.sync.Lock()
-			scope.scopedInstances[serviceType] = append(scope.scopedInstances[serviceType], instance)
-			scope.captureDisposable(instance, false)
-			scope.sync.Unlock()
+			scope.captureDisposable(instance)
 		}
 
 		return results
@@ -324,8 +296,8 @@ func (scope *serviceProviderScope) Resolve(serviceType reflect.Type) (interface{
 	// Create a context with timeout if configured
 	var ctx context.Context
 	var cancel context.CancelFunc
-	if scope.rootProvider.options.ResolutionTimeout > 0 {
-		ctx, cancel = context.WithTimeout(scope.ctx, scope.rootProvider.options.ResolutionTimeout)
+	if scope.serviceProvider.options.ResolutionTimeout > 0 {
+		ctx, cancel = context.WithTimeout(scope.ctx, scope.serviceProvider.options.ResolutionTimeout)
 		defer cancel()
 	} else {
 		ctx = scope.ctx
@@ -358,7 +330,7 @@ func (scope *serviceProviderScope) Resolve(serviceType reflect.Type) (interface{
 	case <-ctx.Done():
 		err = TimeoutError{
 			ServiceType: serviceType,
-			Timeout:     scope.rootProvider.options.ResolutionTimeout,
+			Timeout:     scope.serviceProvider.options.ResolutionTimeout,
 		}
 	}
 
@@ -366,10 +338,10 @@ func (scope *serviceProviderScope) Resolve(serviceType reflect.Type) (interface{
 	duration := time.Since(startTime)
 
 	// Call callbacks
-	if err == nil && scope.rootProvider.options.OnServiceResolved != nil {
-		scope.rootProvider.options.OnServiceResolved(serviceType, result, duration)
-	} else if err != nil && scope.rootProvider.options.OnServiceError != nil {
-		scope.rootProvider.options.OnServiceError(serviceType, err)
+	if err == nil && scope.serviceProvider.options.OnServiceResolved != nil {
+		scope.serviceProvider.options.OnServiceResolved(serviceType, result, duration)
+	} else if err != nil && scope.serviceProvider.options.OnServiceError != nil {
+		scope.serviceProvider.options.OnServiceError(serviceType, err)
 	}
 
 	return result, err
@@ -380,7 +352,6 @@ func (scope *serviceProviderScope) resolveService(serviceType reflect.Type) (int
 	providerFuncType := reflect.FuncOf([]reflect.Type{}, []reflect.Type{serviceType}, false)
 
 	var providerFunc interface{}
-	var providerErr error
 
 	// Try to get the provider function
 	providerExtractor := reflect.MakeFunc(
@@ -396,13 +367,9 @@ func (scope *serviceProviderScope) resolveService(serviceType reflect.Type) (int
 	)
 
 	// Try to invoke the provider extractor
-	scope.rootProvider.digMutex.Lock()
-	if scope.isRootScope {
-		providerErr = scope.rootProvider.digContainer.Invoke(providerExtractor.Interface())
-	} else {
-		providerErr = scope.digScope.Invoke(providerExtractor.Interface())
-	}
-	scope.rootProvider.digMutex.Unlock()
+	scope.serviceProvider.scopesMu.Lock()
+	providerErr := scope.digScope.Invoke(providerExtractor.Interface())
+	scope.serviceProvider.scopesMu.Unlock()
 
 	// If we found a provider function, call it to get a new instance
 	if providerErr == nil && providerFunc != nil {
@@ -412,11 +379,7 @@ func (scope *serviceProviderScope) resolveService(serviceType reflect.Type) (int
 			result := results[0].Interface()
 
 			// Track the instance for disposal in this scope
-			scope.sync.Lock()
-			scope.scopedInstances[serviceType] = append(scope.scopedInstances[serviceType], result)
-			scope.captureDisposable(result, false)
-			scope.sync.Unlock()
-
+			scope.captureDisposable(result)
 			return result, nil
 		}
 	}
@@ -438,13 +401,9 @@ func (scope *serviceProviderScope) resolveService(serviceType reflect.Type) (int
 	})
 
 	// Invoke through dig with mutex protection
-	scope.rootProvider.digMutex.Lock()
-	if scope.isRootScope {
-		resolveErr = scope.rootProvider.digContainer.Invoke(fn.Interface())
-	} else {
-		resolveErr = scope.digScope.Invoke(fn.Interface())
-	}
-	scope.rootProvider.digMutex.Unlock()
+	scope.serviceProvider.scopesMu.Lock()
+	resolveErr = scope.digScope.Invoke(fn.Interface())
+	scope.serviceProvider.scopesMu.Unlock()
 
 	return result, resolveErr
 }
@@ -472,10 +431,10 @@ func (scope *serviceProviderScope) ResolveKeyed(serviceType reflect.Type, servic
 	duration := time.Since(startTime)
 
 	// Record metrics and callbacks
-	if err == nil && scope.rootProvider.options.OnServiceResolved != nil {
-		scope.rootProvider.options.OnServiceResolved(serviceType, result, duration)
-	} else if err != nil && scope.rootProvider.options.OnServiceError != nil {
-		scope.rootProvider.options.OnServiceError(serviceType, err)
+	if err == nil && scope.serviceProvider.options.OnServiceResolved != nil {
+		scope.serviceProvider.options.OnServiceResolved(serviceType, result, duration)
+	} else if err != nil && scope.serviceProvider.options.OnServiceError != nil {
+		scope.serviceProvider.options.OnServiceError(serviceType, err)
 	}
 
 	return result, err
@@ -519,13 +478,9 @@ func (scope *serviceProviderScope) resolveKeyedService(serviceType reflect.Type,
 	)
 
 	// Try to invoke the provider extractor
-	scope.rootProvider.digMutex.Lock()
-	if scope.isRootScope {
-		providerErr = scope.rootProvider.digContainer.Invoke(providerExtractor.Interface())
-	} else {
-		providerErr = scope.digScope.Invoke(providerExtractor.Interface())
-	}
-	scope.rootProvider.digMutex.Unlock()
+	scope.serviceProvider.scopesMu.Lock()
+	providerErr = scope.digScope.Invoke(providerExtractor.Interface())
+	scope.serviceProvider.scopesMu.Unlock()
 
 	// If we found a provider function, call it to get a new instance
 	if providerErr == nil && providerFunc != nil {
@@ -535,11 +490,7 @@ func (scope *serviceProviderScope) resolveKeyedService(serviceType reflect.Type,
 			result := results[0].Interface()
 
 			// Track the instance for disposal in this scope
-			scope.sync.Lock()
-			scope.scopedInstances[serviceType] = append(scope.scopedInstances[serviceType], result)
-			scope.captureDisposable(result, false)
-			scope.sync.Unlock()
-
+			scope.captureDisposable(result)
 			return result, nil
 		}
 	}
@@ -578,13 +529,9 @@ func (scope *serviceProviderScope) resolveKeyedService(serviceType reflect.Type,
 
 	// Invoke through dig with mutex protection
 	var resolveErr error
-	scope.rootProvider.digMutex.Lock()
-	if scope.isRootScope {
-		resolveErr = scope.rootProvider.digContainer.Invoke(fn.Interface())
-	} else {
-		resolveErr = scope.digScope.Invoke(fn.Interface())
-	}
-	scope.rootProvider.digMutex.Unlock()
+	scope.serviceProvider.scopesMu.Lock()
+	resolveErr = scope.digScope.Invoke(fn.Interface())
+	scope.serviceProvider.scopesMu.Unlock()
 
 	if resolveErr != nil {
 		return nil, resolveErr
@@ -598,7 +545,7 @@ func (scope *serviceProviderScope) IsService(serviceType reflect.Type) bool {
 	if scope.IsDisposed() {
 		return false
 	}
-	return scope.rootProvider.IsService(serviceType)
+	return scope.serviceProvider.IsService(serviceType)
 }
 
 // IsKeyedService implements ServiceProvider.
@@ -606,7 +553,7 @@ func (scope *serviceProviderScope) IsKeyedService(serviceType reflect.Type, serv
 	if scope.IsDisposed() {
 		return false
 	}
-	return scope.rootProvider.IsKeyedService(serviceType, serviceKey)
+	return scope.serviceProvider.IsKeyedService(serviceType, serviceKey)
 }
 
 // CreateScope implements ServiceScopeFactory.
@@ -615,8 +562,8 @@ func (scope *serviceProviderScope) CreateScope(ctx context.Context) Scope {
 		panic(ErrScopeDisposed)
 	}
 
-	newScope := newServiceProviderScope(scope.rootProvider, false, ctx)
-	newScope.parent = scope
+	newScope := newServiceProviderScope(scope.serviceProvider, ctx)
+	newScope.parentScope = scope
 	return newScope
 }
 
@@ -626,34 +573,25 @@ func (scope *serviceProviderScope) IsDisposed() bool {
 }
 
 // captureDisposable captures a service for disposal when the scope is disposed.
-func (scope *serviceProviderScope) captureDisposable(service interface{}, shouldLock bool) {
+func (scope *serviceProviderScope) captureDisposable(service interface{}) {
 	if service == scope {
 		return
 	}
 
-	var disposable Disposable
+	var disposable DisposableWithContext
 	switch v := service.(type) {
 	case Disposable:
-		disposable = v
-	case DisposableWithContext:
 		disposable = &contextDisposableWrapper{
-			disposable:     v,
-			defaultTimeout: 30 * time.Second,
+			disposable: v,
 		}
+	case DisposableWithContext:
+		disposable = v
 	default:
 		return
 	}
 
-	if shouldLock {
-		scope.sync.Lock()
-		defer scope.sync.Unlock()
-	}
-
-	if scope.IsDisposed() {
-		disposable.Close()
-		return
-	}
-
+	scope.disposablesMu.Lock()
+	defer scope.disposablesMu.Unlock()
 	scope.disposables = append(scope.disposables, disposable)
 }
 
@@ -662,19 +600,24 @@ func (scope *serviceProviderScope) Close() error {
 		return nil
 	}
 
+	// Remove the scope from the provider's scopes map
+	scope.serviceProvider.scopesMu.Lock()
+	delete(scope.serviceProvider.scopes, scope.scopeID)
+	scope.serviceProvider.scopesMu.Unlock()
+
 	runtime.SetFinalizer(scope, nil)
 
-	scope.sync.Lock()
-	toDispose := make([]Disposable, len(scope.disposables))
+	scope.disposablesMu.Lock()
+	toDispose := make([]DisposableWithContext, len(scope.disposables))
 	copy(toDispose, scope.disposables)
 	scope.disposables = nil
-	scope.scopedInstances = nil
-	scope.sync.Unlock()
+	scope.disposablesMu.Unlock()
 
 	var errs []error
+
 	// Dispose in reverse order (LIFO)
 	for i := len(toDispose) - 1; i >= 0; i-- {
-		if err := toDispose[i].Close(); err != nil {
+		if err := toDispose[i].Close(scope.ctx); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -693,12 +636,8 @@ func (scope *serviceProviderScope) Invoke(function interface{}) error {
 	}
 
 	// Always use dig for invocation with mutex protection
-	scope.rootProvider.digMutex.Lock()
-	defer scope.rootProvider.digMutex.Unlock()
-
-	if scope.isRootScope {
-		return scope.rootProvider.digContainer.Invoke(function)
-	}
+	scope.serviceProvider.scopesMu.Lock()
+	defer scope.serviceProvider.scopesMu.Unlock()
 	return scope.digScope.Invoke(function)
 }
 
@@ -711,14 +650,11 @@ func (scope *serviceProviderScope) finalize() {
 
 // contextDisposableWrapper wraps DisposableWithContext as Disposable.
 type contextDisposableWrapper struct {
-	disposable     DisposableWithContext
-	defaultTimeout time.Duration
+	disposable Disposable
 }
 
-func (w *contextDisposableWrapper) Close() error {
-	ctx, cancel := context.WithTimeout(context.Background(), w.defaultTimeout)
-	defer cancel()
-	return w.disposable.Close(ctx)
+func (w *contextDisposableWrapper) Close(ctx context.Context) error {
+	return w.disposable.Close()
 }
 
 // scopeContextKey is the key for storing the current scope in context.
@@ -733,4 +669,18 @@ func withCurrentScope(ctx context.Context, scope *serviceProviderScope) context.
 func currentScopeFromContext(ctx context.Context) (*serviceProviderScope, bool) {
 	scope, ok := ctx.Value(scopeContextKey{}).(*serviceProviderScope)
 	return scope, ok
+}
+
+func generateID() string {
+	// Timestamp (8 bytes)
+	timestamp := time.Now().UnixNano()
+
+	// Random bytes (8 bytes)
+	randomBytes := make([]byte, 8)
+	if _, err := rand.Read(randomBytes); err != nil {
+		panic(err)
+	}
+
+	// Combine timestamp and random
+	return fmt.Sprintf("%016x%s", timestamp, hex.EncodeToString(randomBytes))
 }

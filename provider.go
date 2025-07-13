@@ -129,13 +129,12 @@ type serviceProvider struct {
 
 	// Root scope for disposal tracking
 	rootScope *serviceProviderScope
+	scopes    map[string]*serviceProviderScope
+	scopesMu  sync.Mutex
 
 	// Callbacks for dig integration
 	providerCallbacks map[uintptr]Callback
 	beforeCallbacks   map[uintptr]BeforeCallback
-
-	// Mutex for dig operations since dig is not thread-safe
-	digMutex sync.Mutex
 }
 
 // newServiceProviderWithOptions creates a new ServiceProvider from the given service collection.
@@ -166,6 +165,7 @@ func newServiceProviderWithOptions(services ServiceCollection, options *ServiceP
 		descriptorIndex:   make(map[reflect.Type][]*serviceDescriptor),
 		keyedIndex:        make(map[typeKeyPair][]*serviceDescriptor),
 		options:           options,
+		scopes:            make(map[string]*serviceProviderScope),
 		providerCallbacks: make(map[uintptr]Callback),
 		beforeCallbacks:   make(map[uintptr]BeforeCallback),
 	}
@@ -182,7 +182,7 @@ func newServiceProviderWithOptions(services ServiceCollection, options *ServiceP
 
 	// Register all services with dig based on lifetime
 	for _, desc := range provider.descriptors {
-		if err := provider.registerServiceWithDig(desc); err != nil {
+		if err := provider.registerService(desc); err != nil {
 			return nil, RegistrationError{
 				ServiceType: desc.ServiceType,
 				Operation:   "register",
@@ -192,10 +192,12 @@ func newServiceProviderWithOptions(services ServiceCollection, options *ServiceP
 	}
 
 	// Create root scope
-	provider.rootScope = newServiceProviderScope(provider, true, context.Background())
+	provider.rootScope = newServiceProviderScope(provider, context.Background())
 
 	// Add built-in services
-	provider.addBuiltInServices()
+	if err := provider.addBuiltInServices(); err != nil {
+		return nil, err
+	}
 
 	// Validate if requested
 	if options.ValidateOnBuild {
@@ -207,13 +209,11 @@ func newServiceProviderWithOptions(services ServiceCollection, options *ServiceP
 	return provider, nil
 }
 
-// registerServiceWithDig registers a service descriptor with the dig container.
-func (sp *serviceProvider) registerServiceWithDig(desc *serviceDescriptor) error {
+// registerService registers a service descriptor with the dig container.
+func (sp *serviceProvider) registerService(desc *serviceDescriptor) error {
 	// Handle decorators separately
 	if desc.isDecorator() && desc.DecorateInfo != nil {
-		sp.digMutex.Lock()
 		err := sp.digContainer.Decorate(desc.DecorateInfo.Decorator, desc.DecorateInfo.DecorateOptions...)
-		sp.digMutex.Unlock()
 		return err
 	}
 
@@ -252,9 +252,7 @@ func (sp *serviceProvider) registerServiceWithDig(desc *serviceDescriptor) error
 	// For transient services, wrap in a provider function
 	if desc.Lifetime == Transient && !isResultObject {
 		wrappedConstructor := sp.wrapTransientConstructor(desc)
-		sp.digMutex.Lock()
 		err := sp.digContainer.Provide(wrappedConstructor, opts...)
-		sp.digMutex.Unlock()
 		return err
 	}
 
@@ -262,25 +260,19 @@ func (sp *serviceProvider) registerServiceWithDig(desc *serviceDescriptor) error
 	if desc.Lifetime == Singleton && !isResultObject {
 		// Wrap the constructor to capture disposable instances
 		wrappedConstructor := sp.wrapSingletonConstructor(desc.Constructor)
-		sp.digMutex.Lock()
 		err := sp.digContainer.Provide(wrappedConstructor, opts...)
-		sp.digMutex.Unlock()
 		return err
 	}
 
 	// For result objects and singleton services, register directly
 	if desc.Lifetime == Singleton || isResultObject {
 		// Singleton result objects are registered directly
-		sp.digMutex.Lock()
 		err := sp.digContainer.Provide(desc.Constructor, opts...)
-		sp.digMutex.Unlock()
 		return err
 	}
 
 	// For scoped services, register normally - they'll be handled at scope level
-	sp.digMutex.Lock()
 	err := sp.digContainer.Provide(desc.Constructor, opts...)
-	sp.digMutex.Unlock()
 	return err
 }
 
@@ -348,9 +340,7 @@ func (sp *serviceProvider) wrapTransientConstructor(desc *serviceDescriptor) int
 			// Handle the result
 			if len(results) > 0 && results[0].IsValid() {
 				instance := results[0].Interface()
-
-				// Track for disposal in the current scope
-				currentScope.captureDisposable(instance, true)
+				currentScope.captureDisposable(instance)
 			}
 
 			// Return only the service instance
@@ -404,8 +394,9 @@ func (sp *serviceProvider) wrapSingletonConstructor(constructor interface{}) int
 
 				if !hasError {
 					instance := results[0].Interface()
+
 					// Track the instance in the root scope for disposal
-					sp.rootScope.captureDisposable(instance, true)
+					sp.rootScope.captureDisposable(instance)
 				}
 			}
 		}
@@ -439,9 +430,7 @@ func (sp *serviceProvider) validateAllServices() error {
 
 	// Try to invoke all test functions
 	for _, testFunc := range testFuncs {
-		sp.digMutex.Lock()
 		err := sp.digContainer.Invoke(testFunc)
-		sp.digMutex.Unlock()
 		if err != nil {
 			// Check if it's a cycle error
 			if dig.IsCycleDetected(err) {
@@ -636,8 +625,8 @@ func (sp *serviceProvider) CreateScope(ctx context.Context) Scope {
 		ctx = context.Background()
 	}
 
-	newScope := newServiceProviderScope(sp, false, ctx)
-	newScope.parent = sp.rootScope
+	newScope := newServiceProviderScope(sp, ctx)
+	newScope.parentScope = sp.rootScope
 	return newScope
 }
 
@@ -657,25 +646,19 @@ func (sp *serviceProvider) Close() error {
 }
 
 // addBuiltInServices adds built-in services.
-func (sp *serviceProvider) addBuiltInServices() {
-	// Register ServiceProvider as a singleton that returns the root scope
-	sp.digMutex.Lock()
-
+func (sp *serviceProvider) addBuiltInServices() error {
 	if err := sp.digContainer.Provide(func() ServiceProvider {
 		return sp.rootScope
 	}); err != nil {
-		sp.digMutex.Unlock()
-		panic(fmt.Errorf("failed to register ServiceProvider: %w", err))
+		return fmt.Errorf("failed to register ServiceProvider: %w", err)
 	}
 
 	// Register ServiceScopeFactory as a singleton that returns the root scope
 	if err := sp.digContainer.Provide(func() ServiceScopeFactory {
 		return sp.rootScope
 	}); err != nil {
-		sp.digMutex.Unlock()
-		panic(fmt.Errorf("failed to register ServiceScopeFactory: %w", err))
+		return fmt.Errorf("failed to register ServiceScopeFactory: %w", err)
 	}
-	sp.digMutex.Unlock()
 
 	// Also add these to our descriptor tracking for IsService checks
 	spDesc := &serviceDescriptor{
@@ -699,6 +682,8 @@ func (sp *serviceProvider) addBuiltInServices() {
 	}
 	sp.descriptors = append(sp.descriptors, ssfDesc)
 	sp.descriptorIndex[ssfDesc.ServiceType] = []*serviceDescriptor{ssfDesc}
+
+	return nil
 }
 
 // Invoke executes a function with automatic dependency injection.
