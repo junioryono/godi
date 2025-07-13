@@ -31,6 +31,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Nothing yet
 
+## [1.0.2] - 2025-07-13
+
+### Fixed
+
+- Fixed thread safety issues in service provider operations by removing shared mutex usage
+- Fixed memory leaks by properly cleaning up scope references when disposed
+- Improved scope lifecycle management and disposal ordering
+
+### Changed
+
+- Refactored internal scope tracking to use a map-based approach instead of parent-child references
+- Simplified mutex usage by removing the shared `digMutex` and using localized locking
+- Improved internal ID generation to use timestamp + random bytes instead of UUID dependency
+- Refactored service registration to use cleaner error handling patterns
+
+### Removed
+
+- Removed dependency on `github.com/google/uuid` package
+- Removed unnecessary mutex locking in dig operations
+
+### Internal
+
+- Better separation of concerns between service provider and scope implementations
+- Improved code organization with helper functions for service type determination
+- Enhanced disposal tracking with proper context handling
+
 ## [1.0.1] - 2025-07-12
 
 ### Fixed
