@@ -3,6 +3,7 @@ package godi_test
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"testing"
 	"time"
 
@@ -223,6 +224,16 @@ func (m *MockScope) Close() error {
 
 func (m *MockScope) String() string {
 	return "MockScope{id: " + m.id + "}"
+}
+
+// Resolve implements godi.Scope.
+func (m *MockScope) Resolve(serviceType reflect.Type) (interface{}, error) {
+	panic("unimplemented")
+}
+
+// ResolveKeyed implements godi.Scope.
+func (m *MockScope) ResolveKeyed(serviceType reflect.Type, serviceKey interface{}) (interface{}, error) {
+	panic("unimplemented")
 }
 
 func TestScopeInterface(t *testing.T) {

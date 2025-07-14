@@ -262,7 +262,7 @@ var DatabaseModule = godi.Module("database",
 )
 
 var UserModule = godi.Module("user",
-    godi.AddModule(DatabaseModule), // Depends on database
+    DatabaseModule, // Depends on database
     godi.AddScoped(NewUserRepository),
     godi.AddScoped(NewUserService),
 )

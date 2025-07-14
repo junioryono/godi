@@ -38,14 +38,6 @@ type ServiceProvider interface {
 	// This scope is created automatically when the provider is built.
 	GetRootScope() Scope
 
-	// Resolve retrieves a service by its type.
-	// Returns an error if the service is not found or cannot be constructed.
-	Resolve(serviceType reflect.Type) (interface{}, error)
-
-	// ResolveKeyed retrieves a keyed service by its type and key.
-	// This is useful when multiple implementations of the same interface are registered.
-	ResolveKeyed(serviceType reflect.Type, serviceKey interface{}) (interface{}, error)
-
 	// IsService determines whether the specified service type is available.
 	// This is useful for optional dependencies.
 	IsService(serviceType reflect.Type) bool
@@ -65,8 +57,7 @@ type ServiceProvider interface {
 	// IsDisposed returns true if the provider has been disposed.
 	IsDisposed() bool
 
-	// Close disposes the ServiceProvider and all singleton services.
-	// This method is safe to call multiple times.
+	ServiceResolver
 	Disposable
 }
 
@@ -80,6 +71,14 @@ type ServiceProviderIsService interface {
 // This interface is automatically registered in the container.
 type ServiceProviderIsKeyedService interface {
 	IsKeyedService(serviceType reflect.Type, serviceKey interface{}) bool
+}
+
+type ServiceResolver interface {
+	// Resolve gets the service object of the specified type.
+	Resolve(serviceType reflect.Type) (interface{}, error)
+
+	// ResolveKeyed gets the service object of the specified type with the specified key.
+	ResolveKeyed(serviceType reflect.Type, serviceKey interface{}) (interface{}, error)
 }
 
 // ServiceProviderOptions configures various ServiceProvider behaviors.
@@ -471,9 +470,9 @@ func (sp *serviceProvider) Resolve(serviceType reflect.Type) (interface{}, error
 }
 
 // Resolve is a generic helper function that returns the service as type T.
-func Resolve[T any](sp ServiceProvider) (T, error) {
+func Resolve[T any](sr ServiceResolver) (T, error) {
 	var zero T
-	if sp == nil {
+	if sr == nil {
 		return zero, ErrNilServiceProvider
 	}
 
@@ -482,7 +481,7 @@ func Resolve[T any](sp ServiceProvider) (T, error) {
 		return zero, err
 	}
 
-	service, err := sp.Resolve(serviceType)
+	service, err := sr.Resolve(serviceType)
 	if err != nil {
 		return zero, fmt.Errorf("unable to resolve service of type %s: %w", formatType(serviceType), err)
 	}
@@ -508,9 +507,9 @@ func (sp *serviceProvider) ResolveKeyed(serviceType reflect.Type, serviceKey int
 }
 
 // ResolveKeyed is a generic helper function that returns the keyed service as type T.
-func ResolveKeyed[T any](sp ServiceProvider, serviceKey interface{}) (T, error) {
+func ResolveKeyed[T any](sr ServiceResolver, serviceKey interface{}) (T, error) {
 	var zero T
-	if sp == nil {
+	if sr == nil {
 		return zero, ErrNilServiceProvider
 	}
 
@@ -519,7 +518,7 @@ func ResolveKeyed[T any](sp ServiceProvider, serviceKey interface{}) (T, error) 
 		return zero, err
 	}
 
-	service, err := sp.ResolveKeyed(serviceType, serviceKey)
+	service, err := sr.ResolveKeyed(serviceType, serviceKey)
 	if err != nil {
 		return zero, fmt.Errorf("unable to resolve service of type %s: %w", formatType(serviceType), err)
 	}

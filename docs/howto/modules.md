@@ -377,8 +377,8 @@ Make module dependencies explicit:
 ```go
 // ✅ Good - clear dependency chain
 var AppModule = godi.Module("app",
-    godi.AddModule(CoreModule),      // Explicit dependency
-    godi.AddModule(DatabaseModule),  // Explicit dependency
+    CoreModule,      // Explicit dependency
+    DatabaseModule,  // Explicit dependency
     godi.AddScoped(NewAppService),
 )
 ```

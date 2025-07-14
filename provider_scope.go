@@ -49,9 +49,7 @@ type Scope interface {
 	// Parent returns the parent scope of this scope.
 	Parent() Scope
 
-	// Dispose the scope and all scoped services.
-	// Services are disposed in reverse order of creation (LIFO).
-	// This method is safe to call multiple times.
+	ServiceResolver
 	Disposable
 }
 

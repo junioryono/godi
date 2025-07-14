@@ -31,6 +31,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Nothing yet
 
+## [1.1.0] - 2025-07-13
+
+### Added
+
+- `ServiceResolver` interface extracted from `ServiceProvider` for better separation of concerns
+- `Scope` now implements `ServiceResolver` interface, allowing direct resolution from scopes
+- Module system improvements for better composability
+
+### Changed
+
+- **BREAKING**: `ServiceProvider` interface refactored:
+  - `Resolve` and `ResolveKeyed` methods moved to embedded `ServiceResolver` interface
+  - `ServiceProvider` now embeds both `ServiceResolver` and `Disposable` interfaces
+- **BREAKING**: Module API renamed for clarity:
+  - `Module` function renamed to `NewModule`
+  - `ModuleBuilder` type renamed to `ModuleOption`
+  - `AddModule` function removed (modules can be composed directly)
+- **BREAKING**: Generic resolution functions now accept `ServiceResolver` instead of `ServiceProvider`:
+  - `Resolve[T](sr ServiceResolver)` instead of `Resolve[T](sp ServiceProvider)`
+  - `ResolveKeyed[T](sr ServiceResolver, key)` instead of `ResolveKeyed[T](sp ServiceProvider, key)`
+- Improved interface segregation following SOLID principles
+- Better support for testing with smaller interface surface area
+
+### Migration Guide
+
+#### ServiceProvider Interface Changes
+
+The `Resolve` and `ResolveKeyed` methods are still available on `ServiceProvider` through the embedded `ServiceResolver` interface. No code changes needed for basic usage.
+
+#### Module System Changes
+
+Before:
+
+```go
+var MyModule = godi.Module("mymodule",
+    godi.AddSingleton(NewService),
+    godi.AddModule(OtherModule),
+)
+```
+
+After:
+
+```go
+var MyModule = godi.NewModule("mymodule",
+    godi.AddSingleton(NewService),
+    OtherModule, // Modules can be composed directly
+)
+```
+
+#### Generic Resolution Functions
+
+The generic helper functions now accept the `ServiceResolver` interface:
+
+Before:
+
+```go
+service, err := godi.Resolve[MyService](provider)
+```
+
+After:
+
+```go
+// Still works - ServiceProvider implements ServiceResolver
+service, err := godi.Resolve[MyService](provider)
+
+// Also works with scopes directly
+service, err := godi.Resolve[MyService](scope)
+```
+
+### Internal
+
+- Cleaner interface design with better separation between service resolution and provider lifecycle management
+- Improved testability by allowing resolution from smaller interfaces
+
 ## [1.0.2] - 2025-07-13
 
 ### Fixed
@@ -167,14 +241,14 @@ godi follows Semantic Versioning:
 
 Planned features for future releases:
 
-- **v1.1.0** (Planned)
+- **v1.2.0** (Planned)
 
   - Async service resolution
   - Service factories with parameters
   - Enhanced debugging tools
   - Performance optimizations
 
-- **v1.2.0** (Planned)
+- **v1.3.0** (Planned)
 
   - Service middlewares
   - Dynamic service registration
@@ -189,6 +263,21 @@ Planned features for future releases:
 
 ## Upgrading
 
+### From v1.0.x to v1.1.0
+
+Version 1.1.0 includes breaking changes to improve the API design:
+
+1. **Update module definitions**:
+   - Change `godi.Module` to `godi.NewModule`
+   - Remove `godi.AddModule` calls - modules can be composed directly
+2. **Update resolution calls** (optional):
+
+   - Generic functions now accept `ServiceResolver` interface
+   - Existing code using `ServiceProvider` will continue to work
+
+3. **Test updates**:
+   - Mock implementations can now implement smaller `ServiceResolver` interface
+
 ### From v0.x to v1.0.0
 
 Version 1.0.0 is the first stable release. If you were using pre-release versions:
@@ -200,7 +289,16 @@ Version 1.0.0 is the first stable release. If you were using pre-release version
 
 ### Breaking Changes
 
-No breaking changes in v1.0.0 as it's the initial release.
+#### v1.1.0
+
+- `Module` renamed to `NewModule`
+- `ModuleBuilder` renamed to `ModuleOption`
+- `AddModule` removed
+- Resolution functions accept `ServiceResolver` interface
+
+#### v1.0.0
+
+No breaking changes as it's the initial release.
 
 ## Support
 

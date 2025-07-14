@@ -185,7 +185,7 @@ func newModuleTestAPIHandler() moduleTestHandler   { return &moduleTestAPIHandle
 func TestModule_BasicFunctionality(t *testing.T) {
 	t.Run("creates simple module", func(t *testing.T) {
 		// Create a simple module
-		logModule := godi.Module("logging",
+		logModule := godi.NewModule("logging",
 			godi.AddSingleton(newModuleTestLogger),
 		)
 
@@ -222,7 +222,7 @@ func TestModule_BasicFunctionality(t *testing.T) {
 
 	t.Run("creates module with multiple services", func(t *testing.T) {
 		// Create a database module
-		dbModule := godi.Module("database",
+		dbModule := godi.NewModule("database",
 			godi.AddSingleton(newModuleTestDatabase),
 			godi.AddScoped(newModuleTestRepository),
 		)
@@ -244,7 +244,7 @@ func TestModule_BasicFunctionality(t *testing.T) {
 
 	t.Run("module name appears in error", func(t *testing.T) {
 		// Create a module with an error
-		errorModule := godi.Module("problematic",
+		errorModule := godi.NewModule("problematic",
 			func(s godi.ServiceCollection) error {
 				return errIntentional
 			},
@@ -263,7 +263,7 @@ func TestModule_BasicFunctionality(t *testing.T) {
 
 	t.Run("handles nil builders", func(t *testing.T) {
 		// Module with nil builders should not error
-		module := godi.Module("safe",
+		module := godi.NewModule("safe",
 			nil,
 			godi.AddSingleton(newModuleTestLogger),
 			nil,
@@ -284,26 +284,26 @@ func TestModule_BasicFunctionality(t *testing.T) {
 func TestModule_Composition(t *testing.T) {
 	t.Run("nested modules", func(t *testing.T) {
 		// Create base modules
-		logModule := godi.Module("logging",
+		logModule := godi.NewModule("logging",
 			godi.AddSingleton(newModuleTestLogger),
 			godi.AddSingleton(newModuleTestMetrics),
 		)
 
-		cacheModule := godi.Module("cache",
+		cacheModule := godi.NewModule("cache",
 			godi.AddSingleton(newModuleTestCache),
 		)
 
 		// Create composite module
-		dataModule := godi.Module("data",
-			godi.AddModule(logModule),
-			godi.AddModule(cacheModule),
+		dataModule := godi.NewModule("data",
+			logModule,
+			cacheModule,
 			godi.AddSingleton(newModuleTestDatabase),
 			godi.AddScoped(newModuleTestRepository),
 		)
 
 		// Create app module that uses data module
-		appModule := godi.Module("app",
-			godi.AddModule(dataModule),
+		appModule := godi.NewModule("app",
+			dataModule,
 			godi.AddScoped(newModuleTestService),
 		)
 
@@ -351,8 +351,8 @@ func TestModule_Composition(t *testing.T) {
 	})
 
 	t.Run("AddModule with nil", func(t *testing.T) {
-		module := godi.Module("test",
-			godi.AddModule(nil),
+		module := godi.NewModule("test",
+			nil,
 			godi.AddSingleton(newModuleTestLogger),
 		)
 
@@ -487,7 +487,7 @@ func TestModuleBuilder_Functions(t *testing.T) {
 
 func TestModule_ComplexScenarios(t *testing.T) {
 	t.Run("module with keyed services", func(t *testing.T) {
-		notificationModule := godi.Module("notifications",
+		notificationModule := godi.NewModule("notifications",
 			godi.AddSingleton(newModuleTestLogger),
 			godi.AddSingleton(newModuleTestEmailNotifier, godi.Name("email")),
 			godi.AddSingleton(newModuleTestSMSNotifier, godi.Name("sms")),
@@ -533,7 +533,7 @@ func TestModule_ComplexScenarios(t *testing.T) {
 	})
 
 	t.Run("module with groups", func(t *testing.T) {
-		handlersModule := godi.Module("handlers",
+		handlersModule := godi.NewModule("handlers",
 			godi.AddSingleton(newModuleTestUserHandler, godi.Group("handlers")),
 			godi.AddSingleton(newModuleTestAdminHandler, godi.Group("handlers")),
 			godi.AddSingleton(newModuleTestAPIHandler, godi.Group("handlers")),
@@ -546,7 +546,7 @@ func TestModule_ComplexScenarios(t *testing.T) {
 		}
 
 		var capturedHandlers []moduleTestHandler
-		consumerModule := godi.Module("consumer",
+		consumerModule := godi.NewModule("consumer",
 			godi.AddSingleton(func(params HandlerConsumer) *moduleTestService {
 				capturedHandlers = params.Handlers
 				return &moduleTestService{id: "handler-consumer"}
@@ -591,7 +591,7 @@ func TestModule_ComplexScenarios(t *testing.T) {
 
 	t.Run("module error propagation", func(t *testing.T) {
 		// Module that has a registration error
-		errorModule := godi.Module("error",
+		errorModule := godi.NewModule("error",
 			godi.AddSingleton(nil), // This should cause an error
 		)
 
@@ -608,17 +608,17 @@ func TestModule_ComplexScenarios(t *testing.T) {
 
 	t.Run("multiple modules with dependencies", func(t *testing.T) {
 		// Define modules that depend on each other
-		coreModule := godi.Module("core",
+		coreModule := godi.NewModule("core",
 			godi.AddSingleton(newModuleTestLogger),
 			godi.AddSingleton(newModuleTestMetrics),
 		)
 
-		dataModule := godi.Module("data",
+		dataModule := godi.NewModule("data",
 			godi.AddSingleton(newModuleTestDatabase),
 			godi.AddSingleton(newModuleTestCache),
 		)
 
-		businessModule := godi.Module("business",
+		businessModule := godi.NewModule("business",
 			godi.AddScoped(newModuleTestRepository),
 			godi.AddScoped(newModuleTestService),
 		)
@@ -662,7 +662,7 @@ func TestModule_RealWorldExample(t *testing.T) {
 	// Simulate a real-world modular application structure
 
 	// Infrastructure module
-	var InfrastructureModule = godi.Module("infrastructure",
+	var InfrastructureModule = godi.NewModule("infrastructure",
 		godi.AddSingleton(newModuleTestLogger),
 		godi.AddSingleton(newModuleTestMetrics),
 		godi.AddSingleton(func() moduleTestDatabase {
@@ -676,7 +676,7 @@ func TestModule_RealWorldExample(t *testing.T) {
 	)
 
 	// Notification module
-	var NotificationModule = godi.Module("notifications",
+	var NotificationModule = godi.NewModule("notifications",
 		godi.AddSingleton(newModuleTestEmailNotifier, godi.Name("email")),
 		godi.AddSingleton(newModuleTestSMSNotifier, godi.Name("sms")),
 		godi.AddDecorator(func(email moduleTestNotifier) moduleTestNotifier {
@@ -688,8 +688,8 @@ func TestModule_RealWorldExample(t *testing.T) {
 	)
 
 	// Data access module
-	var DataModule = godi.Module("data",
-		godi.AddModule(InfrastructureModule),
+	var DataModule = godi.NewModule("data",
+		InfrastructureModule,
 		godi.AddScoped(newModuleTestRepository),
 		godi.AddTransient(func() moduleTestService {
 			return moduleTestService{id: "transient-service"}
@@ -697,17 +697,17 @@ func TestModule_RealWorldExample(t *testing.T) {
 	)
 
 	// API handlers module
-	var HandlersModule = godi.Module("handlers",
+	var HandlersModule = godi.NewModule("handlers",
 		godi.AddSingleton(newModuleTestUserHandler, godi.Group("handlers")),
 		godi.AddSingleton(newModuleTestAdminHandler, godi.Group("handlers")),
 		godi.AddSingleton(newModuleTestAPIHandler, godi.Group("handlers")),
 	)
 
 	// Application module combining everything
-	var ApplicationModule = godi.Module("application",
-		godi.AddModule(DataModule),
-		godi.AddModule(NotificationModule),
-		godi.AddModule(HandlersModule),
+	var ApplicationModule = godi.NewModule("application",
+		DataModule,
+		NotificationModule,
+		HandlersModule,
 		godi.AddScoped(newModuleTestService),
 	)
 
@@ -757,7 +757,7 @@ func TestModule_RealWorldExample(t *testing.T) {
 
 func TestModule_EdgeCases(t *testing.T) {
 	t.Run("empty module", func(t *testing.T) {
-		emptyModule := godi.Module("empty")
+		emptyModule := godi.NewModule("empty")
 
 		collection := godi.NewServiceCollection()
 		err := collection.AddModules(emptyModule)
@@ -771,7 +771,7 @@ func TestModule_EdgeCases(t *testing.T) {
 	})
 
 	t.Run("module with only nil builders", func(t *testing.T) {
-		nilModule := godi.Module("nil-builders", nil, nil, nil)
+		nilModule := godi.NewModule("nil-builders", nil, nil, nil)
 
 		collection := godi.NewServiceCollection()
 		err := collection.AddModules(nilModule)
@@ -786,7 +786,7 @@ func TestModule_EdgeCases(t *testing.T) {
 
 	t.Run("recursive module application", func(t *testing.T) {
 		// Module that adds itself (should not cause infinite loop)
-		recursiveModule := godi.Module("recursive",
+		recursiveModule := godi.NewModule("recursive",
 			godi.AddSingleton(newModuleTestLogger),
 			func(s godi.ServiceCollection) error {
 				// Don't actually add recursively, just test the pattern
@@ -808,7 +808,7 @@ func TestModule_EdgeCases(t *testing.T) {
 	t.Run("module builder error handling", func(t *testing.T) {
 		callOrder := []string{}
 
-		module := godi.Module("error-test",
+		module := godi.NewModule("error-test",
 			func(s godi.ServiceCollection) error {
 				callOrder = append(callOrder, "first")
 				return nil
@@ -849,7 +849,7 @@ func TestModule_ThreadSafety(t *testing.T) {
 
 		for i := 0; i < goroutines; i++ {
 			idx := i
-			modules[i] = godi.Module(fmt.Sprintf("module-%d", idx),
+			modules[i] = godi.NewModule(fmt.Sprintf("module-%d", idx),
 				godi.AddSingleton(func() *moduleTestService {
 					return &moduleTestService{id: fmt.Sprintf("service-%d", idx)}
 				}, godi.Name(fmt.Sprintf("service-%d", idx))),
@@ -879,7 +879,7 @@ func TestModule_PartialFailure(t *testing.T) {
 	t.Run("module stops on first error", func(t *testing.T) {
 		registrationCount := 0
 
-		module := godi.Module("partial",
+		module := godi.NewModule("partial",
 			func(s godi.ServiceCollection) error {
 				registrationCount++
 				return s.AddSingleton(func() moduleTestLogger {
@@ -926,7 +926,7 @@ func TestModule_ConstructorExecution(t *testing.T) {
 	t.Run("constructors called on resolution", func(t *testing.T) {
 		constructed := []string{}
 
-		module := godi.Module("test",
+		module := godi.NewModule("test",
 			godi.AddSingleton(func() moduleTestLogger {
 				constructed = append(constructed, "logger")
 				return &moduleTestLoggerImpl{}

@@ -1,30 +1,30 @@
 package godi
 
-// ModuleBuilder represents a registration action within a module.
-type ModuleBuilder func(ServiceCollection) error
+// ModuleOption represents a registration action within a module.
+type ModuleOption func(ServiceCollection) error
 
-// Module creates a new module with the given name and builders.
+// NewModule creates a new module with the given name and builders.
 // Modules are a way to group related service registrations together.
 //
 // Example:
 //
-//	var DatabaseModule = godi.Module("database",
+//	var DatabaseModule = godi.NewModule("database",
 //	    godi.AddSingleton(NewDatabaseConnection),
 //	    godi.AddScoped(NewUserRepository),
 //	    godi.AddScoped(NewOrderRepository),
 //	)
 //
-//	var CacheModule = godi.Module("cache",
+//	var CacheModule = godi.NewModule("cache",
 //	    godi.AddSingleton(cache.New[any]),
 //	    godi.AddSingleton(NewCacheMetrics),
 //	)
 //
-//	var AppModule = godi.Module("app",
-//	    godi.AddModule(DatabaseModule),
-//	    godi.AddModule(CacheModule),
+//	var AppModule = godi.NewModule("app",
+//	    DatabaseModule,
+//	    CacheModule,
 //	    godi.AddScoped(NewAppService),
 //	)
-func Module(name string, builders ...ModuleBuilder) func(ServiceCollection) error {
+func NewModule(name string, builders ...ModuleOption) ModuleOption {
 	return func(s ServiceCollection) error {
 		// Execute all builders in order
 		for _, builder := range builders {
@@ -40,39 +40,29 @@ func Module(name string, builders ...ModuleBuilder) func(ServiceCollection) erro
 	}
 }
 
-// AddModule creates a ModuleBuilder that adds another module.
-func AddModule(module func(ServiceCollection) error) ModuleBuilder {
-	return func(s ServiceCollection) error {
-		if module == nil {
-			return nil
-		}
-		return module(s)
-	}
-}
-
 // AddSingleton creates a ModuleBuilder for adding a singleton service.
-func AddSingleton(constructor interface{}, opts ...ProvideOption) ModuleBuilder {
+func AddSingleton(constructor interface{}, opts ...ProvideOption) ModuleOption {
 	return func(s ServiceCollection) error {
 		return s.AddSingleton(constructor, opts...)
 	}
 }
 
 // AddScoped creates a ModuleBuilder for adding a scoped service.
-func AddScoped(constructor interface{}, opts ...ProvideOption) ModuleBuilder {
+func AddScoped(constructor interface{}, opts ...ProvideOption) ModuleOption {
 	return func(s ServiceCollection) error {
 		return s.AddScoped(constructor, opts...)
 	}
 }
 
 // AddTransient creates a ModuleBuilder for adding a transient service.
-func AddTransient(constructor interface{}, opts ...ProvideOption) ModuleBuilder {
+func AddTransient(constructor interface{}, opts ...ProvideOption) ModuleOption {
 	return func(s ServiceCollection) error {
 		return s.AddTransient(constructor, opts...)
 	}
 }
 
 // AddDecorator creates a ModuleBuilder for adding a decorator.
-func AddDecorator(decorator interface{}, opts ...DecorateOption) ModuleBuilder {
+func AddDecorator(decorator interface{}, opts ...DecorateOption) ModuleOption {
 	return func(s ServiceCollection) error {
 		return s.Decorate(decorator, opts...)
 	}
