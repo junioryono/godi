@@ -396,7 +396,7 @@ func TestAuthService_Register(t *testing.T) {
             defer scope.Close()
 
             // Resolve service
-            authService, err := godi.Resolve[services.AuthService](scope.ServiceProvider())
+            authService, err := godi.Resolve[services.AuthService](scope)
             require.NoError(t, err)
 
             // Execute test
@@ -509,7 +509,7 @@ func TestAuthService_Login(t *testing.T) {
             )
 
             tp.WithScope(func(scope godi.Scope) {
-                authService, err := godi.Resolve[services.AuthService](scope.ServiceProvider())
+                authService, err := godi.Resolve[services.AuthService](scope)
                 require.NoError(t, err)
 
                 resp, err := authService.Login(context.Background(), tt.request)
@@ -587,13 +587,13 @@ func TestAuthHandler_Integration(t *testing.T) {
 
     router.HandleFunc("/auth/register", func(w http.ResponseWriter, r *http.Request) {
         scope := handlers.GetScope(r.Context())
-        handler, _ := godi.Resolve[*handlers.AuthHandler](scope.ServiceProvider())
+        handler, _ := godi.Resolve[*handlers.AuthHandler](scope)
         handler.Register(w, r)
     }).Methods("POST")
 
     router.HandleFunc("/auth/login", func(w http.ResponseWriter, r *http.Request) {
         scope := handlers.GetScope(r.Context())
-        handler, _ := godi.Resolve[*handlers.AuthHandler](scope.ServiceProvider())
+        handler, _ := godi.Resolve[*handlers.AuthHandler](scope)
         handler.Login(w, r)
     }).Methods("POST")
 
@@ -742,10 +742,10 @@ func TestScopedLifetime(t *testing.T) {
         defer scope.Close()
 
         // Resolve multiple times
-        svc1, err := godi.Resolve[*TrackedService](scope.ServiceProvider())
+        svc1, err := godi.Resolve[*TrackedService](scope)
         require.NoError(t, err)
 
-        svc2, err := godi.Resolve[*TrackedService](scope.ServiceProvider())
+        svc2, err := godi.Resolve[*TrackedService](scope)
         require.NoError(t, err)
 
         // Should be same instance
@@ -760,8 +760,8 @@ func TestScopedLifetime(t *testing.T) {
         scope2 := provider.CreateScope(context.Background())
         defer scope2.Close()
 
-        svc1, _ := godi.Resolve[*TrackedService](scope1.ServiceProvider())
-        svc2, _ := godi.Resolve[*TrackedService](scope2.ServiceProvider())
+        svc1, _ := godi.Resolve[*TrackedService](scope1)
+        svc2, _ := godi.Resolve[*TrackedService](scope2)
 
         // Should be different instances
         assert.NotEqual(t, svc1.GetInstance().ID, svc2.GetInstance().ID)
@@ -783,7 +783,7 @@ func TestScopedLifetime(t *testing.T) {
                 scope := provider.CreateScope(context.Background())
                 defer scope.Close()
 
-                svc, err := godi.Resolve[*TrackedService](scope.ServiceProvider())
+                svc, err := godi.Resolve[*TrackedService](scope)
                 require.NoError(t, err)
 
                 mu.Lock()
@@ -855,7 +855,7 @@ func TestScopeDisposal(t *testing.T) {
         scope := provider.CreateScope(context.Background())
 
         // Create service
-        svc, err := godi.Resolve[*DisposableService](scope.ServiceProvider())
+        svc, err := godi.Resolve[*DisposableService](scope)
         require.NoError(t, err)
 
         assert.False(t, svc.IsDisposed())
@@ -879,7 +879,7 @@ func TestScopeDisposal(t *testing.T) {
         // Create multiple services
         const numServices = 5
         for i := 0; i < numServices; i++ {
-            _, err := godi.Resolve[*DisposableService](scope.ServiceProvider())
+            _, err := godi.Resolve[*DisposableService](scope)
             require.NoError(t, err)
         }
 
@@ -1055,7 +1055,7 @@ func BenchmarkServiceResolution(b *testing.B) {
 
         b.ResetTimer()
         for i := 0; i < b.N; i++ {
-            _, err := godi.Resolve[services.AuthService](scope.ServiceProvider())
+            _, err := godi.Resolve[services.AuthService](scope)
             if err != nil {
                 b.Fatal(err)
             }
@@ -1066,7 +1066,7 @@ func BenchmarkServiceResolution(b *testing.B) {
         b.ResetTimer()
         for i := 0; i < b.N; i++ {
             scope := provider.CreateScope(context.Background())
-            godi.Resolve[services.AuthService](scope.ServiceProvider())
+            godi.Resolve[services.AuthService](scope)
             scope.Close()
         }
     })
@@ -1089,7 +1089,7 @@ func BenchmarkConcurrentResolution(b *testing.B) {
     b.RunParallel(func(pb *testing.PB) {
         for pb.Next() {
             scope := provider.CreateScope(context.Background())
-            godi.Resolve[services.AuthService](scope.ServiceProvider())
+            godi.Resolve[services.AuthService](scope)
             scope.Close()
         }
     })
@@ -1257,6 +1257,5 @@ The combination of dependency injection and Go's testing package creates a power
 
 ## Next Steps
 
-- Explore the [Microservices Tutorial](microservices.md)
 - Learn about [Advanced Patterns](../howto/advanced-patterns.md)
 - Read [Best Practices](../guides/best-practices.md)

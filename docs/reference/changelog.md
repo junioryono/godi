@@ -299,7 +299,6 @@ service, err := godi.Resolve[MyService](scope)
 - Task management system (Getting Started)
 - Blog REST API (Web Application)
 - Test utilities and mocking (Testing)
-- Microservices architecture (Microservices)
 
 ### Documentation
 

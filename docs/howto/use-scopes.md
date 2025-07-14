@@ -101,7 +101,7 @@ func HandleCreateOrder(provider godi.ServiceProvider) http.HandlerFunc {
         defer scope.Close() // Auto-rollback if not committed!
 
         // Get service - transaction is automatically injected
-        orderService, _ := godi.Resolve[*OrderService](scope.ServiceProvider())
+        orderService, _ := godi.Resolve[*OrderService](scope)
 
         err := orderService.CreateOrder(userID, items)
         if err != nil {
@@ -177,7 +177,7 @@ func AuthMiddleware(provider godi.ServiceProvider) func(http.Handler) http.Handl
             defer scope.Close()
 
             // Get request context
-            ctx, _ := godi.Resolve[*RequestContext](scope.ServiceProvider())
+            ctx, _ := godi.Resolve[*RequestContext](scope)
 
             // Populate from auth token
             token := r.Header.Get("Authorization")
@@ -320,7 +320,7 @@ func MetricsMiddleware(provider godi.ServiceProvider) func(http.Handler) http.Ha
             scope := provider.CreateScope(r.Context())
             defer func() {
                 // Get metrics before scope closes
-                metrics, _ := godi.Resolve[*RequestMetrics](scope.ServiceProvider())
+                metrics, _ := godi.Resolve[*RequestMetrics](scope)
 
                 log.Printf("Request stats - Queries: %d, Cache hits: %d, Duration: %v",
                     metrics.DatabaseQueries,
@@ -388,8 +388,8 @@ services.AddScoped(NewNotificationService) // Uses RequestContext
 //       └── Batch Processing Scope (for each batch)
 
 requestScope := provider.CreateScope(ctx)
-jobScope := requestScope.ServiceProvider().CreateScope(ctx)
-batchScope := jobScope.ServiceProvider().CreateScope(ctx)
+jobScope := requestScope.CreateScope(ctx)
+batchScope := jobScope.CreateScope(ctx)
 ```
 
 ## Summary

@@ -170,7 +170,7 @@ func simulateRequests(provider godi.ServiceProvider) {
             defer scope.Close()
 
             // Get the auth service - godi injects all dependencies!
-            authService, _ := godi.Resolve[*AuthService](scope.ServiceProvider())
+            authService, _ := godi.Resolve[*AuthService](scope)
 
             // Use the service
             session := authService.Login(fmt.Sprintf("user-%d", requestID))
@@ -285,12 +285,12 @@ func handleRequest(provider godi.ServiceProvider, userID, userName string) {
     defer scope.Close()
 
     // Get session and populate it
-    session, _ := godi.Resolve[*Session](scope.ServiceProvider())
+    session, _ := godi.Resolve[*Session](scope)
     session.UserID = userID
     session.UserName = userName
 
     // Get service - it automatically has access to this request's session!
-    userService, _ := godi.Resolve[*UserServiceV2](scope.ServiceProvider())
+    userService, _ := godi.Resolve[*UserServiceV2](scope)
     userService.UpdateProfile("New Name")
 
     // The audit log shows: [User: John] Updated profile to New Name (session time: 50ms)

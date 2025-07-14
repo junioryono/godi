@@ -51,7 +51,6 @@ Why godi?
    tutorials/simple-vs-modules.md
    tutorials/web-application.md
    tutorials/testing.md
-   tutorials/microservices.md
 
 .. toctree::
    :maxdepth: 2

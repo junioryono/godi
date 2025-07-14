@@ -16,7 +16,7 @@ A module is a function that configures a set of related services. Modules can:
 ### Basic Module
 
 ```go
-var DatabaseModule = godi.Module("database",
+var DatabaseModule = godi.NewModule("database",
     godi.AddSingleton(NewDatabaseConfig),
     godi.AddSingleton(NewDatabaseConnection),
     godi.AddScoped(NewUnitOfWork),
@@ -28,13 +28,13 @@ var DatabaseModule = godi.Module("database",
 ### Module with Dependencies
 
 ```go
-var LoggingModule = godi.Module("logging",
+var LoggingModule = godi.NewModule("logging",
     godi.AddSingleton(NewLogConfig),
     godi.AddSingleton(NewLogger),
 )
 
-var DatabaseModule = godi.Module("database",
-    godi.AddModule(LoggingModule), // Depend on logging
+var DatabaseModule = godi.NewModule("database",
+    LoggingModule, // Depend on logging
     godi.AddSingleton(NewDatabaseConnection),
     godi.AddScoped(NewRepository),
 )
@@ -87,31 +87,31 @@ func main() {
 
 ```go
 // Core layer - no dependencies
-var CoreModule = godi.Module("core",
+var CoreModule = godi.NewModule("core",
     godi.AddSingleton(NewConfig),
     godi.AddSingleton(NewLogger),
     godi.AddSingleton(NewMetrics),
 )
 
 // Infrastructure layer - depends on core
-var InfrastructureModule = godi.Module("infrastructure",
-    godi.AddModule(CoreModule),
+var InfrastructureModule = godi.NewModule("infrastructure",
+    CoreModule,
     godi.AddSingleton(NewDatabase),
     godi.AddSingleton(NewCache),
     godi.AddSingleton(NewMessageQueue),
 )
 
 // Domain layer - depends on infrastructure
-var DomainModule = godi.Module("domain",
-    godi.AddModule(InfrastructureModule),
+var DomainModule = godi.NewModule("domain",
+    InfrastructureModule,
     godi.AddScoped(NewUserService),
     godi.AddScoped(NewOrderService),
     godi.AddScoped(NewProductService),
 )
 
 // API layer - depends on domain
-var APIModule = godi.Module("api",
-    godi.AddModule(DomainModule),
+var APIModule = godi.NewModule("api",
+    DomainModule,
     godi.AddScoped(NewUserController),
     godi.AddScoped(NewOrderController),
     godi.AddScoped(NewProductController),
@@ -122,7 +122,7 @@ var APIModule = godi.Module("api",
 
 ```go
 // User feature module
-var UserFeatureModule = godi.Module("user-feature",
+var UserFeatureModule = godi.NewModule("user-feature",
     godi.AddScoped(NewUserRepository),
     godi.AddScoped(NewUserService),
     godi.AddScoped(NewUserController),
@@ -130,7 +130,7 @@ var UserFeatureModule = godi.Module("user-feature",
 )
 
 // Order feature module
-var OrderFeatureModule = godi.Module("order-feature",
+var OrderFeatureModule = godi.NewModule("order-feature",
     godi.AddScoped(NewOrderRepository),
     godi.AddScoped(NewOrderService),
     godi.AddScoped(NewOrderController),
@@ -138,10 +138,10 @@ var OrderFeatureModule = godi.Module("order-feature",
 )
 
 // Combine features
-var ApplicationModule = godi.Module("application",
-    godi.AddModule(CoreModule),
-    godi.AddModule(UserFeatureModule),
-    godi.AddModule(OrderFeatureModule),
+var ApplicationModule = godi.NewModule("application",
+    CoreModule,
+    UserFeatureModule,
+    OrderFeatureModule,
 )
 ```
 
@@ -149,21 +149,21 @@ var ApplicationModule = godi.Module("application",
 
 ```go
 // Development module
-var DevelopmentModule = godi.Module("development",
+var DevelopmentModule = godi.NewModule("development",
     godi.AddSingleton(func() Cache { return NewMemoryCache() }),
     godi.AddSingleton(func() Database { return NewSQLiteDB() }),
     godi.AddSingleton(func() EmailService { return NewMockEmailService() }),
 )
 
 // Production module
-var ProductionModule = godi.Module("production",
+var ProductionModule = godi.NewModule("production",
     godi.AddSingleton(func() Cache { return NewRedisCache() }),
     godi.AddSingleton(func() Database { return NewPostgresDB() }),
     godi.AddSingleton(func() EmailService { return NewSMTPEmailService() }),
 )
 
 // Select module based on environment
-func GetEnvironmentModule(env string) func(ServiceCollection) error {
+func GetEnvironmentModule(env string) func(godi.ServiceCollection) error {
     switch env {
     case "production":
         return ProductionModule
@@ -181,7 +181,7 @@ func GetEnvironmentModule(env string) func(ServiceCollection) error {
 
 ```go
 func DatabaseModuleWithConfig(dbConfig DatabaseConfig) func(godi.ServiceCollection) error {
-    return godi.Module("database",
+    return godi.NewModule("database",
         godi.AddSingleton(func() *DatabaseConfig { return &dbConfig }),
         godi.AddSingleton(NewDatabaseConnection),
         godi.AddScoped(NewRepository),
@@ -232,23 +232,23 @@ func APIModuleWithFeatures(features FeatureFlags) func(godi.ServiceCollection) e
 
 ```go
 // Base modules
-var LoggingModule = godi.Module("logging",
+var LoggingModule = godi.NewModule("logging",
     godi.AddSingleton(NewLogger),
 )
 
-var MetricsModule = godi.Module("metrics",
+var MetricsModule = godi.NewModule("metrics",
     godi.AddSingleton(NewMetricsCollector),
 )
 
-var TracingModule = godi.Module("tracing",
+var TracingModule = godi.NewModule("tracing",
     godi.AddSingleton(NewTracer),
 )
 
 // Composite module
-var ObservabilityModule = godi.Module("observability",
-    godi.AddModule(LoggingModule),
-    godi.AddModule(MetricsModule),
-    godi.AddModule(TracingModule),
+var ObservabilityModule = godi.NewModule("observability",
+    LoggingModule,
+    MetricsModule,
+    TracingModule,
     godi.AddSingleton(NewObservabilityService),
 )
 ```
@@ -258,7 +258,7 @@ var ObservabilityModule = godi.Module("observability",
 ### Test Module
 
 ```go
-var TestModule = godi.Module("test",
+var TestModule = godi.NewModule("test",
     godi.AddSingleton(func() Database { return NewInMemoryDB() }),
     godi.AddSingleton(func() Cache { return NewMockCache() }),
     godi.AddSingleton(func() EmailService { return NewMockEmailService() }),
@@ -334,7 +334,7 @@ import (
     "myapp/internal/infrastructure/messaging"
 )
 
-var InfrastructureModule = godi.Module("infrastructure",
+var InfrastructureModule = godi.NewModule("infrastructure",
     // Database
     godi.AddSingleton(database.NewConfig),
     godi.AddSingleton(database.NewConnection),
@@ -359,11 +359,11 @@ Each module should have a single, clear purpose:
 
 ```go
 // ✅ Good - focused modules
-var AuthModule = godi.Module("auth", ...)
-var PaymentModule = godi.Module("payment", ...)
+var AuthModule = godi.NewModule("auth", ...)
+var PaymentModule = godi.NewModule("payment", ...)
 
 // ❌ Bad - mixed concerns
-var UtilityModule = godi.Module("utility",
+var UtilityModule = godi.NewModule("utility",
     godi.AddSingleton(NewAuth),
     godi.AddSingleton(NewPayment),
     godi.AddSingleton(NewEmail),
@@ -376,7 +376,7 @@ Make module dependencies explicit:
 
 ```go
 // ✅ Good - clear dependency chain
-var AppModule = godi.Module("app",
+var AppModule = godi.NewModule("app",
     CoreModule,      // Explicit dependency
     DatabaseModule,  // Explicit dependency
     godi.AddScoped(NewAppService),
@@ -387,12 +387,12 @@ var AppModule = godi.Module("app",
 
 ```go
 // ❌ Bad - circular dependency
-var ModuleA = godi.Module("A",
-    godi.AddModule(ModuleB), // A depends on B
+var ModuleA = godi.NewModule("A",
+    ModuleB, // A depends on B
 )
 
-var ModuleB = godi.Module("B",
-    godi.AddModule(ModuleA), // B depends on A - circular!
+var ModuleB = godi.NewModule("B",
+    ModuleA, // B depends on A - circular!
 )
 ```
 
@@ -410,7 +410,7 @@ var ModuleB = godi.Module("B",
 // Dependencies:
 // - CoreModule (for logging and configuration)
 // - DatabaseModule (for user storage)
-var AuthModule = godi.Module("auth",
+var AuthModule = godi.NewModule("auth",
     // ... registrations
 )
 ```
@@ -438,7 +438,7 @@ func TestAuthModule(t *testing.T) {
 ### Web Application Module
 
 ```go
-var WebModule = godi.Module("web",
+var WebModule = godi.NewModule("web",
     // Core web services
     godi.AddSingleton(NewRouter),
     godi.AddSingleton(NewMiddlewareChain),
@@ -460,7 +460,7 @@ var WebModule = godi.Module("web",
 ### Background Jobs Module
 
 ```go
-var JobsModule = godi.Module("jobs",
+var JobsModule = godi.NewModule("jobs",
     // Job infrastructure
     godi.AddSingleton(NewJobScheduler),
     godi.AddSingleton(NewJobQueue),
