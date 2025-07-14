@@ -718,11 +718,6 @@ func TestServiceProvider_CreateScope(t *testing.T) {
 			t.Fatal("expected non-nil scope")
 		}
 		defer scope.Close()
-
-		scopedProvider := scope.ServiceProvider()
-		if scopedProvider == nil {
-			t.Fatal("expected non-nil scoped provider")
-		}
 	})
 
 	t.Run("injects context into scoped services", func(t *testing.T) {
@@ -742,7 +737,7 @@ func TestServiceProvider_CreateScope(t *testing.T) {
 		scope := provider.CreateScope(ctx)
 		defer scope.Close()
 
-		service, err := scope.ServiceProvider().Resolve(reflect.TypeOf((*providerTestScopedService)(nil)))
+		service, err := scope.Resolve(reflect.TypeOf((*providerTestScopedService)(nil)))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -788,7 +783,7 @@ func TestServiceProvider_CreateScope(t *testing.T) {
 		scope := provider.CreateScope(context.Background())
 		defer scope.Close()
 
-		logger, err := scope.ServiceProvider().Resolve(reflect.TypeOf((*providerTestLogger)(nil)).Elem())
+		logger, err := scope.Resolve(reflect.TypeOf((*providerTestLogger)(nil)).Elem())
 		if err != nil {
 			t.Fatalf("unexpected error resolving logger in scope: %v", err)
 		}
@@ -1015,36 +1010,6 @@ func TestServiceProvider_BuiltInServices(t *testing.T) {
 			t.Errorf("expected same instance but got different instances")
 		}
 	})
-
-	t.Run("provides ServiceScopeFactory", func(t *testing.T) {
-		collection := godi.NewServiceCollection()
-		provider, err := collection.BuildServiceProvider()
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		defer provider.Close()
-
-		service, err := provider.Resolve(reflect.TypeOf((*godi.ServiceScopeFactory)(nil)).Elem())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if service == nil {
-			t.Fatal("expected ServiceScopeFactory to be available")
-		}
-
-		factory, ok := service.(godi.ServiceScopeFactory)
-		if !ok {
-			t.Fatal("expected ServiceScopeFactory interface")
-		}
-
-		// Should be able to create scope
-		scope := factory.CreateScope(context.Background())
-		if scope == nil {
-			t.Error("expected non-nil scope from factory")
-		}
-		defer scope.Close()
-	})
 }
 
 func TestServiceProvider_ParameterObjects(t *testing.T) {
@@ -1201,7 +1166,7 @@ func TestServiceProvider_Concurrency(t *testing.T) {
 
 				// Create and use scope
 				scope := provider.CreateScope(context.Background())
-				_, err = scope.ServiceProvider().Resolve(reflect.TypeOf((*providerTestService)(nil)))
+				_, err = scope.Resolve(reflect.TypeOf((*providerTestService)(nil)))
 				scope.Close()
 				if err != nil {
 					errors <- err
@@ -1477,7 +1442,7 @@ func TestServiceProvider_TransientLifetime(t *testing.T) {
 		// Create multiple transient instances in scope
 		var services []*providerTestDisposableService
 		for i := 0; i < 3; i++ {
-			service, err := scope.ServiceProvider().Resolve(reflect.TypeOf((*providerTestDisposableService)(nil)))
+			service, err := scope.Resolve(reflect.TypeOf((*providerTestDisposableService)(nil)))
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -1514,8 +1479,8 @@ func TestServiceProvider_ScopedLifetime(t *testing.T) {
 		defer scope.Close()
 
 		// Resolve multiple times within same scope
-		service1, _ := scope.ServiceProvider().Resolve(reflect.TypeOf((*providerTestService)(nil)))
-		service2, _ := scope.ServiceProvider().Resolve(reflect.TypeOf((*providerTestService)(nil)))
+		service1, _ := scope.Resolve(reflect.TypeOf((*providerTestService)(nil)))
+		service2, _ := scope.Resolve(reflect.TypeOf((*providerTestService)(nil)))
 
 		// Should be same instance within scope
 		if service1 != service2 {
@@ -1541,8 +1506,8 @@ func TestServiceProvider_ScopedLifetime(t *testing.T) {
 		scope2 := provider.CreateScope(context.Background())
 		defer scope2.Close()
 
-		service1, _ := scope1.ServiceProvider().Resolve(reflect.TypeOf((*providerTestService)(nil)))
-		service2, _ := scope2.ServiceProvider().Resolve(reflect.TypeOf((*providerTestService)(nil)))
+		service1, _ := scope1.Resolve(reflect.TypeOf((*providerTestService)(nil)))
+		service2, _ := scope2.Resolve(reflect.TypeOf((*providerTestService)(nil)))
 
 		// Should be different instances across scopes
 		svc1 := service1.(*providerTestService)
@@ -1559,7 +1524,7 @@ func TestServiceProvider_ScopedLifetime(t *testing.T) {
 			t.Error("scoped services should have different IDs across scopes")
 		}
 
-		service1, _ = scope1.ServiceProvider().Resolve(reflect.TypeOf((*providerTestService)(nil)))
+		service1, _ = scope1.Resolve(reflect.TypeOf((*providerTestService)(nil)))
 		if service1.(*providerTestService).ID != "scope1" {
 			t.Error("service in scope1 should still be the same instance")
 		}
@@ -1598,11 +1563,11 @@ func TestServiceProvider_NestedScopes(t *testing.T) {
 		defer parentScope.Close()
 
 		// Create child scope from parent
-		childScope := parentScope.ServiceProvider().CreateScope(context.Background())
+		childScope := parentScope.CreateScope(context.Background())
 		defer childScope.Close()
 
 		// Child should be able to resolve singleton
-		logger, err := childScope.ServiceProvider().Resolve(reflect.TypeOf((*providerTestLogger)(nil)).Elem())
+		logger, err := childScope.Resolve(reflect.TypeOf((*providerTestLogger)(nil)).Elem())
 		if err != nil {
 			t.Errorf("child scope should resolve singleton: %v", err)
 		}
@@ -1636,10 +1601,10 @@ func TestServiceProvider_NestedScopes(t *testing.T) {
 		}
 
 		parentScope := provider.CreateScope(context.Background())
-		childScope := parentScope.ServiceProvider().CreateScope(context.Background())
+		childScope := parentScope.CreateScope(context.Background())
 
 		// Create service in child scope
-		childScope.ServiceProvider().Resolve(reflect.TypeOf((*godi.Disposable)(nil)).Elem())
+		childScope.Resolve(reflect.TypeOf((*godi.Disposable)(nil)).Elem())
 
 		// Close in order: child first, then parent
 		childScope.Close()
@@ -1762,7 +1727,7 @@ func TestServiceProvider_EdgeCases(t *testing.T) {
 		scope := provider.CreateScope(context.TODO())
 		defer scope.Close()
 
-		service, err := scope.ServiceProvider().Resolve(reflect.TypeOf((*providerTestScopedService)(nil)))
+		service, err := scope.Resolve(reflect.TypeOf((*providerTestScopedService)(nil)))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -1788,15 +1753,6 @@ func TestServiceProvider_EdgeCases(t *testing.T) {
 		}
 		if sp == nil {
 			t.Error("expected non-nil ServiceProvider")
-		}
-
-		// Should be able to resolve ServiceScopeFactory
-		ssf, err := provider.Resolve(reflect.TypeOf((*godi.ServiceScopeFactory)(nil)).Elem())
-		if err != nil {
-			t.Errorf("should resolve ServiceScopeFactory: %v", err)
-		}
-		if ssf == nil {
-			t.Error("expected non-nil ServiceScopeFactory")
 		}
 	})
 
@@ -2283,8 +2239,8 @@ func BenchmarkServiceProvider_ScopeLifecycle(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		scope := provider.CreateScope(ctx)
 		// Resolve some services
-		scope.ServiceProvider().Resolve(reflect.TypeOf((*providerTestScopedService)(nil)))
-		scope.ServiceProvider().Resolve(reflect.TypeOf((*providerTestService)(nil)))
+		scope.Resolve(reflect.TypeOf((*providerTestScopedService)(nil)))
+		scope.Resolve(reflect.TypeOf((*providerTestService)(nil)))
 		scope.Close()
 	}
 }
@@ -2367,13 +2323,12 @@ func BenchmarkServiceProvider_ResolveTransient(b *testing.B) {
 	// Need to use a scope for transient services
 	scope := provider.CreateScope(context.Background())
 	defer scope.Close()
-	scopedProvider := scope.ServiceProvider()
 
 	loggerType := reflect.TypeOf((*providerTestLogger)(nil)).Elem()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := scopedProvider.Resolve(loggerType)
+		_, err := scope.Resolve(loggerType)
 		if err != nil {
 			b.Fatal(err)
 		}

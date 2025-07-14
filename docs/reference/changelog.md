@@ -31,6 +31,94 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Nothing yet
 
+## [1.2.0] - 2025-01-13
+
+### Added
+
+- `Scope` now embeds `ServiceProvider` interface, providing direct access to all service resolution methods
+- Improved API ergonomics - no need to call `.ServiceProvider()` on scopes anymore
+
+### Changed
+
+- **BREAKING**: `Scope` interface now embeds `ServiceProvider` instead of having a `ServiceProvider()` method
+- **BREAKING**: Removed `ServiceProvider()` method from `Scope` interface
+- Simplified scope usage - all `ServiceProvider` methods are now directly available on `Scope`
+
+### Removed
+
+- **BREAKING**: Removed `ServiceProvider()` method from `Scope` interface and its implementation
+
+### Migration Guide
+
+#### Scope Interface Changes
+
+The `Scope` interface now directly provides all `ServiceProvider` methods through embedding. This eliminates the need for the intermediary `.ServiceProvider()` call.
+
+Before:
+
+```go
+scope := provider.CreateScope(ctx)
+defer scope.Close()
+
+// Had to call .ServiceProvider() first
+service, err := scope.ServiceProvider().Resolve(serviceType)
+service, err := godi.Resolve[MyService](scope.ServiceProvider())
+```
+
+After:
+
+```go
+scope := provider.CreateScope(ctx)
+defer scope.Close()
+
+// Direct resolution from scope
+service, err := scope.Resolve(serviceType)
+service, err := godi.Resolve[MyService](scope)
+```
+
+#### Updated Usage Patterns
+
+All service resolution can now be done directly on scopes:
+
+```go
+// Direct resolution
+service, err := scope.Resolve(serviceType)
+
+// Generic resolution
+service, err := godi.Resolve[MyService](scope)
+
+// Keyed resolution
+service, err := scope.ResolveKeyed(serviceType, "primary")
+service, err := godi.ResolveKeyed[Database](scope, "primary")
+
+// Invoke functions
+err := scope.Invoke(func(logger Logger) {
+    logger.Log("Hello from scope")
+})
+
+// Check service availability
+if scope.IsService(serviceType) {
+    // Service is registered
+}
+```
+
+### Why This Change?
+
+This change improves the developer experience by:
+
+- Reducing boilerplate code
+- Making the API more intuitive
+- Following Go's composition principles more closely
+- Eliminating an unnecessary method call in the common path
+
+Since a `Scope` IS a `ServiceProvider` (conceptually), this change makes that relationship explicit in the type system.
+
+### Internal
+
+- Simplified implementation by removing the redundant `ServiceProvider()` method
+- Better adherence to the Interface Segregation Principle
+- Cleaner interface hierarchy with proper embedding
+
 ## [1.1.0] - 2025-07-13
 
 ### Added

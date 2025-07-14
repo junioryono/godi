@@ -135,24 +135,6 @@ func TestServiceProviderScope_Creation(t *testing.T) {
 }
 
 func TestServiceProviderScope_ServiceProvider(t *testing.T) {
-	t.Run("returns self as ServiceProvider", func(t *testing.T) {
-		collection := godi.NewServiceCollection()
-		provider, err := collection.BuildServiceProvider()
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		defer provider.Close()
-
-		scope := provider.CreateScope(context.Background())
-		defer scope.Close()
-
-		sp := scope.ServiceProvider()
-
-		if scope != sp.(godi.Scope) {
-			t.Error("ServiceProvider() should return the scope itself")
-		}
-	})
-
 	t.Run("panics when disposed", func(t *testing.T) {
 		collection := godi.NewServiceCollection()
 		provider, err := collection.BuildServiceProvider()
@@ -170,7 +152,7 @@ func TestServiceProviderScope_ServiceProvider(t *testing.T) {
 			}
 		}()
 
-		scope.ServiceProvider()
+		scope.GetRootScope()
 	})
 }
 
@@ -194,7 +176,7 @@ func TestServiceProviderScope_Resolve(t *testing.T) {
 		scope := provider.CreateScope(context.Background())
 		defer scope.Close()
 
-		service, err := scope.ServiceProvider().Resolve(reflect.TypeOf((*scopeTestService)(nil)))
+		service, err := scope.Resolve(reflect.TypeOf((*scopeTestService)(nil)))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -251,7 +233,7 @@ func TestServiceProviderScope_Resolve(t *testing.T) {
 			}
 		}()
 
-		scope.ServiceProvider() // This should panic
+		scope.GetRootScope() // This should panic
 	})
 
 	t.Run("calls resolution callbacks", func(t *testing.T) {
@@ -279,7 +261,7 @@ func TestServiceProviderScope_Resolve(t *testing.T) {
 		scope := provider.CreateScope(context.Background())
 		defer scope.Close()
 
-		scope.ServiceProvider().Resolve(reflect.TypeOf((*scopeTestService)(nil)))
+		scope.Resolve(reflect.TypeOf((*scopeTestService)(nil)))
 
 		// Verify callback was called
 		if resolvedType != reflect.TypeOf((*scopeTestService)(nil)) {
@@ -311,7 +293,7 @@ func TestServiceProviderScope_ResolveKeyed(t *testing.T) {
 		defer scope.Close()
 
 		// Resolve primary
-		primary, err := scope.ServiceProvider().ResolveKeyed(
+		primary, err := scope.ResolveKeyed(
 			reflect.TypeOf((*scopeTestService)(nil)),
 			"primary",
 		)
@@ -325,7 +307,7 @@ func TestServiceProviderScope_ResolveKeyed(t *testing.T) {
 		}
 
 		// Resolve secondary
-		secondary, err := scope.ServiceProvider().ResolveKeyed(
+		secondary, err := scope.ResolveKeyed(
 			reflect.TypeOf((*scopeTestService)(nil)),
 			"secondary",
 		)
@@ -350,7 +332,7 @@ func TestServiceProviderScope_ResolveKeyed(t *testing.T) {
 		scope := provider.CreateScope(context.Background())
 		defer scope.Close()
 
-		_, err = scope.ServiceProvider().ResolveKeyed(
+		_, err = scope.ResolveKeyed(
 			reflect.TypeOf((*scopeTestService)(nil)),
 			nil,
 		)
@@ -375,7 +357,7 @@ func TestServiceProviderScope_CreateScope(t *testing.T) {
 		parentScope := provider.CreateScope(context.Background())
 		defer parentScope.Close()
 
-		childScope := parentScope.ServiceProvider().CreateScope(context.Background())
+		childScope := parentScope.CreateScope(context.Background())
 		defer childScope.Close()
 
 		if childScope.Parent() != parentScope {
@@ -400,7 +382,7 @@ func TestServiceProviderScope_CreateScope(t *testing.T) {
 			}
 		}()
 
-		scope.ServiceProvider().CreateScope(context.Background())
+		scope.CreateScope(context.Background())
 	})
 }
 
@@ -471,7 +453,7 @@ func TestServiceProviderScope_Invoke(t *testing.T) {
 		defer scope.Close()
 
 		var invokedService *scopeTestService
-		err = scope.ServiceProvider().Invoke(func(svc *scopeTestService) {
+		err = scope.Invoke(func(svc *scopeTestService) {
 			invokedService = svc
 		})
 
@@ -560,7 +542,7 @@ func TestServiceProviderScope_Invoke(t *testing.T) {
 		scope := provider.CreateScope(context.Background())
 		defer scope.Close()
 
-		scopedService, err := scope.ServiceProvider().ResolveKeyed(reflect.TypeOf((*scopeTestService)(nil)), "scoped")
+		scopedService, err := scope.ResolveKeyed(reflect.TypeOf((*scopeTestService)(nil)), "scoped")
 		if err != nil {
 			t.Fatalf("failed to resolve scoped service: %v", err)
 		}
@@ -604,7 +586,7 @@ func TestServiceProviderScope_Invoke(t *testing.T) {
 		scope := provider.CreateScope(context.Background())
 		defer scope.Close()
 
-		service, err := godi.Resolve[scopeTestService](scope.ServiceProvider())
+		service, err := godi.Resolve[scopeTestService](scope)
 		if err != nil {
 			t.Fatalf("failed to resolve service: %v", err)
 		}
@@ -636,7 +618,7 @@ func TestServiceProviderScope_Context(t *testing.T) {
 		scope := provider.CreateScope(ctx)
 		defer scope.Close()
 
-		ctxR, err := scope.ServiceProvider().Resolve(reflect.TypeOf((*context.Context)(nil)).Elem())
+		ctxR, err := scope.Resolve(reflect.TypeOf((*context.Context)(nil)).Elem())
 		if err != nil {
 			t.Fatalf("unexpected error resolving context: %v", err)
 		}
@@ -670,7 +652,7 @@ func TestServiceProviderScope_Context(t *testing.T) {
 		scope := provider.CreateScope(ctx)
 		defer scope.Close()
 
-		service, err := scope.ServiceProvider().Resolve(reflect.TypeOf((*scopeTestContextAware)(nil)))
+		service, err := scope.Resolve(reflect.TypeOf((*scopeTestContextAware)(nil)))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -712,7 +694,7 @@ func TestServiceProviderScope_Concurrency(t *testing.T) {
 			idx := i
 			go func() {
 				defer wg.Done()
-				service, err := scope.ServiceProvider().Resolve(reflect.TypeOf((*scopeTestService)(nil)))
+				service, err := scope.Resolve(reflect.TypeOf((*scopeTestService)(nil)))
 				if err != nil {
 					t.Errorf("goroutine %d: %v", idx, err)
 					return
@@ -796,8 +778,8 @@ func TestServiceProviderScope_TransientWithDependencies(t *testing.T) {
 		defer scope1.Close()
 
 		// Resolve transient multiple times in same scope
-		svc1, _ := scope1.ServiceProvider().Resolve(reflect.TypeOf((*scopeTestDisposable)(nil)))
-		svc2, _ := scope1.ServiceProvider().Resolve(reflect.TypeOf((*scopeTestDisposable)(nil)))
+		svc1, _ := scope1.Resolve(reflect.TypeOf((*scopeTestDisposable)(nil)))
+		svc2, _ := scope1.Resolve(reflect.TypeOf((*scopeTestDisposable)(nil)))
 
 		// Should be different instances but with same scoped dependency
 		if svc1 == svc2 {
@@ -831,7 +813,7 @@ func BenchmarkServiceProviderScope_Resolve(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := scope.ServiceProvider().Resolve(serviceType)
+		_, err := scope.Resolve(serviceType)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -860,7 +842,7 @@ func BenchmarkServiceProviderScope_Disposal(b *testing.B) {
 
 		// Resolve all services to create instances
 		for j := 0; j < 10; j++ {
-			scope.ServiceProvider().ResolveKeyed(
+			scope.ResolveKeyed(
 				reflect.TypeOf((*scopeTestDisposable)(nil)),
 				fmt.Sprintf("service%d", j),
 			)
@@ -889,7 +871,7 @@ func BenchmarkServiceProviderScope_ConcurrentResolve(b *testing.B) {
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			_, err := scope.ServiceProvider().Resolve(serviceType)
+			_, err := scope.Resolve(serviceType)
 			if err != nil {
 				b.Fatal(err)
 			}

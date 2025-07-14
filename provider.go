@@ -46,8 +46,14 @@ type ServiceProvider interface {
 	IsKeyedService(serviceType reflect.Type, serviceKey interface{}) bool
 
 	// CreateScope creates a new service scope with the given context.
-	// The context is available for injection into scoped services.
+	// The returned Scope is also a ServiceProvider for that scope.
 	CreateScope(ctx context.Context) Scope
+
+	// Resolve gets the service object of the specified type.
+	Resolve(serviceType reflect.Type) (interface{}, error)
+
+	// ResolveKeyed gets the service object of the specified type with the specified key.
+	ResolveKeyed(serviceType reflect.Type, serviceKey interface{}) (interface{}, error)
 
 	// Invoke executes a function with dependency injection.
 	// All parameters of the function are resolved from the container.
@@ -57,28 +63,25 @@ type ServiceProvider interface {
 	// IsDisposed returns true if the provider has been disposed.
 	IsDisposed() bool
 
-	ServiceResolver
 	Disposable
 }
 
-// ServiceProviderIsService defines a mechanism for determining if a service is available.
-// This interface is automatically registered in the container.
-type ServiceProviderIsService interface {
-	IsService(serviceType reflect.Type) bool
-}
-
-// ServiceProviderIsKeyedService defines a mechanism for determining if a keyed service is available.
-// This interface is automatically registered in the container.
-type ServiceProviderIsKeyedService interface {
-	IsKeyedService(serviceType reflect.Type, serviceKey interface{}) bool
-}
-
-type ServiceResolver interface {
-	// Resolve gets the service object of the specified type.
-	Resolve(serviceType reflect.Type) (interface{}, error)
-
-	// ResolveKeyed gets the service object of the specified type with the specified key.
-	ResolveKeyed(serviceType reflect.Type, serviceKey interface{}) (interface{}, error)
+// Disposable allows disposal with context for graceful shutdown.
+// Services implementing this interface can perform context-aware cleanup.
+//
+// Example:
+//
+//	type DatabaseConnection struct {
+//	    conn *sql.DB
+//	}
+//
+//	func (dc *DatabaseConnection) Close() error {
+//	    return dc.conn.Close()
+//	}
+type Disposable interface {
+	// Close disposes the resource with the provided context.
+	// Implementations should respect context cancellation for graceful shutdown.
+	Close() error
 }
 
 // ServiceProviderOptions configures various ServiceProvider behaviors.
@@ -470,9 +473,9 @@ func (sp *serviceProvider) Resolve(serviceType reflect.Type) (interface{}, error
 }
 
 // Resolve is a generic helper function that returns the service as type T.
-func Resolve[T any](sr ServiceResolver) (T, error) {
+func Resolve[T any](s ServiceProvider) (T, error) {
 	var zero T
-	if sr == nil {
+	if s == nil {
 		return zero, ErrNilServiceProvider
 	}
 
@@ -481,7 +484,7 @@ func Resolve[T any](sr ServiceResolver) (T, error) {
 		return zero, err
 	}
 
-	service, err := sr.Resolve(serviceType)
+	service, err := s.Resolve(serviceType)
 	if err != nil {
 		return zero, fmt.Errorf("unable to resolve service of type %s: %w", formatType(serviceType), err)
 	}
@@ -507,9 +510,9 @@ func (sp *serviceProvider) ResolveKeyed(serviceType reflect.Type, serviceKey int
 }
 
 // ResolveKeyed is a generic helper function that returns the keyed service as type T.
-func ResolveKeyed[T any](sr ServiceResolver, serviceKey interface{}) (T, error) {
+func ResolveKeyed[T any](s ServiceProvider, serviceKey interface{}) (T, error) {
 	var zero T
-	if sr == nil {
+	if s == nil {
 		return zero, ErrNilServiceProvider
 	}
 
@@ -518,7 +521,7 @@ func ResolveKeyed[T any](sr ServiceResolver, serviceKey interface{}) (T, error) 
 		return zero, err
 	}
 
-	service, err := sr.ResolveKeyed(serviceType, serviceKey)
+	service, err := s.ResolveKeyed(serviceType, serviceKey)
 	if err != nil {
 		return zero, fmt.Errorf("unable to resolve service of type %s: %w", formatType(serviceType), err)
 	}
@@ -652,13 +655,6 @@ func (sp *serviceProvider) addBuiltInServices() error {
 		return fmt.Errorf("failed to register ServiceProvider: %w", err)
 	}
 
-	// Register ServiceScopeFactory as a singleton that returns the root scope
-	if err := sp.digContainer.Provide(func() ServiceScopeFactory {
-		return sp.rootScope
-	}); err != nil {
-		return fmt.Errorf("failed to register ServiceScopeFactory: %w", err)
-	}
-
 	// Also add these to our descriptor tracking for IsService checks
 	spDesc := &serviceDescriptor{
 		ServiceType: reflect.TypeOf((*ServiceProvider)(nil)).Elem(),
@@ -670,17 +666,6 @@ func (sp *serviceProvider) addBuiltInServices() error {
 	}
 	sp.descriptors = append(sp.descriptors, spDesc)
 	sp.descriptorIndex[spDesc.ServiceType] = []*serviceDescriptor{spDesc}
-
-	ssfDesc := &serviceDescriptor{
-		ServiceType: reflect.TypeOf((*ServiceScopeFactory)(nil)).Elem(),
-		Lifetime:    Singleton,
-		Constructor: func() ServiceScopeFactory {
-			return sp.rootScope
-		},
-		Metadata: make(map[string]interface{}),
-	}
-	sp.descriptors = append(sp.descriptors, ssfDesc)
-	sp.descriptorIndex[ssfDesc.ServiceType] = []*serviceDescriptor{ssfDesc}
 
 	return nil
 }

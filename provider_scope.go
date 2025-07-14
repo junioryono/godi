@@ -30,15 +30,13 @@ import (
 //	scopedProvider := scope.ServiceProvider()
 //	service, err := godi.Resolve[MyService](scopedProvider)
 type Scope interface {
+	ServiceProvider
+
 	// ID returns the unique ID of this scope.
 	ID() string
 
 	// Context returns the context associated with this scope.
 	Context() context.Context
-
-	// ServiceProvider returns the ServiceProvider for this scope.
-	// All services resolved from this provider will be scoped to this scope's lifetime.
-	ServiceProvider() ServiceProvider
 
 	// IsRootScope returns true if this provider is the root scope.
 	IsRootScope() bool
@@ -48,27 +46,6 @@ type Scope interface {
 
 	// Parent returns the parent scope of this scope.
 	Parent() Scope
-
-	ServiceResolver
-	Disposable
-}
-
-// Disposable allows disposal with context for graceful shutdown.
-// Services implementing this interface can perform context-aware cleanup.
-//
-// Example:
-//
-//	type DatabaseConnection struct {
-//	    conn *sql.DB
-//	}
-//
-//	func (dc *DatabaseConnection) Close() error {
-//	    return dc.conn.Close()
-//	}
-type Disposable interface {
-	// Close disposes the resource with the provided context.
-	// Implementations should respect context cancellation for graceful shutdown.
-	Close() error
 }
 
 // DisposableWithContext allows disposal with context for graceful shutdown.
@@ -97,14 +74,6 @@ type DisposableWithContext interface {
 	// Close disposes the resource with the provided context.
 	// Implementations should respect context cancellation for graceful shutdown.
 	Close(ctx context.Context) error
-}
-
-// ServiceScopeFactory defines a factory for creating service scopes.
-// This interface is automatically available in the service provider.
-type ServiceScopeFactory interface {
-	// CreateScope creates a new Scope with the given context.
-	// The context is available for injection into scoped services.
-	CreateScope(ctx context.Context) Scope
 }
 
 // serviceProviderScope implements Scope, ServiceProvider, ServiceScopeFactory.
@@ -154,11 +123,6 @@ func newServiceProviderScope(provider *serviceProvider, ctx context.Context) *se
 	// Register the ServiceProvider in the dig scope (override the root registration)
 	if err := scope.digScope.Provide(func() ServiceProvider { return scope }); err != nil {
 		panic(fmt.Errorf("failed to register context in dig scope %s: %w", scope.scopeID, err))
-	}
-
-	// Register ServiceScopeFactory in the dig scope
-	if err := scope.digScope.Provide(func() ServiceScopeFactory { return scope }); err != nil {
-		panic(fmt.Errorf("failed to register ServiceProvider in dig scope %s: %w", scope.scopeID, err))
 	}
 
 	// Register scoped services in this dig scope
@@ -218,15 +182,6 @@ func (scope *serviceProviderScope) Context() context.Context {
 	}
 
 	return scope.ctx
-}
-
-// ServiceProvider implements Scope.ServiceProvider.
-func (scope *serviceProviderScope) ServiceProvider() ServiceProvider {
-	if scope.IsDisposed() {
-		panic(ErrScopeDisposed)
-	}
-
-	return scope
 }
 
 func (scope *serviceProviderScope) IsRootScope() bool {

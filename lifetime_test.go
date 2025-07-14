@@ -3,7 +3,6 @@ package godi_test
 import (
 	"context"
 	"encoding/json"
-	"reflect"
 	"testing"
 	"time"
 
@@ -18,8 +17,6 @@ type (
 		disposeDelay time.Duration
 		disposeError error
 	}
-
-	mockFactory struct{}
 )
 
 func (s *lifetimeTestDisposableWithContext) Close(ctx context.Context) error {
@@ -37,10 +34,6 @@ func (s *lifetimeTestDisposableWithContext) Close(ctx context.Context) error {
 
 	s.disposed = true
 	return s.disposeError
-}
-
-func (m mockFactory) CreateScope(ctx context.Context) godi.Scope {
-	return &MockScope{id: "test"}
 }
 
 func TestServiceLifetime(t *testing.T) {
@@ -182,70 +175,7 @@ func TestServiceLifetime_Marshaling(t *testing.T) {
 	})
 }
 
-// Mock interfaces for testing
-type MockScope struct {
-	serviceProvider godi.ServiceProvider
-	closed          bool
-	id              string
-}
-
-func (m *MockScope) ID() string {
-	return m.id
-}
-
-func (m *MockScope) Context() context.Context {
-	return context.Background()
-}
-
-func (m *MockScope) ServiceProvider() godi.ServiceProvider {
-	return m.serviceProvider
-}
-
-func (m *MockScope) IsRootScope() bool {
-	return m.id == "test"
-}
-
-func (m *MockScope) GetRootScope() godi.Scope {
-	if m.IsRootScope() {
-		return m
-	}
-
-	return nil // In a real implementation, this would return the root scope
-}
-
-func (m *MockScope) Parent() godi.Scope {
-	return nil // No parent for mock scope
-}
-
-func (m *MockScope) Close() error {
-	m.closed = true
-	return nil
-}
-
-func (m *MockScope) String() string {
-	return "MockScope{id: " + m.id + "}"
-}
-
-// Resolve implements godi.Scope.
-func (m *MockScope) Resolve(serviceType reflect.Type) (interface{}, error) {
-	panic("unimplemented")
-}
-
-// ResolveKeyed implements godi.Scope.
-func (m *MockScope) ResolveKeyed(serviceType reflect.Type, serviceKey interface{}) (interface{}, error) {
-	panic("unimplemented")
-}
-
-func TestScopeInterface(t *testing.T) {
-	// This test verifies that our mock implements the Scope interface
-	var _ godi.Scope = (*MockScope)(nil)
-}
-
 func TestDisposableWithContextInterface(t *testing.T) {
 	// Verify our test type implements the interface
 	var _ godi.DisposableWithContext = (*lifetimeTestDisposableWithContext)(nil)
-}
-
-func TestServiceScopeFactoryInterface(t *testing.T) {
-	var _ godi.ServiceScopeFactory = mockFactory{}
 }

@@ -340,7 +340,7 @@ func TestModule_Composition(t *testing.T) {
 		scope := provider.CreateScope(context.Background())
 		defer scope.Close()
 
-		service, err := godi.Resolve[moduleTestService](scope.ServiceProvider())
+		service, err := godi.Resolve[moduleTestService](scope)
 		if err != nil {
 			t.Fatalf("unexpected error resolving service: %v", err)
 		}
@@ -641,7 +641,7 @@ func TestModule_ComplexScenarios(t *testing.T) {
 		defer scope.Close()
 
 		// Should be able to resolve the top-level service
-		service, err := godi.Resolve[moduleTestService](scope.ServiceProvider())
+		service, err := godi.Resolve[moduleTestService](scope)
 		if err != nil {
 			t.Fatalf("unexpected error resolving service: %v", err)
 		}
@@ -729,7 +729,7 @@ func TestModule_RealWorldExample(t *testing.T) {
 	defer scope.Close()
 
 	// Verify all components work together
-	service, err := godi.Resolve[moduleTestService](scope.ServiceProvider())
+	service, err := godi.Resolve[moduleTestService](scope)
 	if err != nil {
 		t.Fatalf("unexpected error resolving service: %v", err)
 	}
