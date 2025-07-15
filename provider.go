@@ -542,9 +542,19 @@ func determineServiceType[T any]() (reflect.Type, error) {
 		// T is already a pointer type (e.g., *UserService)
 		// So we use T directly as the service type
 		return tType, nil
+	case reflect.Slice, reflect.Map, reflect.Chan, reflect.Func:
+		// For slices, maps, channels, and functions, we use the type directly
+		return tType, nil
+	case reflect.Bool,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+		reflect.Float32, reflect.Float64,
+		reflect.Complex64, reflect.Complex128,
+		reflect.String:
+		// For primitive types, we use the type directly
+		return tType, nil
 	default:
-		// T is a non-pointer concrete type
-		// Services are typically registered as pointers, so look for *T
+		// For structs and other complex types, services are typically registered as pointers
 		return reflect.PointerTo(tType), nil
 	}
 }
