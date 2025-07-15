@@ -31,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Nothing yet
 
-## [1.2.1] - 2025-01-14
+## [1.2.1] - 2025-07-14
 
 ### Added
 
@@ -70,7 +70,7 @@ collection.AddSingleton([]string{"a", "b", "c"})
 list, err := godi.Resolve[[]string](provider) // Returns []string, not *[]string
 ```
 
-## [1.2.0] - 2025-01-13
+## [1.2.0] - 2025-07-13
 
 ### Added
 
