@@ -214,6 +214,22 @@ func (sc *serviceCollection) addWithLifetime(constructor interface{}, lifetime S
 		return ErrNilConstructor
 	}
 
+	// Check if this is a function or a value
+	constructorType := reflect.TypeOf(constructor)
+	if constructorType.Kind() != reflect.Func {
+		// It's not a function, so it's an instance - wrap it in a constructor
+		instance := constructor
+		instanceType := constructorType
+
+		// Create a properly typed constructor function
+		fnType := reflect.FuncOf([]reflect.Type{}, []reflect.Type{instanceType}, false)
+		fnValue := reflect.MakeFunc(fnType, func(args []reflect.Value) []reflect.Value {
+			return []reflect.Value{reflect.ValueOf(instance)}
+		})
+
+		constructor = fnValue.Interface()
+	}
+
 	// Check if this returns a result object
 	fnType := reflect.TypeOf(constructor)
 	if fnType.Kind() == reflect.Func && fnType.NumOut() > 0 {
