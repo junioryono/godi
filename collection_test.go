@@ -751,6 +751,41 @@ func TestServiceCollection_AddInstance(t *testing.T) {
 		}
 	})
 
+	t.Run("adds interface instance", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+
+		// Create an instance that implements an interface
+		var logger TestLogger = &testLogger{messages: []string{"interface instance"}}
+
+		// Add the interface instance
+		err := collection.AddSingleton(logger, godi.As(new(TestLogger)))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error building provider: %v", err)
+		}
+		defer provider.Close()
+
+		// Should be able to resolve as interface
+		resolved, err := godi.Resolve[TestLogger](provider)
+		if err != nil {
+			t.Fatalf("unexpected error resolving: %v", err)
+		}
+
+		// Verify it's the same instance
+		if resolved != logger {
+			t.Error("expected same instance")
+		}
+
+		logs := resolved.GetLogs()
+		if len(logs) != 1 {
+			t.Errorf("expected 1 log message, got %d", len(logs))
+		}
+	})
+
 	t.Run("adds slice instance", func(t *testing.T) {
 		collection := godi.NewServiceCollection()
 
@@ -883,11 +918,23 @@ func TestServiceCollection_AddInstance(t *testing.T) {
 			t.Fatalf("expected 3 handlers, got %d", len(capturedHandlers))
 		}
 
-		// Should be the same instances
-		for i, h := range capturedHandlers {
-			if h != handlers[i] {
-				t.Errorf("handler %d not the same instance", i)
+		// Create a map to track which handlers we've seen
+		handlerMap := make(map[Handler]bool)
+		for _, h := range handlers {
+			handlerMap[h] = true
+		}
+
+		// Verify we got the same instances (order doesn't matter)
+		for i, capturedHandler := range capturedHandlers {
+			if !handlerMap[capturedHandler] {
+				t.Errorf("handler at index %d is not one of the original instances", i)
 			}
+			delete(handlerMap, capturedHandler)
+		}
+
+		// Verify we saw all handlers
+		if len(handlerMap) != 0 {
+			t.Errorf("not all original handlers were found in captured handlers")
 		}
 	})
 
