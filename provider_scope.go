@@ -143,9 +143,9 @@ func newServiceProviderScope(provider *serviceProvider, ctx context.Context) *se
 			opts = append(opts, Group(group))
 		}
 
-		// Handle 'as' interfaces if specified
-		if interfaces, ok := desc.Metadata["as"].([]interface{}); ok {
-			opts = append(opts, As(interfaces...))
+		// Handle 'asOptions' if specified
+		if asOpts, ok := desc.Metadata["asOptions"].([]ProvideOption); ok {
+			opts = append(opts, asOpts...)
 		}
 
 		// Use the constructor from the descriptor

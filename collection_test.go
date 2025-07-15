@@ -1,6 +1,7 @@
 package godi_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"reflect"
@@ -13,6 +14,7 @@ import (
 type (
 	TestLogger interface {
 		Log(string)
+		GetLogs() []string
 	}
 
 	testLogger struct {
@@ -28,6 +30,7 @@ type (
 	}
 
 	TestService struct {
+		ID       string
 		Logger   TestLogger
 		Database TestDatabase
 	}
@@ -46,6 +49,10 @@ type (
 		Logger   TestLogger   `name:"service"`
 		Database TestDatabase `group:"databases"`
 	}
+
+	testHandler struct {
+		name string
+	}
 )
 
 func (l *testLogger) Log(msg string) {
@@ -58,6 +65,10 @@ func (d *testDatabase) Query(query string) string {
 
 func newTestLogger() TestLogger {
 	return &testLogger{}
+}
+
+func (l *testLogger) GetLogs() []string {
+	return l.messages
 }
 
 func newTestDatabase() TestDatabase {
@@ -76,6 +87,13 @@ var errConstructionFailed = errors.New("construction failed")
 func newTestServiceWithError() (*TestService, error) {
 	return nil, errConstructionFailed
 }
+
+func (h *testHandler) Handle() {
+	// Implementation
+}
+
+// Ensure it implements Handler interface
+var _ Handler = (*testHandler)(nil)
 
 func TestNewServiceCollection(t *testing.T) {
 	t.Run("creates empty collection", func(t *testing.T) {
@@ -689,5 +707,391 @@ func TestServiceCollection_EdgeCases(t *testing.T) {
 			t.Fatalf("unexpected error building provider: %v", err)
 		}
 		defer provider.Close()
+	})
+}
+
+func TestServiceCollection_AddInstance(t *testing.T) {
+	t.Run("adds singleton instance", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+
+		// Create an instance
+		logger := &testLogger{messages: []string{"initialized"}}
+
+		// Add the instance directly
+		err := collection.AddSingleton(logger)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if collection.Count() != 1 {
+			t.Errorf("expected 1 service, got %d", collection.Count())
+		}
+
+		// Build and resolve
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error building provider: %v", err)
+		}
+		defer provider.Close()
+
+		resolved, err := provider.Resolve(reflect.TypeOf((*testLogger)(nil)))
+		if err != nil {
+			t.Fatalf("unexpected error resolving: %v", err)
+		}
+
+		// Should be the exact same instance
+		if resolved != logger {
+			t.Error("expected same instance")
+		}
+
+		// Verify it has the pre-initialized data
+		resolvedLogger := resolved.(*testLogger)
+		if len(resolvedLogger.messages) != 1 || resolvedLogger.messages[0] != "initialized" {
+			t.Error("instance state not preserved")
+		}
+	})
+
+	t.Run("adds slice instance", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+
+		// Create a slice instance
+		allowedOrigins := []string{"http://localhost:3000", "https://example.com"}
+
+		// Add the slice directly
+		err := collection.AddSingleton(allowedOrigins)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error building provider: %v", err)
+		}
+		defer provider.Close()
+
+		resolved, err := provider.Resolve(reflect.TypeOf([]string{}))
+		if err != nil {
+			t.Fatalf("unexpected error resolving: %v", err)
+		}
+
+		// Should be the same slice
+		resolvedSlice := resolved.([]string)
+		if len(resolvedSlice) != 2 {
+			t.Errorf("expected 2 items, got %d", len(resolvedSlice))
+		}
+		if resolvedSlice[0] != "http://localhost:3000" || resolvedSlice[1] != "https://example.com" {
+			t.Error("slice content not preserved")
+		}
+	})
+
+	t.Run("adds named instance", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+
+		// Create instances
+		primaryDB := &testDatabase{name: "primary"}
+		secondaryDB := &testDatabase{name: "secondary"}
+
+		// Add named instances
+		err := collection.AddSingleton(primaryDB, godi.Name("primary"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		err = collection.AddSingleton(secondaryDB, godi.Name("secondary"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error building provider: %v", err)
+		}
+		defer provider.Close()
+
+		// Resolve by key
+		primary, err := godi.ResolveKeyed[*testDatabase](provider, "primary")
+		if err != nil {
+			t.Fatalf("unexpected error resolving primary: %v", err)
+		}
+
+		secondary, err := godi.ResolveKeyed[*testDatabase](provider, "secondary")
+		if err != nil {
+			t.Fatalf("unexpected error resolving secondary: %v", err)
+		}
+
+		// Should be the exact instances
+		if primary != primaryDB {
+			t.Error("expected same primary instance")
+		}
+		if secondary != secondaryDB {
+			t.Error("expected same secondary instance")
+		}
+
+		// Verify state
+		if primary.name != "primary" {
+			t.Errorf("expected primary name, got %s", primary.name)
+		}
+		if secondary.name != "secondary" {
+			t.Errorf("expected secondary name, got %s", secondary.name)
+		}
+	})
+
+	t.Run("adds group instances", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+
+		// Create handler instances
+		handlers := []Handler{
+			&testHandler{name: "handler1"},
+			&testHandler{name: "handler2"},
+			&testHandler{name: "handler3"},
+		}
+
+		// Add instances to group
+		for _, h := range handlers {
+			err := collection.AddSingleton(h, godi.Group("handlers"), godi.As(new(Handler)))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		}
+
+		// Consumer
+		type HandlerConsumer struct {
+			godi.In
+			Handlers []Handler `group:"handlers"`
+		}
+
+		var capturedHandlers []Handler
+		collection.AddSingleton(func(params HandlerConsumer) *TestService {
+			capturedHandlers = params.Handlers
+			return &TestService{}
+		})
+
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error building provider: %v", err)
+		}
+		defer provider.Close()
+
+		// Trigger resolution
+		_, err = godi.Resolve[*TestService](provider)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// Verify all handlers were injected
+		if len(capturedHandlers) != 3 {
+			t.Fatalf("expected 3 handlers, got %d", len(capturedHandlers))
+		}
+
+		// Should be the same instances
+		for i, h := range capturedHandlers {
+			if h != handlers[i] {
+				t.Errorf("handler %d not the same instance", i)
+			}
+		}
+	})
+
+	t.Run("adds scoped instance", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+
+		// Create an instance
+		service := &TestService{ID: "scoped-instance"}
+
+		// Add as scoped
+		err := collection.AddScoped(service)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error building provider: %v", err)
+		}
+		defer provider.Close()
+
+		// Create two scopes
+		scope1 := provider.CreateScope(context.Background())
+		defer scope1.Close()
+		scope2 := provider.CreateScope(context.Background())
+		defer scope2.Close()
+
+		// Resolve in both scopes
+		resolved1, err := godi.Resolve[*TestService](scope1)
+		if err != nil {
+			t.Fatalf("unexpected error in scope1: %v", err)
+		}
+
+		resolved2, err := godi.Resolve[*TestService](scope2)
+		if err != nil {
+			t.Fatalf("unexpected error in scope2: %v", err)
+		}
+
+		// Should be the same instance across scopes (since we registered an instance)
+		// Note: This is different from normal scoped behavior!
+		if resolved1 != resolved2 {
+			t.Error("expected same instance across scopes when registering instance")
+		}
+
+		if resolved1 != service {
+			t.Error("expected original instance")
+		}
+	})
+
+	t.Run("adds transient instance", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+
+		// Create an instance
+		cache := &testDatabase{name: "transient-cache"}
+
+		// Add as transient
+		err := collection.AddTransient(cache)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error building provider: %v", err)
+		}
+		defer provider.Close()
+
+		// Resolve multiple times
+		resolved1, err := provider.Resolve(reflect.TypeOf((*testDatabase)(nil)))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		resolved2, err := provider.Resolve(reflect.TypeOf((*testDatabase)(nil)))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// Should be the same instance (since we registered an instance, not a constructor)
+		// Note: This is different from normal transient behavior!
+		if resolved1 != resolved2 {
+			t.Error("expected same instance when registering instance as transient")
+		}
+
+		if resolved1 != cache {
+			t.Error("expected original instance")
+		}
+	})
+
+	t.Run("mixed constructors and instances", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+
+		// Add instance
+		logger := &testLogger{messages: []string{"pre-initialized"}}
+		err := collection.AddSingleton(logger)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// Add constructor
+		err = collection.AddSingleton(newTestDatabase)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// Add constructor that depends on both
+		err = collection.AddSingleton(newTestService)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error building provider: %v", err)
+		}
+		defer provider.Close()
+
+		// Resolve the sLogger
+		sLogger, err := godi.Resolve[*testLogger](provider)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// Verify
+		if sLogger != logger {
+			t.Error("expected same logger instance")
+		}
+
+		// Resolve the database
+		db, err := godi.Resolve[TestDatabase](provider)
+		if err != nil {
+			t.Fatalf("unexpected error resolving database: %v", err)
+		}
+		if db == nil {
+			t.Fatal("expected non-nil database instance")
+		}
+		if db.Query("test") != "test-db: test" {
+			t.Errorf("expected 'test-db: test', got %s", db.Query("test"))
+		}
+	})
+
+	t.Run("nil instance returns error", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+
+		// Try to add nil
+		err := collection.AddSingleton(nil)
+		if err == nil {
+			t.Error("expected error for nil instance")
+		}
+
+		// Should still get the same error message
+		if !errors.Is(err, godi.ErrNilConstructor) {
+			t.Errorf("expected ErrNilConstructor, got %v", err)
+		}
+	})
+
+	t.Run("primitive types", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+
+		// Add various primitive instances
+		err := collection.AddSingleton(42, godi.Name("answer"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		err = collection.AddSingleton("hello world", godi.Name("greeting"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		err = collection.AddSingleton(true, godi.Name("enabled"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error building provider: %v", err)
+		}
+		defer provider.Close()
+
+		// Resolve primitives
+		answer, err := godi.ResolveKeyed[int](provider, "answer")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if answer != 42 {
+			t.Errorf("expected 42, got %d", answer)
+		}
+
+		greeting, err := godi.ResolveKeyed[string](provider, "greeting")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if greeting != "hello world" {
+			t.Errorf("expected 'hello world', got %s", greeting)
+		}
+
+		enabled, err := godi.ResolveKeyed[bool](provider, "enabled")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !enabled {
+			t.Error("expected true")
+		}
 	})
 }

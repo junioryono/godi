@@ -237,9 +237,9 @@ func (sp *serviceProvider) registerService(desc *serviceDescriptor) error {
 		opts = append(opts, Group(group))
 	}
 
-	// Handle 'as' interfaces if specified
-	if interfaces, ok := desc.Metadata["as"].([]interface{}); ok {
-		opts = append(opts, As(interfaces...))
+	// Handle 'asOptions' if specified
+	if asOpts, ok := desc.Metadata["asOptions"].([]ProvideOption); ok {
+		opts = append(opts, asOpts...)
 	}
 
 	// Check if this is a result object constructor

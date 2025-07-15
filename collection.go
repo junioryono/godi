@@ -291,6 +291,15 @@ func (sc *serviceCollection) extractMetadataFromOptions(descriptor *serviceDescr
 				descriptor.Metadata["group"] = group
 			}
 		}
+
+		// Extract As interfaces
+		if strings.HasPrefix(optStr, "As(") {
+			if asOpts, ok := descriptor.Metadata["asOptions"]; !ok {
+				descriptor.Metadata["asOptions"] = []ProvideOption{opt}
+			} else {
+				descriptor.Metadata["asOptions"] = append(asOpts.([]ProvideOption), opt)
+			}
+		}
 	}
 }
 
