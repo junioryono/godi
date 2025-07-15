@@ -31,6 +31,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Nothing yet
 
+## [1.2.1] - 2025-01-14
+
+### Added
+
+- Support for registering and resolving primitive types (int, string, bool, etc.) as singleton instances
+- Direct registration of primitive values: `collection.AddSingleton(42, godi.Name("answer"))`
+
+### Fixed
+
+- Fixed resolution of services registered with `As(...)` option - interfaces specified via `As` are now properly resolvable
+- Fixed type resolution for slices, maps, channels, and functions - these types are now resolved directly instead of as pointers
+- Improved handling of non-pointer types in service resolution
+
+### Changed
+
+- Enhanced `determineServiceType[T]()` to handle primitive types correctly
+- Improved type resolution logic for collection types (slice, map, chan, func)
+
+### Examples
+
+```go
+// Primitive type registration now works
+collection.AddSingleton(42, godi.Name("answer"))
+collection.AddSingleton("hello world", godi.Name("greeting"))
+collection.AddSingleton(true, godi.Name("enabled"))
+
+// Resolution
+answer, err := godi.ResolveKeyed[int](provider, "answer")
+greeting, err := godi.ResolveKeyed[string](provider, "greeting")
+
+// As(...) option now works correctly
+collection.AddSingleton(NewPostgresDB, godi.As(new(Reader), new(Writer)))
+reader, err := godi.Resolve[Reader](provider) // Now works!
+
+// Collection types resolved directly
+collection.AddSingleton([]string{"a", "b", "c"})
+list, err := godi.Resolve[[]string](provider) // Returns []string, not *[]string
+```
+
 ## [1.2.0] - 2025-01-13
 
 ### Added
