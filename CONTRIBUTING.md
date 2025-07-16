@@ -197,14 +197,27 @@ Fixes #23
    make lint
    ```
 
-### Creating the PR
+### PR Title Format
 
-1. **PR Title**: Must follow conventional commit format
+1. **PR Title**: Must follow conventional commit format: `type(scope): description`
 
-   - Good: `feat(provider): add singleton lifetime support`
-   - Good: `fix: resolve memory leak in scope disposal`
-   - Bad: `Added new feature`
-   - Bad: `Fix bug`
+**Examples:**
+
+- ✅ `feat: add support for custom providers`
+- ✅ `feat(provider): add singleton lifetime support`
+- ✅ `fix: resolve memory leak in scope disposal`
+- ✅ `fix(collection): handle nil provider registration`
+- ✅ `docs: update installation instructions`
+- ✅ `refactor(module): simplify initialization logic`
+- ✅ `test: add coverage for error scenarios`
+- ✅ `feat!: redesign service resolution API` (breaking change)
+
+**Bad examples:**
+
+- ❌ `Update code` (no type)
+- ❌ `FEAT: Add feature` (wrong capitalization)
+- ❌ `Fixed the bug` (past tense, should be imperative)
+- ❌ `feat: Added new provider.` (period at end, past tense)
 
 2. **PR Description**: Fill out the template completely
 
