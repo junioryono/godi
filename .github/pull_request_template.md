@@ -1,8 +1,12 @@
 ## Description
 
-Brief description of what this PR does.
+Please include a summary of the changes and which issue is fixed. Include relevant motivation and context.
 
-## Type of Change
+Fixes # (issue)
+
+## Type of change
+
+Please delete options that are not relevant.
 
 - [ ] Bug fix (non-breaking change which fixes an issue)
 - [ ] New feature (non-breaking change which adds functionality)
@@ -11,31 +15,26 @@ Brief description of what this PR does.
 - [ ] Performance improvement
 - [ ] Code refactoring
 
-## Related Issues
-
-Fixes #(issue number)
-
-## Changes Made
-
-- List the specific changes made in this PR
-- Be as detailed as necessary
-
-## Testing
-
-- [ ] Unit tests pass locally
-- [ ] Integration tests pass locally
-- [ ] Added new tests for the changes
-- [ ] All tests pass with race detector enabled
-
 ## Checklist
 
-- [ ] My code follows the project's style guidelines
-- [ ] I have performed a self-review of my own code
+- [ ] My code follows the style guidelines of this project
+- [ ] I have performed a self-review of my code
 - [ ] I have commented my code, particularly in hard-to-understand areas
 - [ ] I have made corresponding changes to the documentation
 - [ ] My changes generate no new warnings
-- [ ] Any dependent changes have been merged and published
+- [ ] I have added tests that prove my fix is effective or that my feature works
+- [ ] New and existing unit tests pass locally with my changes
+- [ ] Any dependent changes have been merged and published in downstream modules
+- [ ] I have run `make test-cover` and `make lint` locally
+
+## Test Coverage
+
+Please describe the tests that you ran to verify your changes. Provide instructions so we can reproduce.
+
+- [ ] Unit tests
+- [ ] Integration tests
+- [ ] Manual testing
 
 ## Additional Notes
 
-Any additional information that reviewers should know.
+Add any other context about the pull request here.

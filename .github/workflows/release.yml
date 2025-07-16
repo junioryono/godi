@@ -1,0 +1,104 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  # Run CI tests first
+  ci:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+    secrets: inherit
+
+  release:
+    needs: ci # Only run after CI passes
+    if: |
+      github.event_name == 'push' && 
+      github.ref == 'refs/heads/main' && 
+      !contains(github.event.head_commit.message, 'skip ci') &&
+      !contains(github.event.head_commit.message, 'skip release')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.24.x
+
+      # Configure git to use GitHub Actions bot
+      - name: Configure Git
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+
+      - name: Check for conventional commits
+        id: check_commits
+        run: |
+          # Get commits since last tag
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
+          if [ -z "$LAST_TAG" ]; then
+            echo "No previous tag found, checking all commits"
+            COMMITS=$(git log --pretty=format:"%s")
+          else
+            echo "Checking commits since $LAST_TAG"
+            COMMITS=$(git log ${LAST_TAG}..HEAD --pretty=format:"%s")
+          fi
+
+          # Check if any commits are releasable (feat, fix, or breaking change)
+          RELEASABLE=false
+          while IFS= read -r commit; do
+            if [[ "$commit" =~ ^(feat|fix)(\(.+\))?!?:|BREAKING\ CHANGE: ]] || [[ "$commit" =~ ^[a-z]+(\(.+\))?!: ]]; then
+              RELEASABLE=true
+              break
+            fi
+          done <<< "$COMMITS"
+
+          echo "releasable=$RELEASABLE" >> $GITHUB_OUTPUT
+
+          if [ "$RELEASABLE" = "false" ]; then
+            echo "No releasable changes found. Skipping release."
+          fi
+
+      - name: Conventional Changelog Action
+        id: changelog
+        if: steps.check_commits.outputs.releasable == 'true'
+        uses: TriPSs/conventional-changelog-action@v5.3.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          git-message: |
+            chore(release): v{version} [skip ci]
+
+            - Update changelog
+            - Bump version
+          preset: "angular"
+          tag-prefix: "v"
+          output-file: "docs/reference/changelog.md"
+          version-file: "version.json"
+          skip-on-empty: "true"
+          skip-version-file: "false"
+          skip-git-pull: "false"
+          create-summary: "true"
+
+      - name: Create Release
+        if: |
+          steps.check_commits.outputs.releasable == 'true' && 
+          steps.changelog.outputs.skipped == 'false'
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ steps.changelog.outputs.tag }}
+          name: ${{ steps.changelog.outputs.tag }}
+          body: ${{ steps.changelog.outputs.clean_changelog }}
+          token: ${{ secrets.GITHUB_TOKEN }}
