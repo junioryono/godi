@@ -4,9 +4,7 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-
-  # Auto-update tools dependencies, but not library dependencies.
-  - package-ecosystem: "gomod"
-    directory: "/tools"
-    schedule:
-      interval: "weekly"
+    commit-message:
+      prefix: "chore"
+      prefix-development: "chore"
+      include: "scope"
