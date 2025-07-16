@@ -131,7 +131,7 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           git-message: |
-            chore(release): v{version} [skip ci]
+            chore(release): {tag} [skip ci]
 
             - Update changelog
             - Bump version
