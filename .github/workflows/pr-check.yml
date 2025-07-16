@@ -42,6 +42,7 @@ jobs:
             inout
             scope
             resolver
+            deps
           # Require scope to be provided
           requireScope: false
           # Subject requirements
