@@ -125,6 +125,11 @@ func newServiceProviderScope(provider *serviceProvider, ctx context.Context) *se
 		panic(fmt.Errorf("failed to register context in dig scope %s: %w", scope.scopeID, err))
 	}
 
+	// Register the Scope in the dig scope
+	if err := scope.digScope.Provide(func() Scope { return scope }); err != nil {
+		panic(fmt.Errorf("failed to register scope in dig scope %s: %w", scope.scopeID, err))
+	}
+
 	// Register scoped services in this dig scope
 	for _, desc := range provider.descriptors {
 		if desc.Lifetime != Scoped {
