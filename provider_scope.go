@@ -102,7 +102,7 @@ func newServiceProviderScope(provider *serviceProvider, ctx context.Context) *se
 		serviceProvider: provider,
 	}
 
-	scope.ctx = withCurrentScope(ctx, scope)
+	scope.ctx = contextWithScope(ctx, scope)
 
 	// Create a dig scope for non-root scopes - must hold provider's mutex
 	provider.scopesMu.Lock()
@@ -618,15 +618,23 @@ func (w *contextDisposableWrapper) Close(ctx context.Context) error {
 // scopeContextKey is the key for storing the current scope in context.
 type scopeContextKey struct{}
 
-// withCurrentScope returns a context with the current scope.
-func withCurrentScope(ctx context.Context, scope *serviceProviderScope) context.Context {
+// contextWithScope returns a context with the current scope.
+func contextWithScope(ctx context.Context, scope *serviceProviderScope) context.Context {
 	return context.WithValue(ctx, scopeContextKey{}, scope)
 }
 
-// currentScopeFromContext gets the current scope from context.
-func currentScopeFromContext(ctx context.Context) (*serviceProviderScope, bool) {
-	scope, ok := ctx.Value(scopeContextKey{}).(*serviceProviderScope)
-	return scope, ok
+// ScopeFromContext gets the current scope from context.
+func ScopeFromContext(ctx context.Context) (Scope, error) {
+	scope, ok := ctx.Value(scopeContextKey{}).(Scope)
+	if !ok || scope == nil {
+		return nil, ErrScopeNotInContext
+	}
+
+	if scope.IsDisposed() {
+		return nil, ErrScopeDisposed
+	}
+
+	return scope, nil
 }
 
 func generateID() string {

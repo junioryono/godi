@@ -326,8 +326,8 @@ func (sp *serviceProvider) wrapTransientConstructor(desc *serviceDescriptor) int
 			var currentScope *serviceProviderScope
 			if hasContext && contextIndex >= 0 && capturedArgs[contextIndex].IsValid() {
 				ctx := capturedArgs[contextIndex].Interface().(context.Context)
-				if scope, ok := currentScopeFromContext(ctx); ok {
-					currentScope = scope
+				if scope, err := ScopeFromContext(ctx); err == nil {
+					currentScope = scope.(*serviceProviderScope)
 				}
 			}
 

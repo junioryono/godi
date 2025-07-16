@@ -63,6 +63,9 @@ var (
 	// Special cases.
 	ErrResultObjectConstructor = errors.New("constructor returns Out - use collection.Add* methods")
 	ErrReplaceResultObject     = errors.New("replace not supported for result object constructors")
+
+	// Context errors
+	ErrScopeNotInContext = errors.New("no scope found in context")
 )
 
 // ========================================
