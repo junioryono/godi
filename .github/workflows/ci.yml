@@ -127,7 +127,7 @@ jobs:
       - name: Conventional Changelog Action
         id: changelog
         if: steps.check_commits.outputs.releasable == 'true'
-        uses: TriPSs/conventional-changelog-action@v5.3.0
+        uses: TriPSs/conventional-changelog-action@v6.0.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           git-message: |
