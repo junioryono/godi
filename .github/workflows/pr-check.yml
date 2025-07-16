@@ -53,19 +53,3 @@ jobs:
             doesn't start with an uppercase character.
           # Allow only squash merging with PR title
           validateSingleCommit: true
-
-  check-commits:
-    name: Check Commit Messages
-    runs-on: ubuntu-latest
-    if: github.event.pull_request.draft == false
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Check commits
-        uses: wagoid/commitlint-github-action@v5
-        with:
-          configFile: .commitlintrc.json
-          helpURL: https://github.com/junioryono/godi/blob/main/CONTRIBUTING.md#commit-message-convention
