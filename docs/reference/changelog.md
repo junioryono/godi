@@ -1,3 +1,12 @@
+## [1.3.1](https://github.com/junioryono/godi/compare/v1.3.0...v1.3.1) (2025-07-16)
+
+
+### Bug Fixes
+
+* **release:** update git message format to use {tag} instead of v{version} ([67d7ea7](https://github.com/junioryono/godi/commit/67d7ea7c7848111d88295238c47a4bcce63b9e32))
+
+
+
 # [1.3.0](https://github.com/junioryono/godi/compare/v1.2.2...v1.3.0) (2025-07-16)
 
 
@@ -16,10 +25,6 @@
 
 
 # [1.2.0](https://github.com/junioryono/godi/compare/v1.1.0...v1.2.0) (2025-07-14)
-
-
-
-# [1.1.0](https://github.com/junioryono/godi/compare/v1.0.2...v1.1.0) (2025-07-14)
 
 
 
