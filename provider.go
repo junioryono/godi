@@ -244,9 +244,10 @@ func (sp *serviceProvider) registerService(desc *serviceDescriptor) error {
 
 	// Check if this is a result object constructor
 	isResultObject := false
-	fnType := reflect.TypeOf(desc.Constructor)
-	if fnType.Kind() == reflect.Func && fnType.NumOut() > 0 {
-		if dig.IsOut(fnType.Out(0)) {
+	fnInfo := globalTypeCache.getTypeInfo(reflect.TypeOf(desc.Constructor))
+	if fnInfo.IsFunc && fnInfo.NumOut > 0 {
+		firstOutInfo := globalTypeCache.getTypeInfo(fnInfo.OutTypes[0])
+		if firstOutInfo.IsStruct && firstOutInfo.HasOutField {
 			isResultObject = true
 		}
 	}
@@ -283,21 +284,21 @@ func (sp *serviceProvider) wrapTransientConstructor(desc *serviceDescriptor) int
 	constructor := desc.Constructor
 	serviceType := desc.ServiceType
 	fnType := reflect.TypeOf(constructor)
+	fnInfo := globalTypeCache.getTypeInfo(fnType)
 
 	// Create a provider function type: func() T
 	providerFuncType := reflect.FuncOf([]reflect.Type{}, []reflect.Type{serviceType}, false)
 
 	// Build the wrapper function that dig will call
-	wrapperInTypes := make([]reflect.Type, fnType.NumIn())
-	for i := 0; i < fnType.NumIn(); i++ {
-		wrapperInTypes[i] = fnType.In(i)
-	}
+	wrapperInTypes := make([]reflect.Type, fnInfo.NumIn)
+	copy(wrapperInTypes, fnInfo.InTypes)
 
 	// Check if context.Context is one of the dependencies
 	hasContext := false
 	contextIndex := -1
-	for i := 0; i < fnType.NumIn(); i++ {
-		if wrapperInTypes[i] == reflect.TypeOf((*context.Context)(nil)).Elem() {
+	contextType := reflect.TypeOf((*context.Context)(nil)).Elem()
+	for i := 0; i < fnInfo.NumIn; i++ {
+		if wrapperInTypes[i] == contextType {
 			hasContext = true
 			contextIndex = i
 			break
@@ -306,11 +307,9 @@ func (sp *serviceProvider) wrapTransientConstructor(desc *serviceDescriptor) int
 
 	wrapperOutTypes := []reflect.Type{providerFuncType}
 	// Add error if the constructor can fail
-	if fnType.NumOut() > 1 {
+	if fnInfo.NumOut > 1 && fnInfo.HasErrorReturn {
 		errorType := reflect.TypeOf((*error)(nil)).Elem()
-		if fnType.Out(1).Implements(errorType) {
-			wrapperOutTypes = append(wrapperOutTypes, errorType)
-		}
+		wrapperOutTypes = append(wrapperOutTypes, errorType)
 	}
 
 	wrapperType := reflect.FuncOf(wrapperInTypes, wrapperOutTypes, false)
@@ -363,6 +362,7 @@ func (sp *serviceProvider) wrapTransientConstructor(desc *serviceDescriptor) int
 // wrapSingletonConstructor wraps a singleton constructor to track disposable instances.
 func (sp *serviceProvider) wrapSingletonConstructor(constructor interface{}) interface{} {
 	fnType := reflect.TypeOf(constructor)
+	fnInfo := globalTypeCache.getTypeInfo(fnType)
 	fnValue := reflect.ValueOf(constructor)
 
 	return reflect.MakeFunc(fnType, func(args []reflect.Value) []reflect.Value {
@@ -371,33 +371,37 @@ func (sp *serviceProvider) wrapSingletonConstructor(constructor interface{}) int
 
 		// If successful and has a result, check if it's disposable
 		if len(results) > 0 && results[0].IsValid() {
-			// Check if we can call IsNil (only for chan, func, interface, map, pointer, or slice)
-			canCheckNil := false
-			switch results[0].Kind() {
-			case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
-				canCheckNil = true
-			case reflect.Invalid, reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32,
-				reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32,
-				reflect.Uint64, reflect.Uintptr, reflect.Float32, reflect.Float64, reflect.Complex64,
-				reflect.Complex128, reflect.Array, reflect.String, reflect.Struct, reflect.UnsafePointer:
-				// These kinds can't be checked for nil
-			}
+			// Use cached info to check if we can call IsNil
+			if canCheckNilCached(results[0]) {
+				// For result objects (Out structs), we don't check IsNil
+				if !results[0].IsNil() {
+					// Check if there's an error result
+					hasError := false
+					if fnInfo.NumOut > 1 && fnInfo.HasErrorReturn && results[1].IsValid() {
+						// We know from fnInfo that the second return is an error interface
+						if !results[1].IsNil() {
+							hasError = true
+						}
+					}
 
-			// For result objects (Out structs), we don't check IsNil
-			if !canCheckNil || !results[0].IsNil() {
-				// Check if there's an error result
+					if !hasError {
+						instance := results[0].Interface()
+						// Track the instance in the root scope for disposal
+						sp.rootScope.captureDisposable(instance)
+					}
+				}
+			} else {
+				// For non-nillable types, just capture if no error
 				hasError := false
-				if len(results) > 1 && results[1].IsValid() {
-					// Error is always an interface, so we can check IsNil
-					if results[1].Kind() == reflect.Interface && !results[1].IsNil() {
+				if fnInfo.NumOut > 1 && fnInfo.HasErrorReturn && results[1].IsValid() {
+					// We know from fnInfo that the second return is an error interface
+					if !results[1].IsNil() {
 						hasError = true
 					}
 				}
 
 				if !hasError {
 					instance := results[0].Interface()
-
-					// Track the instance in the root scope for disposal
 					sp.rootScope.captureDisposable(instance)
 				}
 			}
@@ -531,32 +535,8 @@ func ResolveKeyed[T any](s ServiceProvider, serviceKey interface{}) (T, error) {
 
 // determineServiceType determines the actual service type to resolve based on the generic type T.
 func determineServiceType[T any]() (reflect.Type, error) {
-	tType := reflect.TypeOf((*T)(nil)).Elem()
-
-	// Determine the actual service type to resolve
-	switch tType.Kind() {
-	case reflect.Interface:
-		// For interfaces, use the interface type directly
-		return tType, nil
-	case reflect.Ptr:
-		// T is already a pointer type (e.g., *UserService)
-		// So we use T directly as the service type
-		return tType, nil
-	case reflect.Slice, reflect.Map, reflect.Chan, reflect.Func:
-		// For slices, maps, channels, and functions, we use the type directly
-		return tType, nil
-	case reflect.Bool,
-		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
-		reflect.Float32, reflect.Float64,
-		reflect.Complex64, reflect.Complex128,
-		reflect.String:
-		// For primitive types, we use the type directly
-		return tType, nil
-	default:
-		// For structs and other complex types, services are typically registered as pointers
-		return reflect.PointerTo(tType), nil
-	}
+	serviceType, _, err := determineServiceTypeCached[T]()
+	return serviceType, err
 }
 
 // assertServiceType performs type assertion and returns the service as type T.

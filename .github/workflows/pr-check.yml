@@ -16,7 +16,7 @@ jobs:
       - name: Check PR title
         uses: amannn/action-semantic-pull-request@v5
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         with:
           # Configure allowed types
           types: |
@@ -43,6 +43,7 @@ jobs:
             scope
             resolver
             deps
+            docs
           # Require scope to be provided
           requireScope: false
           # Subject requirements
