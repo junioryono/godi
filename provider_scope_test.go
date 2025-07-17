@@ -778,8 +778,15 @@ func TestServiceProviderScope_TransientWithDependencies(t *testing.T) {
 		defer scope1.Close()
 
 		// Resolve transient multiple times in same scope
-		svc1, _ := scope1.Resolve(reflect.TypeOf((*scopeTestDisposable)(nil)))
-		svc2, _ := scope1.Resolve(reflect.TypeOf((*scopeTestDisposable)(nil)))
+		svc1, err := scope1.Resolve(reflect.TypeOf((*scopeTestDisposable)(nil)))
+		if err != nil {
+			t.Fatalf("unexpected error resolving transient: %v", err)
+		}
+
+		svc2, err := scope1.Resolve(reflect.TypeOf((*scopeTestDisposable)(nil)))
+		if err != nil {
+			t.Fatalf("unexpected error resolving transient: %v", err)
+		}
 
 		// Should be different instances but with same scoped dependency
 		if svc1 == svc2 {
