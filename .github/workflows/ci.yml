@@ -165,8 +165,10 @@ jobs:
           skip-version-file: "false"
           skip-git-pull: "false"
           create-summary: "true"
+          skip-commit: "true"
+          skip-tag: "true"
 
-      - name: Ensure changelog has proper formatting
+      - name: Fix changelog and commit
         if: |
           steps.check_commits.outputs.releasable == 'true' && 
           steps.changelog.outputs.skipped == 'false'
@@ -186,11 +188,16 @@ jobs:
           # Replace h1 version headers with h2
           sed -i 's/^# \[\([0-9]\)/## [\1/g' docs/reference/changelog.md
 
-          # Stage the changes
-          git add docs/reference/changelog.md
+          # Commit all changes
+          git add docs/reference/changelog.md version.json
+          git commit -m "chore(release): ${{ steps.changelog.outputs.tag }} [skip ci]
 
-          # Amend the commit to include our fixes
-          git commit --amend --no-edit
+          - Update changelog
+          - Bump version"
+
+          # Create and push tag
+          git tag ${{ steps.changelog.outputs.tag }}
+          git push origin HEAD:main --tags
 
       - name: Create Release
         if: |
