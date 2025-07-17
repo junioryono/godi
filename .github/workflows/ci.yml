@@ -166,6 +166,32 @@ jobs:
           skip-git-pull: "false"
           create-summary: "true"
 
+      - name: Ensure changelog has proper formatting
+        if: |
+          steps.check_commits.outputs.releasable == 'true' && 
+          steps.changelog.outputs.skipped == 'false'
+        run: |
+          # Add main heading if it doesn't exist
+          if ! grep -q "^# Changelog" docs/reference/changelog.md; then
+            {
+              echo "# Changelog"
+              echo ""
+              echo "All notable changes to godi are documented here. This project follows [Semantic Versioning](https://semver.org/) and uses [Conventional Commits](https://www.conventionalcommits.org/) for automatic versioning."
+              echo ""
+              cat docs/reference/changelog.md
+            } > docs/reference/changelog.md.tmp
+            mv docs/reference/changelog.md.tmp docs/reference/changelog.md
+          fi
+
+          # Replace h1 version headers with h2
+          sed -i 's/^# \[\([0-9]\)/## [\1/g' docs/reference/changelog.md
+
+          # Stage the changes
+          git add docs/reference/changelog.md
+
+          # Amend the commit to include our fixes
+          git commit --amend --no-edit
+
       - name: Create Release
         if: |
           steps.check_commits.outputs.releasable == 'true' && 
