@@ -1,3 +1,12 @@
+# [1.5.0](https://github.com/junioryono/godi/compare/v1.4.0...v1.5.0) (2025-07-17)
+
+
+### Features
+
+* update version handling in Sphinx config and adjust installation instructions to use version placeholders ([b156b4c](https://github.com/junioryono/godi/commit/b156b4ca0e662540634442f0dca58674b80ada04))
+
+
+
 # [1.4.0](https://github.com/junioryono/godi/compare/v1.3.3...v1.4.0) (2025-07-17)
 
 
@@ -32,15 +41,6 @@
 ### Bug Fixes
 
 * **release:** update git message format to use {tag} instead of v{version} ([67d7ea7](https://github.com/junioryono/godi/commit/67d7ea7c7848111d88295238c47a4bcce63b9e32))
-
-
-
-# [1.3.0](https://github.com/junioryono/godi/compare/v1.2.2...v1.3.0) (2025-07-16)
-
-
-### Features
-
-* **scope:** add public ScopeFromContext function with error handling ([7a95acb](https://github.com/junioryono/godi/commit/7a95acbe0f805871b4d71258c8d81495540c84c2))
 
 
 
