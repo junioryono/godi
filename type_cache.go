@@ -192,10 +192,10 @@ func (tc *typeCache) createTypeInfo(t reflect.Type) *typeInfo {
 
 			// Check for dig.In/Out
 			if field.Anonymous && field.Type != nil {
-				if tc.isInType(field.Type) {
+				if IsIn(field.Type) {
 					info.HasInField = true
 				}
-				if tc.isOutType(field.Type) {
+				if IsOut(field.Type) {
 					info.HasOutField = true
 				}
 			}
@@ -205,24 +205,6 @@ func (tc *typeCache) createTypeInfo(t reflect.Type) *typeInfo {
 	}
 
 	return info
-}
-
-func (tc *typeCache) isInType(t reflect.Type) bool {
-	if t == nil {
-		return false
-	}
-
-	info := tc.getTypeInfo(t)
-	return info.Name == "In" && strings.HasSuffix(info.PkgPath, "dig")
-}
-
-func (tc *typeCache) isOutType(t reflect.Type) bool {
-	if t == nil {
-		return false
-	}
-
-	info := tc.getTypeInfo(t)
-	return info.Name == "Out" && strings.HasSuffix(info.PkgPath, "dig")
 }
 
 func (info *typeInfo) GetFormattedName() string {
