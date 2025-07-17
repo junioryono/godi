@@ -104,7 +104,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.RELEASE_TOKEN }}
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -151,7 +151,7 @@ jobs:
         if: steps.check_commits.outputs.releasable == 'true'
         uses: TriPSs/conventional-changelog-action@v6.0.0
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.RELEASE_TOKEN }}
           git-message: |
             chore(release): {tag} [skip ci]
 
@@ -175,4 +175,4 @@ jobs:
           tag: ${{ steps.changelog.outputs.tag }}
           name: ${{ steps.changelog.outputs.tag }}
           body: ${{ steps.changelog.outputs.clean_changelog }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.RELEASE_TOKEN }}
