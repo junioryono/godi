@@ -176,3 +176,11 @@ jobs:
           name: ${{ steps.changelog.outputs.tag }}
           body: ${{ steps.changelog.outputs.clean_changelog }}
           token: ${{ secrets.RELEASE_TOKEN }}
+
+      - name: Create release branch
+        if: |
+          steps.check_commits.outputs.releasable == 'true' && 
+          steps.changelog.outputs.skipped == 'false'
+        run: |
+          git checkout -b release/${{ steps.changelog.outputs.tag }}
+          git push origin release/${{ steps.changelog.outputs.tag }}
