@@ -83,68 +83,7 @@ func (sd *serviceDescriptor) validate() error {
 
 // validateConstructorForDig validates that a constructor is compatible with dig.
 func validateConstructorForDig(constructor interface{}) error {
-	if constructor == nil {
-		return ErrNilConstructor
-	}
-
-	fnType := reflect.TypeOf(constructor)
-	if fnType.Kind() != reflect.Func {
-		return ErrConstructorNotFunction
-	}
-
-	// Check if any parameter uses In
-	usesDigIn := false
-	for i := 0; i < fnType.NumIn(); i++ {
-		inType := fnType.In(i)
-		if inType.Kind() == reflect.Struct && IsIn(inType) {
-			if usesDigIn {
-				return ErrConstructorMultipleIn
-			}
-
-			usesDigIn = true
-		}
-	}
-
-	// Check outputs
-	usesDigOut := false
-	if fnType.NumOut() > 0 {
-		outType := fnType.Out(0)
-		if outType.Kind() == reflect.Struct && IsOut(outType) {
-			usesDigOut = true
-		}
-	}
-
-	if usesDigOut {
-		// Can only return the result object or (result object, error)
-		if fnType.NumOut() > 2 {
-			return ErrConstructorOutMaxReturns
-		}
-
-		if fnType.NumOut() == 2 {
-			errorType := reflect.TypeOf((*error)(nil)).Elem()
-			if !fnType.Out(1).Implements(errorType) {
-				return ErrConstructorInvalidSecondReturn
-			}
-		}
-	} else {
-		// Regular constructor validation
-		if fnType.NumOut() == 0 {
-			return ErrConstructorNoReturn
-		}
-
-		if fnType.NumOut() > 2 {
-			return ErrConstructorTooManyReturns
-		}
-
-		if fnType.NumOut() == 2 {
-			errorType := reflect.TypeOf((*error)(nil)).Elem()
-			if !fnType.Out(1).Implements(errorType) {
-				return ErrConstructorInvalidSecondReturn
-			}
-		}
-	}
-
-	return nil
+	return validateConstructorCached(constructor)
 }
 
 // validateDecoratorForDig validates that a decorator is compatible with dig.
@@ -154,17 +93,19 @@ func validateDecoratorForDig(decorator interface{}) error {
 	}
 
 	fnType := reflect.TypeOf(decorator)
-	if fnType.Kind() != reflect.Func {
+	fnInfo := globalTypeCache.getTypeInfo(fnType)
+
+	if !fnInfo.IsFunc {
 		return ErrDecoratorNotFunction
 	}
 
 	// Decorators must have at least one input (the value being decorated)
-	if fnType.NumIn() == 0 {
+	if fnInfo.NumIn == 0 {
 		return ErrDecoratorNoParams
 	}
 
 	// Decorators must return at least one value
-	if fnType.NumOut() == 0 {
+	if fnInfo.NumOut == 0 {
 		return ErrDecoratorNoReturn
 	}
 
@@ -174,21 +115,22 @@ func validateDecoratorForDig(decorator interface{}) error {
 // newServiceDescriptor creates a descriptor from a constructor function.
 // The service type is inferred from the constructor's return type.
 func newServiceDescriptor(constructor interface{}, lifetime ServiceLifetime) (*serviceDescriptor, error) {
-	if err := validateConstructorForDig(constructor); err != nil {
+	if err := validateConstructorCached(constructor); err != nil {
 		return nil, err
 	}
 
 	fnType := reflect.TypeOf(constructor)
+	fnInfo := globalTypeCache.getTypeInfo(fnType)
 
 	// Determine service type from return type
 	var serviceType reflect.Type
-	if fnType.NumOut() > 0 {
-		firstOut := fnType.Out(0)
-		if firstOut.Kind() == reflect.Struct && IsOut(firstOut) {
+	if fnInfo.NumOut > 0 {
+		firstOut := fnInfo.OutTypes[0]
+		firstOutInfo := globalTypeCache.getTypeInfo(firstOut)
+		if firstOutInfo.IsStruct && firstOutInfo.HasOutField {
 			// This is a result object - we'll handle it differently
 			return nil, ErrResultObjectConstructor
 		}
-
 		serviceType = firstOut
 	}
 
