@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -2216,6 +2217,456 @@ func TestServiceProvider_ResolveGenericTypes(t *testing.T) {
 			t.Error("expected type mismatch error")
 		}
 	})
+}
+
+func TestServiceProvider_ResolveGroup(t *testing.T) {
+	t.Run("resolves group services", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+
+		// Add multiple handlers to a group
+		collection.AddSingleton(func() Handler {
+			return &testHandler{name: "handler1"}
+		}, godi.Group("handlers"))
+
+		collection.AddSingleton(func() Handler {
+			return &testHandler{name: "handler2"}
+		}, godi.Group("handlers"))
+
+		collection.AddSingleton(func() Handler {
+			return &testHandler{name: "handler3"}
+		}, godi.Group("handlers"))
+
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		defer provider.Close()
+
+		// Resolve the group
+		handlers, err := provider.ResolveGroup(reflect.TypeOf((*Handler)(nil)).Elem(), "handlers")
+		if err != nil {
+			t.Fatalf("unexpected error resolving group: %v", err)
+		}
+
+		if len(handlers) != 3 {
+			t.Errorf("expected 3 handlers, got %d", len(handlers))
+		}
+
+		// Verify we got the correct handlers
+		handlerNames := make(map[string]bool)
+		for _, h := range handlers {
+			handler, ok := h.(Handler)
+			if !ok {
+				t.Errorf("expected Handler type, got %T", h)
+				continue
+			}
+			// Assuming testHandler has a Name() method or field
+			if th, ok := handler.(*testHandler); ok {
+				handlerNames[th.name] = true
+			}
+		}
+
+		expectedNames := []string{"handler1", "handler2", "handler3"}
+		for _, name := range expectedNames {
+			if !handlerNames[name] {
+				t.Errorf("missing handler: %s", name)
+			}
+		}
+	})
+
+	t.Run("resolves empty group", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		defer provider.Close()
+
+		// Try to resolve a non-existent group
+		handlers, err := provider.ResolveGroup(reflect.TypeOf((*Handler)(nil)).Elem(), "nonexistent")
+		if err == nil {
+			t.Error("expected error for non-existent group")
+		}
+
+		if handlers != nil {
+			t.Error("expected nil handlers for non-existent group")
+		}
+	})
+
+	t.Run("resolves with generic helper", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+
+		// Add handlers with specific types
+		collection.AddSingleton(func() Handler {
+			return &testHandler{name: "generic1"}
+		}, godi.Group("handlers"), godi.As(new(Handler)))
+
+		collection.AddSingleton(func() Handler {
+			return &testHandler{name: "generic2"}
+		}, godi.Group("handlers"), godi.As(new(Handler)))
+
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		defer provider.Close()
+
+		// Use generic helper
+		handlers, err := godi.ResolveGroup[Handler](provider, "handlers")
+		if err != nil {
+			t.Fatalf("unexpected error with generic helper: %v", err)
+		}
+
+		if len(handlers) != 2 {
+			t.Errorf("expected 2 handlers, got %d", len(handlers))
+		}
+
+		// Verify types are correct
+		for i, handler := range handlers {
+			if handler == nil {
+				t.Errorf("handler %d is nil", i)
+			}
+		}
+	})
+
+	t.Run("returns error for nil type", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		defer provider.Close()
+
+		_, err = provider.ResolveGroup(nil, "somegroup")
+		if err == nil {
+			t.Error("expected error for nil type")
+		}
+		if !errors.Is(err, godi.ErrInvalidServiceType) {
+			t.Errorf("expected ErrInvalidServiceType, got %v", err)
+		}
+	})
+
+	t.Run("returns error for empty group name", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		defer provider.Close()
+
+		_, err = provider.ResolveGroup(reflect.TypeOf((*Handler)(nil)).Elem(), "")
+		if err == nil {
+			t.Error("expected error for empty group name")
+		}
+		if !strings.Contains(err.Error(), "group name cannot be empty") {
+			t.Errorf("unexpected error message: %v", err)
+		}
+	})
+
+	t.Run("returns error when disposed", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		provider.Close()
+
+		_, err = provider.ResolveGroup(reflect.TypeOf((*Handler)(nil)).Elem(), "handlers")
+		if err == nil {
+			t.Error("expected error when resolving from disposed provider")
+		}
+		if !errors.Is(err, godi.ErrProviderDisposed) {
+			t.Errorf("expected ErrProviderDisposed, got %v", err)
+		}
+	})
+
+	t.Run("returns error for nil provider in generic helper", func(t *testing.T) {
+		_, err := godi.ResolveGroup[Handler](nil, "handlers")
+		if err == nil {
+			t.Error("expected error for nil provider")
+		}
+		if !errors.Is(err, godi.ErrNilServiceProvider) {
+			t.Errorf("expected ErrNilServiceProvider, got %v", err)
+		}
+	})
+
+	t.Run("resolves scoped group services", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+
+		// Add scoped services to a group
+		for i := 0; i < 2; i++ {
+			idx := i
+			collection.AddScoped(func() Handler {
+				return &testHandler{name: fmt.Sprintf("scoped-%d", idx)}
+			}, godi.Group("scoped-handlers"))
+		}
+
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		defer provider.Close()
+
+		scope1 := provider.CreateScope(context.Background())
+		defer scope1.Close()
+
+		scope2 := provider.CreateScope(context.Background())
+		defer scope2.Close()
+
+		// Resolve in scope1
+		handlers1, err := scope1.ResolveGroup(reflect.TypeOf((*Handler)(nil)).Elem(), "scoped-handlers")
+		if err != nil {
+			t.Fatalf("unexpected error in scope1: %v", err)
+		}
+
+		if len(handlers1) != 2 {
+			t.Errorf("expected 2 scoped handlers, got %d", len(handlers1))
+		}
+
+		// Resolve again in scope1 - should be same instances
+		handlers1Again, err := scope1.ResolveGroup(reflect.TypeOf((*Handler)(nil)).Elem(), "scoped-handlers")
+		if err != nil {
+			t.Fatalf("unexpected error in scope1 again: %v", err)
+		}
+
+		if len(handlers1Again) != 2 {
+			t.Errorf("expected 2 scoped handlers again, got %d", len(handlers1Again))
+		}
+
+		// Order by name for consistent comparison
+		sort.Slice(handlers1, func(i, j int) bool {
+			return handlers1[i].(*testHandler).name < handlers1[j].(*testHandler).name
+		})
+		sort.Slice(handlers1Again, func(i, j int) bool {
+			return handlers1Again[i].(*testHandler).name < handlers1Again[j].(*testHandler).name
+		})
+
+		// Verify same instances within scope
+		for i := range handlers1 {
+			if handlers1[i] != handlers1Again[i] {
+				t.Errorf("scoped service %d should return same instance within scope", i)
+			}
+		}
+
+		// Resolve in scope2 - should be different instances
+		handlers2, err := scope2.ResolveGroup(reflect.TypeOf((*Handler)(nil)).Elem(), "scoped-handlers")
+		if err != nil {
+			t.Fatalf("unexpected error in scope2: %v", err)
+		}
+
+		if len(handlers2) != 2 {
+			t.Errorf("expected 2 scoped handlers in scope2, got %d", len(handlers2))
+		}
+
+		sort.Slice(handlers2, func(i, j int) bool {
+			return handlers2[i].(*testHandler).name < handlers2[j].(*testHandler).name
+		})
+
+		// Verify different instances across scopes
+		for i := range handlers1 {
+			if handlers1[i] == handlers2[i] {
+				t.Errorf("scoped service %d should create different instances across scopes", i)
+			}
+		}
+	})
+
+	t.Run("transient services cannot be in groups", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+
+		// Singleton and scoped are allowed in groups
+		err := collection.AddSingleton(func() Handler {
+			return &testHandler{name: "singleton"}
+		}, godi.Group("mixed"))
+		if err != nil {
+			t.Fatalf("unexpected error adding singleton to group: %v", err)
+		}
+
+		err = collection.AddScoped(func() Handler {
+			return &testHandler{name: "scoped"}
+		}, godi.Group("mixed"))
+		if err != nil {
+			t.Fatalf("unexpected error adding scoped to group: %v", err)
+		}
+
+		// Transient should fail
+		err = collection.AddTransient(func() Handler {
+			return &testHandler{name: "transient"}
+		}, godi.Group("mixed"))
+		if err == nil {
+			t.Fatal("expected error when adding transient service to group")
+		}
+
+		if !errors.Is(err, godi.ErrTransientInGroup) {
+			t.Errorf("expected ErrTransientInGroup, got %v", err)
+		}
+
+		if !strings.Contains(err.Error(), "transient services cannot be registered in groups") {
+			t.Errorf("unexpected error message: %v", err)
+		}
+	})
+
+	t.Run("resolves mixed singleton and scoped group", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+
+		// Mix of singleton and scoped in same group
+		collection.AddSingleton(func() Handler {
+			return &testHandler{name: "singleton"}
+		}, godi.Group("mixed"))
+
+		collection.AddScoped(func() Handler {
+			return &testHandler{name: "scoped"}
+		}, godi.Group("mixed"))
+
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		defer provider.Close()
+
+		scope := provider.CreateScope(context.Background())
+		defer scope.Close()
+
+		handlers, err := scope.ResolveGroup(reflect.TypeOf((*Handler)(nil)).Elem(), "mixed")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if len(handlers) != 2 {
+			t.Errorf("expected 2 handlers, got %d", len(handlers))
+		}
+
+		// Verify we got both handlers
+		handlerNames := make(map[string]bool)
+		for _, h := range handlers {
+			if th, ok := h.(*testHandler); ok {
+				handlerNames[th.name] = true
+			}
+		}
+
+		if !handlerNames["singleton"] {
+			t.Error("missing singleton handler")
+		}
+		if !handlerNames["scoped"] {
+			t.Error("missing scoped handler")
+		}
+	})
+
+	t.Run("resolves scoped group with pointer type", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+
+		// Register a scoped service returning the interface type directly
+		collection.AddScoped(func() Handler {
+			return &testHandler{name: "scoped-pointer"}
+		}, godi.Group("scoped-handlers"))
+
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		defer provider.Close()
+
+		scope := provider.CreateScope(context.Background())
+		defer scope.Close()
+
+		// Resolve the group with interface type
+		handlers, err := scope.ResolveGroup(reflect.TypeOf((*Handler)(nil)).Elem(), "scoped-handlers")
+		if err != nil {
+			t.Fatalf("unexpected error resolving scoped group: %v", err)
+		}
+
+		if len(handlers) != 1 {
+			t.Errorf("expected 1 handler, got %d", len(handlers))
+		}
+		if handler, ok := handlers[0].(*testHandler); ok {
+			if handler.name != "scoped-pointer" {
+				t.Errorf("expected handler name 'scoped-pointer', got '%s'", handler.name)
+			}
+		} else {
+			t.Error("expected handler to be of type *testHandler")
+		}
+	})
+
+	t.Run("type conversion in generic helper", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+
+		// Register returning the interface type directly
+		collection.AddSingleton(func() Handler {
+			return &testHandler{name: "ptr-to-value"}
+		}, godi.Group("handlers"))
+
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		defer provider.Close()
+
+		// This should work without As() since we're returning the interface type
+		handlers, err := godi.ResolveGroup[Handler](provider, "handlers")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if len(handlers) != 1 {
+			t.Errorf("expected 1 handler, got %d", len(handlers))
+		}
+	})
+}
+
+// Benchmark for group resolution
+func BenchmarkServiceProvider_ResolveGroup(b *testing.B) {
+	collection := godi.NewServiceCollection()
+
+	// Add 10 services to a group
+	for i := 0; i < 10; i++ {
+		idx := i
+		collection.AddSingleton(func() Handler {
+			return &testHandler{name: fmt.Sprintf("handler-%d", idx)}
+		}, godi.Group("bench-handlers"))
+	}
+
+	provider, err := collection.BuildServiceProvider()
+	if err != nil {
+		b.Fatalf("unexpected error: %v", err)
+	}
+	defer provider.Close()
+
+	handlerType := reflect.TypeOf((*Handler)(nil)).Elem()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := provider.ResolveGroup(handlerType, "bench-handlers")
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkServiceProvider_ResolveGroupGeneric(b *testing.B) {
+	collection := godi.NewServiceCollection()
+
+	// Add 10 services to a group
+	for i := 0; i < 10; i++ {
+		idx := i
+		collection.AddSingleton(func() Handler {
+			return &testHandler{name: fmt.Sprintf("handler-%d", idx)}
+		}, godi.Group("bench-handlers"))
+	}
+
+	provider, err := collection.BuildServiceProvider()
+	if err != nil {
+		b.Fatalf("unexpected error: %v", err)
+	}
+	defer provider.Close()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := godi.ResolveGroup[Handler](provider, "bench-handlers")
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
 }
 
 // Benchmark for scope creation and disposal

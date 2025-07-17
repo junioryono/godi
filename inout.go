@@ -117,11 +117,15 @@ var Name = dig.Name
 // Group is an option for providing values to a group.
 // Groups allow multiple values of the same type to be collected into a slice.
 //
+// Note: Transient services cannot be registered in groups. Only Singleton and
+// Scoped services are supported in groups. This is because transient services
+// use a factory pattern that is incompatible with dig's group mechanism.
+//
 // Example:
 //
 //	collection.AddSingleton(NewUserHandler, godi.Group("routes"))
 //	collection.AddSingleton(NewAdminHandler, godi.Group("routes"))
-//	collection.AddSingleton(NewAPIHandler, godi.Group("routes"))
+//	collection.AddScoped(NewAPIHandler, godi.Group("routes"))
 //
 //	// Then consume all handlers:
 //	type ServerParams struct {

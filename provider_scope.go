@@ -498,6 +498,89 @@ func (scope *serviceProviderScope) resolveKeyedService(serviceType reflect.Type,
 	return result, nil
 }
 
+func (scope *serviceProviderScope) ResolveGroup(serviceType reflect.Type, groupName string) ([]interface{}, error) {
+	if scope.IsDisposed() {
+		return nil, ErrScopeDisposed
+	}
+
+	if serviceType == nil {
+		return nil, ErrInvalidServiceType
+	}
+
+	if groupName == "" {
+		return nil, fmt.Errorf("group name cannot be empty")
+	}
+
+	// Record start time for metrics
+	startTime := time.Now()
+
+	results, err := scope.resolveGroupService(serviceType, groupName)
+
+	// Calculate resolution duration
+	duration := time.Since(startTime)
+
+	// Record metrics and callbacks
+	if err == nil && scope.serviceProvider.options.OnServiceResolved != nil {
+		// Call callback for each resolved service
+		for _, result := range results {
+			scope.serviceProvider.options.OnServiceResolved(serviceType, result, duration)
+		}
+	} else if err != nil && scope.serviceProvider.options.OnServiceError != nil {
+		scope.serviceProvider.options.OnServiceError(serviceType, err)
+	}
+
+	return results, err
+}
+
+func (scope *serviceProviderScope) resolveGroupService(serviceType reflect.Type, groupName string) ([]interface{}, error) {
+	sliceType := reflect.SliceOf(serviceType)
+	paramType := reflect.StructOf([]reflect.StructField{
+		{
+			Name:      "In",
+			Type:      reflect.TypeOf(In{}),
+			Anonymous: true,
+		},
+		{
+			Name: "Services",
+			Type: sliceType,
+			Tag:  reflect.StructTag(fmt.Sprintf(`group:"%s"`, groupName)),
+		},
+	})
+
+	// Create extraction function
+	var results []interface{}
+	fnType := reflect.FuncOf([]reflect.Type{paramType}, []reflect.Type{reflect.TypeOf((*error)(nil)).Elem()}, false)
+	fn := reflect.MakeFunc(fnType, func(args []reflect.Value) []reflect.Value {
+		if len(args) > 0 && args[0].IsValid() {
+			servicesField := args[0].FieldByName("Services")
+			if servicesField.IsValid() && servicesField.Len() > 0 {
+				results = make([]interface{}, servicesField.Len())
+				for i := 0; i < servicesField.Len(); i++ {
+					results[i] = servicesField.Index(i).Interface()
+					// Track disposables for cleanup
+					scope.captureDisposable(results[i])
+				}
+				return []reflect.Value{reflect.Zero(reflect.TypeOf((*error)(nil)).Elem())}
+			}
+		}
+
+		err := fmt.Errorf("no services found in group %q for type %s", groupName, formatType(serviceType))
+		return []reflect.Value{reflect.ValueOf(err)}
+	})
+
+	// Invoke through dig with mutex protection
+	var resolveErr error
+	scope.serviceProvider.scopesMu.Lock()
+	resolveErr = scope.digScope.Invoke(fn.Interface())
+	scope.serviceProvider.scopesMu.Unlock()
+
+	if resolveErr != nil {
+		return nil, resolveErr
+	}
+
+	return results, nil
+}
+
 // IsService implements ServiceProvider.
 func (scope *serviceProviderScope) IsService(serviceType reflect.Type) bool {
 	if scope.IsDisposed() {
