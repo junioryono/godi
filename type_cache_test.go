@@ -406,8 +406,8 @@ func TestTypeInfo_Structs(t *testing.T) {
 
 		// Check named field
 		namedField := info.Fields[3]
-		if namedField.ServiceName != "custom" {
-			t.Errorf("ServiceName = %s, want custom", namedField.ServiceName)
+		if namedField.TagName != "custom" {
+			t.Errorf("ServiceName = %s, want custom", namedField.TagName)
 		}
 
 		// Check private field

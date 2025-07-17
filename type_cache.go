@@ -65,7 +65,7 @@ type fieldInfo struct {
 	IsOptional  bool   // Has optional:"true" tag
 	IsGroup     bool   // Has group:"name" tag
 	GroupName   string // Group name if IsGroup
-	ServiceName string // Name tag value if present
+	TagName     string // Name tag value if present
 }
 
 // globalTypeCache is the singleton type cache used throughout the library.
@@ -185,7 +185,7 @@ func (tc *typeCache) createTypeInfo(t reflect.Type) *typeInfo {
 			}
 
 			if name := field.Tag.Get("name"); name != "" {
-				fieldInfo.ServiceName = name
+				fieldInfo.TagName = name
 			}
 
 			// Check for dig.In/Out
