@@ -43,6 +43,7 @@ jobs:
             scope
             resolver
             deps
+            docs
           # Require scope to be provided
           requireScope: false
           # Subject requirements
