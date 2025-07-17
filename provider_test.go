@@ -2000,9 +2000,9 @@ func TestServiceProvider_PanicInDisposal(t *testing.T) {
 		// Resolve to create instance
 		provider.Resolve(reflect.TypeOf((*godi.Disposable)(nil)).Elem())
 
-		// Should handle panic gracefully
 		defer func() {
-			if r := recover(); r != nil {
+			if r := recover(); r == nil {
+				t.Error("expected panic during disposal")
 			}
 		}()
 
