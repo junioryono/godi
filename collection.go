@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
-
-	"go.uber.org/dig"
 )
 
 // ServiceCollection represents a collection of service descriptors that define
@@ -216,7 +214,9 @@ func (sc *serviceCollection) addWithLifetime(constructor interface{}, lifetime S
 
 	// Check if this is a function or a value
 	constructorType := reflect.TypeOf(constructor)
-	if constructorType.Kind() != reflect.Func {
+	constructorInfo := globalTypeCache.getTypeInfo(constructorType)
+
+	if !constructorInfo.IsFunc {
 		// It's not a function, so it's an instance - wrap it in a constructor
 		instance := constructor
 		instanceType := constructorType
@@ -228,16 +228,17 @@ func (sc *serviceCollection) addWithLifetime(constructor interface{}, lifetime S
 		})
 
 		constructor = fnValue.Interface()
+		// Update the type info since we've wrapped it
+		constructorInfo = globalTypeCache.getTypeInfo(fnType)
 	}
 
 	// Check if this returns a result object
-	fnType := reflect.TypeOf(constructor)
-	if fnType.Kind() == reflect.Func && fnType.NumOut() > 0 {
-		outType := fnType.Out(0)
-		if outType.Kind() == reflect.Struct && dig.IsOut(outType) {
+	if constructorInfo.IsFunc && constructorInfo.NumOut > 0 {
+		outInfo := globalTypeCache.getTypeInfo(constructorInfo.OutTypes[0])
+		if outInfo.IsStruct && outInfo.HasOutField {
 			// This is a result object constructor - dig handles it automatically
 			descriptor := &serviceDescriptor{
-				ServiceType:    outType,
+				ServiceType:    constructorInfo.OutTypes[0],
 				Lifetime:       lifetime,
 				Constructor:    constructor,
 				ProvideOptions: opts,
@@ -315,12 +316,14 @@ func (sc *serviceCollection) Decorate(decorator interface{}, opts ...DecorateOpt
 
 	// Create a decorator descriptor
 	fnType := reflect.TypeOf(decorator)
-	if fnType.Kind() != reflect.Func || fnType.NumIn() == 0 {
+	fnInfo := globalTypeCache.getTypeInfo(fnType)
+
+	if !fnInfo.IsFunc || fnInfo.NumIn == 0 {
 		return ErrDecoratorNoParams
 	}
 
 	// The first parameter type is what's being decorated
-	decoratedType := fnType.In(0)
+	decoratedType := fnInfo.InTypes[0]
 
 	descriptor := &serviceDescriptor{
 		ServiceType: decoratedType,
@@ -344,12 +347,16 @@ func (sc *serviceCollection) Replace(lifetime ServiceLifetime, constructor inter
 
 	// Determine the service type
 	fnType := reflect.TypeOf(constructor)
-	if fnType.Kind() != reflect.Func || fnType.NumOut() == 0 {
+	fnInfo := globalTypeCache.getTypeInfo(fnType)
+
+	if !fnInfo.IsFunc || fnInfo.NumOut == 0 {
 		return ErrConstructorMustReturnValue
 	}
 
-	serviceType := fnType.Out(0)
-	if serviceType.Kind() == reflect.Struct && dig.IsOut(serviceType) {
+	serviceType := fnInfo.OutTypes[0]
+	serviceInfo := globalTypeCache.getTypeInfo(serviceType)
+
+	if serviceInfo.IsStruct && serviceInfo.HasOutField {
 		// For result objects, we can't easily determine what to replace
 		return ErrReplaceResultObject
 	}
