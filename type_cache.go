@@ -1,6 +1,7 @@
 package godi
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"sync"
@@ -243,6 +244,13 @@ func formatTypeCached(info *typeInfo) string {
 			keyInfo := globalTypeCache.getTypeInfo(info.KeyType)
 			elemInfo := globalTypeCache.getTypeInfo(info.ElementType)
 			return "map[" + keyInfo.FormattedName + "]" + elemInfo.FormattedName
+		}
+		return info.String
+
+	case reflect.Array:
+		if info.ElementType != nil {
+			elemInfo := globalTypeCache.getTypeInfo(info.ElementType)
+			return fmt.Sprintf("[%d]%s", info.Type.Len(), elemInfo.FormattedName)
 		}
 		return info.String
 

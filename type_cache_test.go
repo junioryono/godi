@@ -159,6 +159,13 @@ func TestTypeInfo_BasicTypes(t *testing.T) {
 			wantCanBeNil:  true,
 		},
 		{
+			name:          "array",
+			typ:           reflect.TypeOf([5]int{}),
+			wantKind:      reflect.Array,
+			wantPrimitive: false,
+			wantCanBeNil:  false,
+		},
+		{
 			name:          "map",
 			typ:           reflect.TypeOf(map[string]int{}),
 			wantKind:      reflect.Map,
@@ -233,6 +240,36 @@ func TestTypeInfo_ElementTypes(t *testing.T) {
 
 		if info.ElementType != reflect.TypeOf(0) {
 			t.Error("incorrect element type for slice")
+		}
+	})
+
+	t.Run("array element type", func(t *testing.T) {
+		typ := reflect.TypeOf([5]string{})
+		info := cache.getTypeInfo(typ)
+
+		if info.ElementType == nil {
+			t.Fatal("expected non-nil element type for array")
+		}
+
+		if info.ElementType != reflect.TypeOf("") {
+			t.Error("incorrect element type for array")
+		}
+
+		if info.Kind != reflect.Array {
+			t.Errorf("expected Array kind, got %v", info.Kind)
+		}
+	})
+
+	t.Run("array of structs", func(t *testing.T) {
+		typ := reflect.TypeOf([3]testStruct{})
+		info := cache.getTypeInfo(typ)
+
+		if info.ElementType == nil {
+			t.Fatal("expected non-nil element type for array")
+		}
+
+		if info.ElementType != reflect.TypeOf(testStruct{}) {
+			t.Error("incorrect element type for array of structs")
 		}
 	})
 
@@ -462,6 +499,16 @@ func TestFormatTypeCached(t *testing.T) {
 			name:     "slice",
 			typ:      reflect.TypeOf([]int{}),
 			contains: "[]",
+		},
+		{
+			name:     "array",
+			typ:      reflect.TypeOf([5]int{}),
+			contains: "[5]",
+		},
+		{
+			name:     "array of strings",
+			typ:      reflect.TypeOf([3]string{}),
+			contains: "[3]",
 		},
 		{
 			name:     "map",
