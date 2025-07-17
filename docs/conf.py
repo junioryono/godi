@@ -6,6 +6,7 @@
 # -- Path setup --------------------------------------------------------------
 
 import os
+import json
 import sphinx_rtd_theme
 
 # -- Project information -----------------------------------------------------
@@ -14,8 +15,18 @@ project = 'godi'
 copyright = '2025, junioryono'
 author = 'junioryono'
 
+# Read version from version.json
+def get_version():
+    version_file = os.path.join(os.path.dirname(__file__), '..', 'version.json')
+    if os.path.exists(version_file):
+        with open(version_file, 'r') as f:
+            data = json.load(f)
+            return f"v{data.get('version', '0.0.0')}"
+    return 'v0.0.0'
+
 # The full version, including alpha/beta/rc tags
-release = 'v1.0.0'
+release = get_version()
+version = release
 
 # -- General configuration ---------------------------------------------------
 

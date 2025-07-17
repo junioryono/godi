@@ -20,7 +20,7 @@ go get github.com/junioryono/godi
 This will add godi to your `go.mod` file:
 
 ```go
-require github.com/junioryono/godi v1.0.0
+require github.com/junioryono/godi v1.x.x
 ```
 
 ### Import in Your Code
@@ -71,7 +71,7 @@ go get -u github.com/junioryono/godi
 ### Use Specific Version
 
 ```bash
-go get github.com/junioryono/godi@v1.0.0
+go get github.com/junioryono/godi@v1.x.x
 ```
 
 ## Development Setup
