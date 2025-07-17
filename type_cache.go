@@ -208,7 +208,7 @@ func (tc *typeCache) createTypeInfo(t reflect.Type) *typeInfo {
 	return info
 }
 
-// formatTypeCached formats a typermation.
+// formatTypeCached formats a type using cached information.
 func formatTypeCached(info *typeInfo) string {
 	if info == nil || info.Type == nil {
 		return "<nil>"
