@@ -1,3 +1,16 @@
+# Changelog
+
+All notable changes to godi are documented here. This project follows [Semantic Versioning](https://semver.org/) and uses [Conventional Commits](https://www.conventionalcommits.org/) for automatic versioning.
+
+## [1.6.0](https://github.com/junioryono/godi/compare/v1.5.1...v1.6.0) (2025-07-17)
+
+
+### Features
+
+* ensure changelog has proper formatting and amend commit if necessary ([93a8ac2](https://github.com/junioryono/godi/commit/93a8ac262ab66684e144b47396741d746b9abb4b))
+
+
+
 ## [1.5.1](https://github.com/junioryono/godi/compare/v1.5.0...v1.5.1) (2025-07-17)
 
 
@@ -7,7 +20,7 @@
 
 
 
-# [1.5.0](https://github.com/junioryono/godi/compare/v1.4.0...v1.5.0) (2025-07-17)
+## [1.5.0](https://github.com/junioryono/godi/compare/v1.4.0...v1.5.0) (2025-07-17)
 
 
 ### Features
@@ -16,7 +29,7 @@
 
 
 
-# [1.4.0](https://github.com/junioryono/godi/compare/v1.3.3...v1.4.0) (2025-07-17)
+## [1.4.0](https://github.com/junioryono/godi/compare/v1.3.3...v1.4.0) (2025-07-17)
 
 
 ### Features
@@ -32,15 +45,6 @@
 ### Bug Fixes
 
 * **ci:** allow deps scope for Dependabot commits PR ([0f92ef1](https://github.com/junioryono/godi/commit/0f92ef1aed2b4c95dc631f2af646290aa0a48ba3))
-
-
-
-## [1.3.2](https://github.com/junioryono/godi/compare/v1.3.1...v1.3.2) (2025-07-16)
-
-
-### Bug Fixes
-
-* **ci:** allow deps scope for Dependabot commits ([3c8bcbc](https://github.com/junioryono/godi/commit/3c8bcbc2089fb3c2fbacfdde51ff3f75b673954a))
 
 
 
