@@ -255,7 +255,7 @@ func formatTypeCachedWithDepth(info *typeInfo, depth int) string {
 		if info.KeyType != nil && info.ElementType != nil {
 			keyInfo := globalTypeCache.getTypeInfo(info.KeyType)
 			elemInfo := globalTypeCache.getTypeInfo(info.ElementType)
-			return "map[" + keyInfo.GetFormattedName() + "]" + formatTypeCachedWithDepth(elemInfo, depth+1)
+			return "map[" + formatTypeCachedWithDepth(keyInfo, depth+1) + "]" + formatTypeCachedWithDepth(elemInfo, depth+1)
 		}
 		return info.String
 
