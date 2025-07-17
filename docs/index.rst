@@ -76,7 +76,7 @@ Why godi?
    reference/lifetimes.md
    reference/errors.md
    reference/options.md
-   reference/changelog
+   reference/changelog.md
 
 .. toctree::
    :maxdepth: 2
