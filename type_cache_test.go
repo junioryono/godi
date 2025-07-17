@@ -3,6 +3,7 @@ package godi
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -484,7 +485,7 @@ func TestFormatTypeCached(t *testing.T) {
 			info := globalTypeCache.getTypeInfo(tt.typ)
 			formatted := formatTypeCached(info)
 
-			if !contains(formatted, tt.contains) {
+			if !strings.Contains(formatted, tt.contains) {
 				t.Errorf("formatTypeCached() = %v, want to contain %v", formatted, tt.contains)
 			}
 		})
@@ -801,5 +802,3 @@ func BenchmarkTypeCache_CreateTypeInfo_Function(b *testing.B) {
 		cache.createTypeInfo(typ)
 	}
 }
-
-// Removed the custom `contains` and `findSubstring` functions as they are replaced by `strings.Contains`.
