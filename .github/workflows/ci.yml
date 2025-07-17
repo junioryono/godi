@@ -159,6 +159,7 @@ jobs:
             - Bump version
           preset: "angular"
           tag-prefix: "v"
+          release-count: 0
           output-file: "docs/reference/changelog.md"
           version-file: "version.json"
           skip-on-empty: "true"
