@@ -530,7 +530,7 @@ func TestFormatTypeCached(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			info := globalTypeCache.getTypeInfo(tt.typ)
-			formatted := formatTypeCached(info)
+			formatted := formatTypeCachedWithDepth(info, 0)
 
 			if !strings.Contains(formatted, tt.contains) {
 				t.Errorf("formatTypeCached() = %v, want to contain %v", formatted, tt.contains)
@@ -539,7 +539,7 @@ func TestFormatTypeCached(t *testing.T) {
 	}
 
 	t.Run("nil info", func(t *testing.T) {
-		result := formatTypeCached(nil)
+		result := formatTypeCachedWithDepth(nil, 0)
 		if result != "<nil>" {
 			t.Errorf("formatTypeCached(nil) = %v, want <nil>", result)
 		}

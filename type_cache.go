@@ -52,7 +52,8 @@ type typeInfo struct {
 	HasOutField bool // Has embedded dig.Out
 
 	// Formatted name for error messages
-	FormattedName string
+	FormattedName     string
+	formattedNameOnce sync.Once
 }
 
 // fieldInfo holds information about a struct field.
@@ -191,10 +192,10 @@ func (tc *typeCache) createTypeInfo(t reflect.Type) *typeInfo {
 
 			// Check for dig.In/Out
 			if field.Anonymous && field.Type != nil {
-				if IsIn(field.Type) {
+				if tc.isInType(field.Type) {
 					info.HasInField = true
 				}
-				if IsOut(field.Type) {
+				if tc.isOutType(field.Type) {
 					info.HasOutField = true
 				}
 			}
@@ -203,14 +204,43 @@ func (tc *typeCache) createTypeInfo(t reflect.Type) *typeInfo {
 		}
 	}
 
-	// Format the name for error messages
-	info.FormattedName = formatTypeCached(info)
-
 	return info
 }
 
-// formatTypeCached formats a type using cached information.
-func formatTypeCached(info *typeInfo) string {
+func (tc *typeCache) isInType(t reflect.Type) bool {
+	if t == nil {
+		return false
+	}
+
+	info := tc.getTypeInfo(t)
+	return info.Name == "In" && strings.HasSuffix(info.PkgPath, "dig")
+}
+
+func (tc *typeCache) isOutType(t reflect.Type) bool {
+	if t == nil {
+		return false
+	}
+
+	info := tc.getTypeInfo(t)
+	return info.Name == "Out" && strings.HasSuffix(info.PkgPath, "dig")
+}
+
+func (info *typeInfo) GetFormattedName() string {
+	info.formattedNameOnce.Do(func() {
+		info.FormattedName = formatTypeCachedWithDepth(info, 0)
+	})
+
+	return info.FormattedName
+}
+
+// formatTypeCachedWithDepth formats a type using cached information.
+func formatTypeCachedWithDepth(info *typeInfo, depth int) string {
+	const maxDepth = 50
+
+	if depth > maxDepth {
+		return info.String
+	}
+
 	if info == nil || info.Type == nil {
 		return "<nil>"
 	}
@@ -228,14 +258,14 @@ func formatTypeCached(info *typeInfo) string {
 	case reflect.Ptr:
 		if info.ElementType != nil {
 			elemInfo := globalTypeCache.getTypeInfo(info.ElementType)
-			return "*" + elemInfo.FormattedName
+			return "*" + formatTypeCachedWithDepth(elemInfo, depth+1)
 		}
 		return "*" + info.ElementType.String()
 
 	case reflect.Slice:
 		if info.ElementType != nil {
 			elemInfo := globalTypeCache.getTypeInfo(info.ElementType)
-			return "[]" + elemInfo.FormattedName
+			return "[]" + formatTypeCachedWithDepth(elemInfo, depth+1)
 		}
 		return "[]" + info.ElementType.String()
 
@@ -243,14 +273,14 @@ func formatTypeCached(info *typeInfo) string {
 		if info.KeyType != nil && info.ElementType != nil {
 			keyInfo := globalTypeCache.getTypeInfo(info.KeyType)
 			elemInfo := globalTypeCache.getTypeInfo(info.ElementType)
-			return "map[" + keyInfo.FormattedName + "]" + elemInfo.FormattedName
+			return "map[" + keyInfo.GetFormattedName() + "]" + formatTypeCachedWithDepth(elemInfo, depth+1)
 		}
 		return info.String
 
 	case reflect.Array:
 		if info.ElementType != nil {
 			elemInfo := globalTypeCache.getTypeInfo(info.ElementType)
-			return fmt.Sprintf("[%d]%s", info.Type.Len(), elemInfo.FormattedName)
+			return fmt.Sprintf("[%d]%s", info.Type.Len(), formatTypeCachedWithDepth(elemInfo, depth+1))
 		}
 		return info.String
 

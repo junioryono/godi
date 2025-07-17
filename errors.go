@@ -311,5 +311,5 @@ func formatType(t reflect.Type) string {
 	}
 
 	info := globalTypeCache.getTypeInfo(t)
-	return info.FormattedName
+	return info.GetFormattedName()
 }
