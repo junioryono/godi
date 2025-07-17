@@ -91,6 +91,10 @@ jobs:
       !contains(github.event.head_commit.message, 'skip ci') &&
       !contains(github.event.head_commit.message, 'skip release')
 
+    concurrency:
+      group: release
+      cancel-in-progress: false
+
     permissions:
       contents: write
       pull-requests: write
