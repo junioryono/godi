@@ -1,3 +1,12 @@
+## [1.5.1](https://github.com/junioryono/godi/compare/v1.5.0...v1.5.1) (2025-07-17)
+
+
+### Bug Fixes
+
+* update installation instructions to use version placeholders ([4cb376e](https://github.com/junioryono/godi/commit/4cb376ec684fbe159b5655dae5c808feaa544b3d))
+
+
+
 # [1.5.0](https://github.com/junioryono/godi/compare/v1.4.0...v1.5.0) (2025-07-17)
 
 
@@ -32,15 +41,6 @@
 ### Bug Fixes
 
 * **ci:** allow deps scope for Dependabot commits ([3c8bcbc](https://github.com/junioryono/godi/commit/3c8bcbc2089fb3c2fbacfdde51ff3f75b673954a))
-
-
-
-## [1.3.1](https://github.com/junioryono/godi/compare/v1.3.0...v1.3.1) (2025-07-16)
-
-
-### Bug Fixes
-
-* **release:** update git message format to use {tag} instead of v{version} ([67d7ea7](https://github.com/junioryono/godi/commit/67d7ea7c7848111d88295238c47a4bcce63b9e32))
 
 
 
