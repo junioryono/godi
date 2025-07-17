@@ -1,3 +1,12 @@
+## [1.3.3](https://github.com/junioryono/godi/compare/v1.3.2...v1.3.3) (2025-07-16)
+
+
+### Bug Fixes
+
+* **ci:** allow deps scope for Dependabot commits PR ([0f92ef1](https://github.com/junioryono/godi/commit/0f92ef1aed2b4c95dc631f2af646290aa0a48ba3))
+
+
+
 ## [1.3.2](https://github.com/junioryono/godi/compare/v1.3.1...v1.3.2) (2025-07-16)
 
 
@@ -26,10 +35,6 @@
 
 
 ## [1.2.2](https://github.com/junioryono/godi/compare/v1.2.1...v1.2.2) (2025-07-16)
-
-
-
-## [1.2.1](https://github.com/junioryono/godi/compare/v1.2.0...v1.2.1) (2025-07-15)
 
 
 
