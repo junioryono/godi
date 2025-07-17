@@ -83,8 +83,9 @@ jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
-    needs: [build, lint] # Only run after build and lint pass
+    needs: [all-checks]
     if: |
+      success() &&
       github.event_name == 'push' && 
       github.ref == 'refs/heads/main' && 
       !contains(github.event.head_commit.message, 'skip ci') &&
