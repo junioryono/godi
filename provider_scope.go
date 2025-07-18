@@ -130,9 +130,9 @@ func newServiceProviderScope(provider *serviceProvider, ctx context.Context) *se
 		panic(fmt.Errorf("failed to register scope in dig scope %s: %w", scope.scopeID, err))
 	}
 
-	// Register scoped services in this dig scope
+	// Register all scoped and transient services in this dig scope
 	for _, desc := range provider.descriptors {
-		if desc.Lifetime != Scoped {
+		if desc.Lifetime == Singleton {
 			continue
 		}
 
@@ -155,16 +155,25 @@ func newServiceProviderScope(provider *serviceProvider, ctx context.Context) *se
 
 		// Use the constructor from the descriptor
 		if desc.Constructor == nil {
-			// This shouldn't happen if descriptor is validated
 			err := MissingConstructorError{ServiceType: desc.ServiceType, Context: "descriptor"}
-			panic(fmt.Errorf("failed to register scoped service %s: %w", desc.ServiceType, err))
+			panic(fmt.Errorf("failed to register service %s: %w", desc.ServiceType, err))
 		}
 
-		// Wrap the constructor to track instances for disposal
-		wrappedConstructor := scope.wrapConstructorForTracking(desc.Constructor)
-		err := scope.digScope.Provide(wrappedConstructor, opts...)
-		if err != nil {
-			panic(fmt.Errorf("failed to register scoped service %s: %w", desc.ServiceType, err))
+		if desc.Lifetime == Scoped {
+			// Wrap the constructor to track instances for disposal
+			wrappedConstructor := scope.wrapConstructorForTracking(desc.Constructor)
+			err := scope.digScope.Provide(wrappedConstructor, opts...)
+			if err != nil {
+				panic(fmt.Errorf("failed to register scoped service %s: %w", desc.ServiceType, err))
+			}
+		} else { // Transient
+			// For transient services, we need to register a factory function
+			// that returns a new instance each time
+			factoryConstructor := scope.createTransientFactory(desc.Constructor)
+			err := scope.digScope.Provide(factoryConstructor, opts...)
+			if err != nil {
+				panic(fmt.Errorf("failed to register transient service %s: %w", desc.ServiceType, err))
+			}
 		}
 	}
 
@@ -241,6 +250,55 @@ func (scope *serviceProviderScope) wrapConstructorForTracking(constructor interf
 	}).Interface()
 }
 
+func (scope *serviceProviderScope) createTransientFactory(constructor interface{}) interface{} {
+	constructorType := reflect.TypeOf(constructor)
+	constructorValue := reflect.ValueOf(constructor)
+
+	// Get the constructor's input and output types
+	numIn := constructorType.NumIn()
+	inTypes := make([]reflect.Type, numIn)
+	for i := 0; i < numIn; i++ {
+		inTypes[i] = constructorType.In(i)
+	}
+
+	numOut := constructorType.NumOut()
+	outTypes := make([]reflect.Type, numOut)
+	for i := 0; i < numOut; i++ {
+		outTypes[i] = constructorType.Out(i)
+	}
+
+	// Create a factory function that dig will call to get the dependencies
+	// The factory will return a function that creates new instances
+	factoryOutType := reflect.FuncOf([]reflect.Type{}, outTypes, false)
+	factoryType := reflect.FuncOf(inTypes, []reflect.Type{factoryOutType}, false)
+
+	factory := reflect.MakeFunc(factoryType, func(args []reflect.Value) []reflect.Value {
+		// Capture the dependencies
+		capturedArgs := make([]reflect.Value, len(args))
+		copy(capturedArgs, args)
+
+		// Return a function that creates new instances using the captured dependencies
+		instanceCreator := reflect.MakeFunc(factoryOutType, func(_ []reflect.Value) []reflect.Value {
+			// Call the original constructor with captured dependencies
+			results := constructorValue.Call(capturedArgs)
+
+			// Track disposables
+			if len(results) > 0 && results[0].IsValid() {
+				if !results[0].IsZero() {
+					instance := results[0].Interface()
+					scope.captureDisposable(instance)
+				}
+			}
+
+			return results
+		})
+
+		return []reflect.Value{instanceCreator}
+	})
+
+	return factory.Interface()
+}
+
 // Resolve implements ServiceProvider.
 func (scope *serviceProviderScope) Resolve(serviceType reflect.Type) (interface{}, error) {
 	if scope.IsDisposed() {
@@ -306,43 +364,37 @@ func (scope *serviceProviderScope) Resolve(serviceType reflect.Type) (interface{
 }
 
 func (scope *serviceProviderScope) resolveService(serviceType reflect.Type) (interface{}, error) {
-	// First, try to resolve a provider function for this type (for transient services)
-	providerFuncType := reflect.FuncOf([]reflect.Type{}, []reflect.Type{serviceType}, false)
+	// For transient services, we need to check if there's a factory function
+	factoryType := reflect.FuncOf([]reflect.Type{}, []reflect.Type{serviceType}, false)
 
-	var providerFunc interface{}
+	var factory interface{}
 
-	// Try to get the provider function
-	providerExtractor := reflect.MakeFunc(
-		reflect.FuncOf([]reflect.Type{providerFuncType}, []reflect.Type{reflect.TypeOf((*error)(nil)).Elem()}, false),
+	// Try to resolve the factory
+	factoryExtractor := reflect.MakeFunc(
+		reflect.FuncOf([]reflect.Type{factoryType}, []reflect.Type{reflect.TypeOf((*error)(nil)).Elem()}, false),
 		func(args []reflect.Value) []reflect.Value {
-			if len(args) > 0 && args[0].IsValid() {
-				providerFunc = args[0].Interface()
+			if len(args) > 0 && args[0].IsValid() && !args[0].IsZero() {
+				factory = args[0].Interface()
 				return []reflect.Value{reflect.Zero(reflect.TypeOf((*error)(nil)).Elem())}
 			}
-
-			return []reflect.Value{reflect.ValueOf(ErrProviderFunctionNotFound)}
+			return []reflect.Value{reflect.ValueOf(fmt.Errorf("factory not found"))}
 		},
 	)
 
-	// Try to invoke the provider extractor
+	// Try to get the factory
 	scope.serviceProvider.scopesMu.Lock()
-	providerErr := scope.digScope.Invoke(providerExtractor.Interface())
+	factoryErr := scope.digScope.Invoke(factoryExtractor.Interface())
 	scope.serviceProvider.scopesMu.Unlock()
 
-	// If we found a provider function, call it to get a new instance
-	if providerErr == nil && providerFunc != nil {
-		// Call the provider function
-		results := reflect.ValueOf(providerFunc).Call(nil)
+	// If we found a factory, call it to get a new instance
+	if factoryErr == nil && factory != nil {
+		results := reflect.ValueOf(factory).Call(nil)
 		if len(results) > 0 && results[0].IsValid() {
-			result := results[0].Interface()
-
-			// Track the instance for disposal in this scope
-			scope.captureDisposable(result)
-			return result, nil
+			return results[0].Interface(), nil
 		}
 	}
 
-	// If no provider function, resolve normally (for non-transient services)
+	// If no factory, try normal resolution (for scoped/singleton services)
 	var result interface{}
 	var resolveErr error
 
@@ -399,10 +451,10 @@ func (scope *serviceProviderScope) ResolveKeyed(serviceType reflect.Type, servic
 }
 
 func (scope *serviceProviderScope) resolveKeyedService(serviceType reflect.Type, serviceKey interface{}) (interface{}, error) {
-	// First, try to resolve a provider function for this keyed service (for transient services)
-	providerFuncType := reflect.FuncOf([]reflect.Type{}, []reflect.Type{serviceType}, false)
+	// For transient services, we need to check if there's a factory function
+	factoryType := reflect.FuncOf([]reflect.Type{}, []reflect.Type{serviceType}, false)
 
-	// Create a parameter struct to request the keyed provider function
+	// Create a parameter struct to request the keyed factory
 	paramType := reflect.StructOf([]reflect.StructField{
 		{
 			Name:      "In",
@@ -410,50 +462,43 @@ func (scope *serviceProviderScope) resolveKeyedService(serviceType reflect.Type,
 			Anonymous: true,
 		},
 		{
-			Name: "Provider",
-			Type: providerFuncType,
+			Name: "Factory",
+			Type: factoryType,
 			Tag:  reflect.StructTag(fmt.Sprintf(`name:"%v"`, serviceKey)),
 		},
 	})
 
-	var providerFunc interface{}
-	var providerErr error
+	var factory interface{}
 
-	// Try to get the keyed provider function
-	providerExtractor := reflect.MakeFunc(
+	// Try to get the keyed factory
+	factoryExtractor := reflect.MakeFunc(
 		reflect.FuncOf([]reflect.Type{paramType}, []reflect.Type{reflect.TypeOf((*error)(nil)).Elem()}, false),
 		func(args []reflect.Value) []reflect.Value {
 			if len(args) > 0 && args[0].IsValid() {
-				providerField := args[0].FieldByName("Provider")
-				if providerField.IsValid() && !providerField.IsZero() {
-					providerFunc = providerField.Interface()
+				factoryField := args[0].FieldByName("Factory")
+				if factoryField.IsValid() && !factoryField.IsZero() {
+					factory = factoryField.Interface()
 					return []reflect.Value{reflect.Zero(reflect.TypeOf((*error)(nil)).Elem())}
 				}
 			}
-
-			return []reflect.Value{reflect.ValueOf(ErrKeyedProviderFunctionNotFound)}
+			return []reflect.Value{reflect.ValueOf(fmt.Errorf("keyed factory not found"))}
 		},
 	)
 
-	// Try to invoke the provider extractor
+	// Try to invoke the factory extractor
 	scope.serviceProvider.scopesMu.Lock()
-	providerErr = scope.digScope.Invoke(providerExtractor.Interface())
+	factoryErr := scope.digScope.Invoke(factoryExtractor.Interface())
 	scope.serviceProvider.scopesMu.Unlock()
 
-	// If we found a provider function, call it to get a new instance
-	if providerErr == nil && providerFunc != nil {
-		// Call the provider function
-		results := reflect.ValueOf(providerFunc).Call(nil)
+	// If we found a factory, call it to get a new instance
+	if factoryErr == nil && factory != nil {
+		results := reflect.ValueOf(factory).Call(nil)
 		if len(results) > 0 && results[0].IsValid() {
-			result := results[0].Interface()
-
-			// Track the instance for disposal in this scope
-			scope.captureDisposable(result)
-			return result, nil
+			return results[0].Interface(), nil
 		}
 	}
 
-	// If no provider function, resolve normally (for non-transient keyed services)
+	// If no factory, try normal resolution (for scoped/singleton keyed services)
 	// This is complex with dig's current API - we need to use reflection
 	// to create a struct with the right name tag
 	paramType = reflect.StructOf([]reflect.StructField{

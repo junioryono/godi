@@ -2415,6 +2415,12 @@ func TestServiceProvider_ResolveGroup(t *testing.T) {
 		scope2 := provider.CreateScope(context.Background())
 		defer scope2.Close()
 
+		scope3 := provider.CreateScope(context.Background())
+		defer scope3.Close()
+
+		scope4 := provider.CreateScope(context.Background())
+		defer scope4.Close()
+
 		// Resolve in scope1
 		handlers1, err := scope1.ResolveGroup(reflect.TypeOf((*Handler)(nil)).Elem(), "scoped-handlers")
 		if err != nil {

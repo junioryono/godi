@@ -34,6 +34,47 @@ type (
 	scopeTestContextAware struct {
 		ctx context.Context
 	}
+
+	// Singleton services
+	lifetimeSingletonService struct {
+		ID          string
+		Transient   lifetimeTransientService
+		TransientID string // To verify we get different transient instances
+	}
+
+	lifetimeSingletonWithScoped struct {
+		ID     string
+		Scoped lifetimeScopedService // This should fail during validation
+	}
+
+	// Scoped services
+	lifetimeScopedService struct {
+		ID          string
+		Singleton   lifetimeSingletonOnlyService
+		Transient   lifetimeTransientService
+		TransientID string
+		SingletonID string
+	}
+
+	// Transient services
+	lifetimeTransientService struct {
+		ID        string
+		Singleton lifetimeSingletonOnlyService
+		Scoped    lifetimeScopedOnlyService
+	}
+
+	// Pure services for dependencies
+	lifetimeSingletonOnlyService struct {
+		ID string
+	}
+
+	lifetimeScopedOnlyService struct {
+		ID string
+	}
+
+	lifetimeTransientOnlyService struct {
+		ID string
+	}
 )
 
 func (s *scopeTestDisposable) Close() error {
@@ -47,6 +88,58 @@ func (s *scopeTestDisposable) Close() error {
 	s.disposed = true
 	s.disposeTime = time.Now()
 	return s.disposeError
+}
+
+// Constructors
+func newLifetimeSingletonService(transient lifetimeTransientService) *lifetimeSingletonService {
+	return &lifetimeSingletonService{
+		ID:          fmt.Sprintf("singleton-%d", time.Now().UnixNano()),
+		Transient:   transient,
+		TransientID: transient.ID,
+	}
+}
+
+func newLifetimeSingletonWithScoped(scoped lifetimeScopedService) *lifetimeSingletonWithScoped {
+	return &lifetimeSingletonWithScoped{
+		ID:     fmt.Sprintf("singleton-%d", time.Now().UnixNano()),
+		Scoped: scoped,
+	}
+}
+
+func newLifetimeScopedService(singleton lifetimeSingletonOnlyService, transient lifetimeTransientService) *lifetimeScopedService {
+	return &lifetimeScopedService{
+		ID:          fmt.Sprintf("scoped-%d", time.Now().UnixNano()),
+		Singleton:   singleton,
+		Transient:   transient,
+		TransientID: transient.ID,
+		SingletonID: singleton.ID,
+	}
+}
+
+func newLifetimeTransientService(singleton lifetimeSingletonOnlyService, scoped lifetimeScopedOnlyService) *lifetimeTransientService {
+	return &lifetimeTransientService{
+		ID:        fmt.Sprintf("transient-%d", time.Now().UnixNano()),
+		Singleton: singleton,
+		Scoped:    scoped,
+	}
+}
+
+func newLifetimeSingletonOnlyService() *lifetimeSingletonOnlyService {
+	return &lifetimeSingletonOnlyService{
+		ID: fmt.Sprintf("singleton-only-%d", time.Now().UnixNano()),
+	}
+}
+
+func newLifetimeScopedOnlyService() *lifetimeScopedOnlyService {
+	return &lifetimeScopedOnlyService{
+		ID: fmt.Sprintf("scoped-only-%d", time.Now().UnixNano()),
+	}
+}
+
+func newLifetimeTransientOnlyService() *lifetimeTransientOnlyService {
+	return &lifetimeTransientOnlyService{
+		ID: fmt.Sprintf("transient-only-%d", time.Now().UnixNano()),
+	}
 }
 
 func TestServiceProviderScope_Creation(t *testing.T) {
@@ -798,6 +891,879 @@ func TestServiceProviderScope_TransientWithDependencies(t *testing.T) {
 			t.Error("transient should have scoped dependency")
 		}
 	})
+}
+
+func TestLifetimeDependencies_SingletonAccessingTransient(t *testing.T) {
+	t.Run("singleton can access transient", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+
+		// Register services
+		collection.AddSingleton(newLifetimeSingletonOnlyService)
+		collection.AddTransient(func() *lifetimeTransientService {
+			return &lifetimeTransientService{
+				ID: fmt.Sprintf("transient-%d", time.Now().UnixNano()),
+			}
+		})
+		collection.AddSingleton(newLifetimeSingletonService)
+
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		defer provider.Close()
+
+		// Resolve singleton multiple times
+		svc1, err := godi.Resolve[*lifetimeSingletonService](provider)
+		if err != nil {
+			t.Fatalf("unexpected error resolving singleton: %v", err)
+		}
+
+		svc2, err := godi.Resolve[*lifetimeSingletonService](provider)
+		if err != nil {
+			t.Fatalf("unexpected error resolving singleton: %v", err)
+		}
+
+		// Should be same singleton instance
+		if svc1 != svc2 {
+			t.Error("singleton instances should be the same")
+		}
+
+		// The transient inside should be the same (captured at singleton creation)
+		if svc1.TransientID != svc2.TransientID {
+			t.Error("transient captured by singleton should be the same")
+		}
+	})
+
+	t.Run("singleton with transient factory pattern", func(t *testing.T) {
+		// This test shows how a singleton can get new transient instances
+		// by injecting a factory function instead of the service directly
+		collection := godi.NewServiceCollection()
+
+		collection.AddTransient(newLifetimeTransientOnlyService)
+
+		// Singleton that takes a factory function
+		type singletonWithFactory struct {
+			ID               string
+			TransientFactory func() *lifetimeTransientOnlyService
+			mu               sync.Mutex
+			createdInstances []string
+		}
+
+		collection.AddSingleton(func() *singletonWithFactory {
+			return &singletonWithFactory{
+				ID: "singleton-factory",
+			}
+		})
+
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		defer provider.Close()
+
+		svc, err := godi.Resolve[*singletonWithFactory](provider)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// In a real scenario, the singleton would have a method that uses
+		// the factory to create transient instances as needed
+		// This demonstrates that singletons can work with transients
+		// but need to be careful about lifetime management
+		svc.mu.Lock()
+		defer svc.mu.Unlock()
+		for i := 0; i < 5; i++ {
+			transient := svc.TransientFactory()
+			svc.createdInstances = append(svc.createdInstances, transient.ID)
+		}
+
+		if len(svc.createdInstances) != 5 {
+			t.Errorf("expected 5 transient instances, got %d", len(svc.createdInstances))
+		}
+
+		for _, id := range svc.createdInstances {
+			if !strings.HasPrefix(id, "transient-only-") {
+				t.Errorf("unexpected transient ID: %s", id)
+			}
+		}
+	})
+}
+
+func TestLifetimeDependencies_SingletonCannotAccessScoped(t *testing.T) {
+	t.Run("singleton cannot access scoped - validation error", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+
+		// Register services
+		collection.AddScoped(newLifetimeScopedOnlyService)
+		collection.AddSingleton(func(scoped *lifetimeScopedOnlyService) *lifetimeSingletonWithScoped {
+			return &lifetimeSingletonWithScoped{
+				ID: "invalid-singleton",
+			}
+		})
+
+		options := &godi.ServiceProviderOptions{
+			ValidateOnBuild: true,
+		}
+
+		_, err := collection.BuildServiceProviderWithOptions(options)
+		if err == nil {
+			t.Fatal("expected validation error when singleton depends on scoped")
+		}
+
+		// The error should indicate the dependency issue
+		if !godi.IsNotFound(err) {
+			t.Errorf("expected dependency not found error, got: %v", err)
+		}
+	})
+
+	t.Run("singleton cannot access scoped - runtime error without validation", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+
+		// Register services
+		collection.AddScoped(newLifetimeScopedOnlyService)
+		collection.AddSingleton(func(scoped *lifetimeScopedOnlyService) *lifetimeSingletonWithScoped {
+			return &lifetimeSingletonWithScoped{
+				ID: "invalid-singleton",
+			}
+		})
+
+		// Build without validation
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error during build: %v", err)
+		}
+		defer provider.Close()
+
+		// Should fail when trying to resolve
+		_, err = godi.Resolve[*lifetimeSingletonWithScoped](provider)
+		if err == nil {
+			t.Fatal("expected error when resolving singleton that depends on scoped")
+		}
+	})
+}
+
+func TestLifetimeDependencies_ScopedAccessingTransient(t *testing.T) {
+	t.Run("scoped can access transient", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+
+		// Register services
+		collection.AddSingleton(newLifetimeSingletonOnlyService)
+		collection.AddTransient(func() *lifetimeTransientService {
+			return &lifetimeTransientService{
+				ID: fmt.Sprintf("transient-%d", time.Now().UnixNano()),
+			}
+		})
+		collection.AddScoped(newLifetimeScopedService)
+
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		defer provider.Close()
+
+		scope := provider.CreateScope(context.Background())
+		defer scope.Close()
+
+		// Resolve scoped service multiple times in same scope
+		svc1, err := godi.Resolve[*lifetimeScopedService](scope)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		svc2, err := godi.Resolve[*lifetimeScopedService](scope)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// Should be same scoped instance
+		if svc1 != svc2 {
+			t.Error("scoped instances should be the same within scope")
+		}
+
+		// The transient inside should be the same (captured at scoped creation)
+		if svc1.TransientID != svc2.TransientID {
+			t.Error("transient captured by scoped should be the same")
+		}
+
+		// Create new scope
+		scope2 := provider.CreateScope(context.Background())
+		defer scope2.Close()
+
+		svc3, err := godi.Resolve[*lifetimeScopedService](scope2)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// Should be different scoped instance
+		if svc1 == svc3 {
+			t.Error("scoped instances should be different across scopes")
+		}
+
+		// Should have different transient
+		if svc1.TransientID == svc3.TransientID {
+			t.Error("transient should be different in different scopes")
+		}
+	})
+}
+
+func TestLifetimeDependencies_TransientAccessingScopedAndSingleton(t *testing.T) {
+	t.Run("transient can access both scoped and singleton", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+
+		// Register services
+		collection.AddSingleton(newLifetimeSingletonOnlyService)
+		collection.AddScoped(newLifetimeScopedOnlyService)
+		collection.AddTransient(newLifetimeTransientService)
+
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		defer provider.Close()
+
+		scope := provider.CreateScope(context.Background())
+		defer scope.Close()
+
+		// Resolve transient multiple times
+		trans1, err := godi.Resolve[*lifetimeTransientService](scope)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		trans2, err := godi.Resolve[*lifetimeTransientService](scope)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// Should be different transient instances
+		if trans1 == trans2 {
+			t.Error("transient instances should be different")
+		}
+		if trans1.ID == trans2.ID {
+			t.Error("transient IDs should be different")
+		}
+
+		// But they should reference the same singleton
+		if trans1.Singleton.ID != trans2.Singleton.ID {
+			t.Error("transients should reference the same singleton")
+		}
+
+		// And the same scoped service (within the same scope)
+		if trans1.Scoped.ID != trans2.Scoped.ID {
+			t.Error("transients should reference the same scoped service within scope")
+		}
+	})
+}
+
+func TestLifetimeDependencies_ComplexDependencyChain(t *testing.T) {
+	t.Run("complex dependency chain with all lifetimes", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+
+		// Register a complex chain
+		collection.AddSingleton(func() *lifetimeSingletonOnlyService {
+			return &lifetimeSingletonOnlyService{ID: "root-singleton"}
+		})
+
+		collection.AddScoped(func(singleton *lifetimeSingletonOnlyService) *lifetimeScopedOnlyService {
+			return &lifetimeScopedOnlyService{
+				ID: fmt.Sprintf("scoped-with-singleton-%s", singleton.ID),
+			}
+		})
+
+		collection.AddTransient(func(singleton *lifetimeSingletonOnlyService, scoped *lifetimeScopedOnlyService) *lifetimeTransientService {
+			return &lifetimeTransientService{
+				ID:        fmt.Sprintf("transient-%d", time.Now().UnixNano()),
+				Singleton: *singleton,
+				Scoped:    *scoped,
+			}
+		})
+
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		defer provider.Close()
+
+		// Test in first scope
+		scope1 := provider.CreateScope(context.Background())
+		defer scope1.Close()
+
+		trans1_1, _ := godi.Resolve[*lifetimeTransientService](scope1)
+		trans1_2, _ := godi.Resolve[*lifetimeTransientService](scope1)
+
+		// Different transient instances
+		if trans1_1 == trans1_2 {
+			t.Error("transient instances should be different")
+		}
+
+		// Same singleton reference
+		if trans1_1.Singleton.ID != "root-singleton" {
+			t.Error("singleton ID mismatch")
+		}
+		if trans1_1.Singleton.ID != trans1_2.Singleton.ID {
+			t.Error("singleton should be the same")
+		}
+
+		// Same scoped reference within scope
+		if trans1_1.Scoped.ID != trans1_2.Scoped.ID {
+			t.Error("scoped should be the same within scope")
+		}
+
+		// Test in second scope
+		scope2 := provider.CreateScope(context.Background())
+		defer scope2.Close()
+
+		trans2_1, _ := godi.Resolve[*lifetimeTransientService](scope2)
+
+		// Same singleton across scopes
+		if trans1_1.Singleton.ID != trans2_1.Singleton.ID {
+			t.Error("singleton should be the same across scopes")
+		}
+
+		// Different scoped across scopes
+		if trans1_1.Scoped.ID == trans2_1.Scoped.ID {
+			t.Error("scoped should be different across scopes")
+		}
+	})
+}
+
+func TestLifetimeDependencies_TransientResolutionPatterns(t *testing.T) {
+	t.Run("transient resolved through different paths", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+
+		instanceCount := 0
+		collection.AddTransient(func() *lifetimeTransientOnlyService {
+			instanceCount++
+			return &lifetimeTransientOnlyService{
+				ID: fmt.Sprintf("transient-%d", instanceCount),
+			}
+		})
+
+		// Service A depends on transient
+		type serviceA struct {
+			Transient *lifetimeTransientOnlyService
+		}
+		collection.AddScoped(func(t *lifetimeTransientOnlyService) *serviceA {
+			return &serviceA{Transient: t}
+		})
+
+		// Service B also depends on transient
+		type serviceB struct {
+			Transient *lifetimeTransientOnlyService
+		}
+		collection.AddScoped(func(t *lifetimeTransientOnlyService) *serviceB {
+			return &serviceB{Transient: t}
+		})
+
+		// Service C depends on both A and B
+		type serviceC struct {
+			A *serviceA
+			B *serviceB
+		}
+		collection.AddScoped(func(a *serviceA, b *serviceB) *serviceC {
+			return &serviceC{A: a, B: b}
+		})
+
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		defer provider.Close()
+
+		scope := provider.CreateScope(context.Background())
+		defer scope.Close()
+
+		// Resolve service C
+		svcC, err := godi.Resolve[*serviceC](scope)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// A and B should have different transient instances
+		if svcC.A.Transient.ID == svcC.B.Transient.ID {
+			t.Error("transient instances should be different when resolved through different paths")
+		}
+
+		// Direct resolution should also give a new instance
+		directTransient, err := godi.Resolve[*lifetimeTransientOnlyService](scope)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if directTransient.ID == svcC.A.Transient.ID || directTransient.ID == svcC.B.Transient.ID {
+			t.Error("directly resolved transient should be a new instance")
+		}
+	})
+}
+
+func TestLifetimeDependencies_LifetimeMismatchErrors(t *testing.T) {
+	t.Run("detects lifetime mismatches during validation", func(t *testing.T) {
+		testCases := []struct {
+			name        string
+			setup       func(godi.ServiceCollection)
+			shouldError bool
+			errorMsg    string
+		}{
+			{
+				name: "singleton depending on scoped",
+				setup: func(c godi.ServiceCollection) {
+					c.AddScoped(func() *lifetimeScopedOnlyService {
+						return &lifetimeScopedOnlyService{ID: "test"}
+					})
+					c.AddSingleton(func(scoped *lifetimeScopedOnlyService) *lifetimeSingletonOnlyService {
+						return &lifetimeSingletonOnlyService{ID: "invalid"}
+					})
+				},
+				shouldError: true,
+				errorMsg:    "singleton cannot depend on scoped",
+			},
+			{
+				name: "singleton depending on transient is allowed",
+				setup: func(c godi.ServiceCollection) {
+					c.AddTransient(func() *lifetimeTransientOnlyService {
+						return &lifetimeTransientOnlyService{ID: "test"}
+					})
+					c.AddSingleton(func(trans *lifetimeTransientOnlyService) *lifetimeSingletonOnlyService {
+						return &lifetimeSingletonOnlyService{ID: trans.ID}
+					})
+				},
+				shouldError: false,
+			},
+			{
+				name: "scoped depending on singleton is allowed",
+				setup: func(c godi.ServiceCollection) {
+					c.AddSingleton(func() *lifetimeSingletonOnlyService {
+						return &lifetimeSingletonOnlyService{ID: "test"}
+					})
+					c.AddScoped(func(singleton *lifetimeSingletonOnlyService) *lifetimeScopedOnlyService {
+						return &lifetimeScopedOnlyService{ID: singleton.ID}
+					})
+				},
+				shouldError: false,
+			},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				collection := godi.NewServiceCollection()
+				tc.setup(collection)
+
+				options := &godi.ServiceProviderOptions{
+					ValidateOnBuild: true,
+				}
+
+				_, err := collection.BuildServiceProviderWithOptions(options)
+
+				if tc.shouldError && err == nil {
+					t.Errorf("expected error for %s", tc.errorMsg)
+				} else if !tc.shouldError && err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+			})
+		}
+	})
+}
+
+// Test concurrent transient resolution
+func TestTransientServices_Concurrency(t *testing.T) {
+	t.Run("concurrent transient resolution creates unique instances", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+
+		var counter int32
+		collection.AddTransient(func() *lifetimeTransientOnlyService {
+			id := atomic.AddInt32(&counter, 1)
+			return &lifetimeTransientOnlyService{
+				ID: fmt.Sprintf("transient-%d", id),
+			}
+		})
+
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		defer provider.Close()
+
+		scope := provider.CreateScope(context.Background())
+		defer scope.Close()
+
+		const goroutines = 100
+		instances := make([]*lifetimeTransientOnlyService, goroutines)
+		var wg sync.WaitGroup
+		wg.Add(goroutines)
+
+		for i := 0; i < goroutines; i++ {
+			idx := i
+			go func() {
+				defer wg.Done()
+				inst, err := godi.Resolve[*lifetimeTransientOnlyService](scope)
+				if err != nil {
+					t.Errorf("goroutine %d: %v", idx, err)
+					return
+				}
+				instances[idx] = inst
+			}()
+		}
+
+		wg.Wait()
+
+		// Verify all instances are unique
+		seen := make(map[string]bool)
+		for i, inst := range instances {
+			if inst == nil {
+				t.Errorf("instance %d is nil", i)
+				continue
+			}
+			if seen[inst.ID] {
+				t.Errorf("duplicate instance ID: %s", inst.ID)
+			}
+			seen[inst.ID] = true
+		}
+
+		// Should have created exactly 'goroutines' instances
+		if int(atomic.LoadInt32(&counter)) != goroutines {
+			t.Errorf("expected %d instances, got %d", goroutines, counter)
+		}
+	})
+}
+
+// Test transient with groups
+func TestTransientServices_Groups(t *testing.T) {
+	t.Run("transient services in groups are not allowed", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+
+		// This should fail because transient services cannot be in groups
+		err := collection.AddTransient(func() Handler {
+			return &testHandler{name: "transient-handler"}
+		}, godi.Group("handlers"))
+
+		if err == nil {
+			t.Fatal("expected error when adding transient service to group")
+		}
+
+		if !errors.Is(err, godi.ErrTransientInGroup) {
+			t.Errorf("expected ErrTransientInGroup, got %v", err)
+		}
+	})
+}
+
+// Test transient services with keyed registration
+func TestTransientServices_Keyed(t *testing.T) {
+	t.Run("keyed transient services work correctly", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+
+		var primaryCount, secondaryCount int32
+
+		collection.AddTransient(func() *lifetimeTransientOnlyService {
+			count := atomic.AddInt32(&primaryCount, 1)
+			return &lifetimeTransientOnlyService{
+				ID: fmt.Sprintf("primary-%d", count),
+			}
+		}, godi.Name("primary"))
+
+		collection.AddTransient(func() *lifetimeTransientOnlyService {
+			count := atomic.AddInt32(&secondaryCount, 1)
+			return &lifetimeTransientOnlyService{
+				ID: fmt.Sprintf("secondary-%d", count),
+			}
+		}, godi.Name("secondary"))
+
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		defer provider.Close()
+
+		scope := provider.CreateScope(context.Background())
+		defer scope.Close()
+
+		// Resolve primary multiple times
+		primary1, err := godi.ResolveKeyed[*lifetimeTransientOnlyService](scope, "primary")
+		if err != nil {
+			t.Fatalf("error resolving primary: %v", err)
+		}
+
+		primary2, err := godi.ResolveKeyed[*lifetimeTransientOnlyService](scope, "primary")
+		if err != nil {
+			t.Fatalf("error resolving primary: %v", err)
+		}
+
+		// Should be different instances
+		if primary1 == primary2 {
+			t.Error("keyed transient instances should be different")
+		}
+		if primary1.ID == primary2.ID {
+			t.Errorf("expected different IDs, got %s and %s", primary1.ID, primary2.ID)
+		}
+
+		// Resolve secondary
+		secondary1, err := godi.ResolveKeyed[*lifetimeTransientOnlyService](scope, "secondary")
+		if err != nil {
+			t.Fatalf("error resolving secondary: %v", err)
+		}
+
+		// Should have correct prefix
+		if !strings.HasPrefix(primary1.ID, "primary-") {
+			t.Errorf("primary should have 'primary-' prefix, got %s", primary1.ID)
+		}
+		if !strings.HasPrefix(secondary1.ID, "secondary-") {
+			t.Errorf("secondary should have 'secondary-' prefix, got %s", secondary1.ID)
+		}
+
+		// Counts should be correct
+		if atomic.LoadInt32(&primaryCount) != 2 {
+			t.Errorf("expected 2 primary instances, got %d", primaryCount)
+		}
+		if atomic.LoadInt32(&secondaryCount) != 1 {
+			t.Errorf("expected 1 secondary instance, got %d", secondaryCount)
+		}
+	})
+}
+
+// Test transient disposal
+func TestTransientServices_Disposal(t *testing.T) {
+	t.Run("transient services are disposed when scope closes", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+
+		collection.AddTransient(func() *scopeTestDisposable {
+			return &scopeTestDisposable{
+				ID: fmt.Sprintf("transient-%d", time.Now().UnixNano()),
+			}
+		})
+
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		defer provider.Close()
+
+		var instances []*scopeTestDisposable
+
+		// Create scope and resolve multiple transients
+		func() {
+			scope := provider.CreateScope(context.Background())
+			defer scope.Close()
+
+			for i := 0; i < 5; i++ {
+				inst, err := godi.Resolve[*scopeTestDisposable](scope)
+				if err != nil {
+					t.Fatalf("error resolving transient: %v", err)
+				}
+				instances = append(instances, inst)
+			}
+
+			// All should be different instances
+			for i := 0; i < len(instances)-1; i++ {
+				for j := i + 1; j < len(instances); j++ {
+					if instances[i] == instances[j] {
+						t.Errorf("instances %d and %d should be different", i, j)
+					}
+				}
+			}
+
+			// None should be disposed yet
+			for i, inst := range instances {
+				if inst.disposed {
+					t.Errorf("instance %d should not be disposed yet", i)
+				}
+			}
+		}() // Scope closes here
+
+		// All instances should now be disposed
+		for i, inst := range instances {
+			if !inst.disposed {
+				t.Errorf("instance %d should be disposed after scope close", i)
+			}
+		}
+	})
+}
+
+// Test transient with complex constructors
+func TestTransientServices_ComplexConstructors(t *testing.T) {
+	t.Run("transient with multiple dependencies", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+
+		// Register dependencies
+		collection.AddSingleton(func() *lifetimeSingletonOnlyService {
+			return &lifetimeSingletonOnlyService{ID: "singleton"}
+		})
+
+		collection.AddScoped(func() *lifetimeScopedOnlyService {
+			return &lifetimeScopedOnlyService{ID: "scoped"}
+		})
+
+		// Complex transient with parameter object
+		type transientParams struct {
+			godi.In
+
+			Singleton *lifetimeSingletonOnlyService
+			Scoped    *lifetimeScopedOnlyService
+			Context   context.Context
+		}
+
+		type complexTransient struct {
+			ID          string
+			SingletonID string
+			ScopedID    string
+			HasContext  bool
+		}
+
+		collection.AddTransient(func(params transientParams) *complexTransient {
+			return &complexTransient{
+				ID:          fmt.Sprintf("complex-%d", time.Now().UnixNano()),
+				SingletonID: params.Singleton.ID,
+				ScopedID:    params.Scoped.ID,
+				HasContext:  params.Context != nil,
+			}
+		})
+
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		defer provider.Close()
+
+		type ctxKey string
+		const testKey ctxKey = "test"
+		ctx := context.WithValue(context.Background(), testKey, "value")
+		scope := provider.CreateScope(ctx)
+		defer scope.Close()
+
+		// Resolve multiple times
+		inst1, err := godi.Resolve[*complexTransient](scope)
+		if err != nil {
+			t.Fatalf("error resolving complex transient: %v", err)
+		}
+
+		inst2, err := godi.Resolve[*complexTransient](scope)
+		if err != nil {
+			t.Fatalf("error resolving complex transient: %v", err)
+		}
+
+		// Should be different instances
+		if inst1 == inst2 {
+			t.Error("instances should be different")
+		}
+		if inst1.ID == inst2.ID {
+			t.Error("instance IDs should be different")
+		}
+
+		// But should have same dependencies
+		if inst1.SingletonID != inst2.SingletonID {
+			t.Error("singleton dependency should be the same")
+		}
+		if inst1.ScopedID != inst2.ScopedID {
+			t.Error("scoped dependency should be the same within scope")
+		}
+
+		// Should have context
+		if !inst1.HasContext || !inst2.HasContext {
+			t.Error("context should be available")
+		}
+	})
+}
+
+// Test transient with result objects
+func TestTransientServices_ResultObjects(t *testing.T) {
+	t.Run("transient with result object", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+
+		type transientResult struct {
+			godi.Out
+
+			Service1 *lifetimeTransientOnlyService
+			Service2 *lifetimeTransientOnlyService `name:"special"`
+		}
+
+		var counter int32
+		collection.AddTransient(func() transientResult {
+			count := atomic.AddInt32(&counter, 1)
+			return transientResult{
+				Service1: &lifetimeTransientOnlyService{
+					ID: fmt.Sprintf("service1-%d", count),
+				},
+				Service2: &lifetimeTransientOnlyService{
+					ID: fmt.Sprintf("service2-%d", count),
+				},
+			}
+		})
+
+		provider, err := collection.BuildServiceProvider()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		defer provider.Close()
+
+		scope := provider.CreateScope(context.Background())
+		defer scope.Close()
+
+		// Resolve the services
+		svc1_1, err := godi.Resolve[*lifetimeTransientOnlyService](scope)
+		if err != nil {
+			t.Fatalf("error resolving service1: %v", err)
+		}
+
+		svc1_2, err := godi.Resolve[*lifetimeTransientOnlyService](scope)
+		if err != nil {
+			t.Fatalf("error resolving service1 again: %v", err)
+		}
+
+		// Should be different instances (transient)
+		if svc1_1 == svc1_2 {
+			t.Error("transient result object services should create new instances")
+		}
+
+		// Resolve keyed service
+		svcSpecial, err := godi.ResolveKeyed[*lifetimeTransientOnlyService](scope, "special")
+		if err != nil {
+			t.Fatalf("error resolving special service: %v", err)
+		}
+
+		if svcSpecial == nil {
+			t.Error("special service should not be nil")
+		}
+
+		// Counter should reflect all invocations
+		expectedCount := int32(3) // Two regular + one keyed
+		if atomic.LoadInt32(&counter) != expectedCount {
+			t.Errorf("expected %d invocations, got %d", expectedCount, counter)
+		}
+	})
+}
+
+// Benchmark tests for different lifetime resolution patterns
+func BenchmarkLifetimeDependencies_TransientResolution(b *testing.B) {
+	collection := godi.NewServiceCollection()
+	collection.AddTransient(newLifetimeTransientOnlyService)
+
+	provider, _ := collection.BuildServiceProvider()
+	defer provider.Close()
+
+	scope := provider.CreateScope(context.Background())
+	defer scope.Close()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = godi.Resolve[*lifetimeTransientOnlyService](scope)
+	}
+}
+
+func BenchmarkLifetimeDependencies_ComplexChain(b *testing.B) {
+	collection := godi.NewServiceCollection()
+
+	collection.AddSingleton(newLifetimeSingletonOnlyService)
+	collection.AddScoped(newLifetimeScopedOnlyService)
+	collection.AddTransient(newLifetimeTransientService)
+
+	provider, _ := collection.BuildServiceProvider()
+	defer provider.Close()
+
+	scope := provider.CreateScope(context.Background())
+	defer scope.Close()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = godi.Resolve[*lifetimeTransientService](scope)
+	}
 }
 
 // Benchmarks

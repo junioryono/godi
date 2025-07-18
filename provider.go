@@ -188,6 +188,10 @@ func newServiceProviderWithOptions(services ServiceCollection, options *ServiceP
 
 	// Register all services with dig based on lifetime
 	for _, desc := range provider.descriptors {
+		if desc.Lifetime != Singleton {
+			continue
+		}
+
 		if err := provider.registerService(desc); err != nil {
 			return nil, RegistrationError{
 				ServiceType: desc.ServiceType,
@@ -217,6 +221,10 @@ func newServiceProviderWithOptions(services ServiceCollection, options *ServiceP
 
 // registerService registers a service descriptor with the dig container.
 func (sp *serviceProvider) registerService(desc *serviceDescriptor) error {
+	if desc.Lifetime != Singleton {
+		return fmt.Errorf("only Singleton services can be registered at the root level, got %s for %s", desc.Lifetime, desc.ServiceType)
+	}
+
 	// Handle decorators separately
 	if desc.isDecorator() && desc.DecorateInfo != nil {
 		err := sp.digContainer.Decorate(desc.DecorateInfo.Decorator, desc.DecorateInfo.DecorateOptions...)
@@ -226,11 +234,6 @@ func (sp *serviceProvider) registerService(desc *serviceDescriptor) error {
 	// Ensure we have a constructor
 	if desc.Constructor == nil {
 		return MissingConstructorError{ServiceType: desc.ServiceType, Context: "service"}
-	}
-
-	// Skip scoped services in the root container - they'll be registered in scopes
-	if desc.Lifetime == Scoped {
-		return nil
 	}
 
 	// Create provider options
@@ -251,119 +254,10 @@ func (sp *serviceProvider) registerService(desc *serviceDescriptor) error {
 		opts = append(opts, asOpts...)
 	}
 
-	// Check if this is a result object constructor
-	isResultObject := false
-	fnInfo := globalTypeCache.getTypeInfo(reflect.TypeOf(desc.Constructor))
-	if fnInfo.IsFunc && fnInfo.NumOut > 0 {
-		firstOutInfo := globalTypeCache.getTypeInfo(fnInfo.OutTypes[0])
-		if firstOutInfo.IsStruct && firstOutInfo.HasOutField {
-			isResultObject = true
-		}
-	}
-
-	// For transient services, wrap in a provider function
-	if desc.Lifetime == Transient && !isResultObject {
-		wrappedConstructor := sp.wrapTransientConstructor(desc)
-		err := sp.digContainer.Provide(wrappedConstructor, opts...)
-		return err
-	}
-
-	// For singleton services that are NOT result objects, wrap the constructor
-	if desc.Lifetime == Singleton && !isResultObject {
-		// Wrap the constructor to capture disposable instances
-		wrappedConstructor := sp.wrapSingletonConstructor(desc.Constructor)
-		err := sp.digContainer.Provide(wrappedConstructor, opts...)
-		return err
-	}
-
-	// For result objects and singleton services, register directly
-	if desc.Lifetime == Singleton || isResultObject {
-		// Singleton result objects are registered directly
-		err := sp.digContainer.Provide(desc.Constructor, opts...)
-		return err
-	}
-
-	panic(fmt.Errorf("unsupported service lifetime %s for service %s", desc.Lifetime, desc.ServiceType))
-}
-
-// wrapTransientConstructor wraps a constructor to provide factory behavior.
-func (sp *serviceProvider) wrapTransientConstructor(desc *serviceDescriptor) interface{} {
-	constructor := desc.Constructor
-	serviceType := desc.ServiceType
-	fnType := reflect.TypeOf(constructor)
-	fnInfo := globalTypeCache.getTypeInfo(fnType)
-
-	// Create a provider function type: func() T
-	providerFuncType := reflect.FuncOf([]reflect.Type{}, []reflect.Type{serviceType}, false)
-
-	// Build the wrapper function that dig will call
-	wrapperInTypes := make([]reflect.Type, fnInfo.NumIn)
-	copy(wrapperInTypes, fnInfo.InTypes)
-
-	// Check if context.Context is one of the dependencies
-	hasContext := false
-	contextIndex := -1
-	contextType := reflect.TypeOf((*context.Context)(nil)).Elem()
-	for i := 0; i < fnInfo.NumIn; i++ {
-		if wrapperInTypes[i] == contextType {
-			hasContext = true
-			contextIndex = i
-			break
-		}
-	}
-
-	wrapperOutTypes := []reflect.Type{providerFuncType}
-	// Add error if the constructor can fail
-	if fnInfo.NumOut > 1 && fnInfo.HasErrorReturn {
-		errorType := reflect.TypeOf((*error)(nil)).Elem()
-		wrapperOutTypes = append(wrapperOutTypes, errorType)
-	}
-
-	wrapperType := reflect.FuncOf(wrapperInTypes, wrapperOutTypes, false)
-
-	wrapper := reflect.MakeFunc(wrapperType, func(args []reflect.Value) []reflect.Value {
-		// Capture the dependencies in the closure
-		capturedArgs := make([]reflect.Value, len(args))
-		copy(capturedArgs, args)
-
-		// Create the provider function that will be called each time the service is needed
-		providerFunc := reflect.MakeFunc(providerFuncType, func(_ []reflect.Value) []reflect.Value {
-			// Get the current scope from context if available
-			var currentScope *serviceProviderScope
-			if hasContext && contextIndex >= 0 && capturedArgs[contextIndex].IsValid() {
-				ctx := capturedArgs[contextIndex].Interface().(context.Context)
-				if scope, err := ScopeFromContext(ctx); err == nil {
-					currentScope = scope.(*serviceProviderScope)
-				}
-			}
-
-			// Fall back to root scope if no scope in context
-			if currentScope == nil {
-				currentScope = sp.rootScope
-			}
-
-			// Call the original constructor with the captured dependencies
-			results := reflect.ValueOf(constructor).Call(capturedArgs)
-
-			// Handle the result
-			if len(results) > 0 && results[0].IsValid() {
-				instance := results[0].Interface()
-				currentScope.captureDisposable(instance)
-			}
-
-			// Return only the service instance
-			return results[:1]
-		})
-
-		// Return the provider function
-		if len(wrapperOutTypes) > 1 {
-			return []reflect.Value{providerFunc, reflect.Zero(wrapperOutTypes[1])}
-		}
-
-		return []reflect.Value{providerFunc}
-	})
-
-	return wrapper.Interface()
+	// Wrap the constructor to capture disposable instances
+	wrappedConstructor := sp.wrapSingletonConstructor(desc.Constructor)
+	err := sp.digContainer.Provide(wrappedConstructor, opts...)
+	return err
 }
 
 // wrapSingletonConstructor wraps a singleton constructor to track disposable instances.
