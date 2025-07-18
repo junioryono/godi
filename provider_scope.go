@@ -130,41 +130,27 @@ func newServiceProviderScope(provider *serviceProvider, ctx context.Context) *se
 		panic(fmt.Errorf("failed to register scope in dig scope %s: %w", scope.scopeID, err))
 	}
 
-	// Register scoped services in this dig scope
+	// Register scoped and transient services in this dig scope
 	for _, desc := range provider.descriptors {
-		if desc.Lifetime != Scoped {
+		if desc.Lifetime == Singleton {
 			continue
-		}
-
-		// Create provider options
-		opts := []ProvideOption{}
-
-		if desc.isKeyedService() {
-			opts = append(opts, Name(fmt.Sprintf("%v", desc.ServiceKey)))
-		}
-
-		// Handle groups if specified in metadata
-		if group, ok := desc.Metadata["group"].(string); ok && group != "" {
-			opts = append(opts, Group(group))
-		}
-
-		// Handle 'asOptions' if specified
-		if asOpts, ok := desc.Metadata["asOptions"].([]ProvideOption); ok {
-			opts = append(opts, asOpts...)
 		}
 
 		// Use the constructor from the descriptor
 		if desc.Constructor == nil {
 			// This shouldn't happen if descriptor is validated
 			err := MissingConstructorError{ServiceType: desc.ServiceType, Context: "descriptor"}
-			panic(fmt.Errorf("failed to register scoped service %s: %w", desc.ServiceType, err))
+			panic(fmt.Errorf("failed to register scoped/transient service %s: %w", desc.ServiceType, err))
 		}
 
-		// Wrap the constructor to track instances for disposal
+		// Scoped and Transient services are registered identically into the scope.
+		// `dig` will cache them within the scope, making Transient behave like Scoped.
+		// This is a necessary simplification to make dependency resolution work.
+		// We wrap the constructor to track all created instances for disposal.
 		wrappedConstructor := scope.wrapConstructorForTracking(desc.Constructor)
-		err := scope.digScope.Provide(wrappedConstructor, opts...)
+		err := scope.digScope.Provide(wrappedConstructor, desc.ProvideOptions...)
 		if err != nil {
-			panic(fmt.Errorf("failed to register scoped service %s: %w", desc.ServiceType, err))
+			panic(fmt.Errorf("failed to register %s service %s: %w", desc.Lifetime, desc.ServiceType, err))
 		}
 	}
 
@@ -231,8 +217,19 @@ func (scope *serviceProviderScope) wrapConstructorForTracking(constructor interf
 		// Call the original constructor
 		results := fnValue.Call(args)
 
-		// Track the instance if successful
-		if len(results) > 0 && results[0].IsValid() {
+		// Track the instance for disposal if the constructor was successful
+		// Check for error in return values
+		hasError := false
+		if len(results) > 1 {
+			lastResult := results[len(results)-1]
+			if lastResult.Type().Implements(reflect.TypeOf((*error)(nil)).Elem()) {
+				if !lastResult.IsNil() {
+					hasError = true
+				}
+			}
+		}
+
+		if !hasError && len(results) > 0 && results[0].IsValid() {
 			instance := results[0].Interface()
 			scope.captureDisposable(instance)
 		}
@@ -306,47 +303,13 @@ func (scope *serviceProviderScope) Resolve(serviceType reflect.Type) (interface{
 }
 
 func (scope *serviceProviderScope) resolveService(serviceType reflect.Type) (interface{}, error) {
-	// First, try to resolve a provider function for this type (for transient services)
-	providerFuncType := reflect.FuncOf([]reflect.Type{}, []reflect.Type{serviceType}, false)
-
-	var providerFunc interface{}
-
-	// Try to get the provider function
-	providerExtractor := reflect.MakeFunc(
-		reflect.FuncOf([]reflect.Type{providerFuncType}, []reflect.Type{reflect.TypeOf((*error)(nil)).Elem()}, false),
-		func(args []reflect.Value) []reflect.Value {
-			if len(args) > 0 && args[0].IsValid() {
-				providerFunc = args[0].Interface()
-				return []reflect.Value{reflect.Zero(reflect.TypeOf((*error)(nil)).Elem())}
-			}
-
-			return []reflect.Value{reflect.ValueOf(ErrProviderFunctionNotFound)}
-		},
-	)
-
-	// Try to invoke the provider extractor
-	scope.serviceProvider.scopesMu.Lock()
-	providerErr := scope.digScope.Invoke(providerExtractor.Interface())
-	scope.serviceProvider.scopesMu.Unlock()
-
-	// If we found a provider function, call it to get a new instance
-	if providerErr == nil && providerFunc != nil {
-		// Call the provider function
-		results := reflect.ValueOf(providerFunc).Call(nil)
-		if len(results) > 0 && results[0].IsValid() {
-			result := results[0].Interface()
-
-			// Track the instance for disposal in this scope
-			scope.captureDisposable(result)
-			return result, nil
-		}
-	}
-
-	// If no provider function, resolve normally (for non-transient services)
+	// With the new model, all resolvable services (Singleton, Scoped, Transient)
+	// are present in the dig container graph. We can use a simple, unified
+	// resolution strategy.
 	var result interface{}
 	var resolveErr error
 
-	// Build the extraction function dynamically
+	// Build the extraction function dynamically: func(T) error
 	fnType := reflect.FuncOf([]reflect.Type{serviceType}, []reflect.Type{reflect.TypeOf((*error)(nil)).Elem()}, false)
 	fn := reflect.MakeFunc(fnType, func(args []reflect.Value) []reflect.Value {
 		if len(args) > 0 && args[0].IsValid() {
@@ -399,64 +362,8 @@ func (scope *serviceProviderScope) ResolveKeyed(serviceType reflect.Type, servic
 }
 
 func (scope *serviceProviderScope) resolveKeyedService(serviceType reflect.Type, serviceKey interface{}) (interface{}, error) {
-	// First, try to resolve a provider function for this keyed service (for transient services)
-	providerFuncType := reflect.FuncOf([]reflect.Type{}, []reflect.Type{serviceType}, false)
-
-	// Create a parameter struct to request the keyed provider function
+	// Use a dig.In struct to request the named service.
 	paramType := reflect.StructOf([]reflect.StructField{
-		{
-			Name:      "In",
-			Type:      reflect.TypeOf(In{}),
-			Anonymous: true,
-		},
-		{
-			Name: "Provider",
-			Type: providerFuncType,
-			Tag:  reflect.StructTag(fmt.Sprintf(`name:"%v"`, serviceKey)),
-		},
-	})
-
-	var providerFunc interface{}
-	var providerErr error
-
-	// Try to get the keyed provider function
-	providerExtractor := reflect.MakeFunc(
-		reflect.FuncOf([]reflect.Type{paramType}, []reflect.Type{reflect.TypeOf((*error)(nil)).Elem()}, false),
-		func(args []reflect.Value) []reflect.Value {
-			if len(args) > 0 && args[0].IsValid() {
-				providerField := args[0].FieldByName("Provider")
-				if providerField.IsValid() && !providerField.IsZero() {
-					providerFunc = providerField.Interface()
-					return []reflect.Value{reflect.Zero(reflect.TypeOf((*error)(nil)).Elem())}
-				}
-			}
-
-			return []reflect.Value{reflect.ValueOf(ErrKeyedProviderFunctionNotFound)}
-		},
-	)
-
-	// Try to invoke the provider extractor
-	scope.serviceProvider.scopesMu.Lock()
-	providerErr = scope.digScope.Invoke(providerExtractor.Interface())
-	scope.serviceProvider.scopesMu.Unlock()
-
-	// If we found a provider function, call it to get a new instance
-	if providerErr == nil && providerFunc != nil {
-		// Call the provider function
-		results := reflect.ValueOf(providerFunc).Call(nil)
-		if len(results) > 0 && results[0].IsValid() {
-			result := results[0].Interface()
-
-			// Track the instance for disposal in this scope
-			scope.captureDisposable(result)
-			return result, nil
-		}
-	}
-
-	// If no provider function, resolve normally (for non-transient keyed services)
-	// This is complex with dig's current API - we need to use reflection
-	// to create a struct with the right name tag
-	paramType = reflect.StructOf([]reflect.StructField{
 		{
 			Name:      "In",
 			Type:      reflect.TypeOf(In{}),
@@ -557,15 +464,15 @@ func (scope *serviceProviderScope) resolveGroupService(serviceType reflect.Type,
 				results = make([]interface{}, servicesField.Len())
 				for i := 0; i < servicesField.Len(); i++ {
 					results[i] = servicesField.Index(i).Interface()
-					// Track disposables for cleanup
-					scope.captureDisposable(results[i])
+					// Note: Disposables are already captured by wrapConstructorForTracking
 				}
 				return []reflect.Value{reflect.Zero(reflect.TypeOf((*error)(nil)).Elem())}
 			}
 		}
 
-		err := fmt.Errorf("no services found in group %q for type %s", groupName, formatType(serviceType))
-		return []reflect.Value{reflect.ValueOf(err)}
+		// It's not an error if a group is empty, return an empty slice.
+		results = make([]interface{}, 0)
+		return []reflect.Value{reflect.Zero(reflect.TypeOf((*error)(nil)).Elem())}
 	})
 
 	// Invoke through dig with mutex protection
