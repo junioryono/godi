@@ -399,23 +399,64 @@ func (scope *serviceProviderScope) ResolveKeyed(serviceType reflect.Type, servic
 }
 
 func (scope *serviceProviderScope) resolveKeyedService(serviceType reflect.Type, serviceKey interface{}) (interface{}, error) {
-	// First check if this is a transient service
-	var isTransient bool
-	for _, desc := range scope.serviceProvider.descriptors {
-		if desc.ServiceType == serviceType && desc.ServiceKey == serviceKey && desc.Lifetime == Transient {
-			isTransient = true
-			break
+	// First, try to resolve a provider function for this keyed service (for transient services)
+	providerFuncType := reflect.FuncOf([]reflect.Type{}, []reflect.Type{serviceType}, false)
+
+	// Create a parameter struct to request the keyed provider function
+	paramType := reflect.StructOf([]reflect.StructField{
+		{
+			Name:      "In",
+			Type:      reflect.TypeOf(In{}),
+			Anonymous: true,
+		},
+		{
+			Name: "Provider",
+			Type: providerFuncType,
+			Tag:  reflect.StructTag(fmt.Sprintf(`name:"%v"`, serviceKey)),
+		},
+	})
+
+	var providerFunc interface{}
+	var providerErr error
+
+	// Try to get the keyed provider function
+	providerExtractor := reflect.MakeFunc(
+		reflect.FuncOf([]reflect.Type{paramType}, []reflect.Type{reflect.TypeOf((*error)(nil)).Elem()}, false),
+		func(args []reflect.Value) []reflect.Value {
+			if len(args) > 0 && args[0].IsValid() {
+				providerField := args[0].FieldByName("Provider")
+				if providerField.IsValid() && !providerField.IsZero() {
+					providerFunc = providerField.Interface()
+					return []reflect.Value{reflect.Zero(reflect.TypeOf((*error)(nil)).Elem())}
+				}
+			}
+
+			return []reflect.Value{reflect.ValueOf(ErrKeyedProviderFunctionNotFound)}
+		},
+	)
+
+	// Try to invoke the provider extractor
+	scope.serviceProvider.scopesMu.Lock()
+	providerErr = scope.digScope.Invoke(providerExtractor.Interface())
+	scope.serviceProvider.scopesMu.Unlock()
+
+	// If we found a provider function, call it to get a new instance
+	if providerErr == nil && providerFunc != nil {
+		// Call the provider function
+		results := reflect.ValueOf(providerFunc).Call(nil)
+		if len(results) > 0 && results[0].IsValid() {
+			result := results[0].Interface()
+
+			// Track the instance for disposal in this scope
+			scope.captureDisposable(result)
+			return result, nil
 		}
 	}
 
-	if isTransient {
-		// For transient keyed services, we need to call the factory
-		// The provider function should handle this, so just do normal resolution
-		// which will call the provider that calls the factory
-	}
-
-	// Use the existing resolution logic
-	paramType := reflect.StructOf([]reflect.StructField{
+	// If no provider function, resolve normally (for non-transient keyed services)
+	// This is complex with dig's current API - we need to use reflection
+	// to create a struct with the right name tag
+	paramType = reflect.StructOf([]reflect.StructField{
 		{
 			Name:      "In",
 			Type:      reflect.TypeOf(In{}),

@@ -217,6 +217,10 @@ func newServiceProviderWithOptions(services ServiceCollection, options *ServiceP
 
 // registerService registers a service descriptor with the dig container.
 func (sp *serviceProvider) registerService(desc *serviceDescriptor) error {
+	if desc.Lifetime == Scoped {
+		return nil
+	}
+
 	// Handle decorators separately
 	if desc.isDecorator() && desc.DecorateInfo != nil {
 		err := sp.digContainer.Decorate(desc.DecorateInfo.Decorator, desc.DecorateInfo.DecorateOptions...)
@@ -253,11 +257,6 @@ func (sp *serviceProvider) registerService(desc *serviceDescriptor) error {
 		wrappedConstructor := sp.wrapSingletonConstructor(desc.Constructor)
 		err := sp.digContainer.Provide(wrappedConstructor, opts...)
 		return err
-
-	case Scoped:
-		// Scoped services are registered in scopes, not the root container
-		// We'll register them when creating scopes
-		return nil
 
 	case Transient:
 		// Wrap the constructor to provide factory behavior
@@ -350,7 +349,7 @@ func (sp *serviceProvider) wrapTransientConstructor(desc *serviceDescriptor) int
 	return wrapper.Interface()
 }
 
-// wrapSingletonConstructor wraps a constructor to track disposable instances.
+// wrapSingletonConstructor wraps a singleton constructor to track disposable instances.
 func (sp *serviceProvider) wrapSingletonConstructor(constructor interface{}) interface{} {
 	fnType := reflect.TypeOf(constructor)
 	fnInfo := globalTypeCache.getTypeInfo(fnType)
