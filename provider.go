@@ -215,6 +215,31 @@ func newServiceProviderWithOptions(services ServiceCollection, options *ServiceP
 	return provider, nil
 }
 
+// findDescriptor finds the descriptor for a service.
+// For non-keyed services, it returns the first registration.
+// For keyed services, it finds the specific keyed registration.
+func (sp *serviceProvider) findDescriptor(serviceType reflect.Type, serviceKey interface{}) *serviceDescriptor {
+	sp.mu.RLock()
+	defer sp.mu.RUnlock()
+
+	if serviceKey != nil {
+		key := typeKeyPair{serviceType: serviceType, serviceKey: serviceKey}
+		if descs, ok := sp.keyedIndex[key]; ok && len(descs) > 0 {
+			return descs[0]
+		}
+	} else {
+		if descs, ok := sp.descriptorIndex[serviceType]; ok {
+			// Find the non-keyed one
+			for _, d := range descs {
+				if !d.isKeyedService() {
+					return d
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // registerService registers a service descriptor with the dig container.
 func (sp *serviceProvider) registerService(desc *serviceDescriptor) error {
 	// Scoped and Transient services are registered within each scope, not in the root container.
@@ -253,8 +278,6 @@ func (sp *serviceProvider) registerService(desc *serviceDescriptor) error {
 		return fmt.Errorf("unknown or unhandled service lifetime for root provider: %v", desc.Lifetime)
 	}
 }
-
-// wrapTransientConstructor was removed from here as it's no longer needed at the provider level.
 
 // wrapSingletonConstructor wraps a singleton constructor to track disposable instances.
 func (sp *serviceProvider) wrapSingletonConstructor(constructor interface{}) interface{} {

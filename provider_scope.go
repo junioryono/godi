@@ -144,8 +144,8 @@ func newServiceProviderScope(provider *serviceProvider, ctx context.Context) *se
 		}
 
 		// Scoped and Transient services are registered identically into the scope.
-		// `dig` will cache them within the scope, making Transient behave like Scoped.
-		// This is a necessary simplification to make dependency resolution work.
+		// `dig` will cache them within the scope, making Transient behave like Scoped
+		// when injected as a dependency. This is a necessary simplification.
 		// We wrap the constructor to track all created instances for disposal.
 		wrappedConstructor := scope.wrapConstructorForTracking(desc.Constructor)
 		err := scope.digScope.Provide(wrappedConstructor, desc.ProvideOptions...)
@@ -240,12 +240,25 @@ func (scope *serviceProviderScope) wrapConstructorForTracking(constructor interf
 
 // Resolve implements ServiceProvider.
 func (scope *serviceProviderScope) Resolve(serviceType reflect.Type) (interface{}, error) {
+	return scope.resolve(serviceType, nil)
+}
+
+// ResolveKeyed implements ServiceProvider.
+func (scope *serviceProviderScope) ResolveKeyed(serviceType reflect.Type, serviceKey interface{}) (interface{}, error) {
+	return scope.resolve(serviceType, serviceKey)
+}
+
+// resolve is the unified underlying resolution logic.
+func (scope *serviceProviderScope) resolve(serviceType reflect.Type, serviceKey interface{}) (interface{}, error) {
 	if scope.IsDisposed() {
 		return nil, ErrScopeDisposed
 	}
 
 	if serviceType == nil {
 		return nil, ErrInvalidServiceType
+	}
+	if serviceKey != nil && serviceKey == reflect.Zero(reflect.TypeOf(serviceKey)).Interface() {
+		return nil, ErrServiceKeyNil
 	}
 
 	// Create a context with timeout if configured
@@ -270,7 +283,18 @@ func (scope *serviceProviderScope) Resolve(serviceType reflect.Type) (interface{
 
 	// Run the resolution in a goroutine
 	go func() {
-		result, err := scope.resolveService(serviceType)
+		// Find descriptor to check the lifetime
+		descriptor := scope.serviceProvider.findDescriptor(serviceType, serviceKey)
+		var result interface{}
+		var err error
+
+		// If the service is transient, we bypass the cache and invoke the constructor directly.
+		if descriptor != nil && descriptor.Lifetime == Transient {
+			result, err = scope.resolveTransient(descriptor)
+		} else {
+			// For Scoped and Singleton, resolve normally from the container cache.
+			result, err = scope.resolveFromCache(serviceType, serviceKey)
+		}
 		resultChan <- resolveResult{value: result, err: err}
 	}()
 
@@ -302,104 +326,92 @@ func (scope *serviceProviderScope) Resolve(serviceType reflect.Type) (interface{
 	return result, err
 }
 
-func (scope *serviceProviderScope) resolveService(serviceType reflect.Type) (interface{}, error) {
-	// With the new model, all resolvable services (Singleton, Scoped, Transient)
-	// are present in the dig container graph. We can use a simple, unified
-	// resolution strategy.
-	var result interface{}
-	var resolveErr error
+// resolveTransient handles creating a new instance of a transient service.
+func (scope *serviceProviderScope) resolveTransient(desc *serviceDescriptor) (interface{}, error) {
+	var instance interface{}
+	var constructorErr error
 
-	// Build the extraction function dynamically: func(T) error
-	fnType := reflect.FuncOf([]reflect.Type{serviceType}, []reflect.Type{reflect.TypeOf((*error)(nil)).Elem()}, false)
-	fn := reflect.MakeFunc(fnType, func(args []reflect.Value) []reflect.Value {
-		if len(args) > 0 && args[0].IsValid() {
-			result = args[0].Interface()
-			return []reflect.Value{reflect.Zero(reflect.TypeOf((*error)(nil)).Elem())}
+	ctor := desc.Constructor
+	ctorValue := reflect.ValueOf(ctor)
+	ctorType := reflect.TypeOf(ctor)
+
+	// Create the list of input types for the function we'll give to Invoke
+	inTypes := make([]reflect.Type, ctorType.NumIn())
+	for i := 0; i < len(inTypes); i++ {
+		inTypes[i] = ctorType.In(i)
+	}
+
+	// Create the function that dig will invoke: func(deps...)
+	// This function's body calls the original constructor.
+	invokeFunc := reflect.MakeFunc(reflect.FuncOf(inTypes, nil, false), func(args []reflect.Value) []reflect.Value {
+		// dig calls this with resolved dependencies in 'args'
+		results := ctorValue.Call(args)
+
+		// Capture the created instance and track it for disposal
+		instance = results[0].Interface()
+		scope.captureDisposable(instance)
+
+		// Capture the error from the constructor, if any
+		if len(results) > 1 && !results[1].IsNil() {
+			constructorErr = results[1].Interface().(error)
 		}
-
-		err := ResolutionError{ServiceType: serviceType, Cause: ErrFailedToExtractService}
-		return []reflect.Value{reflect.ValueOf(err)}
+		return nil
 	})
 
-	// Invoke through dig with mutex protection
+	// Use dig to invoke our dynamic function, which resolves all dependencies
 	scope.serviceProvider.scopesMu.Lock()
-	resolveErr = scope.digScope.Invoke(fn.Interface())
+	resolveErr := scope.digScope.Invoke(invokeFunc.Interface())
 	scope.serviceProvider.scopesMu.Unlock()
 
-	return result, resolveErr
+	if resolveErr != nil {
+		return nil, resolveErr // An error occurred resolving the dependencies
+	}
+
+	// Return the newly created instance and any error from the constructor itself
+	return instance, constructorErr
 }
 
-// ResolveKeyed implements ServiceProvider.
-func (scope *serviceProviderScope) ResolveKeyed(serviceType reflect.Type, serviceKey interface{}) (interface{}, error) {
-	if scope.IsDisposed() {
-		return nil, ErrScopeDisposed
-	}
-
-	if serviceType == nil {
-		return nil, ErrInvalidServiceType
-	}
-
-	if serviceKey == nil {
-		return nil, ErrServiceKeyNil
-	}
-
-	// Record start time for metrics
-	startTime := time.Now()
-
-	result, err := scope.resolveKeyedService(serviceType, serviceKey)
-
-	// Calculate resolution duration
-	duration := time.Since(startTime)
-
-	// Record metrics and callbacks
-	if err == nil && scope.serviceProvider.options.OnServiceResolved != nil {
-		scope.serviceProvider.options.OnServiceResolved(serviceType, result, duration)
-	} else if err != nil && scope.serviceProvider.options.OnServiceError != nil {
-		scope.serviceProvider.options.OnServiceError(serviceType, err)
-	}
-
-	return result, err
-}
-
-func (scope *serviceProviderScope) resolveKeyedService(serviceType reflect.Type, serviceKey interface{}) (interface{}, error) {
-	// Use a dig.In struct to request the named service.
-	paramType := reflect.StructOf([]reflect.StructField{
-		{
-			Name:      "In",
-			Type:      reflect.TypeOf(In{}),
-			Anonymous: true,
-		},
-		{
-			Name: "Service",
-			Type: serviceType,
-			Tag:  reflect.StructTag(fmt.Sprintf(`name:"%v"`, serviceKey)),
-		},
-	})
-
-	// Create extraction function
+// resolveFromCache handles resolving Scoped and Singleton services from dig's container.
+func (scope *serviceProviderScope) resolveFromCache(serviceType reflect.Type, serviceKey interface{}) (interface{}, error) {
 	var result interface{}
-	fnType := reflect.FuncOf([]reflect.Type{paramType}, []reflect.Type{reflect.TypeOf((*error)(nil)).Elem()}, false)
-	fn := reflect.MakeFunc(fnType, func(args []reflect.Value) []reflect.Value {
-		if len(args) > 0 && args[0].IsValid() {
-			serviceField := args[0].FieldByName("Service")
-			if serviceField.IsValid() {
-				result = serviceField.Interface()
-				return []reflect.Value{reflect.Zero(reflect.TypeOf((*error)(nil)).Elem())}
-			}
-		}
 
-		err := ResolutionError{ServiceType: serviceType, ServiceKey: serviceKey, Cause: ErrFailedToExtractKeyedService}
-		return []reflect.Value{reflect.ValueOf(err)}
-	})
+	// Build the extraction function dynamically: func(T) error or func(In) error
+	var extractor interface{}
+
+	if serviceKey != nil {
+		// For keyed services, use a dig.In struct
+		paramType := reflect.StructOf([]reflect.StructField{
+			{Name: "In", Type: reflect.TypeOf(In{}), Anonymous: true},
+			{Name: "Service", Type: serviceType, Tag: reflect.StructTag(fmt.Sprintf(`name:"%v"`, serviceKey))},
+		})
+		fn := reflect.MakeFunc(reflect.FuncOf([]reflect.Type{paramType}, nil, false), func(args []reflect.Value) []reflect.Value {
+			if len(args) > 0 && args[0].IsValid() {
+				result = args[0].FieldByName("Service").Interface()
+			}
+			return nil
+		})
+		extractor = fn.Interface()
+	} else {
+		// For non-keyed services, request the type directly
+		fn := reflect.MakeFunc(reflect.FuncOf([]reflect.Type{serviceType}, nil, false), func(args []reflect.Value) []reflect.Value {
+			if len(args) > 0 && args[0].IsValid() {
+				result = args[0].Interface()
+			}
+			return nil
+		})
+		extractor = fn.Interface()
+	}
 
 	// Invoke through dig with mutex protection
-	var resolveErr error
 	scope.serviceProvider.scopesMu.Lock()
-	resolveErr = scope.digScope.Invoke(fn.Interface())
+	resolveErr := scope.digScope.Invoke(extractor)
 	scope.serviceProvider.scopesMu.Unlock()
 
 	if resolveErr != nil {
 		return nil, resolveErr
+	}
+	if result == nil {
+		return nil, ResolutionError{ServiceType: serviceType, ServiceKey: serviceKey, Cause: ErrServiceNotFound}
 	}
 
 	return result, nil
@@ -464,7 +476,6 @@ func (scope *serviceProviderScope) resolveGroupService(serviceType reflect.Type,
 				results = make([]interface{}, servicesField.Len())
 				for i := 0; i < servicesField.Len(); i++ {
 					results[i] = servicesField.Index(i).Interface()
-					// Note: Disposables are already captured by wrapConstructorForTracking
 				}
 				return []reflect.Value{reflect.Zero(reflect.TypeOf((*error)(nil)).Elem())}
 			}
