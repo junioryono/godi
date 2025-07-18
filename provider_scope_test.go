@@ -2,6 +2,8 @@ package godi_test
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"reflect"
@@ -38,20 +40,20 @@ type (
 	// Singleton services
 	lifetimeSingletonService struct {
 		ID          string
-		Transient   lifetimeTransientService
+		Transient   *lifetimeTransientService
 		TransientID string // To verify we get different transient instances
 	}
 
 	lifetimeSingletonWithScoped struct {
 		ID     string
-		Scoped lifetimeScopedService // This should fail during validation
+		Scoped *lifetimeScopedService // This should fail during validation
 	}
 
 	// Scoped services
 	lifetimeScopedService struct {
 		ID          string
-		Singleton   lifetimeSingletonOnlyService
-		Transient   lifetimeTransientService
+		Singleton   *lifetimeSingletonOnlyService
+		Transient   *lifetimeTransientService
 		TransientID string
 		SingletonID string
 	}
@@ -59,8 +61,8 @@ type (
 	// Transient services
 	lifetimeTransientService struct {
 		ID        string
-		Singleton lifetimeSingletonOnlyService
-		Scoped    lifetimeScopedOnlyService
+		Singleton *lifetimeSingletonOnlyService
+		Scoped    *lifetimeScopedOnlyService
 	}
 
 	// Pure services for dependencies
@@ -91,24 +93,24 @@ func (s *scopeTestDisposable) Close() error {
 }
 
 // Constructors
-func newLifetimeSingletonService(transient lifetimeTransientService) *lifetimeSingletonService {
+func newLifetimeSingletonService(transient *lifetimeTransientService) *lifetimeSingletonService {
 	return &lifetimeSingletonService{
-		ID:          fmt.Sprintf("singleton-%d", time.Now().UnixNano()),
+		ID:          fmt.Sprintf("singleton-%s", generateID()),
 		Transient:   transient,
 		TransientID: transient.ID,
 	}
 }
 
-func newLifetimeSingletonWithScoped(scoped lifetimeScopedService) *lifetimeSingletonWithScoped {
+func newLifetimeSingletonWithScoped(scoped *lifetimeScopedService) *lifetimeSingletonWithScoped {
 	return &lifetimeSingletonWithScoped{
-		ID:     fmt.Sprintf("singleton-%d", time.Now().UnixNano()),
+		ID:     fmt.Sprintf("singleton-%s", generateID()),
 		Scoped: scoped,
 	}
 }
 
-func newLifetimeScopedService(singleton lifetimeSingletonOnlyService, transient lifetimeTransientService) *lifetimeScopedService {
+func newLifetimeScopedService(singleton *lifetimeSingletonOnlyService, transient *lifetimeTransientService) *lifetimeScopedService {
 	return &lifetimeScopedService{
-		ID:          fmt.Sprintf("scoped-%d", time.Now().UnixNano()),
+		ID:          fmt.Sprintf("scoped-%s", generateID()),
 		Singleton:   singleton,
 		Transient:   transient,
 		TransientID: transient.ID,
@@ -116,9 +118,9 @@ func newLifetimeScopedService(singleton lifetimeSingletonOnlyService, transient 
 	}
 }
 
-func newLifetimeTransientService(singleton lifetimeSingletonOnlyService, scoped lifetimeScopedOnlyService) *lifetimeTransientService {
+func newLifetimeTransientService(singleton *lifetimeSingletonOnlyService, scoped *lifetimeScopedOnlyService) *lifetimeTransientService {
 	return &lifetimeTransientService{
-		ID:        fmt.Sprintf("transient-%d", time.Now().UnixNano()),
+		ID:        fmt.Sprintf("transient-%s", generateID()),
 		Singleton: singleton,
 		Scoped:    scoped,
 	}
@@ -126,20 +128,34 @@ func newLifetimeTransientService(singleton lifetimeSingletonOnlyService, scoped 
 
 func newLifetimeSingletonOnlyService() *lifetimeSingletonOnlyService {
 	return &lifetimeSingletonOnlyService{
-		ID: fmt.Sprintf("singleton-only-%d", time.Now().UnixNano()),
+		ID: fmt.Sprintf("singleton-only-%s", generateID()),
 	}
 }
 
 func newLifetimeScopedOnlyService() *lifetimeScopedOnlyService {
 	return &lifetimeScopedOnlyService{
-		ID: fmt.Sprintf("scoped-only-%d", time.Now().UnixNano()),
+		ID: fmt.Sprintf("scoped-only-%s", generateID()),
 	}
 }
 
 func newLifetimeTransientOnlyService() *lifetimeTransientOnlyService {
 	return &lifetimeTransientOnlyService{
-		ID: fmt.Sprintf("transient-only-%d", time.Now().UnixNano()),
+		ID: fmt.Sprintf("transient-only-%s", generateID()),
 	}
+}
+
+func generateID() string {
+	// Timestamp (8 bytes)
+	timestamp := time.Now().UnixNano()
+
+	// Random bytes (8 bytes)
+	randomBytes := make([]byte, 8)
+	if _, err := rand.Read(randomBytes); err != nil {
+		panic(err)
+	}
+
+	// Combine timestamp and random
+	return fmt.Sprintf("%016x%s", timestamp, hex.EncodeToString(randomBytes))
 }
 
 func TestServiceProviderScope_Creation(t *testing.T) {
@@ -1048,11 +1064,8 @@ func TestLifetimeDependencies_ScopedAccessingTransient(t *testing.T) {
 
 		// Register services
 		collection.AddSingleton(newLifetimeSingletonOnlyService)
-		collection.AddTransient(func() *lifetimeTransientService {
-			return &lifetimeTransientService{
-				ID: fmt.Sprintf("transient-%d", time.Now().UnixNano()),
-			}
-		})
+		collection.AddScoped(newLifetimeScopedOnlyService)
+		collection.AddTransient(newLifetimeTransientService)
 		collection.AddScoped(newLifetimeScopedService)
 
 		provider, err := collection.BuildServiceProvider()
@@ -1173,8 +1186,8 @@ func TestLifetimeDependencies_ComplexDependencyChain(t *testing.T) {
 		collection.AddTransient(func(singleton *lifetimeSingletonOnlyService, scoped *lifetimeScopedOnlyService) *lifetimeTransientService {
 			return &lifetimeTransientService{
 				ID:        fmt.Sprintf("transient-%d", time.Now().UnixNano()),
-				Singleton: *singleton,
-				Scoped:    *scoped,
+				Singleton: singleton,
+				Scoped:    scoped,
 			}
 		})
 

@@ -217,10 +217,6 @@ func newServiceProviderWithOptions(services ServiceCollection, options *ServiceP
 
 // registerService registers a service descriptor with the dig container.
 func (sp *serviceProvider) registerService(desc *serviceDescriptor) error {
-	if desc.Lifetime == Scoped {
-		return nil
-	}
-
 	// Handle decorators separately
 	if desc.isDecorator() && desc.DecorateInfo != nil {
 		err := sp.digContainer.Decorate(desc.DecorateInfo.Decorator, desc.DecorateInfo.DecorateOptions...)
@@ -250,14 +246,112 @@ func (sp *serviceProvider) registerService(desc *serviceDescriptor) error {
 		opts = append(opts, asOpts...)
 	}
 
-	// Wrap the constructor to capture disposable instances
-	wrappedConstructor := sp.wrapConstructor(desc.Constructor)
-	err := sp.digContainer.Provide(wrappedConstructor, opts...)
-	return err
+	// Register based on lifetime
+	switch desc.Lifetime {
+	case Singleton:
+		// Wrap the constructor to capture disposable instances
+		wrappedConstructor := sp.wrapSingletonConstructor(desc.Constructor)
+		err := sp.digContainer.Provide(wrappedConstructor, opts...)
+		return err
+
+	case Scoped:
+		// Scoped services are registered in scopes, not the root container
+		// We'll register them when creating scopes
+		return nil
+
+	case Transient:
+		// Wrap the constructor to provide factory behavior
+		wrappedConstructor := sp.wrapTransientConstructor(desc)
+		err := sp.digContainer.Provide(wrappedConstructor, opts...)
+		return err
+
+	default:
+		return fmt.Errorf("unknown service lifetime: %v", desc.Lifetime)
+	}
 }
 
-// wrapConstructor wraps a constructor to track disposable instances.
-func (sp *serviceProvider) wrapConstructor(constructor interface{}) interface{} {
+// wrapTransientConstructor wraps a constructor to provide factory behavior.
+func (sp *serviceProvider) wrapTransientConstructor(desc *serviceDescriptor) interface{} {
+	constructor := desc.Constructor
+	serviceType := desc.ServiceType
+	fnType := reflect.TypeOf(constructor)
+	fnInfo := globalTypeCache.getTypeInfo(fnType)
+
+	// Create a provider function type: func() T
+	providerFuncType := reflect.FuncOf([]reflect.Type{}, []reflect.Type{serviceType}, false)
+
+	// Build the wrapper function that dig will call
+	wrapperInTypes := make([]reflect.Type, fnInfo.NumIn)
+	copy(wrapperInTypes, fnInfo.InTypes)
+
+	// Check if context.Context is one of the dependencies
+	hasContext := false
+	contextIndex := -1
+	contextType := reflect.TypeOf((*context.Context)(nil)).Elem()
+	for i := 0; i < fnInfo.NumIn; i++ {
+		if wrapperInTypes[i] == contextType {
+			hasContext = true
+			contextIndex = i
+			break
+		}
+	}
+
+	wrapperOutTypes := []reflect.Type{providerFuncType}
+	// Add error if the constructor can fail
+	if fnInfo.NumOut > 1 && fnInfo.HasErrorReturn {
+		errorType := reflect.TypeOf((*error)(nil)).Elem()
+		wrapperOutTypes = append(wrapperOutTypes, errorType)
+	}
+
+	wrapperType := reflect.FuncOf(wrapperInTypes, wrapperOutTypes, false)
+
+	wrapper := reflect.MakeFunc(wrapperType, func(args []reflect.Value) []reflect.Value {
+		// Capture the dependencies in the closure
+		capturedArgs := make([]reflect.Value, len(args))
+		copy(capturedArgs, args)
+
+		// Create the provider function that will be called each time the service is needed
+		providerFunc := reflect.MakeFunc(providerFuncType, func(_ []reflect.Value) []reflect.Value {
+			// Get the current scope from context if available
+			var currentScope *serviceProviderScope
+			if hasContext && contextIndex >= 0 && capturedArgs[contextIndex].IsValid() {
+				ctx := capturedArgs[contextIndex].Interface().(context.Context)
+				if scope, err := ScopeFromContext(ctx); err == nil {
+					currentScope = scope.(*serviceProviderScope)
+				}
+			}
+
+			// Fall back to root scope if no scope in context
+			if currentScope == nil {
+				currentScope = sp.rootScope
+			}
+
+			// Call the original constructor with the captured dependencies
+			results := reflect.ValueOf(constructor).Call(capturedArgs)
+
+			// Handle the result
+			if len(results) > 0 && results[0].IsValid() {
+				instance := results[0].Interface()
+				currentScope.captureDisposable(instance)
+			}
+
+			// Return only the service instance
+			return results[:1]
+		})
+
+		// Return the provider function
+		if len(wrapperOutTypes) > 1 {
+			return []reflect.Value{providerFunc, reflect.Zero(wrapperOutTypes[1])}
+		}
+
+		return []reflect.Value{providerFunc}
+	})
+
+	return wrapper.Interface()
+}
+
+// wrapSingletonConstructor wraps a constructor to track disposable instances.
+func (sp *serviceProvider) wrapSingletonConstructor(constructor interface{}) interface{} {
 	fnType := reflect.TypeOf(constructor)
 	fnInfo := globalTypeCache.getTypeInfo(fnType)
 	fnValue := reflect.ValueOf(constructor)
