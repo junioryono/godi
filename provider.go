@@ -188,10 +188,6 @@ func newServiceProviderWithOptions(services ServiceCollection, options *ServiceP
 
 	// Register all services with dig based on lifetime
 	for _, desc := range provider.descriptors {
-		if desc.Lifetime != Singleton {
-			continue
-		}
-
 		if err := provider.registerService(desc); err != nil {
 			return nil, RegistrationError{
 				ServiceType: desc.ServiceType,
@@ -221,8 +217,8 @@ func newServiceProviderWithOptions(services ServiceCollection, options *ServiceP
 
 // registerService registers a service descriptor with the dig container.
 func (sp *serviceProvider) registerService(desc *serviceDescriptor) error {
-	if desc.Lifetime != Singleton {
-		return fmt.Errorf("only Singleton services can be registered at the root level, got %s for %s", desc.Lifetime, desc.ServiceType)
+	if desc.Lifetime == Scoped {
+		return nil
 	}
 
 	// Handle decorators separately
@@ -255,13 +251,13 @@ func (sp *serviceProvider) registerService(desc *serviceDescriptor) error {
 	}
 
 	// Wrap the constructor to capture disposable instances
-	wrappedConstructor := sp.wrapSingletonConstructor(desc.Constructor)
+	wrappedConstructor := sp.wrapConstructor(desc.Constructor)
 	err := sp.digContainer.Provide(wrappedConstructor, opts...)
 	return err
 }
 
-// wrapSingletonConstructor wraps a singleton constructor to track disposable instances.
-func (sp *serviceProvider) wrapSingletonConstructor(constructor interface{}) interface{} {
+// wrapConstructor wraps a constructor to track disposable instances.
+func (sp *serviceProvider) wrapConstructor(constructor interface{}) interface{} {
 	fnType := reflect.TypeOf(constructor)
 	fnInfo := globalTypeCache.getTypeInfo(fnType)
 	fnValue := reflect.ValueOf(constructor)
