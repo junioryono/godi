@@ -9,7 +9,7 @@
 ## Features
 
 - 🚀 **Simple, intuitive API** inspired by Microsoft's DI container
-- 🔄 **Three service lifetimes**: Singleton, Scoped, and Transient
+- 🔄 **Two service lifetimes**: Singleton and Scoped
 - 🎯 **Type-safe** service resolution with generic helpers
 - 🏗️ **Constructor injection** with automatic dependency resolution
 - 🔌 **Modular design** with support for service modules
@@ -127,14 +127,6 @@ Created once per scope. Ideal for per-request services in web applications.
 
 ```go
 services.AddScoped(NewRepository)
-```
-
-### Transient
-
-Created every time they are requested.
-
-```go
-services.AddTransient(NewService)
 ```
 
 ## Advanced Features
@@ -392,7 +384,6 @@ For performance-critical paths, consider:
 
 - Resolving services once and reusing them
 - Using singleton services where appropriate
-- Avoiding transient services in hot paths
 
 ## Contributing
 

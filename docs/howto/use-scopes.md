@@ -352,13 +352,6 @@ func MetricsMiddleware(provider godi.ServiceProvider) func(http.Handler) http.Ha
 - Managing transactions or units of work
 - Examples: Request Context, User Session, Transaction, Tenant Context
 
-### Use Transient When:
-
-- Need a fresh instance every time
-- Service has mutable state
-- Lightweight to create
-- Examples: Email Messages, Commands, Temporary Calculations
-
 ## Common Patterns
 
 ### Pattern 1: Request Pipeline

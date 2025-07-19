@@ -159,40 +159,6 @@ func HandleRequest(provider godi.ServiceProvider) http.HandlerFunc {
 }
 ```
 
-### Transient Disposal
-
-Transient services are disposed with their containing scope:
-
-```go
-type TempFile struct {
-    file *os.File
-    path string
-}
-
-func NewTempFile() (*TempFile, error) {
-    file, err := os.CreateTemp("", "upload-*")
-    if err != nil {
-        return nil, err
-    }
-
-    return &TempFile{
-        file: file,
-        path: file.Name(),
-    }, nil
-}
-
-func (t *TempFile) Close() error {
-    t.file.Close()
-    return os.Remove(t.path)
-}
-
-// Register as transient
-collection.AddTransient(NewTempFile)
-
-// Each resolution creates a new instance
-// All instances disposed when scope closes
-```
-
 ## Disposal Patterns
 
 ### Resource Pool

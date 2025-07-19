@@ -60,7 +60,6 @@ func main() {
     // Email stuff
     services.AddSingleton(NewEmailConfig)
     services.AddSingleton(NewSMTPClient)
-    services.AddTransient(NewEmailMessage)
     services.AddScoped(NewEmailService)
 
     // ... 50 more lines
@@ -102,7 +101,6 @@ package email
 var Module = godi.Module("email",
     godi.AddSingleton(NewEmailConfig),
     godi.AddSingleton(NewSMTPClient),
-    godi.AddTransient(NewEmailMessage),
     godi.AddScoped(NewEmailService),
 )
 
@@ -148,7 +146,6 @@ var NotificationModule = godi.Module("notifications",
     godi.AddSingleton(NewEmailClient),
     godi.AddSingleton(NewSMSClient),
     godi.AddScoped(NewNotificationService),
-    godi.AddTransient(NewNotificationMessage),
 )
 ```
 

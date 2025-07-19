@@ -71,7 +71,7 @@ emailService, _ := godi.Resolve[*EmailService](provider)
 
 ## Service Lifetimes: When Things Are Created
 
-This is the most important concept in godi. There are three lifetimes:
+This is the most important concept in godi. There are two lifetimes:
 
 ### Singleton - One for the Whole App
 
@@ -101,19 +101,6 @@ cart2, _ := godi.Resolve[*ShoppingCart](scope2.ServiceProvider())
 ```
 
 **Use for:** Database transactions, request context, user sessions
-
-### Transient - New Every Time
-
-```go
-services.AddTransient(NewEmailMessage)
-
-// Always creates a new instance
-email1, _ := godi.Resolve[*EmailMessage](provider)
-email2, _ := godi.Resolve[*EmailMessage](provider)
-// email1 != email2 (always different)
-```
-
-**Use for:** Unique operations, temporary objects, messages
 
 ## Scopes: Isolation for Operations
 
@@ -262,7 +249,6 @@ godi handled all of that for us!
 | **ServiceProvider**   | What creates service instances  | Throughout your app    |
 | **Singleton**         | One instance forever            | Shared resources       |
 | **Scoped**            | One instance per scope          | Request-specific data  |
-| **Transient**         | New instance each time          | Temporary objects      |
 | **Scope**             | Boundary for scoped services    | Per request/operation  |
 
 ## Next Steps

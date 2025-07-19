@@ -17,7 +17,6 @@ type ServiceCollection interface {
     // Register services
     AddSingleton(constructor interface{}, opts ...ProvideOption) error
     AddScoped(constructor interface{}, opts ...ProvideOption) error
-    AddTransient(constructor interface{}, opts ...ProvideOption) error
 
     // Advanced registration
     Decorate(decorator interface{}, opts ...DecorateOption) error
@@ -98,7 +97,6 @@ type ServiceLifetime int
 const (
     Singleton ServiceLifetime = iota  // One instance for entire app
     Scoped                           // One instance per scope
-    Transient                        // New instance every time
 )
 ```
 
@@ -112,9 +110,6 @@ err := collection.AddSingleton(NewLogger)
 
 // Register a scoped service
 err := collection.AddScoped(NewRepository)
-
-// Register a transient service
-err := collection.AddTransient(NewCommand)
 ```
 
 ### Keyed Registration
@@ -372,7 +367,6 @@ func main() {
     collection.AddSingleton(NewDatabase)
     collection.AddScoped(NewUserRepository)
     collection.AddScoped(NewUserService)
-    collection.AddTransient(NewEmailMessage)
 
     // Build provider
     provider, err := collection.BuildServiceProvider()
