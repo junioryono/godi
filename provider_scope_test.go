@@ -2,8 +2,6 @@ package godi_test
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"reflect"
@@ -14,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/junioryono/godi"
 )
 
@@ -72,38 +71,16 @@ func (s *scopeTestDisposable) Close() error {
 	return s.disposeError
 }
 
-func newLifetimeScopedService(singleton *lifetimeSingletonOnlyService) *lifetimeScopedService {
-	return &lifetimeScopedService{
-		ID:          fmt.Sprintf("scoped-%s", generateID()),
-		Singleton:   singleton,
-		SingletonID: singleton.ID,
-	}
-}
-
 func newLifetimeSingletonOnlyService() *lifetimeSingletonOnlyService {
 	return &lifetimeSingletonOnlyService{
-		ID: fmt.Sprintf("singleton-only-%s", generateID()),
+		ID: fmt.Sprintf("singleton-only-%s", uuid.NewString()),
 	}
 }
 
 func newLifetimeScopedOnlyService() *lifetimeScopedOnlyService {
 	return &lifetimeScopedOnlyService{
-		ID: fmt.Sprintf("scoped-only-%s", generateID()),
+		ID: fmt.Sprintf("scoped-only-%s", uuid.NewString()),
 	}
-}
-
-func generateID() string {
-	// Timestamp (8 bytes)
-	timestamp := time.Now().UnixNano()
-
-	// Random bytes (8 bytes)
-	randomBytes := make([]byte, 8)
-	if _, err := rand.Read(randomBytes); err != nil {
-		panic(err)
-	}
-
-	// Combine timestamp and random
-	return fmt.Sprintf("%016x%s", timestamp, hex.EncodeToString(randomBytes))
 }
 
 func TestServiceProviderScope_Creation(t *testing.T) {
@@ -728,7 +705,7 @@ func TestServiceProviderScope_Concurrency(t *testing.T) {
 			// Simulate some work
 			time.Sleep(10 * time.Millisecond)
 			return &scopeTestService{
-				ID:        fmt.Sprintf("instance-%s", generateID()),
+				ID:        fmt.Sprintf("instance-%s", uuid.NewString()),
 				CreatedAt: time.Now(),
 			}
 		})

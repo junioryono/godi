@@ -132,7 +132,7 @@ type RequestContext struct {
 
 func NewRequestContext() *RequestContext {
     return &RequestContext{
-        RequestID: generateID(),
+        RequestID: uuid.NewString(),
         StartTime: time.Now(),
     }
 }

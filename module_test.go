@@ -7,8 +7,8 @@ import (
 	"reflect"
 	"sync"
 	"testing"
-	"time"
 
+	"github.com/google/uuid"
 	"github.com/junioryono/godi"
 )
 
@@ -162,7 +162,7 @@ func newModuleTestService(repo *moduleTestRepository, cache moduleTestCache, log
 		repo:   repo,
 		cache:  cache,
 		logger: logger,
-		id:     fmt.Sprintf("service-%d", time.Now().UnixNano()),
+		id:     fmt.Sprintf("service-%s", uuid.NewString()),
 	}
 }
 

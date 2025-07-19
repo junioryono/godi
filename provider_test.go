@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/junioryono/godi"
 	"go.uber.org/dig"
 )
@@ -204,7 +205,7 @@ func newProviderTestService(logger providerTestLogger, db providerTestDatabase, 
 		Logger:   logger,
 		Database: db,
 		Cache:    cache,
-		ID:       fmt.Sprintf("service-%d", time.Now().UnixNano()),
+		ID:       fmt.Sprintf("service-%s", uuid.NewString()),
 	}
 }
 

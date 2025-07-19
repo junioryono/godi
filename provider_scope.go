@@ -2,8 +2,6 @@ package godi
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"reflect"
@@ -12,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"go.uber.org/dig"
 )
 
@@ -98,7 +97,7 @@ func newServiceProviderScope(provider *serviceProvider, ctx context.Context) *se
 
 	scope := &serviceProviderScope{
 		ctx:             ctx,
-		scopeID:         generateID(),
+		scopeID:         uuid.NewString(),
 		serviceProvider: provider,
 	}
 
@@ -541,18 +540,4 @@ func ScopeFromContext(ctx context.Context) (Scope, error) {
 	}
 
 	return scope, nil
-}
-
-func generateID() string {
-	// Timestamp (8 bytes)
-	timestamp := time.Now().UnixNano()
-
-	// Random bytes (8 bytes)
-	randomBytes := make([]byte, 8)
-	if _, err := rand.Read(randomBytes); err != nil {
-		panic(err)
-	}
-
-	// Combine timestamp and random
-	return fmt.Sprintf("%016x%s", timestamp, hex.EncodeToString(randomBytes))
 }
