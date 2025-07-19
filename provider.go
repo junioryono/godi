@@ -55,6 +55,10 @@ type ServiceProvider interface {
 	// ResolveKeyed gets the service object of the specified type with the specified key.
 	ResolveKeyed(serviceType reflect.Type, serviceKey interface{}) (interface{}, error)
 
+	// ResolveGroup gets all services of the specified type registered in a group.
+	// This is useful for plugin systems or when you need multiple implementations.
+	ResolveGroup(serviceType reflect.Type, groupName string) ([]interface{}, error)
+
 	// Invoke executes a function with dependency injection.
 	// All parameters of the function are resolved from the container.
 	// The function can optionally return an error.
@@ -211,8 +215,38 @@ func newServiceProviderWithOptions(services ServiceCollection, options *ServiceP
 	return provider, nil
 }
 
+// findDescriptor finds the descriptor for a service.
+// For non-keyed services, it returns the first registration.
+// For keyed services, it finds the specific keyed registration.
+func (sp *serviceProvider) findDescriptor(serviceType reflect.Type, serviceKey interface{}) *serviceDescriptor {
+	sp.mu.RLock()
+	defer sp.mu.RUnlock()
+
+	if serviceKey != nil {
+		key := typeKeyPair{serviceType: serviceType, serviceKey: serviceKey}
+		if descs, ok := sp.keyedIndex[key]; ok && len(descs) > 0 {
+			return descs[0]
+		}
+	} else {
+		if descs, ok := sp.descriptorIndex[serviceType]; ok {
+			// Find the non-keyed one
+			for _, d := range descs {
+				if !d.isKeyedService() {
+					return d
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // registerService registers a service descriptor with the dig container.
 func (sp *serviceProvider) registerService(desc *serviceDescriptor) error {
+	// Scoped and Transient services are registered within each scope, not in the root container.
+	if desc.Lifetime == Scoped || desc.Lifetime == Transient {
+		return nil
+	}
+
 	// Handle decorators separately
 	if desc.isDecorator() && desc.DecorateInfo != nil {
 		err := sp.digContainer.Decorate(desc.DecorateInfo.Decorator, desc.DecorateInfo.DecorateOptions...)
@@ -225,138 +259,24 @@ func (sp *serviceProvider) registerService(desc *serviceDescriptor) error {
 	}
 
 	// Create provider options
-	opts := []ProvideOption{}
-
-	// Handle keyed services
-	if desc.isKeyedService() {
-		opts = append(opts, Name(fmt.Sprintf("%v", desc.ServiceKey)))
-	}
-
-	// Handle groups if specified in metadata
-	if group, ok := desc.Metadata["group"].(string); ok && group != "" {
-		opts = append(opts, Group(group))
-	}
+	opts := desc.ProvideOptions
 
 	// Handle 'asOptions' if specified
 	if asOpts, ok := desc.Metadata["asOptions"].([]ProvideOption); ok {
 		opts = append(opts, asOpts...)
 	}
 
-	// Check if this is a result object constructor
-	isResultObject := false
-	fnInfo := globalTypeCache.getTypeInfo(reflect.TypeOf(desc.Constructor))
-	if fnInfo.IsFunc && fnInfo.NumOut > 0 {
-		firstOutInfo := globalTypeCache.getTypeInfo(fnInfo.OutTypes[0])
-		if firstOutInfo.IsStruct && firstOutInfo.HasOutField {
-			isResultObject = true
-		}
-	}
-
-	// For transient services, wrap in a provider function
-	if desc.Lifetime == Transient && !isResultObject {
-		wrappedConstructor := sp.wrapTransientConstructor(desc)
-		err := sp.digContainer.Provide(wrappedConstructor, opts...)
-		return err
-	}
-
-	// For singleton services that are NOT result objects, wrap the constructor
-	if desc.Lifetime == Singleton && !isResultObject {
+	// Register based on lifetime
+	switch desc.Lifetime {
+	case Singleton:
 		// Wrap the constructor to capture disposable instances
 		wrappedConstructor := sp.wrapSingletonConstructor(desc.Constructor)
 		err := sp.digContainer.Provide(wrappedConstructor, opts...)
 		return err
+	default:
+		// This path should not be reached for Scoped or Transient
+		return fmt.Errorf("unknown or unhandled service lifetime for root provider: %v", desc.Lifetime)
 	}
-
-	// For result objects and singleton services, register directly
-	if desc.Lifetime == Singleton || isResultObject {
-		// Singleton result objects are registered directly
-		err := sp.digContainer.Provide(desc.Constructor, opts...)
-		return err
-	}
-
-	// For scoped services, register normally - they'll be handled at scope level
-	err := sp.digContainer.Provide(desc.Constructor, opts...)
-	return err
-}
-
-// wrapTransientConstructor wraps a constructor to provide factory behavior.
-func (sp *serviceProvider) wrapTransientConstructor(desc *serviceDescriptor) interface{} {
-	constructor := desc.Constructor
-	serviceType := desc.ServiceType
-	fnType := reflect.TypeOf(constructor)
-	fnInfo := globalTypeCache.getTypeInfo(fnType)
-
-	// Create a provider function type: func() T
-	providerFuncType := reflect.FuncOf([]reflect.Type{}, []reflect.Type{serviceType}, false)
-
-	// Build the wrapper function that dig will call
-	wrapperInTypes := make([]reflect.Type, fnInfo.NumIn)
-	copy(wrapperInTypes, fnInfo.InTypes)
-
-	// Check if context.Context is one of the dependencies
-	hasContext := false
-	contextIndex := -1
-	contextType := reflect.TypeOf((*context.Context)(nil)).Elem()
-	for i := 0; i < fnInfo.NumIn; i++ {
-		if wrapperInTypes[i] == contextType {
-			hasContext = true
-			contextIndex = i
-			break
-		}
-	}
-
-	wrapperOutTypes := []reflect.Type{providerFuncType}
-	// Add error if the constructor can fail
-	if fnInfo.NumOut > 1 && fnInfo.HasErrorReturn {
-		errorType := reflect.TypeOf((*error)(nil)).Elem()
-		wrapperOutTypes = append(wrapperOutTypes, errorType)
-	}
-
-	wrapperType := reflect.FuncOf(wrapperInTypes, wrapperOutTypes, false)
-
-	wrapper := reflect.MakeFunc(wrapperType, func(args []reflect.Value) []reflect.Value {
-		// Capture the dependencies in the closure
-		capturedArgs := make([]reflect.Value, len(args))
-		copy(capturedArgs, args)
-
-		// Create the provider function that will be called each time the service is needed
-		providerFunc := reflect.MakeFunc(providerFuncType, func(_ []reflect.Value) []reflect.Value {
-			// Get the current scope from context if available
-			var currentScope *serviceProviderScope
-			if hasContext && contextIndex >= 0 && capturedArgs[contextIndex].IsValid() {
-				ctx := capturedArgs[contextIndex].Interface().(context.Context)
-				if scope, err := ScopeFromContext(ctx); err == nil {
-					currentScope = scope.(*serviceProviderScope)
-				}
-			}
-
-			// Fall back to root scope if no scope in context
-			if currentScope == nil {
-				currentScope = sp.rootScope
-			}
-
-			// Call the original constructor with the captured dependencies
-			results := reflect.ValueOf(constructor).Call(capturedArgs)
-
-			// Handle the result
-			if len(results) > 0 && results[0].IsValid() {
-				instance := results[0].Interface()
-				currentScope.captureDisposable(instance)
-			}
-
-			// Return only the service instance
-			return results[:1]
-		})
-
-		// Return the provider function
-		if len(wrapperOutTypes) > 1 {
-			return []reflect.Value{providerFunc, reflect.Zero(wrapperOutTypes[1])}
-		}
-
-		return []reflect.Value{providerFunc}
-	})
-
-	return wrapper.Interface()
 }
 
 // wrapSingletonConstructor wraps a singleton constructor to track disposable instances.
@@ -531,6 +451,77 @@ func ResolveKeyed[T any](s ServiceProvider, serviceKey interface{}) (T, error) {
 	}
 
 	return assertServiceType[T](service, serviceType, serviceKey)
+}
+
+// ResolveGroup gets all services of the specified type registered in a group.
+func (sp *serviceProvider) ResolveGroup(serviceType reflect.Type, groupName string) ([]interface{}, error) {
+	if sp.IsDisposed() {
+		return nil, ErrProviderDisposed
+	}
+
+	if serviceType == nil {
+		return nil, ErrInvalidServiceType
+	}
+
+	if groupName == "" {
+		return nil, fmt.Errorf("group name cannot be empty")
+	}
+
+	return sp.rootScope.ResolveGroup(serviceType, groupName)
+}
+
+// ResolveGroup is a generic helper function that returns the group services as type []T.
+func ResolveGroup[T any](s ServiceProvider, groupName string) ([]T, error) {
+	if s == nil {
+		return nil, ErrNilServiceProvider
+	}
+
+	serviceType, err := determineServiceType[T]()
+	if err != nil {
+		return nil, err
+	}
+
+	services, err := s.ResolveGroup(serviceType, groupName)
+	if err != nil {
+		return nil, fmt.Errorf("unable to resolve group %q of type %s: %w", groupName, formatType(serviceType), err)
+	}
+
+	// Convert []interface{} to []T
+	result := make([]T, 0, len(services))
+	for i, service := range services {
+		if service == nil {
+			continue
+		}
+
+		// Type assertion to T
+		if svc, ok := service.(T); ok {
+			result = append(result, svc)
+			continue
+		}
+
+		// If T is a non-pointer type and service is a pointer to T, dereference it
+		tType := reflect.TypeOf((*T)(nil)).Elem()
+		if tType.Kind() != reflect.Ptr && tType.Kind() != reflect.Interface {
+			// T is a value type, check if service is *T
+			serviceValue := reflect.ValueOf(service)
+			if serviceValue.Kind() == reflect.Ptr && serviceValue.Elem().Type() == tType {
+				// Service is *T and we want T, so dereference
+				if !serviceValue.IsNil() {
+					result = append(result, serviceValue.Elem().Interface().(T))
+					continue
+				}
+			}
+		}
+
+		// If we couldn't convert, return an error
+		return nil, TypeMismatchError{
+			Expected: serviceType,
+			Actual:   reflect.TypeOf(service),
+			Context:  fmt.Sprintf("group item %d type assertion", i),
+		}
+	}
+
+	return result, nil
 }
 
 // determineServiceType determines the actual service type to resolve based on the generic type T.

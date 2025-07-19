@@ -416,6 +416,11 @@ func (sc *serviceCollection) addInternal(descriptor *serviceDescriptor) error {
 	isGroupService := false
 	if group, ok := descriptor.Metadata["group"].(string); ok && group != "" {
 		isGroupService = true
+
+		// Validate that transient services cannot be in groups
+		if descriptor.Lifetime == Transient {
+			return fmt.Errorf("%w (group: %s)", ErrTransientInGroup, group)
+		}
 	}
 
 	// For non-keyed, non-group services, check lifetime conflicts

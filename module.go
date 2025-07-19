@@ -55,6 +55,7 @@ func AddScoped(constructor interface{}, opts ...ProvideOption) ModuleOption {
 }
 
 // AddTransient creates a ModuleBuilder for adding a transient service.
+// Note: Transient services cannot be registered in groups.
 func AddTransient(constructor interface{}, opts ...ProvideOption) ModuleOption {
 	return func(s ServiceCollection) error {
 		return s.AddTransient(constructor, opts...)

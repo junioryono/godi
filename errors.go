@@ -50,6 +50,7 @@ var (
 	ErrDescriptorNil               = errors.New("descriptor cannot be nil")
 	ErrNoConstructorOrDecorator    = errors.New("constructor or decorator must be provided")
 	ErrBothConstructorAndDecorator = errors.New("cannot have both constructor and decorator")
+	ErrTransientInGroup            = errors.New("transient services cannot be registered in groups")
 
 	// Provider errors.
 	ErrServicesNil                   = errors.New("services cannot be nil")
