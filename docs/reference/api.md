@@ -50,6 +50,7 @@ type ServiceProvider interface {
     // Service resolution
     Resolve(serviceType reflect.Type) (interface{}, error)
     ResolveKeyed(serviceType reflect.Type, serviceKey interface{}) (interface{}, error)
+    ResolveGroup(serviceType reflect.Type, groupName string) ([]interface{}, error)
 
     // Service inspection
     IsService(serviceType reflect.Type) bool

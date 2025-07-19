@@ -55,6 +55,10 @@ type ServiceProvider interface {
 	// ResolveKeyed gets the service object of the specified type with the specified key.
 	ResolveKeyed(serviceType reflect.Type, serviceKey interface{}) (interface{}, error)
 
+	// ResolveGroup gets all services of the specified type registered in a group.
+	// This is useful for plugin systems or when you need multiple implementations.
+	ResolveGroup(serviceType reflect.Type, groupName string) ([]interface{}, error)
+
 	// Invoke executes a function with dependency injection.
 	// All parameters of the function are resolved from the container.
 	// The function can optionally return an error.
@@ -379,26 +383,6 @@ func (sp *serviceProvider) Resolve(serviceType reflect.Type) (interface{}, error
 	return sp.rootScope.Resolve(serviceType)
 }
 
-// Resolve is a generic helper function that returns the service as type T.
-func Resolve[T any](s ServiceProvider) (T, error) {
-	var zero T
-	if s == nil {
-		return zero, ErrNilServiceProvider
-	}
-
-	serviceType, err := determineServiceType[T]()
-	if err != nil {
-		return zero, err
-	}
-
-	service, err := s.Resolve(serviceType)
-	if err != nil {
-		return zero, fmt.Errorf("unable to resolve service of type %s: %w", formatType(serviceType), err)
-	}
-
-	return assertServiceType[T](service, serviceType, nil)
-}
-
 // ResolveKeyed gets the service object of the specified type with the specified key.
 func (sp *serviceProvider) ResolveKeyed(serviceType reflect.Type, serviceKey interface{}) (interface{}, error) {
 	if sp.IsDisposed() {
@@ -416,71 +400,21 @@ func (sp *serviceProvider) ResolveKeyed(serviceType reflect.Type, serviceKey int
 	return sp.rootScope.ResolveKeyed(serviceType, serviceKey)
 }
 
-// ResolveKeyed is a generic helper function that returns the keyed service as type T.
-func ResolveKeyed[T any](s ServiceProvider, serviceKey interface{}) (T, error) {
-	var zero T
-	if s == nil {
-		return zero, ErrNilServiceProvider
+// ResolveGroup gets all services of the specified type registered in a group.
+func (sp *serviceProvider) ResolveGroup(serviceType reflect.Type, groupName string) ([]interface{}, error) {
+	if sp.IsDisposed() {
+		return nil, ErrProviderDisposed
 	}
 
-	serviceType, err := determineServiceType[T]()
-	if err != nil {
-		return zero, err
+	if serviceType == nil {
+		return nil, ErrInvalidServiceType
 	}
 
-	service, err := s.ResolveKeyed(serviceType, serviceKey)
-	if err != nil {
-		return zero, fmt.Errorf("unable to resolve service of type %s: %w", formatType(serviceType), err)
+	if groupName == "" {
+		return nil, fmt.Errorf("group name cannot be empty")
 	}
 
-	return assertServiceType[T](service, serviceType, serviceKey)
-}
-
-// determineServiceType determines the actual service type to resolve based on the generic type T.
-func determineServiceType[T any]() (reflect.Type, error) {
-	serviceType, _, err := determineServiceTypeCached[T]()
-	return serviceType, err
-}
-
-// assertServiceType performs type assertion and returns the service as type T.
-func assertServiceType[T any](service interface{}, serviceType reflect.Type, serviceKey interface{}) (T, error) {
-	var zero T
-
-	if service == nil {
-		return zero, ResolutionError{ServiceType: serviceType, ServiceKey: serviceKey, Cause: ErrServiceNotFound}
-	}
-
-	// Type assertion to T
-	if svc, ok := service.(T); ok {
-		return svc, nil
-	}
-
-	// If T is a non-pointer type and service is a pointer to T, dereference it
-	tType := reflect.TypeOf((*T)(nil)).Elem()
-	if tType.Kind() != reflect.Ptr && tType.Kind() != reflect.Interface {
-		// T is a value type, check if service is *T
-		serviceValue := reflect.ValueOf(service)
-		if serviceValue.Kind() == reflect.Ptr && serviceValue.Elem().Type() == tType {
-			// Service is *T and we want T, so dereference
-			if serviceValue.IsNil() {
-				return zero, ResolutionError{ServiceType: serviceType, ServiceKey: serviceKey, Cause: ErrServiceNotFound}
-			}
-			return serviceValue.Elem().Interface().(T), nil
-		}
-	}
-
-	var msg string
-	if serviceKey != nil {
-		msg = "keyed type assertion"
-	} else {
-		msg = "type assertion"
-	}
-
-	return zero, TypeMismatchError{
-		Expected: serviceType,
-		Actual:   reflect.TypeOf(service),
-		Context:  msg,
-	}
+	return sp.rootScope.ResolveGroup(serviceType, groupName)
 }
 
 // IsService determines whether the specified service type is available.
@@ -570,4 +504,145 @@ func (sp *serviceProvider) Invoke(function interface{}) error {
 	}
 
 	return sp.rootScope.Invoke(function)
+}
+
+// Resolve is a generic helper function that returns the service as type T.
+func Resolve[T any](s ServiceProvider) (T, error) {
+	var zero T
+	if s == nil {
+		return zero, ErrNilServiceProvider
+	}
+
+	serviceType, err := determineServiceType[T]()
+	if err != nil {
+		return zero, err
+	}
+
+	service, err := s.Resolve(serviceType)
+	if err != nil {
+		return zero, fmt.Errorf("unable to resolve service of type %s: %w", formatType(serviceType), err)
+	}
+
+	return assertServiceType[T](service, serviceType, nil)
+}
+
+// ResolveKeyed is a generic helper function that returns the keyed service as type T.
+func ResolveKeyed[T any](s ServiceProvider, serviceKey interface{}) (T, error) {
+	var zero T
+	if s == nil {
+		return zero, ErrNilServiceProvider
+	}
+
+	serviceType, err := determineServiceType[T]()
+	if err != nil {
+		return zero, err
+	}
+
+	service, err := s.ResolveKeyed(serviceType, serviceKey)
+	if err != nil {
+		return zero, fmt.Errorf("unable to resolve service of type %s: %w", formatType(serviceType), err)
+	}
+
+	return assertServiceType[T](service, serviceType, serviceKey)
+}
+
+// ResolveGroup is a generic helper function that returns the group services as type []T.
+func ResolveGroup[T any](s ServiceProvider, groupName string) ([]T, error) {
+	if s == nil {
+		return nil, ErrNilServiceProvider
+	}
+
+	serviceType, err := determineServiceType[T]()
+	if err != nil {
+		return nil, err
+	}
+
+	services, err := s.ResolveGroup(serviceType, groupName)
+	if err != nil {
+		return nil, fmt.Errorf("unable to resolve group %q of type %s: %w", groupName, formatType(serviceType), err)
+	}
+
+	// Convert []interface{} to []T
+	result := make([]T, 0, len(services))
+	for i, service := range services {
+		if service == nil {
+			continue
+		}
+
+		// Type assertion to T
+		if svc, ok := service.(T); ok {
+			result = append(result, svc)
+			continue
+		}
+
+		// If T is a non-pointer type and service is a pointer to T, dereference it
+		tType := reflect.TypeOf((*T)(nil)).Elem()
+		if tType.Kind() != reflect.Ptr && tType.Kind() != reflect.Interface {
+			// T is a value type, check if service is *T
+			serviceValue := reflect.ValueOf(service)
+			if serviceValue.Kind() == reflect.Ptr && serviceValue.Elem().Type() == tType {
+				// Service is *T and we want T, so dereference
+				if !serviceValue.IsNil() {
+					result = append(result, serviceValue.Elem().Interface().(T))
+					continue
+				}
+			}
+		}
+
+		// If we couldn't convert, return an error
+		return nil, TypeMismatchError{
+			Expected: serviceType,
+			Actual:   reflect.TypeOf(service),
+			Context:  fmt.Sprintf("group item %d type assertion", i),
+		}
+	}
+
+	return result, nil
+}
+
+// determineServiceType determines the actual service type to resolve based on the generic type T.
+func determineServiceType[T any]() (reflect.Type, error) {
+	serviceType, _, err := determineServiceTypeCached[T]()
+	return serviceType, err
+}
+
+// assertServiceType performs type assertion and returns the service as type T.
+func assertServiceType[T any](service interface{}, serviceType reflect.Type, serviceKey interface{}) (T, error) {
+	var zero T
+
+	if service == nil {
+		return zero, ResolutionError{ServiceType: serviceType, ServiceKey: serviceKey, Cause: ErrServiceNotFound}
+	}
+
+	// Type assertion to T
+	if svc, ok := service.(T); ok {
+		return svc, nil
+	}
+
+	// If T is a non-pointer type and service is a pointer to T, dereference it
+	tType := reflect.TypeOf((*T)(nil)).Elem()
+	if tType.Kind() != reflect.Ptr && tType.Kind() != reflect.Interface {
+		// T is a value type, check if service is *T
+		serviceValue := reflect.ValueOf(service)
+		if serviceValue.Kind() == reflect.Ptr && serviceValue.Elem().Type() == tType {
+			// Service is *T and we want T, so dereference
+			if serviceValue.IsNil() {
+				return zero, ResolutionError{ServiceType: serviceType, ServiceKey: serviceKey, Cause: ErrServiceNotFound}
+			}
+			return serviceValue.Elem().Interface().(T), nil
+		}
+	}
+
+	var msg string
+	if serviceKey != nil {
+		msg = "keyed type assertion"
+	} else {
+		msg = "type assertion"
+	}
+
+	return zero, TypeMismatchError{
+		Expected: serviceType,
+		Actual:   reflect.TypeOf(service),
+		Context:  msg,
+	}
 }
