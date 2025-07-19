@@ -9,7 +9,7 @@ import (
 // It represents a single service registration in the dependency injection container.
 //
 // serviceDescriptor is designed to work seamlessly with dig while maintaining
-// Microsoft-style DI semantics for lifetimes (Singleton, Scoped, Transient).
+// Microsoft-style DI semantics for lifetimes (Singleton, Scoped).
 type serviceDescriptor struct {
 	// ServiceType is the exact type returned by the constructor.
 	// This could be an interface, struct, or pointer type.
@@ -19,7 +19,7 @@ type serviceDescriptor struct {
 	// This allows multiple implementations of the same type to be registered.
 	ServiceKey interface{}
 
-	// Lifetime is the lifetime of the service (Singleton, Scoped, or Transient).
+	// Lifetime is the lifetime of the service (Singleton, Scoped).
 	Lifetime ServiceLifetime
 
 	// Constructor is the original constructor function.

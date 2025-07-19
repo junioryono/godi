@@ -45,9 +45,6 @@ func TestServiceLifetime(t *testing.T) {
 		if godi.Scoped != 1 {
 			t.Errorf("Scoped should be 1, got %d", godi.Scoped)
 		}
-		if godi.Transient != 2 {
-			t.Errorf("Transient should be 2, got %d", godi.Transient)
-		}
 	})
 
 	t.Run("String", func(t *testing.T) {
@@ -57,7 +54,6 @@ func TestServiceLifetime(t *testing.T) {
 		}{
 			{godi.Singleton, "Singleton"},
 			{godi.Scoped, "Scoped"},
-			{godi.Transient, "Transient"},
 			{godi.ServiceLifetime(999), "Unknown(999)"},
 		}
 
@@ -75,7 +71,6 @@ func TestServiceLifetime(t *testing.T) {
 		}{
 			{godi.Singleton, true},
 			{godi.Scoped, true},
-			{godi.Transient, true},
 			{godi.ServiceLifetime(-1), false},
 			{godi.ServiceLifetime(3), false},
 			{godi.ServiceLifetime(999), false},
@@ -97,7 +92,6 @@ func TestServiceLifetime_Marshaling(t *testing.T) {
 		}{
 			{godi.Singleton, "Singleton"},
 			{godi.Scoped, "Scoped"},
-			{godi.Transient, "Transient"},
 		}
 
 		for _, tt := range tests {
@@ -121,8 +115,6 @@ func TestServiceLifetime_Marshaling(t *testing.T) {
 			{"singleton", godi.Singleton, false},
 			{"Scoped", godi.Scoped, false},
 			{"scoped", godi.Scoped, false},
-			{"Transient", godi.Transient, false},
-			{"transient", godi.Transient, false},
 			{"Invalid", godi.ServiceLifetime(0), true},
 			{"", godi.ServiceLifetime(0), true},
 		}
@@ -152,7 +144,7 @@ func TestServiceLifetime_Marshaling(t *testing.T) {
 			Lifetime godi.ServiceLifetime `json:"lifetime"`
 		}
 
-		for _, lifetime := range []godi.ServiceLifetime{godi.Singleton, godi.Scoped, godi.Transient} {
+		for _, lifetime := range []godi.ServiceLifetime{godi.Singleton, godi.Scoped} {
 			original := testStruct{Lifetime: lifetime}
 
 			data, err := json.Marshal(original)

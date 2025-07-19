@@ -231,26 +231,6 @@ func TestServiceCollection_AddScoped(t *testing.T) {
 	})
 }
 
-func TestServiceCollection_AddTransient(t *testing.T) {
-	t.Run("adds transient service", func(t *testing.T) {
-		collection := godi.NewServiceCollection()
-
-		err := collection.AddTransient(newTestDatabase)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		descriptors := collection.ToSlice()
-		if len(descriptors) != 1 {
-			t.Fatalf("expected 1 descriptor, got %d", len(descriptors))
-		}
-
-		if descriptors[0].Lifetime != godi.Transient {
-			t.Errorf("expected Transient lifetime, got %v", descriptors[0].Lifetime)
-		}
-	})
-}
-
 func TestServiceCollection_Decorate(t *testing.T) {
 	t.Run("decorates service", func(t *testing.T) {
 		collection := godi.NewServiceCollection()
@@ -430,10 +410,9 @@ func TestServiceCollection_Clear(t *testing.T) {
 		// Add multiple services
 		collection.AddSingleton(newTestLogger)
 		collection.AddScoped(newTestDatabase)
-		collection.AddTransient(newTestService)
 
-		if collection.Count() < 3 {
-			t.Fatalf("expected at least 3 services, got %d", collection.Count())
+		if collection.Count() < 2 {
+			t.Fatalf("expected at least 2 services, got %d", collection.Count())
 		}
 
 		collection.Clear()
@@ -637,11 +616,6 @@ func TestServiceCollection_ThreadSafety(t *testing.T) {
 		}
 
 		err = collection.AddScoped(newTestDatabase)
-		if err == nil {
-			t.Error("expected error when modifying after build")
-		}
-
-		err = collection.AddTransient(newTestService)
 		if err == nil {
 			t.Error("expected error when modifying after build")
 		}
@@ -980,46 +954,6 @@ func TestServiceCollection_AddInstance(t *testing.T) {
 		}
 
 		if resolved1 != service {
-			t.Error("expected original instance")
-		}
-	})
-
-	t.Run("adds transient instance", func(t *testing.T) {
-		collection := godi.NewServiceCollection()
-
-		// Create an instance
-		cache := &testDatabase{name: "transient-cache"}
-
-		// Add as transient
-		err := collection.AddTransient(cache)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		provider, err := collection.BuildServiceProvider()
-		if err != nil {
-			t.Fatalf("unexpected error building provider: %v", err)
-		}
-		defer provider.Close()
-
-		// Resolve multiple times
-		resolved1, err := provider.Resolve(reflect.TypeOf((*testDatabase)(nil)))
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		resolved2, err := provider.Resolve(reflect.TypeOf((*testDatabase)(nil)))
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// Should be the same instance (since we registered an instance, not a constructor)
-		// Note: This is different from normal transient behavior!
-		if resolved1 != resolved2 {
-			t.Error("expected same instance when registering instance as transient")
-		}
-
-		if resolved1 != cache {
 			t.Error("expected original instance")
 		}
 	})

@@ -2,6 +2,8 @@ package godi_test
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"reflect"
@@ -34,6 +36,27 @@ type (
 	scopeTestContextAware struct {
 		ctx context.Context
 	}
+
+	lifetimeSingletonWithScoped struct {
+		ID     string
+		Scoped *lifetimeScopedService // This should fail during validation
+	}
+
+	// Scoped services
+	lifetimeScopedService struct {
+		ID          string
+		Singleton   *lifetimeSingletonOnlyService
+		SingletonID string
+	}
+
+	// Pure services for dependencies
+	lifetimeSingletonOnlyService struct {
+		ID string
+	}
+
+	lifetimeScopedOnlyService struct {
+		ID string
+	}
 )
 
 func (s *scopeTestDisposable) Close() error {
@@ -47,6 +70,40 @@ func (s *scopeTestDisposable) Close() error {
 	s.disposed = true
 	s.disposeTime = time.Now()
 	return s.disposeError
+}
+
+func newLifetimeScopedService(singleton *lifetimeSingletonOnlyService) *lifetimeScopedService {
+	return &lifetimeScopedService{
+		ID:          fmt.Sprintf("scoped-%s", generateID()),
+		Singleton:   singleton,
+		SingletonID: singleton.ID,
+	}
+}
+
+func newLifetimeSingletonOnlyService() *lifetimeSingletonOnlyService {
+	return &lifetimeSingletonOnlyService{
+		ID: fmt.Sprintf("singleton-only-%s", generateID()),
+	}
+}
+
+func newLifetimeScopedOnlyService() *lifetimeScopedOnlyService {
+	return &lifetimeScopedOnlyService{
+		ID: fmt.Sprintf("scoped-only-%s", generateID()),
+	}
+}
+
+func generateID() string {
+	// Timestamp (8 bytes)
+	timestamp := time.Now().UnixNano()
+
+	// Random bytes (8 bytes)
+	randomBytes := make([]byte, 8)
+	if _, err := rand.Read(randomBytes); err != nil {
+		panic(err)
+	}
+
+	// Combine timestamp and random
+	return fmt.Sprintf("%016x%s", timestamp, hex.EncodeToString(randomBytes))
 }
 
 func TestServiceProviderScope_Creation(t *testing.T) {
@@ -671,7 +728,7 @@ func TestServiceProviderScope_Concurrency(t *testing.T) {
 			// Simulate some work
 			time.Sleep(10 * time.Millisecond)
 			return &scopeTestService{
-				ID:        fmt.Sprintf("instance-%d", time.Now().UnixNano()),
+				ID:        fmt.Sprintf("instance-%s", generateID()),
 				CreatedAt: time.Now(),
 			}
 		})
@@ -754,43 +811,75 @@ func TestServiceProviderScope_Concurrency(t *testing.T) {
 	})
 }
 
-func TestServiceProviderScope_TransientWithDependencies(t *testing.T) {
-	t.Run("transient service with scoped dependencies", func(t *testing.T) {
+func TestLifetimeDependencies_SingletonCannotAccessScoped(t *testing.T) {
+	t.Run("singleton cannot access scoped - validation error", func(t *testing.T) {
 		collection := godi.NewServiceCollection()
 
-		// Scoped dependency
-		collection.AddScoped(func() *scopeTestService {
-			return &scopeTestService{ID: "scoped-dep"}
+		// Register services
+		collection.AddScoped(newLifetimeScopedOnlyService)
+		collection.AddSingleton(func(scoped *lifetimeScopedOnlyService) *lifetimeSingletonWithScoped {
+			return &lifetimeSingletonWithScoped{
+				ID: "invalid-singleton",
+			}
 		})
 
-		// Transient service depending on scoped
-		collection.AddTransient(func(svc *scopeTestService) *scopeTestDisposable {
-			return &scopeTestDisposable{ID: fmt.Sprintf("transient-with-%s", svc.ID)}
+		options := &godi.ServiceProviderOptions{
+			ValidateOnBuild: true,
+		}
+
+		_, err := collection.BuildServiceProviderWithOptions(options)
+		if err == nil {
+			t.Fatal("expected validation error when singleton depends on scoped")
+		}
+
+		// The error should indicate the dependency issue
+		if !godi.IsNotFound(err) {
+			t.Errorf("expected dependency not found error, got: %v", err)
+		}
+	})
+
+	t.Run("singleton cannot access scoped - runtime error without validation", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+
+		// Register services
+		collection.AddScoped(newLifetimeScopedOnlyService)
+		collection.AddSingleton(func(scoped *lifetimeScopedOnlyService) *lifetimeSingletonWithScoped {
+			return &lifetimeSingletonWithScoped{
+				ID: "invalid-singleton",
+			}
 		})
 
+		// Build without validation
 		provider, err := collection.BuildServiceProvider()
 		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+			t.Fatalf("unexpected error during build: %v", err)
 		}
 		defer provider.Close()
 
-		scope1 := provider.CreateScope(context.Background())
-		defer scope1.Close()
-
-		// Resolve transient multiple times in same scope
-		svc1, _ := scope1.Resolve(reflect.TypeOf((*scopeTestDisposable)(nil)))
-		svc2, _ := scope1.Resolve(reflect.TypeOf((*scopeTestDisposable)(nil)))
-
-		// Should be different instances but with same scoped dependency
-		if svc1 == svc2 {
-			t.Error("transient services should be different instances")
-		}
-
-		// Both should reference the same scoped dependency
-		if !strings.Contains(svc1.(*scopeTestDisposable).ID, "scoped-dep") {
-			t.Error("transient should have scoped dependency")
+		// Should fail when trying to resolve
+		_, err = godi.Resolve[*lifetimeSingletonWithScoped](provider)
+		if err == nil {
+			t.Fatal("expected error when resolving singleton that depends on scoped")
 		}
 	})
+}
+
+func BenchmarkLifetimeDependencies_ComplexChain(b *testing.B) {
+	collection := godi.NewServiceCollection()
+
+	collection.AddSingleton(newLifetimeSingletonOnlyService)
+	collection.AddScoped(newLifetimeScopedOnlyService)
+
+	provider, _ := collection.BuildServiceProvider()
+	defer provider.Close()
+
+	scope := provider.CreateScope(context.Background())
+	defer scope.Close()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = godi.Resolve[*lifetimeSingletonWithScoped](scope)
+	}
 }
 
 // Benchmarks

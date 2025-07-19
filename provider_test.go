@@ -1133,7 +1133,7 @@ func TestServiceProvider_Concurrency(t *testing.T) {
 		collection.AddSingleton(newProviderTestLogger)
 		collection.AddSingleton(newProviderTestDatabase)
 		collection.AddSingleton(newProviderTestCache)
-		collection.AddTransient(newProviderTestService)
+		collection.AddScoped(newProviderTestService)
 
 		provider, err := collection.BuildServiceProvider()
 		if err != nil {
@@ -1379,84 +1379,6 @@ func TestServiceProvider_Options(t *testing.T) {
 		err = provider.Invoke(func(a *circularServiceA) {})
 		if err == nil {
 			t.Error("expected cycle error on invoke")
-		}
-	})
-}
-
-func TestServiceProvider_TransientLifetime(t *testing.T) {
-	t.Run("creates new instance each time for transient", func(t *testing.T) {
-		instanceCount := int32(0)
-		collection := godi.NewServiceCollection()
-		collection.AddTransient(func() *providerTestService {
-			atomic.AddInt32(&instanceCount, 1)
-			return &providerTestService{
-				ID: fmt.Sprintf("instance-%d", atomic.LoadInt32(&instanceCount)),
-			}
-		})
-
-		provider, err := collection.BuildServiceProvider()
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		defer provider.Close()
-
-		// Resolve multiple times
-		service1, err := godi.Resolve[providerTestService](provider)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		service2, err := godi.Resolve[providerTestService](provider)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// Should be different instances
-		if service1 == service2 {
-			t.Error("transient service should create new instances")
-		}
-
-		// Should have different IDs
-		if service1.ID == service2.ID {
-			t.Error("transient services should have different IDs")
-		}
-
-		// Should have created 2 instances
-		if atomic.LoadInt32(&instanceCount) != 2 {
-			t.Errorf("expected 2 instances created, got %d", instanceCount)
-		}
-	})
-
-	t.Run("disposes all transient instances on scope close", func(t *testing.T) {
-		collection := godi.NewServiceCollection()
-		collection.AddTransient(newProviderTestDisposableService)
-
-		provider, err := collection.BuildServiceProvider()
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		defer provider.Close()
-
-		scope := provider.CreateScope(context.Background())
-
-		// Create multiple transient instances in scope
-		var services []*providerTestDisposableService
-		for i := 0; i < 3; i++ {
-			service, err := scope.Resolve(reflect.TypeOf((*providerTestDisposableService)(nil)))
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			services = append(services, service.(*providerTestDisposableService))
-		}
-
-		// Close scope
-		scope.Close()
-
-		// All instances should be disposed
-		for i, svc := range services {
-			if !svc.disposed {
-				t.Errorf("transient instance %d should be disposed", i)
-			}
 		}
 	})
 }
@@ -2304,31 +2226,6 @@ func BenchmarkServiceProvider_ResolveSingleton(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, err := provider.Resolve(loggerType)
-		if err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkServiceProvider_ResolveTransient(b *testing.B) {
-	collection := godi.NewServiceCollection()
-	collection.AddTransient(newProviderTestLogger)
-
-	provider, err := collection.BuildServiceProvider()
-	if err != nil {
-		b.Fatalf("unexpected error: %v", err)
-	}
-	defer provider.Close()
-
-	// Need to use a scope for transient services
-	scope := provider.CreateScope(context.Background())
-	defer scope.Close()
-
-	loggerType := reflect.TypeOf((*providerTestLogger)(nil)).Elem()
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, err := scope.Resolve(loggerType)
 		if err != nil {
 			b.Fatal(err)
 		}

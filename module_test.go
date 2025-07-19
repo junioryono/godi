@@ -402,25 +402,6 @@ func TestModuleBuilder_Functions(t *testing.T) {
 		}
 	})
 
-	t.Run("AddTransient", func(t *testing.T) {
-		builder := godi.AddTransient(newModuleTestCache)
-
-		collection := godi.NewServiceCollection()
-		err := builder(collection)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		descriptors := collection.ToSlice()
-		if len(descriptors) != 1 {
-			t.Fatalf("expected 1 descriptor, got %d", len(descriptors))
-		}
-
-		if descriptors[0].Lifetime != godi.Transient {
-			t.Errorf("expected Transient lifetime, got %v", descriptors[0].Lifetime)
-		}
-	})
-
 	t.Run("AddDecorator", func(t *testing.T) {
 		decoratorCalled := false
 		decorator := func(logger moduleTestLogger) moduleTestLogger {
@@ -691,8 +672,8 @@ func TestModule_RealWorldExample(t *testing.T) {
 	var DataModule = godi.NewModule("data",
 		InfrastructureModule,
 		godi.AddScoped(newModuleTestRepository),
-		godi.AddTransient(func() moduleTestService {
-			return moduleTestService{id: "transient-service"}
+		godi.AddScoped(func() moduleTestService {
+			return moduleTestService{id: "scoped-service"}
 		}),
 	)
 

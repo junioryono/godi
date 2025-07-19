@@ -20,7 +20,6 @@ import (
 //	collection := godi.NewServiceCollection()
 //	collection.AddSingleton(NewLogger)
 //	collection.AddScoped(NewDatabase)
-//	collection.AddTransient(NewUserService)
 //
 //	provider, err := collection.BuildServiceProvider()
 //	if err != nil {
@@ -43,10 +42,6 @@ type ServiceCollection interface {
 	// AddModules applies one or more module configurations to the service collection.
 	// Modules provide a way to group related service registrations.
 	AddModules(modules ...func(ServiceCollection) error) error
-
-	// AddTransient registers a service with transient lifetime.
-	// A new instance is created for each resolution.
-	AddTransient(constructor interface{}, opts ...ProvideOption) error
 
 	// AddSingleton registers a service with singleton lifetime.
 	// Only one instance is created and shared across all resolutions.
@@ -185,11 +180,6 @@ func (sc *serviceCollection) AddModules(modules ...func(ServiceCollection) error
 	}
 
 	return nil
-}
-
-// AddTransient adds a transient service to the collection.
-func (sc *serviceCollection) AddTransient(constructor interface{}, opts ...ProvideOption) error {
-	return sc.addWithLifetime(constructor, Transient, opts...)
 }
 
 // AddSingleton adds a singleton service to the collection.
