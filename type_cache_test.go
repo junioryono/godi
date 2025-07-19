@@ -679,7 +679,7 @@ func TestValidateConstructorCached(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateConstructorCached(tt.constructor)
+			err := validateConstructor(tt.constructor)
 			if !errors.Is(err, tt.wantErr) {
 				t.Errorf("validateConstructorCached() error = %v, wantErr %v", err, tt.wantErr)
 			}

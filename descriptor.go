@@ -66,47 +66,16 @@ func (sd *serviceDescriptor) validate() error {
 
 	// Validate constructor if present
 	if sd.Constructor != nil {
-		if err := validateConstructorForDig(sd.Constructor); err != nil {
+		if err := validateConstructor(sd.Constructor); err != nil {
 			return fmt.Errorf("invalid constructor: %w", err)
 		}
 	}
 
 	// Validate decorator if present
 	if sd.DecorateInfo != nil && sd.DecorateInfo.Decorator != nil {
-		if err := validateDecoratorForDig(sd.DecorateInfo.Decorator); err != nil {
+		if err := validateDecorator(sd.DecorateInfo.Decorator); err != nil {
 			return fmt.Errorf("invalid decorator: %w", err)
 		}
-	}
-
-	return nil
-}
-
-// validateConstructorForDig validates that a constructor is compatible with dig.
-func validateConstructorForDig(constructor interface{}) error {
-	return validateConstructorCached(constructor)
-}
-
-// validateDecoratorForDig validates that a decorator is compatible with dig.
-func validateDecoratorForDig(decorator interface{}) error {
-	if decorator == nil {
-		return ErrDecoratorNil
-	}
-
-	fnType := reflect.TypeOf(decorator)
-	fnInfo := globalTypeCache.getTypeInfo(fnType)
-
-	if !fnInfo.IsFunc {
-		return ErrDecoratorNotFunction
-	}
-
-	// Decorators must have at least one input (the value being decorated)
-	if fnInfo.NumIn == 0 {
-		return ErrDecoratorNoParams
-	}
-
-	// Decorators must return at least one value
-	if fnInfo.NumOut == 0 {
-		return ErrDecoratorNoReturn
 	}
 
 	return nil
@@ -115,7 +84,7 @@ func validateDecoratorForDig(decorator interface{}) error {
 // newServiceDescriptor creates a descriptor from a constructor function.
 // The service type is inferred from the constructor's return type.
 func newServiceDescriptor(constructor interface{}, lifetime ServiceLifetime) (*serviceDescriptor, error) {
-	if err := validateConstructorCached(constructor); err != nil {
+	if err := validateConstructor(constructor); err != nil {
 		return nil, err
 	}
 
