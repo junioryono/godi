@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/junioryono/godi/internal/typecache"
 	"go.uber.org/dig"
 )
 
@@ -310,6 +311,6 @@ func formatType(t reflect.Type) string {
 		return "<nil>"
 	}
 
-	info := globalTypeCache.getTypeInfo(t)
+	info := typecache.GetTypeInfo(t)
 	return info.GetFormattedName()
 }

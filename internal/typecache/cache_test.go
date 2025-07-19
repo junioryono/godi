@@ -1,7 +1,6 @@
-package godi
+package typecache
 
 import (
-	"errors"
 	"reflect"
 	"strings"
 	"sync"
@@ -27,30 +26,16 @@ type testStructWithTags struct {
 	privateField string
 }
 
-type testStructWithIn struct {
-	In
-	Service1 testInterface
-	Service2 *testStruct
-}
-
-type testStructWithOut struct {
-	Out
-	Service1 testInterface
-	Service2 *testStruct
-}
-
 type testStructComplex struct {
-	In
 	Required   testInterface
 	Optional   *testStruct `optional:"true"`
 	GroupSlice []string    `group:"names"`
 }
 
 func TestTypeCache_GetTypeInfo(t *testing.T) {
-	cache := &typeCache{}
 
 	t.Run("nil type", func(t *testing.T) {
-		info := cache.getTypeInfo(nil)
+		info := GetTypeInfo(nil)
 		if info != nil {
 			t.Error("expected nil for nil type")
 		}
@@ -60,20 +45,19 @@ func TestTypeCache_GetTypeInfo(t *testing.T) {
 		typ := reflect.TypeOf((*testInterface)(nil)).Elem()
 
 		// First call should create and cache
-		info1 := cache.getTypeInfo(typ)
+		info1 := GetTypeInfo(typ)
 		if info1 == nil {
 			t.Fatal("expected non-nil type info")
 		}
 
 		// Second call should return same instance
-		info2 := cache.getTypeInfo(typ)
+		info2 := GetTypeInfo(typ)
 		if info1 != info2 {
 			t.Error("expected same type info instance from cache")
 		}
 	})
 
 	t.Run("concurrent access", func(t *testing.T) {
-		cache := &typeCache{}
 		typ := reflect.TypeOf(testStruct{})
 
 		var wg sync.WaitGroup
@@ -83,7 +67,7 @@ func TestTypeCache_GetTypeInfo(t *testing.T) {
 			wg.Add(1)
 			go func(idx int) {
 				defer wg.Done()
-				infos[idx] = cache.getTypeInfo(typ)
+				infos[idx] = GetTypeInfo(typ)
 			}(i)
 		}
 
@@ -100,7 +84,6 @@ func TestTypeCache_GetTypeInfo(t *testing.T) {
 }
 
 func TestTypeInfo_BasicTypes(t *testing.T) {
-	cache := &typeCache{}
 
 	tests := []struct {
 		name          string
@@ -197,7 +180,7 @@ func TestTypeInfo_BasicTypes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			info := cache.getTypeInfo(tt.typ)
+			info := GetTypeInfo(tt.typ)
 
 			if info.Kind != tt.wantKind {
 				t.Errorf("Kind = %v, want %v", info.Kind, tt.wantKind)
@@ -215,11 +198,10 @@ func TestTypeInfo_BasicTypes(t *testing.T) {
 }
 
 func TestTypeInfo_ElementTypes(t *testing.T) {
-	cache := &typeCache{}
 
 	t.Run("pointer element type", func(t *testing.T) {
 		typ := reflect.TypeOf((*testStruct)(nil))
-		info := cache.getTypeInfo(typ)
+		info := GetTypeInfo(typ)
 
 		if info.ElementType == nil {
 			t.Fatal("expected non-nil element type for pointer")
@@ -232,7 +214,7 @@ func TestTypeInfo_ElementTypes(t *testing.T) {
 
 	t.Run("slice element type", func(t *testing.T) {
 		typ := reflect.TypeOf([]int{})
-		info := cache.getTypeInfo(typ)
+		info := GetTypeInfo(typ)
 
 		if info.ElementType == nil {
 			t.Fatal("expected non-nil element type for slice")
@@ -245,7 +227,7 @@ func TestTypeInfo_ElementTypes(t *testing.T) {
 
 	t.Run("array element type", func(t *testing.T) {
 		typ := reflect.TypeOf([5]string{})
-		info := cache.getTypeInfo(typ)
+		info := GetTypeInfo(typ)
 
 		if info.ElementType == nil {
 			t.Fatal("expected non-nil element type for array")
@@ -262,7 +244,7 @@ func TestTypeInfo_ElementTypes(t *testing.T) {
 
 	t.Run("array of structs", func(t *testing.T) {
 		typ := reflect.TypeOf([3]testStruct{})
-		info := cache.getTypeInfo(typ)
+		info := GetTypeInfo(typ)
 
 		if info.ElementType == nil {
 			t.Fatal("expected non-nil element type for array")
@@ -275,7 +257,7 @@ func TestTypeInfo_ElementTypes(t *testing.T) {
 
 	t.Run("map key and element types", func(t *testing.T) {
 		typ := reflect.TypeOf(map[string]int{})
-		info := cache.getTypeInfo(typ)
+		info := GetTypeInfo(typ)
 
 		if info.KeyType == nil {
 			t.Fatal("expected non-nil key type for map")
@@ -296,7 +278,7 @@ func TestTypeInfo_ElementTypes(t *testing.T) {
 
 	t.Run("channel element type", func(t *testing.T) {
 		typ := reflect.TypeOf(make(chan string))
-		info := cache.getTypeInfo(typ)
+		info := GetTypeInfo(typ)
 
 		if info.ElementType == nil {
 			t.Fatal("expected non-nil element type for channel")
@@ -309,11 +291,10 @@ func TestTypeInfo_ElementTypes(t *testing.T) {
 }
 
 func TestTypeInfo_Functions(t *testing.T) {
-	cache := &typeCache{}
 
 	t.Run("simple function", func(t *testing.T) {
 		fn := func(s string, i int) error { return nil }
-		info := cache.getTypeInfo(reflect.TypeOf(fn))
+		info := GetTypeInfo(reflect.TypeOf(fn))
 
 		if !info.IsFunc {
 			t.Error("expected IsFunc to be true")
@@ -338,7 +319,7 @@ func TestTypeInfo_Functions(t *testing.T) {
 
 	t.Run("variadic function", func(t *testing.T) {
 		fn := func(prefix string, args ...int) {}
-		info := cache.getTypeInfo(reflect.TypeOf(fn))
+		info := GetTypeInfo(reflect.TypeOf(fn))
 
 		if !info.IsVariadic {
 			t.Error("expected IsVariadic to be true")
@@ -351,7 +332,7 @@ func TestTypeInfo_Functions(t *testing.T) {
 
 	t.Run("multiple returns without error", func(t *testing.T) {
 		fn := func() (string, int) { return "", 0 }
-		info := cache.getTypeInfo(reflect.TypeOf(fn))
+		info := GetTypeInfo(reflect.TypeOf(fn))
 
 		if info.NumOut != 2 {
 			t.Errorf("NumOut = %d, want 2", info.NumOut)
@@ -364,7 +345,7 @@ func TestTypeInfo_Functions(t *testing.T) {
 
 	t.Run("cached input and output types", func(t *testing.T) {
 		fn := func(s string, i int) (bool, error) { return false, nil }
-		info := cache.getTypeInfo(reflect.TypeOf(fn))
+		info := GetTypeInfo(reflect.TypeOf(fn))
 
 		if len(info.InTypes) != 2 {
 			t.Fatalf("expected 2 input types, got %d", len(info.InTypes))
@@ -389,10 +370,8 @@ func TestTypeInfo_Functions(t *testing.T) {
 }
 
 func TestTypeInfo_Structs(t *testing.T) {
-	cache := &typeCache{}
-
 	t.Run("simple struct", func(t *testing.T) {
-		info := cache.getTypeInfo(reflect.TypeOf(testStruct{}))
+		info := GetTypeInfo(reflect.TypeOf(testStruct{}))
 
 		if !info.IsStruct {
 			t.Error("expected IsStruct to be true")
@@ -420,7 +399,7 @@ func TestTypeInfo_Structs(t *testing.T) {
 	})
 
 	t.Run("struct with tags", func(t *testing.T) {
-		info := cache.getTypeInfo(reflect.TypeOf(testStructWithTags{}))
+		info := GetTypeInfo(reflect.TypeOf(testStructWithTags{}))
 
 		if info.NumFields != 5 { // 4 public + 1 private
 			t.Errorf("NumFields = %d, want 5", info.NumFields)
@@ -451,30 +430,6 @@ func TestTypeInfo_Structs(t *testing.T) {
 		privateField := info.Fields[4]
 		if privateField.IsExported {
 			t.Error("expected privateField to not be exported")
-		}
-	})
-
-	t.Run("struct with In", func(t *testing.T) {
-		info := cache.getTypeInfo(reflect.TypeOf(testStructWithIn{}))
-
-		if !info.HasInField {
-			t.Error("expected HasInField to be true")
-		}
-
-		if info.HasOutField {
-			t.Error("expected HasOutField to be false")
-		}
-	})
-
-	t.Run("struct with Out", func(t *testing.T) {
-		info := cache.getTypeInfo(reflect.TypeOf(testStructWithOut{}))
-
-		if info.HasInField {
-			t.Error("expected HasInField to be false")
-		}
-
-		if !info.HasOutField {
-			t.Error("expected HasOutField to be true")
 		}
 	})
 }
@@ -529,7 +484,7 @@ func TestFormatTypeCached(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			info := globalTypeCache.getTypeInfo(tt.typ)
+			info := GetTypeInfo(tt.typ)
 			formatted := formatTypeCachedWithDepth(info, 0)
 
 			if !strings.Contains(formatted, tt.contains) {
@@ -556,42 +511,42 @@ func TestDetermineServiceTypeCached(t *testing.T) {
 		{
 			name: "interface type",
 			typeFunc: func() (reflect.Type, *typeInfo, error) {
-				return determineServiceTypeCached[testInterface]()
+				return DetermineServiceTypeCached[testInterface]()
 			},
 			wantInterface: true,
 		},
 		{
 			name: "pointer type",
 			typeFunc: func() (reflect.Type, *typeInfo, error) {
-				return determineServiceTypeCached[*testStruct]()
+				return DetermineServiceTypeCached[*testStruct]()
 			},
 			wantPointer: true,
 		},
 		{
 			name: "struct type",
 			typeFunc: func() (reflect.Type, *typeInfo, error) {
-				return determineServiceTypeCached[testStruct]()
+				return DetermineServiceTypeCached[testStruct]()
 			},
 			wantPointer: true, // Should return pointer to struct
 		},
 		{
 			name: "slice type",
 			typeFunc: func() (reflect.Type, *typeInfo, error) {
-				return determineServiceTypeCached[[]string]()
+				return DetermineServiceTypeCached[[]string]()
 			},
 			wantPointer: false, // Slices are used directly
 		},
 		{
 			name: "map type",
 			typeFunc: func() (reflect.Type, *typeInfo, error) {
-				return determineServiceTypeCached[map[string]int]()
+				return DetermineServiceTypeCached[map[string]int]()
 			},
 			wantPointer: false, // Maps are used directly
 		},
 		{
 			name: "primitive type",
 			typeFunc: func() (reflect.Type, *typeInfo, error) {
-				return determineServiceTypeCached[int]()
+				return DetermineServiceTypeCached[int]()
 			},
 			wantPointer: false, // Primitives are used directly
 		},
@@ -614,74 +569,6 @@ func TestDetermineServiceTypeCached(t *testing.T) {
 
 			if typ != info.Type {
 				t.Error("returned type doesn't match info.Type")
-			}
-		})
-	}
-}
-
-func TestValidateConstructorCached(t *testing.T) {
-	tests := []struct {
-		name        string
-		constructor interface{}
-		wantErr     error
-	}{
-		{
-			name:        "nil constructor",
-			constructor: nil,
-			wantErr:     ErrNilConstructor,
-		},
-		{
-			name:        "not a function",
-			constructor: "not a function",
-			wantErr:     ErrConstructorNotFunction,
-		},
-		{
-			name:        "valid simple constructor",
-			constructor: func() *testStruct { return &testStruct{} },
-			wantErr:     nil,
-		},
-		{
-			name:        "constructor with error",
-			constructor: func() (*testStruct, error) { return nil, nil },
-			wantErr:     nil,
-		},
-		{
-			name:        "no return values",
-			constructor: func() {},
-			wantErr:     ErrConstructorNoReturn,
-		},
-		{
-			name:        "too many returns",
-			constructor: func() (int, int, int) { return 0, 0, 0 },
-			wantErr:     ErrConstructorTooManyReturns,
-		},
-		{
-			name:        "invalid second return",
-			constructor: func() (int, string) { return 0, "" },
-			wantErr:     ErrConstructorInvalidSecondReturn,
-		},
-		{
-			name:        "with dig.In parameter",
-			constructor: func(in testStructWithIn) *testStruct { return nil },
-			wantErr:     nil,
-		},
-		{
-			name:        "with dig.Out return",
-			constructor: func() testStructWithOut { return testStructWithOut{} },
-			wantErr:     nil,
-		},
-		{
-			name:        "dig.Out with error",
-			constructor: func() (testStructWithOut, error) { return testStructWithOut{}, nil },
-			wantErr:     nil,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateConstructor(tt.constructor)
-			if !errors.Is(err, tt.wantErr) {
-				t.Errorf("validateConstructorCached() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}
@@ -760,7 +647,7 @@ func TestClearTypeCache(t *testing.T) {
 
 	// Ensure they're cached
 	for _, typ := range types {
-		globalTypeCache.getTypeInfo(typ)
+		GetTypeInfo(typ)
 	}
 
 	// Clear the cache
@@ -769,7 +656,7 @@ func TestClearTypeCache(t *testing.T) {
 	// Verify cache is empty by checking that new calls create different instances
 	// (This is a bit indirect, but we can't directly inspect the sync.Map size)
 	count := 0
-	globalTypeCache.cache.Range(func(key, value interface{}) bool {
+	tc.cache.Range(func(key, value interface{}) bool {
 		count++
 		return true
 	})
@@ -802,50 +689,46 @@ func TestLastSegment(t *testing.T) {
 
 // Benchmark tests
 func BenchmarkTypeCache_GetTypeInfo(b *testing.B) {
-	cache := &typeCache{}
 	typ := reflect.TypeOf(testStruct{})
 
 	// Warm up the cache
-	cache.getTypeInfo(typ)
+	GetTypeInfo(typ)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		cache.getTypeInfo(typ)
+		GetTypeInfo(typ)
 	}
 }
 
 func BenchmarkTypeCache_GetTypeInfo_Parallel(b *testing.B) {
-	cache := &typeCache{}
 	typ := reflect.TypeOf(testStruct{})
 
 	// Warm up the cache
-	cache.getTypeInfo(typ)
+	GetTypeInfo(typ)
 
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			cache.getTypeInfo(typ)
+			GetTypeInfo(typ)
 		}
 	})
 }
 
 func BenchmarkTypeCache_CreateTypeInfo_Struct(b *testing.B) {
-	cache := &typeCache{}
 	typ := reflect.TypeOf(testStructComplex{})
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		cache.createTypeInfo(typ)
+		createTypeInfo(typ)
 	}
 }
 
 func BenchmarkTypeCache_CreateTypeInfo_Function(b *testing.B) {
-	cache := &typeCache{}
 	fn := func(a string, b int, c testInterface) (*testStruct, error) { return nil, nil }
 	typ := reflect.TypeOf(fn)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		cache.createTypeInfo(typ)
+		createTypeInfo(typ)
 	}
 }

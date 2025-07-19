@@ -1,10 +1,12 @@
-package godi
+package typecache
 
 import (
 	"fmt"
 	"reflect"
 	"strings"
 	"sync"
+
+	"go.uber.org/dig"
 )
 
 // typeCache provides a thread-safe cache for reflection type information
@@ -70,11 +72,11 @@ type fieldInfo struct {
 	TagName     string // Name tag value if present
 }
 
-// globalTypeCache is the singleton type cache used throughout the library.
-var globalTypeCache = &typeCache{}
+// tc is the singleton type cache used throughout the library.
+var tc = &typeCache{}
 
-// getTypeInfo returns cached type information or creates it if not present.
-func (tc *typeCache) getTypeInfo(t reflect.Type) *typeInfo {
+// GetTypeInfo returns cached type information or creates it if not present.
+func GetTypeInfo(t reflect.Type) *typeInfo {
 	if t == nil {
 		return nil
 	}
@@ -85,7 +87,7 @@ func (tc *typeCache) getTypeInfo(t reflect.Type) *typeInfo {
 	}
 
 	// Create new type info
-	info := tc.createTypeInfo(t)
+	info := createTypeInfo(t)
 
 	// Store in cache (handle race condition where another goroutine might have stored it)
 	actual, _ := tc.cache.LoadOrStore(t, info)
@@ -93,7 +95,7 @@ func (tc *typeCache) getTypeInfo(t reflect.Type) *typeInfo {
 }
 
 // createTypeInfo creates a new typeInfo for the given type.
-func (tc *typeCache) createTypeInfo(t reflect.Type) *typeInfo {
+func createTypeInfo(t reflect.Type) *typeInfo {
 	info := &typeInfo{
 		Type:    t,
 		Kind:    t.Kind(),
@@ -192,10 +194,11 @@ func (tc *typeCache) createTypeInfo(t reflect.Type) *typeInfo {
 
 			// Check for dig.In/Out
 			if field.Anonymous && field.Type != nil {
-				if IsIn(field.Type) {
+				if dig.IsIn(field.Type) {
 					info.HasInField = true
 				}
-				if IsOut(field.Type) {
+
+				if dig.IsOut(field.Type) {
 					info.HasOutField = true
 				}
 			}
@@ -239,29 +242,29 @@ func formatTypeCachedWithDepth(info *typeInfo, depth int) string {
 
 	case reflect.Ptr:
 		if info.ElementType != nil {
-			elemInfo := globalTypeCache.getTypeInfo(info.ElementType)
+			elemInfo := GetTypeInfo(info.ElementType)
 			return "*" + formatTypeCachedWithDepth(elemInfo, depth+1)
 		}
 		return "*" + info.ElementType.String()
 
 	case reflect.Slice:
 		if info.ElementType != nil {
-			elemInfo := globalTypeCache.getTypeInfo(info.ElementType)
+			elemInfo := GetTypeInfo(info.ElementType)
 			return "[]" + formatTypeCachedWithDepth(elemInfo, depth+1)
 		}
 		return "[]" + info.ElementType.String()
 
 	case reflect.Map:
 		if info.KeyType != nil && info.ElementType != nil {
-			keyInfo := globalTypeCache.getTypeInfo(info.KeyType)
-			elemInfo := globalTypeCache.getTypeInfo(info.ElementType)
+			keyInfo := GetTypeInfo(info.KeyType)
+			elemInfo := GetTypeInfo(info.ElementType)
 			return "map[" + formatTypeCachedWithDepth(keyInfo, depth+1) + "]" + formatTypeCachedWithDepth(elemInfo, depth+1)
 		}
 		return info.String
 
 	case reflect.Array:
 		if info.ElementType != nil {
-			elemInfo := globalTypeCache.getTypeInfo(info.ElementType)
+			elemInfo := GetTypeInfo(info.ElementType)
 			return fmt.Sprintf("[%d]%s", info.Type.Len(), formatTypeCachedWithDepth(elemInfo, depth+1))
 		}
 		return info.String
@@ -294,9 +297,9 @@ func lastSegment(path string) string {
 }
 
 // Update the determineServiceType function to use the cache
-func determineServiceTypeCached[T any]() (reflect.Type, *typeInfo, error) {
+func DetermineServiceTypeCached[T any]() (reflect.Type, *typeInfo, error) {
 	tType := reflect.TypeOf((*T)(nil)).Elem()
-	tInfo := globalTypeCache.getTypeInfo(tType)
+	tInfo := GetTypeInfo(tType)
 
 	// Determine the actual service type to resolve
 	switch tInfo.Kind {
@@ -320,7 +323,7 @@ func determineServiceTypeCached[T any]() (reflect.Type, *typeInfo, error) {
 		}
 		// For structs and other complex types, services are typically registered as pointers
 		ptrType := reflect.PointerTo(tType)
-		ptrInfo := globalTypeCache.getTypeInfo(ptrType)
+		ptrInfo := GetTypeInfo(ptrType)
 		return ptrType, ptrInfo, nil
 	}
 }
@@ -331,14 +334,14 @@ func canCheckNilCached(v reflect.Value) bool {
 		return false
 	}
 
-	info := globalTypeCache.getTypeInfo(v.Type())
+	info := GetTypeInfo(v.Type())
 	return info.CanBeNil
 }
 
 // clearTypeCache clears the global type cache. Useful for testing.
 func clearTypeCache() {
-	globalTypeCache.cache.Range(func(key, value interface{}) bool {
-		globalTypeCache.cache.Delete(key)
+	tc.cache.Range(func(key, value interface{}) bool {
+		tc.cache.Delete(key)
 		return true
 	})
 }

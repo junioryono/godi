@@ -1,6 +1,10 @@
 package godi
 
-import "reflect"
+import (
+	"reflect"
+
+	"github.com/junioryono/godi/internal/typecache"
+)
 
 // validateConstructor validates a constructor using cached type information.
 func validateConstructor(constructor interface{}) error {
@@ -9,7 +13,7 @@ func validateConstructor(constructor interface{}) error {
 	}
 
 	fnType := reflect.TypeOf(constructor)
-	fnInfo := globalTypeCache.getTypeInfo(fnType)
+	fnInfo := typecache.GetTypeInfo(fnType)
 
 	if !fnInfo.IsFunc {
 		return ErrConstructorNotFunction
@@ -18,7 +22,7 @@ func validateConstructor(constructor interface{}) error {
 	// Check if any parameter uses In
 	usesDigIn := false
 	for _, inType := range fnInfo.InTypes {
-		inInfo := globalTypeCache.getTypeInfo(inType)
+		inInfo := typecache.GetTypeInfo(inType)
 		if inInfo.IsStruct && inInfo.HasInField {
 			if usesDigIn {
 				return ErrConstructorMultipleIn
@@ -30,7 +34,7 @@ func validateConstructor(constructor interface{}) error {
 	// Check outputs
 	usesDigOut := false
 	if fnInfo.NumOut > 0 {
-		outInfo := globalTypeCache.getTypeInfo(fnInfo.OutTypes[0])
+		outInfo := typecache.GetTypeInfo(fnInfo.OutTypes[0])
 		if outInfo.IsStruct && outInfo.HasOutField {
 			usesDigOut = true
 		}
@@ -70,7 +74,7 @@ func validateDecorator(decorator interface{}) error {
 	}
 
 	fnType := reflect.TypeOf(decorator)
-	fnInfo := globalTypeCache.getTypeInfo(fnType)
+	fnInfo := typecache.GetTypeInfo(fnType)
 
 	if !fnInfo.IsFunc {
 		return ErrDecoratorNotFunction

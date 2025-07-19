@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/junioryono/godi/internal/typecache"
 	"go.uber.org/dig"
 )
 
@@ -256,9 +257,9 @@ func (sp *serviceProvider) registerSingletonService(desc *serviceDescriptor) err
 
 	// Check if this is a result object constructor
 	isResultObject := false
-	fnInfo := globalTypeCache.getTypeInfo(reflect.TypeOf(desc.Constructor))
+	fnInfo := typecache.GetTypeInfo(reflect.TypeOf(desc.Constructor))
 	if fnInfo.IsFunc && fnInfo.NumOut > 0 {
-		firstOutInfo := globalTypeCache.getTypeInfo(fnInfo.OutTypes[0])
+		firstOutInfo := typecache.GetTypeInfo(fnInfo.OutTypes[0])
 		if firstOutInfo.IsStruct && firstOutInfo.HasOutField {
 			isResultObject = true
 		}
@@ -278,7 +279,7 @@ func (sp *serviceProvider) registerSingletonService(desc *serviceDescriptor) err
 // wrapSingletonConstructor wraps a singleton constructor to track disposable instances.
 func (sp *serviceProvider) wrapSingletonConstructor(constructor interface{}) interface{} {
 	fnType := reflect.TypeOf(constructor)
-	fnInfo := globalTypeCache.getTypeInfo(fnType)
+	fnInfo := typecache.GetTypeInfo(fnType)
 	fnValue := reflect.ValueOf(constructor)
 
 	return reflect.MakeFunc(fnType, func(args []reflect.Value) []reflect.Value {
@@ -288,7 +289,8 @@ func (sp *serviceProvider) wrapSingletonConstructor(constructor interface{}) int
 		// If successful and has a result, check if it's disposable
 		if len(results) > 0 && results[0].IsValid() {
 			// Use cached info to check if we can call IsNil
-			if canCheckNilCached(results[0]) && !results[0].IsNil() {
+			canBeNil := typecache.GetTypeInfo(results[0].Type()).CanBeNil
+			if canBeNil && !results[0].IsNil() {
 				// Check if there's an error result
 				hasError := false
 				if fnInfo.NumOut > 1 && fnInfo.HasErrorReturn && results[1].IsValid() && !results[1].IsNil() {
@@ -300,7 +302,7 @@ func (sp *serviceProvider) wrapSingletonConstructor(constructor interface{}) int
 					// Track the instance in the root scope for disposal
 					sp.rootScope.captureDisposable(instance)
 				}
-			} else if !canCheckNilCached(results[0]) {
+			} else if !canBeNil {
 				// For non-nillable types, just capture if no error
 				hasError := false
 				if fnInfo.NumOut > 1 && fnInfo.HasErrorReturn && results[1].IsValid() && !results[1].IsNil() {
@@ -602,7 +604,7 @@ func ResolveGroup[T any](s ServiceProvider, groupName string) ([]T, error) {
 
 // determineServiceType determines the actual service type to resolve based on the generic type T.
 func determineServiceType[T any]() (reflect.Type, error) {
-	serviceType, _, err := determineServiceTypeCached[T]()
+	serviceType, _, err := typecache.DetermineServiceTypeCached[T]()
 	return serviceType, err
 }
 

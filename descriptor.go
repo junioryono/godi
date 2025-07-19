@@ -3,6 +3,8 @@ package godi
 import (
 	"fmt"
 	"reflect"
+
+	"github.com/junioryono/godi/internal/typecache"
 )
 
 // serviceDescriptor describes a service with its type, factory, and lifetime.
@@ -89,13 +91,13 @@ func newServiceDescriptor(constructor interface{}, lifetime ServiceLifetime) (*s
 	}
 
 	fnType := reflect.TypeOf(constructor)
-	fnInfo := globalTypeCache.getTypeInfo(fnType)
+	fnInfo := typecache.GetTypeInfo(fnType)
 
 	// Determine service type from return type
 	var serviceType reflect.Type
 	if fnInfo.NumOut > 0 {
 		firstOut := fnInfo.OutTypes[0]
-		firstOutInfo := globalTypeCache.getTypeInfo(firstOut)
+		firstOutInfo := typecache.GetTypeInfo(firstOut)
 		if firstOutInfo.IsStruct && firstOutInfo.HasOutField {
 			// This is a result object - we'll handle it differently
 			return nil, ErrResultObjectConstructor
