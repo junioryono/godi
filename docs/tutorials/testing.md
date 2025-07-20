@@ -108,8 +108,6 @@ func WithService(lifetime godi.ServiceLifetime, constructor interface{}) Option 
             c.services.AddSingleton(constructor)
         case godi.Scoped:
             c.services.AddScoped(constructor)
-        case godi.Transient:
-            c.services.AddTransient(constructor)
         }
     }
 }

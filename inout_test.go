@@ -1,305 +1,633 @@
 package godi_test
 
 import (
+	"context"
+	"errors"
 	"fmt"
-	"reflect"
 	"testing"
 
 	"github.com/junioryono/godi"
-	"go.uber.org/dig"
+	"github.com/junioryono/godi/internal/testutil"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-// Test types for In/Out functionality
-type (
-	// Services for testing
-	inoutTestLogger interface {
-		Log(string)
-	}
+func TestParameterObjects(t *testing.T) {
+	t.Run("basic parameter object", func(t *testing.T) {
+		t.Parallel()
 
-	inoutTestDatabase interface {
-		Query(string) string
-	}
+		type ServiceParams struct {
+			godi.In
 
-	// Parameter objects using In
-	simpleInParams struct {
-		godi.In
-
-		Logger inoutTestLogger
-		DB     inoutTestDatabase
-	}
-
-	// Result objects using Out
-	simpleOutResult struct {
-		godi.Out
-
-		Logger inoutTestLogger
-		DB     inoutTestDatabase
-	}
-
-	// Handler for group tests
-	Handler interface {
-		Handle()
-	}
-)
-
-func TestInOut_TypeAliases(t *testing.T) {
-	t.Run("In type alias", func(t *testing.T) {
-		// Verify that our In is the same as dig.In
-		var godiIn godi.In
-		var digIn dig.In
-
-		godiType := reflect.TypeOf(godiIn)
-		digType := reflect.TypeOf(digIn)
-
-		if godiType != digType {
-			t.Error("godi.In should be the same type as dig.In")
+			Logger   testutil.TestLogger
+			Database testutil.TestDatabase
 		}
+
+		constructor := func(params ServiceParams) *testutil.TestService {
+			// Use dependencies
+			params.Logger.Log("Creating service")
+			params.Database.Query("SELECT 1")
+
+			return &testutil.TestService{
+				ID:   "from-params",
+				Data: "test",
+			}
+		}
+
+		provider := testutil.NewServiceCollectionBuilder(t).
+			WithSingleton(testutil.NewTestLogger).
+			WithSingleton(testutil.NewTestDatabase).
+			WithScoped(constructor).
+			BuildProvider()
+
+		scope := provider.CreateScope(context.Background())
+		t.Cleanup(func() {
+			require.NoError(t, scope.Close())
+		})
+
+		service := testutil.AssertServiceResolvableInScope[*testutil.TestService](t, scope)
+		assert.Equal(t, "from-params", service.ID)
 	})
 
-	t.Run("Out type alias", func(t *testing.T) {
-		// Verify that our Out is the same as dig.Out
-		var godiOut godi.Out
-		var digOut dig.Out
+	t.Run("parameter object with optional fields", func(t *testing.T) {
+		t.Parallel()
 
-		godiType := reflect.TypeOf(godiOut)
-		digType := reflect.TypeOf(digOut)
+		type ServiceParams struct {
+			godi.In
 
-		if godiType != digType {
-			t.Error("godi.Out should be the same type as dig.Out")
+			Logger   testutil.TestLogger
+			Database testutil.TestDatabase
+			Cache    testutil.TestCache `optional:"true"`
 		}
+
+		type ServiceWithOptional struct {
+			hasCache bool
+		}
+
+		constructor := func(params ServiceParams) *ServiceWithOptional {
+			return &ServiceWithOptional{
+				hasCache: params.Cache != nil,
+			}
+		}
+
+		// Test without cache
+		provider1 := testutil.NewServiceCollectionBuilder(t).
+			WithSingleton(testutil.NewTestLogger).
+			WithSingleton(testutil.NewTestDatabase).
+			WithSingleton(constructor).
+			BuildProvider()
+
+		service1 := testutil.AssertServiceResolvable[*ServiceWithOptional](t, provider1)
+		assert.False(t, service1.hasCache, "should not have cache when not registered")
+
+		// Test with cache
+		provider2 := testutil.NewServiceCollectionBuilder(t).
+			WithSingleton(testutil.NewTestLogger).
+			WithSingleton(testutil.NewTestDatabase).
+			WithSingleton(testutil.NewTestCache).
+			WithSingleton(constructor).
+			BuildProvider()
+
+		service2 := testutil.AssertServiceResolvable[*ServiceWithOptional](t, provider2)
+		assert.True(t, service2.hasCache, "should have cache when registered")
+	})
+
+	t.Run("parameter object with named services", func(t *testing.T) {
+		t.Parallel()
+
+		type ServiceParams struct {
+			godi.In
+
+			PrimaryDB   testutil.TestDatabase `name:"primary"`
+			SecondaryDB testutil.TestDatabase `name:"secondary"`
+		}
+
+		type ServiceWithNamedDeps struct {
+			primaryResult   string
+			secondaryResult string
+		}
+
+		constructor := func(params ServiceParams) *ServiceWithNamedDeps {
+			return &ServiceWithNamedDeps{
+				primaryResult:   params.PrimaryDB.Query("SELECT 1"),
+				secondaryResult: params.SecondaryDB.Query("SELECT 2"),
+			}
+		}
+
+		provider := testutil.NewServiceCollectionBuilder(t).
+			WithSingleton(func() testutil.TestDatabase {
+				return testutil.NewTestDatabaseNamed("primary-db")
+			}, godi.Name("primary")).
+			WithSingleton(func() testutil.TestDatabase {
+				return testutil.NewTestDatabaseNamed("secondary-db")
+			}, godi.Name("secondary")).
+			WithSingleton(constructor).
+			BuildProvider()
+
+		service := testutil.AssertServiceResolvable[*ServiceWithNamedDeps](t, provider)
+		assert.Contains(t, service.primaryResult, "primary-db")
+		assert.Contains(t, service.secondaryResult, "secondary-db")
+	})
+
+	t.Run("parameter object with groups", func(t *testing.T) {
+		t.Parallel()
+
+		type ServiceParams struct {
+			godi.In
+
+			Handlers []testutil.TestHandler `group:"handlers"`
+		}
+
+		type HandlerManager struct {
+			handlerCount int
+			names        []string
+		}
+
+		constructor := func(params ServiceParams) *HandlerManager {
+			names := make([]string, len(params.Handlers))
+			for i, h := range params.Handlers {
+				names[i] = h.Handle()
+			}
+
+			return &HandlerManager{
+				handlerCount: len(params.Handlers),
+				names:        names,
+			}
+		}
+
+		provider := testutil.NewServiceCollectionBuilder(t).
+			WithSingleton(func() testutil.TestHandler {
+				return testutil.NewTestHandler("handler1")
+			}, godi.Group("handlers")).
+			WithSingleton(func() testutil.TestHandler {
+				return testutil.NewTestHandler("handler2")
+			}, godi.Group("handlers")).
+			WithSingleton(func() testutil.TestHandler {
+				return testutil.NewTestHandler("handler3")
+			}, godi.Group("handlers")).
+			WithSingleton(constructor).
+			BuildProvider()
+
+		manager := testutil.AssertServiceResolvable[*HandlerManager](t, provider)
+		assert.Equal(t, 3, manager.handlerCount)
+		assert.Len(t, manager.names, 3)
+
+		// Check all handlers are present
+		nameSet := make(map[string]bool)
+		for _, name := range manager.names {
+			nameSet[name] = true
+		}
+		assert.True(t, nameSet["handler1"])
+		assert.True(t, nameSet["handler2"])
+		assert.True(t, nameSet["handler3"])
 	})
 }
 
-func TestInOut_IsInIsOut(t *testing.T) {
-	t.Run("IsIn function", func(t *testing.T) {
-		// Test with In struct
-		if !dig.IsIn(simpleInParams{}) {
-			t.Error("expected IsIn to return true for struct with embedded In")
+func TestResultObjects(t *testing.T) {
+	t.Run("basic result object", func(t *testing.T) {
+		t.Parallel()
+
+		type ServiceBundle struct {
+			godi.Out
+
+			Logger   testutil.TestLogger
+			Database testutil.TestDatabase
+			Cache    testutil.TestCache
 		}
 
-		// Test with non-In struct
-		if dig.IsIn(struct{}{}) {
-			t.Error("expected IsIn to return false for regular struct")
+		constructor := func() ServiceBundle {
+			return ServiceBundle{
+				Logger:   testutil.NewTestLogger(),
+				Database: testutil.NewTestDatabase(),
+				Cache:    testutil.NewTestCache(),
+			}
 		}
 
-		// Test with type instead of value
-		if !dig.IsIn(reflect.TypeOf(simpleInParams{})) {
-			t.Error("expected IsIn to work with reflect.Type")
-		}
+		provider := testutil.NewServiceCollectionBuilder(t).
+			WithSingleton(constructor).
+			BuildProvider()
+
+		// All services should be resolvable
+		logger := testutil.AssertServiceResolvable[testutil.TestLogger](t, provider)
+		database := testutil.AssertServiceResolvable[testutil.TestDatabase](t, provider)
+		cache := testutil.AssertServiceResolvable[testutil.TestCache](t, provider)
+
+		assert.NotNil(t, logger)
+		assert.NotNil(t, database)
+		assert.NotNil(t, cache)
 	})
 
-	t.Run("IsOut function", func(t *testing.T) {
-		// Test with Out struct
-		if !dig.IsOut(simpleOutResult{}) {
-			t.Error("expected IsOut to return true for struct with embedded Out")
+	t.Run("result object with named services", func(t *testing.T) {
+		t.Parallel()
+
+		type ServiceBundle struct {
+			godi.Out
+
+			UserService  *testutil.TestService `name:"user"`
+			AdminService *testutil.TestService `name:"admin"`
 		}
 
-		// Test with non-Out struct
-		if dig.IsOut(struct{}{}) {
-			t.Error("expected IsOut to return false for regular struct")
+		constructor := func() ServiceBundle {
+			return ServiceBundle{
+				UserService:  &testutil.TestService{ID: "user-service"},
+				AdminService: &testutil.TestService{ID: "admin-service"},
+			}
 		}
 
-		// Test with type instead of value
-		if !dig.IsOut(reflect.TypeOf(simpleOutResult{})) {
-			t.Error("expected IsOut to work with reflect.Type")
+		provider := testutil.NewServiceCollectionBuilder(t).
+			WithSingleton(constructor).
+			BuildProvider()
+
+		// Named services should be resolvable
+		userService := testutil.AssertKeyedServiceResolvable[*testutil.TestService](t, provider, "user")
+		adminService := testutil.AssertKeyedServiceResolvable[*testutil.TestService](t, provider, "admin")
+
+		assert.Equal(t, "user-service", userService.ID)
+		assert.Equal(t, "admin-service", adminService.ID)
+	})
+
+	t.Run("result object with groups", func(t *testing.T) {
+		t.Parallel()
+
+		type HandlerBundle struct {
+			godi.Out
+
+			UserHandler  testutil.TestHandler `group:"routes"`
+			AdminHandler testutil.TestHandler `group:"routes"`
+			APIHandler   testutil.TestHandler `group:"routes"`
 		}
+
+		constructor := func() HandlerBundle {
+			return HandlerBundle{
+				UserHandler:  testutil.NewTestHandler("user"),
+				AdminHandler: testutil.NewTestHandler("admin"),
+				APIHandler:   testutil.NewTestHandler("api"),
+			}
+		}
+
+		provider := testutil.NewServiceCollectionBuilder(t).
+			WithSingleton(constructor).
+			BuildProvider()
+
+		// Group should contain all handlers
+		handlers, err := godi.ResolveGroup[testutil.TestHandler](provider, "routes")
+		require.NoError(t, err)
+		assert.Len(t, handlers, 3)
+
+		// Verify all handlers are present
+		names := make(map[string]bool)
+		for _, h := range handlers {
+			names[h.Handle()] = true
+		}
+		assert.True(t, names["user"])
+		assert.True(t, names["admin"])
+		assert.True(t, names["api"])
+	})
+
+	t.Run("result object with error", func(t *testing.T) {
+		t.Parallel()
+
+		type ServiceBundle struct {
+			godi.Out
+
+			Service *testutil.TestService
+		}
+
+		expectedErr := errors.New("construction failed")
+
+		constructor := func() (ServiceBundle, error) {
+			return ServiceBundle{}, expectedErr
+		}
+
+		provider := testutil.NewServiceCollectionBuilder(t).
+			WithSingleton(constructor).
+			BuildProvider()
+
+		// Resolution should fail with the constructor error
+		_, err := godi.Resolve[*testutil.TestService](provider)
+		assert.Error(t, err)
+		assert.ErrorIs(t, err, expectedErr)
 	})
 }
 
-func TestInOut_ProvideOptions(t *testing.T) {
-	t.Run("Name function", func(t *testing.T) {
-		// Test that Name returns a valid ProvideOption
-		opt := godi.Name("test-name")
-		if opt == nil {
-			t.Error("Name should return non-nil ProvideOption")
+func TestComplexScenarios(t *testing.T) {
+	t.Run("parameter and result objects together", func(t *testing.T) {
+		t.Parallel()
+
+		// Input params
+		type DatabaseParams struct {
+			godi.In
+
+			Logger testutil.TestLogger
 		}
 
-		// Verify it's the same function as dig.Name
-		digOpt := dig.Name("test-name")
+		// Output bundle
+		type DatabaseBundle struct {
+			godi.Out
 
-		// We can't directly compare functions, but we can check their string representations
-		if formatOption(opt) != formatOption(digOpt) {
-			t.Error("godi.Name should produce same option as dig.Name")
+			Primary   testutil.TestDatabase `name:"primary"`
+			Secondary testutil.TestDatabase `name:"secondary"`
 		}
+
+		constructor := func(params DatabaseParams) DatabaseBundle {
+			params.Logger.Log("Creating databases")
+
+			return DatabaseBundle{
+				Primary:   testutil.NewTestDatabaseNamed("primary"),
+				Secondary: testutil.NewTestDatabaseNamed("secondary"),
+			}
+		}
+
+		provider := testutil.NewServiceCollectionBuilder(t).
+			WithSingleton(testutil.NewTestLogger).
+			WithSingleton(constructor).
+			BuildProvider()
+
+		// Both databases should be available
+		primary := testutil.AssertKeyedServiceResolvable[testutil.TestDatabase](t, provider, "primary")
+		secondary := testutil.AssertKeyedServiceResolvable[testutil.TestDatabase](t, provider, "secondary")
+
+		assert.Contains(t, primary.Query("SELECT 1"), "primary")
+		assert.Contains(t, secondary.Query("SELECT 1"), "secondary")
 	})
 
-	t.Run("Group function", func(t *testing.T) {
-		opt := godi.Group("test-group")
-		if opt == nil {
-			t.Error("Group should return non-nil ProvideOption")
+	t.Run("nested parameter objects", func(t *testing.T) {
+		t.Parallel()
+
+		type InnerParams struct {
+			godi.In
+
+			Logger testutil.TestLogger
 		}
 
-		digOpt := dig.Group("test-group")
-		if formatOption(opt) != formatOption(digOpt) {
-			t.Error("godi.Group should produce same option as dig.Group")
+		type OuterService struct {
+			logger testutil.TestLogger
 		}
+
+		// This should work - the inner struct has In, not the constructor param
+		innerConstructor := func(params InnerParams) *OuterService {
+			return &OuterService{logger: params.Logger}
+		}
+
+		provider := testutil.NewServiceCollectionBuilder(t).
+			WithSingleton(testutil.NewTestLogger).
+			WithSingleton(innerConstructor).
+			BuildProvider()
+
+		service := testutil.AssertServiceResolvable[*OuterService](t, provider)
+		assert.NotNil(t, service.logger)
 	})
 
-	t.Run("As function", func(t *testing.T) {
-		opt := godi.As(new(inoutTestLogger), new(inoutTestDatabase))
-		if opt == nil {
-			t.Error("As should return non-nil ProvideOption")
+	t.Run("mixed dependencies with parameter objects", func(t *testing.T) {
+		t.Parallel()
+
+		type ServiceParams struct {
+			godi.In
+
+			Logger   testutil.TestLogger
+			Handlers []testutil.TestHandler `group:"handlers"`
+			Config   string                 `optional:"true"`
 		}
 
-		// Test with single interface
-		opt = godi.As(new(inoutTestLogger))
-		if opt == nil {
-			t.Error("As should work with single interface")
+		type ComplexService struct {
+			loggerType   string
+			handlerCount int
+			hasConfig    bool
 		}
+
+		constructor := func(params ServiceParams, db testutil.TestDatabase) *ComplexService {
+			// Mix of parameter object and regular parameter
+			params.Logger.Log("Creating complex service")
+			db.Query("INIT")
+
+			return &ComplexService{
+				loggerType:   fmt.Sprintf("%T", params.Logger),
+				handlerCount: len(params.Handlers),
+				hasConfig:    params.Config != "",
+			}
+		}
+
+		provider := testutil.NewServiceCollectionBuilder(t).
+			WithSingleton(testutil.NewTestLogger).
+			WithSingleton(testutil.NewTestDatabase).
+			WithSingleton(func() testutil.TestHandler {
+				return testutil.NewTestHandler("h1")
+			}, godi.Group("handlers")).
+			WithSingleton(func() testutil.TestHandler {
+				return testutil.NewTestHandler("h2")
+			}, godi.Group("handlers")).
+			WithSingleton(constructor).
+			BuildProvider()
+
+		service := testutil.AssertServiceResolvable[*ComplexService](t, provider)
+		assert.Contains(t, service.loggerType, "TestLoggerImpl")
+		assert.Equal(t, 2, service.handlerCount)
+		assert.False(t, service.hasConfig) // Optional not provided
+	})
+}
+
+func TestIsInAndIsOut(t *testing.T) {
+	t.Run("IsIn correctly identifies In structs", func(t *testing.T) {
+		t.Parallel()
+
+		type ValidIn struct {
+			godi.In
+			Logger testutil.TestLogger
+		}
+
+		type InvalidIn struct {
+			Logger testutil.TestLogger
+		}
+
+		type NamedIn struct {
+			In     godi.In // Wrong - should be embedded
+			Logger testutil.TestLogger
+		}
+
+		assert.True(t, godi.IsIn(ValidIn{}))
+		assert.False(t, godi.IsIn(InvalidIn{}))
+		assert.False(t, godi.IsIn(NamedIn{}))
+		assert.False(t, godi.IsIn("not a struct"))
 	})
 
-	t.Run("FillProvideInfo function", func(t *testing.T) {
+	t.Run("IsOut correctly identifies Out structs", func(t *testing.T) {
+		t.Parallel()
+
+		type ValidOut struct {
+			godi.Out
+			Service *testutil.TestService
+		}
+
+		type InvalidOut struct {
+			Service *testutil.TestService
+		}
+
+		type NamedOut struct {
+			Out     godi.Out // Wrong - should be embedded
+			Service *testutil.TestService
+		}
+
+		assert.True(t, godi.IsOut(ValidOut{}))
+		assert.False(t, godi.IsOut(InvalidOut{}))
+		assert.False(t, godi.IsOut(NamedOut{}))
+		assert.False(t, godi.IsOut(42))
+	})
+}
+
+// Table-driven tests for edge cases
+func TestInOutEdgeCases(t *testing.T) {
+	tests := []struct {
+		name     string
+		setup    func(t *testing.T) godi.ServiceCollection
+		wantErr  bool
+		checkErr func(t *testing.T, err error)
+	}{
+		{
+			name: "empty parameter object",
+			setup: func(t *testing.T) godi.ServiceCollection {
+				type EmptyParams struct {
+					godi.In
+				}
+
+				constructor := func(params EmptyParams) string {
+					return "success"
+				}
+
+				collection := godi.NewServiceCollection()
+				require.NoError(t, collection.AddSingleton(constructor))
+				return collection
+			},
+			wantErr: false,
+		},
+		{
+			name: "empty result object",
+			setup: func(t *testing.T) godi.ServiceCollection {
+				type EmptyResult struct {
+					godi.Out
+				}
+
+				constructor := func() EmptyResult {
+					return EmptyResult{}
+				}
+
+				collection := godi.NewServiceCollection()
+				require.NoError(t, collection.AddSingleton(constructor))
+				return collection
+			},
+			wantErr: true,
+			checkErr: func(t *testing.T, err error) {
+				assert.Contains(t, err.Error(), "must provide at least one non-error type")
+			},
+		},
+		{
+			name: "parameter object with unexported fields",
+			setup: func(t *testing.T) godi.ServiceCollection {
+				type ParamsWithUnexported struct {
+					godi.In
+
+					Logger testutil.TestLogger
+					hidden string //lint:ignore U1000 unexported
+				}
+
+				constructor := func(params ParamsWithUnexported) string {
+					return "success"
+				}
+
+				collection := godi.NewServiceCollection()
+				require.NoError(t, collection.AddSingleton(testutil.NewTestLogger))
+				require.NoError(t, collection.AddSingleton(constructor))
+				return collection
+			},
+			wantErr: true,
+			checkErr: func(t *testing.T, err error) {
+				assert.Contains(t, err.Error(), "unexported fields not allowed")
+			},
+		},
+		{
+			name: "result object with nil values",
+			setup: func(t *testing.T) godi.ServiceCollection {
+				type NilResult struct {
+					godi.Out
+
+					Service testutil.TestLogger
+				}
+
+				constructor := func() NilResult {
+					return NilResult{
+						Service: nil, // Explicitly nil
+					}
+				}
+
+				collection := godi.NewServiceCollection()
+				require.NoError(t, collection.AddSingleton(constructor))
+				return collection
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			collection := tt.setup(t)
+			provider, err := collection.BuildServiceProvider()
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.checkErr != nil {
+					tt.checkErr(t, err)
+				}
+			} else {
+				require.NoError(t, err)
+				t.Cleanup(func() {
+					require.NoError(t, provider.Close())
+				})
+			}
+		})
+	}
+}
+
+func TestProvideOptions(t *testing.T) {
+	t.Run("FillProvideInfo works", func(t *testing.T) {
+		t.Parallel()
+
 		var info godi.ProvideInfo
-		opt := godi.FillProvideInfo(&info)
-		if opt == nil {
-			t.Error("FillProvideInfo should return non-nil ProvideOption")
-		}
-	})
-}
 
-func TestInOut_DecorateOptions(t *testing.T) {
-	t.Run("FillDecorateInfo function", func(t *testing.T) {
-		var info godi.DecorateInfo
-		opt := godi.FillDecorateInfo(&info)
-		if opt == nil {
-			t.Error("FillDecorateInfo should return non-nil DecorateOption")
-		}
-	})
-}
+		provider := testutil.NewServiceCollectionBuilder(t).
+			WithSingleton(testutil.NewTestLogger, godi.FillProvideInfo(&info)).
+			BuildProvider()
 
-func TestInOut_InvokeOptions(t *testing.T) {
-	t.Run("FillInvokeInfo function", func(t *testing.T) {
-		var info godi.InvokeInfo
-		opt := godi.FillInvokeInfo(&info)
-		if opt == nil {
-			t.Error("FillInvokeInfo should return non-nil InvokeOption")
-		}
-	})
-}
+		// Resolve to ensure the constructor runs
+		testutil.AssertServiceResolvable[testutil.TestLogger](t, provider)
 
-func TestInOut_Callbacks(t *testing.T) {
-	t.Run("WithProviderCallback function", func(t *testing.T) {
-		callback := func(ci godi.CallbackInfo) {
-			// declared and not used: called
-		}
-
-		opt := godi.WithProviderCallback(callback)
-		if opt == nil {
-			t.Error("WithProviderCallback should return non-nil ProvideOption")
-		}
+		// Info should be populated
+		assert.NotNil(t, info)
+		// The exact contents depend on dig's implementation
 	})
 
-	t.Run("WithProviderBeforeCallback function", func(t *testing.T) {
-		callback := func(bci godi.BeforeCallbackInfo) {
-			// declared and not used: called
-		}
+	t.Run("callbacks work", func(t *testing.T) {
+		t.Parallel()
 
-		opt := godi.WithProviderBeforeCallback(callback)
-		if opt == nil {
-			t.Error("WithProviderBeforeCallback should return non-nil ProvideOption")
-		}
+		var callbackInvoked bool
+		var beforeCallbackInvoked bool
+
+		provider := testutil.NewServiceCollectionBuilder(t).
+			WithSingleton(
+				testutil.NewTestLogger,
+				godi.WithProviderCallback(func(ci godi.CallbackInfo) {
+					callbackInvoked = true
+				}),
+				godi.WithProviderBeforeCallback(func(ci godi.BeforeCallbackInfo) {
+					beforeCallbackInvoked = true
+				}),
+			).
+			BuildProvider()
+
+		// Resolve to trigger callbacks
+		testutil.AssertServiceResolvable[testutil.TestLogger](t, provider)
+
+		assert.True(t, beforeCallbackInvoked, "before callback should be invoked")
+		assert.True(t, callbackInvoked, "after callback should be invoked")
 	})
-
-	t.Run("WithDecoratorCallback function", func(t *testing.T) {
-		callback := func(ci godi.CallbackInfo) {
-			// declared and not used: called
-		}
-
-		opt := godi.WithDecoratorCallback(callback)
-		if opt == nil {
-			t.Error("WithDecoratorCallback should return non-nil DecorateOption")
-		}
-	})
-
-	t.Run("WithDecoratorBeforeCallback function", func(t *testing.T) {
-		callback := func(bci godi.BeforeCallbackInfo) {
-			// declared and not used: called
-		}
-
-		opt := godi.WithDecoratorBeforeCallback(callback)
-		if opt == nil {
-			t.Error("WithDecoratorBeforeCallback should return non-nil DecorateOption")
-		}
-	})
-}
-
-func TestInOut_TypeAliasesInfo(t *testing.T) {
-	t.Run("info type aliases are same as dig types", func(t *testing.T) {
-		// These should all be true since they're type aliases
-		var provideInfo godi.ProvideInfo
-		var digProvideInfo dig.ProvideInfo
-		if reflect.TypeOf(provideInfo) != reflect.TypeOf(digProvideInfo) {
-			t.Error("ProvideInfo should be same type as dig.ProvideInfo")
-		}
-
-		var decorateInfo godi.DecorateInfo
-		var digDecorateInfo dig.DecorateInfo
-		if reflect.TypeOf(decorateInfo) != reflect.TypeOf(digDecorateInfo) {
-			t.Error("DecorateInfo should be same type as dig.DecorateInfo")
-		}
-
-		var invokeInfo godi.InvokeInfo
-		var digInvokeInfo dig.InvokeInfo
-		if reflect.TypeOf(invokeInfo) != reflect.TypeOf(digInvokeInfo) {
-			t.Error("InvokeInfo should be same type as dig.InvokeInfo")
-		}
-
-		var input godi.Input
-		var digInput dig.Input
-		if reflect.TypeOf(input) != reflect.TypeOf(digInput) {
-			t.Error("Input should be same type as dig.Input")
-		}
-
-		var output godi.Output
-		var digOutput dig.Output
-		if reflect.TypeOf(output) != reflect.TypeOf(digOutput) {
-			t.Error("Output should be same type as dig.Output")
-		}
-
-		var callbackInfo godi.CallbackInfo
-		var digCallbackInfo dig.CallbackInfo
-		if reflect.TypeOf(callbackInfo) != reflect.TypeOf(digCallbackInfo) {
-			t.Error("CallbackInfo should be same type as dig.CallbackInfo")
-		}
-
-		var beforeCallbackInfo godi.BeforeCallbackInfo
-		var digBeforeCallbackInfo dig.BeforeCallbackInfo
-		if reflect.TypeOf(beforeCallbackInfo) != reflect.TypeOf(digBeforeCallbackInfo) {
-			t.Error("BeforeCallbackInfo should be same type as dig.BeforeCallbackInfo")
-		}
-	})
-}
-
-func TestInOut_OptionTypes(t *testing.T) {
-	t.Run("option type aliases", func(t *testing.T) {
-		// Verify option types are properly aliased
-		var provideOpt godi.ProvideOption
-		var digProvideOpt dig.ProvideOption
-		if reflect.TypeOf(provideOpt) != reflect.TypeOf(digProvideOpt) {
-			t.Error("ProvideOption should be same type as dig.ProvideOption")
-		}
-
-		var decorateOpt godi.DecorateOption
-		var digDecorateOpt dig.DecorateOption
-		if reflect.TypeOf(decorateOpt) != reflect.TypeOf(digDecorateOpt) {
-			t.Error("DecorateOption should be same type as dig.DecorateOption")
-		}
-
-		var invokeOpt godi.InvokeOption
-		var digInvokeOpt dig.InvokeOption
-		if reflect.TypeOf(invokeOpt) != reflect.TypeOf(digInvokeOpt) {
-			t.Error("InvokeOption should be same type as dig.InvokeOption")
-		}
-
-		var scopeOpt godi.ScopeOption
-		var digScopeOpt dig.ScopeOption
-		if reflect.TypeOf(scopeOpt) != reflect.TypeOf(digScopeOpt) {
-			t.Error("ScopeOption should be same type as dig.ScopeOption")
-		}
-	})
-}
-
-// Helper function to format options for comparison
-func formatOption(opt interface{}) string {
-	return fmt.Sprintf("%v", opt)
 }

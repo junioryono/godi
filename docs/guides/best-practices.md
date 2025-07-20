@@ -117,11 +117,6 @@ services.AddSingleton(NewMetricsCollector) // ✅ Thread-safe
 services.AddScoped(NewUnitOfWork)          // ✅ Transaction boundary
 services.AddScoped(NewRequestContext)      // ✅ Request metadata
 services.AddScoped(NewRepository)          // ✅ May use scoped transaction
-
-// Transient: Lightweight, unique state, short-lived
-services.AddTransient(NewCommand)          // ✅ Single operation
-services.AddTransient(NewValidator)        // ✅ Stateless operation
-services.AddTransient(NewEmailMessage)     // ✅ Unique per use
 ```
 
 ### Avoid Captive Dependencies

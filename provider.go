@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/junioryono/godi/internal/typecache"
 	"go.uber.org/dig"
 )
 
@@ -54,6 +55,10 @@ type ServiceProvider interface {
 
 	// ResolveKeyed gets the service object of the specified type with the specified key.
 	ResolveKeyed(serviceType reflect.Type, serviceKey interface{}) (interface{}, error)
+
+	// ResolveGroup gets all services of the specified type registered in a group.
+	// This is useful for plugin systems or when you need multiple implementations.
+	ResolveGroup(serviceType reflect.Type, groupName string) ([]interface{}, error)
 
 	// Invoke executes a function with dependency injection.
 	// All parameters of the function are resolved from the container.
@@ -184,7 +189,11 @@ func newServiceProviderWithOptions(services ServiceCollection, options *ServiceP
 
 	// Register all services with dig based on lifetime
 	for _, desc := range provider.descriptors {
-		if err := provider.registerService(desc); err != nil {
+		if desc.Lifetime != Singleton {
+			continue
+		}
+
+		if err := provider.registerSingletonService(desc); err != nil {
 			return nil, RegistrationError{
 				ServiceType: desc.ServiceType,
 				Operation:   "register",
@@ -194,7 +203,7 @@ func newServiceProviderWithOptions(services ServiceCollection, options *ServiceP
 	}
 
 	// Create root scope
-	provider.rootScope = newServiceProviderScope(provider, context.Background())
+	provider.rootScope = newScope(provider, context.Background())
 
 	// Add built-in services
 	if err := provider.addBuiltInServices(); err != nil {
@@ -211,8 +220,12 @@ func newServiceProviderWithOptions(services ServiceCollection, options *ServiceP
 	return provider, nil
 }
 
-// registerService registers a service descriptor with the dig container.
-func (sp *serviceProvider) registerService(desc *serviceDescriptor) error {
+// registerSingletonService registers a service descriptor with the dig container.
+func (sp *serviceProvider) registerSingletonService(desc *serviceDescriptor) error {
+	if desc.Lifetime != Singleton {
+		return fmt.Errorf("registerSingletonService called with non-singleton lifetime: %s", desc.Lifetime)
+	}
+
 	// Handle decorators separately
 	if desc.isDecorator() && desc.DecorateInfo != nil {
 		err := sp.digContainer.Decorate(desc.DecorateInfo.Decorator, desc.DecorateInfo.DecorateOptions...)
@@ -224,145 +237,31 @@ func (sp *serviceProvider) registerService(desc *serviceDescriptor) error {
 		return MissingConstructorError{ServiceType: desc.ServiceType, Context: "service"}
 	}
 
-	// Create provider options
-	opts := []ProvideOption{}
-
-	// Handle keyed services
-	if desc.isKeyedService() {
-		opts = append(opts, Name(fmt.Sprintf("%v", desc.ServiceKey)))
-	}
-
-	// Handle groups if specified in metadata
-	if group, ok := desc.Metadata["group"].(string); ok && group != "" {
-		opts = append(opts, Group(group))
-	}
-
-	// Handle 'asOptions' if specified
-	if asOpts, ok := desc.Metadata["asOptions"].([]ProvideOption); ok {
-		opts = append(opts, asOpts...)
-	}
-
 	// Check if this is a result object constructor
 	isResultObject := false
-	fnInfo := globalTypeCache.getTypeInfo(reflect.TypeOf(desc.Constructor))
+	fnInfo := typecache.GetTypeInfo(reflect.TypeOf(desc.Constructor))
 	if fnInfo.IsFunc && fnInfo.NumOut > 0 {
-		firstOutInfo := globalTypeCache.getTypeInfo(fnInfo.OutTypes[0])
+		firstOutInfo := typecache.GetTypeInfo(fnInfo.OutTypes[0])
 		if firstOutInfo.IsStruct && firstOutInfo.HasOutField {
 			isResultObject = true
 		}
 	}
 
-	// For transient services, wrap in a provider function
-	if desc.Lifetime == Transient && !isResultObject {
-		wrappedConstructor := sp.wrapTransientConstructor(desc)
-		err := sp.digContainer.Provide(wrappedConstructor, opts...)
-		return err
-	}
-
 	// For singleton services that are NOT result objects, wrap the constructor
-	if desc.Lifetime == Singleton && !isResultObject {
+	if !isResultObject {
 		// Wrap the constructor to capture disposable instances
 		wrappedConstructor := sp.wrapSingletonConstructor(desc.Constructor)
-		err := sp.digContainer.Provide(wrappedConstructor, opts...)
-		return err
+		return sp.digContainer.Provide(wrappedConstructor, desc.ProvideOptions...)
 	}
 
-	// For result objects and singleton services, register directly
-	if desc.Lifetime == Singleton || isResultObject {
-		// Singleton result objects are registered directly
-		err := sp.digContainer.Provide(desc.Constructor, opts...)
-		return err
-	}
-
-	// For scoped services, register normally - they'll be handled at scope level
-	err := sp.digContainer.Provide(desc.Constructor, opts...)
-	return err
-}
-
-// wrapTransientConstructor wraps a constructor to provide factory behavior.
-func (sp *serviceProvider) wrapTransientConstructor(desc *serviceDescriptor) interface{} {
-	constructor := desc.Constructor
-	serviceType := desc.ServiceType
-	fnType := reflect.TypeOf(constructor)
-	fnInfo := globalTypeCache.getTypeInfo(fnType)
-
-	// Create a provider function type: func() T
-	providerFuncType := reflect.FuncOf([]reflect.Type{}, []reflect.Type{serviceType}, false)
-
-	// Build the wrapper function that dig will call
-	wrapperInTypes := make([]reflect.Type, fnInfo.NumIn)
-	copy(wrapperInTypes, fnInfo.InTypes)
-
-	// Check if context.Context is one of the dependencies
-	hasContext := false
-	contextIndex := -1
-	contextType := reflect.TypeOf((*context.Context)(nil)).Elem()
-	for i := 0; i < fnInfo.NumIn; i++ {
-		if wrapperInTypes[i] == contextType {
-			hasContext = true
-			contextIndex = i
-			break
-		}
-	}
-
-	wrapperOutTypes := []reflect.Type{providerFuncType}
-	// Add error if the constructor can fail
-	if fnInfo.NumOut > 1 && fnInfo.HasErrorReturn {
-		errorType := reflect.TypeOf((*error)(nil)).Elem()
-		wrapperOutTypes = append(wrapperOutTypes, errorType)
-	}
-
-	wrapperType := reflect.FuncOf(wrapperInTypes, wrapperOutTypes, false)
-
-	wrapper := reflect.MakeFunc(wrapperType, func(args []reflect.Value) []reflect.Value {
-		// Capture the dependencies in the closure
-		capturedArgs := make([]reflect.Value, len(args))
-		copy(capturedArgs, args)
-
-		// Create the provider function that will be called each time the service is needed
-		providerFunc := reflect.MakeFunc(providerFuncType, func(_ []reflect.Value) []reflect.Value {
-			// Get the current scope from context if available
-			var currentScope *serviceProviderScope
-			if hasContext && contextIndex >= 0 && capturedArgs[contextIndex].IsValid() {
-				ctx := capturedArgs[contextIndex].Interface().(context.Context)
-				if scope, err := ScopeFromContext(ctx); err == nil {
-					currentScope = scope.(*serviceProviderScope)
-				}
-			}
-
-			// Fall back to root scope if no scope in context
-			if currentScope == nil {
-				currentScope = sp.rootScope
-			}
-
-			// Call the original constructor with the captured dependencies
-			results := reflect.ValueOf(constructor).Call(capturedArgs)
-
-			// Handle the result
-			if len(results) > 0 && results[0].IsValid() {
-				instance := results[0].Interface()
-				currentScope.captureDisposable(instance)
-			}
-
-			// Return only the service instance
-			return results[:1]
-		})
-
-		// Return the provider function
-		if len(wrapperOutTypes) > 1 {
-			return []reflect.Value{providerFunc, reflect.Zero(wrapperOutTypes[1])}
-		}
-
-		return []reflect.Value{providerFunc}
-	})
-
-	return wrapper.Interface()
+	// For result objects, register directly
+	return sp.digContainer.Provide(desc.Constructor, desc.ProvideOptions...)
 }
 
 // wrapSingletonConstructor wraps a singleton constructor to track disposable instances.
 func (sp *serviceProvider) wrapSingletonConstructor(constructor interface{}) interface{} {
 	fnType := reflect.TypeOf(constructor)
-	fnInfo := globalTypeCache.getTypeInfo(fnType)
+	fnInfo := typecache.GetTypeInfo(fnType)
 	fnValue := reflect.ValueOf(constructor)
 
 	return reflect.MakeFunc(fnType, func(args []reflect.Value) []reflect.Value {
@@ -372,32 +271,24 @@ func (sp *serviceProvider) wrapSingletonConstructor(constructor interface{}) int
 		// If successful and has a result, check if it's disposable
 		if len(results) > 0 && results[0].IsValid() {
 			// Use cached info to check if we can call IsNil
-			if canCheckNilCached(results[0]) {
-				// For result objects (Out structs), we don't check IsNil
-				if !results[0].IsNil() {
-					// Check if there's an error result
-					hasError := false
-					if fnInfo.NumOut > 1 && fnInfo.HasErrorReturn && results[1].IsValid() {
-						// We know from fnInfo that the second return is an error interface
-						if !results[1].IsNil() {
-							hasError = true
-						}
-					}
-
-					if !hasError {
-						instance := results[0].Interface()
-						// Track the instance in the root scope for disposal
-						sp.rootScope.captureDisposable(instance)
-					}
+			canBeNil := typecache.GetTypeInfo(results[0].Type()).CanBeNil
+			if canBeNil && !results[0].IsNil() {
+				// Check if there's an error result
+				hasError := false
+				if fnInfo.NumOut > 1 && fnInfo.HasErrorReturn && results[1].IsValid() && !results[1].IsNil() {
+					hasError = true
 				}
-			} else {
+
+				if !hasError {
+					instance := results[0].Interface()
+					// Track the instance in the root scope for disposal
+					sp.rootScope.captureDisposable(instance)
+				}
+			} else if !canBeNil {
 				// For non-nillable types, just capture if no error
 				hasError := false
-				if fnInfo.NumOut > 1 && fnInfo.HasErrorReturn && results[1].IsValid() {
-					// We know from fnInfo that the second return is an error interface
-					if !results[1].IsNil() {
-						hasError = true
-					}
+				if fnInfo.NumOut > 1 && fnInfo.HasErrorReturn && results[1].IsValid() && !results[1].IsNil() {
+					hasError = true
 				}
 
 				if !hasError {
@@ -476,6 +367,128 @@ func (sp *serviceProvider) Resolve(serviceType reflect.Type) (interface{}, error
 	return sp.rootScope.Resolve(serviceType)
 }
 
+// ResolveKeyed gets the service object of the specified type with the specified key.
+func (sp *serviceProvider) ResolveKeyed(serviceType reflect.Type, serviceKey interface{}) (interface{}, error) {
+	if sp.IsDisposed() {
+		return nil, ErrProviderDisposed
+	}
+
+	if serviceType == nil {
+		return nil, ErrInvalidServiceType
+	}
+
+	if serviceKey == nil {
+		return nil, ErrServiceKeyNil
+	}
+
+	return sp.rootScope.ResolveKeyed(serviceType, serviceKey)
+}
+
+// ResolveGroup gets all services of the specified type registered in a group.
+func (sp *serviceProvider) ResolveGroup(serviceType reflect.Type, groupName string) ([]interface{}, error) {
+	if sp.IsDisposed() {
+		return nil, ErrProviderDisposed
+	}
+
+	if serviceType == nil {
+		return nil, ErrInvalidServiceType
+	}
+
+	if groupName == "" {
+		return nil, fmt.Errorf("group name cannot be empty")
+	}
+
+	return sp.rootScope.ResolveGroup(serviceType, groupName)
+}
+
+// IsService determines whether the specified service type is available.
+func (sp *serviceProvider) IsService(serviceType reflect.Type) bool {
+	if sp.IsDisposed() {
+		return false
+	}
+
+	sp.mu.RLock()
+	defer sp.mu.RUnlock()
+
+	_, exists := sp.descriptorIndex[serviceType]
+	return exists
+}
+
+// IsKeyedService determines whether the specified keyed service type is available.
+func (sp *serviceProvider) IsKeyedService(serviceType reflect.Type, serviceKey interface{}) bool {
+	if sp.IsDisposed() {
+		return false
+	}
+
+	sp.mu.RLock()
+	defer sp.mu.RUnlock()
+
+	key := typeKeyPair{serviceType: serviceType, serviceKey: serviceKey}
+	_, exists := sp.keyedIndex[key]
+	return exists
+}
+
+// CreateScope creates a new service scope.
+func (sp *serviceProvider) CreateScope(ctx context.Context) Scope {
+	if sp.IsDisposed() {
+		panic(ErrProviderDisposed)
+	}
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	newScope := newScope(sp, ctx)
+	newScope.parentScope = sp.rootScope
+	return newScope
+}
+
+// IsDisposed returns true if the provider is disposed.
+func (sp *serviceProvider) IsDisposed() bool {
+	return atomic.LoadInt32(&sp.disposed) != 0
+}
+
+// Close disposes the ServiceProvider.
+func (sp *serviceProvider) Close() error {
+	if !atomic.CompareAndSwapInt32(&sp.disposed, 0, 1) {
+		return nil
+	}
+
+	runtime.SetFinalizer(sp, nil)
+	return sp.rootScope.Close()
+}
+
+// addBuiltInServices adds built-in services.
+func (sp *serviceProvider) addBuiltInServices() error {
+	if err := sp.digContainer.Provide(func() ServiceProvider {
+		return sp.rootScope
+	}); err != nil {
+		return fmt.Errorf("failed to register ServiceProvider: %w", err)
+	}
+
+	// Also add these to our descriptor tracking for IsService checks
+	spDesc := &serviceDescriptor{
+		ServiceType: reflect.TypeOf((*ServiceProvider)(nil)).Elem(),
+		Lifetime:    Singleton,
+		Constructor: func() ServiceProvider {
+			return sp.rootScope
+		},
+	}
+	sp.descriptors = append(sp.descriptors, spDesc)
+	sp.descriptorIndex[spDesc.ServiceType] = []*serviceDescriptor{spDesc}
+
+	return nil
+}
+
+// Invoke executes a function with automatic dependency injection.
+func (sp *serviceProvider) Invoke(function interface{}) error {
+	if sp.IsDisposed() {
+		return ErrProviderDisposed
+	}
+
+	return sp.rootScope.Invoke(function)
+}
+
 // Resolve is a generic helper function that returns the service as type T.
 func Resolve[T any](s ServiceProvider) (T, error) {
 	var zero T
@@ -494,23 +507,6 @@ func Resolve[T any](s ServiceProvider) (T, error) {
 	}
 
 	return assertServiceType[T](service, serviceType, nil)
-}
-
-// ResolveKeyed gets the service object of the specified type with the specified key.
-func (sp *serviceProvider) ResolveKeyed(serviceType reflect.Type, serviceKey interface{}) (interface{}, error) {
-	if sp.IsDisposed() {
-		return nil, ErrProviderDisposed
-	}
-
-	if serviceType == nil {
-		return nil, ErrInvalidServiceType
-	}
-
-	if serviceKey == nil {
-		return nil, ErrServiceKeyNil
-	}
-
-	return sp.rootScope.ResolveKeyed(serviceType, serviceKey)
 }
 
 // ResolveKeyed is a generic helper function that returns the keyed service as type T.
@@ -533,9 +529,63 @@ func ResolveKeyed[T any](s ServiceProvider, serviceKey interface{}) (T, error) {
 	return assertServiceType[T](service, serviceType, serviceKey)
 }
 
+// ResolveGroup is a generic helper function that returns the group services as type []T.
+func ResolveGroup[T any](s ServiceProvider, groupName string) ([]T, error) {
+	if s == nil {
+		return nil, ErrNilServiceProvider
+	}
+
+	serviceType, err := determineServiceType[T]()
+	if err != nil {
+		return nil, err
+	}
+
+	services, err := s.ResolveGroup(serviceType, groupName)
+	if err != nil {
+		return nil, fmt.Errorf("unable to resolve group %q of type %s: %w", groupName, formatType(serviceType), err)
+	}
+
+	// Convert []interface{} to []T
+	result := make([]T, 0, len(services))
+	for i, service := range services {
+		if service == nil {
+			continue
+		}
+
+		// Type assertion to T
+		if svc, ok := service.(T); ok {
+			result = append(result, svc)
+			continue
+		}
+
+		// If T is a non-pointer type and service is a pointer to T, dereference it
+		tType := reflect.TypeOf((*T)(nil)).Elem()
+		if tType.Kind() != reflect.Ptr && tType.Kind() != reflect.Interface {
+			// T is a value type, check if service is *T
+			serviceValue := reflect.ValueOf(service)
+			if serviceValue.Kind() == reflect.Ptr && serviceValue.Elem().Type() == tType {
+				// Service is *T and we want T, so dereference
+				if !serviceValue.IsNil() {
+					result = append(result, serviceValue.Elem().Interface().(T))
+					continue
+				}
+			}
+		}
+
+		// If we couldn't convert, return an error
+		return nil, TypeMismatchError{
+			Expected: serviceType,
+			Actual:   reflect.TypeOf(service),
+			Context:  fmt.Sprintf("group item %d type assertion", i),
+		}
+	}
+
+	return result, nil
+}
+
 // determineServiceType determines the actual service type to resolve based on the generic type T.
 func determineServiceType[T any]() (reflect.Type, error) {
-	serviceType, _, err := determineServiceTypeCached[T]()
+	serviceType, _, err := typecache.DetermineServiceTypeCached[T]()
 	return serviceType, err
 }
 
@@ -578,95 +628,4 @@ func assertServiceType[T any](service interface{}, serviceType reflect.Type, ser
 		Actual:   reflect.TypeOf(service),
 		Context:  msg,
 	}
-}
-
-// IsService determines whether the specified service type is available.
-func (sp *serviceProvider) IsService(serviceType reflect.Type) bool {
-	if sp.IsDisposed() {
-		return false
-	}
-
-	sp.mu.RLock()
-	defer sp.mu.RUnlock()
-
-	_, exists := sp.descriptorIndex[serviceType]
-	return exists
-}
-
-// IsKeyedService determines whether the specified keyed service type is available.
-func (sp *serviceProvider) IsKeyedService(serviceType reflect.Type, serviceKey interface{}) bool {
-	if sp.IsDisposed() {
-		return false
-	}
-
-	sp.mu.RLock()
-	defer sp.mu.RUnlock()
-
-	key := typeKeyPair{serviceType: serviceType, serviceKey: serviceKey}
-	_, exists := sp.keyedIndex[key]
-	return exists
-}
-
-// CreateScope creates a new service scope.
-func (sp *serviceProvider) CreateScope(ctx context.Context) Scope {
-	if sp.IsDisposed() {
-		panic(ErrProviderDisposed)
-	}
-
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	newScope := newServiceProviderScope(sp, ctx)
-	newScope.parentScope = sp.rootScope
-	return newScope
-}
-
-// IsDisposed returns true if the provider is disposed.
-func (sp *serviceProvider) IsDisposed() bool {
-	return atomic.LoadInt32(&sp.disposed) != 0
-}
-
-// Close disposes the ServiceProvider.
-func (sp *serviceProvider) Close() error {
-	if !atomic.CompareAndSwapInt32(&sp.disposed, 0, 1) {
-		return nil
-	}
-
-	runtime.SetFinalizer(sp, nil)
-	return sp.rootScope.Close()
-}
-
-// addBuiltInServices adds built-in services.
-func (sp *serviceProvider) addBuiltInServices() error {
-	if err := sp.digContainer.Provide(func() ServiceProvider {
-		return sp.rootScope
-	}); err != nil {
-		return fmt.Errorf("failed to register ServiceProvider: %w", err)
-	}
-
-	// Also add these to our descriptor tracking for IsService checks
-	spDesc := &serviceDescriptor{
-		ServiceType: reflect.TypeOf((*ServiceProvider)(nil)).Elem(),
-		Lifetime:    Singleton,
-		Constructor: func() ServiceProvider {
-			return sp.rootScope
-		},
-		Metadata: make(map[string]interface{}),
-	}
-	sp.descriptors = append(sp.descriptors, spDesc)
-	sp.descriptorIndex[spDesc.ServiceType] = []*serviceDescriptor{spDesc}
-
-	return nil
-}
-
-// Invoke executes a function with automatic dependency injection.
-func (sp *serviceProvider) Invoke(function interface{}) error {
-	if sp.IsDisposed() {
-		return ErrProviderDisposed
-	}
-
-	// For singleton services, we can use dig directly
-	// For scoped/transient, we need to use the root scope
-	return sp.rootScope.Invoke(function)
 }

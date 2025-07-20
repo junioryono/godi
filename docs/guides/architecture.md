@@ -7,15 +7,15 @@ This guide explains how godi works internally and how to architect applications 
 ### Core Components
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                    ServiceCollection                │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  │
-│  │ Descriptor 1│  │ Descriptor 2│  │ Descriptor 3│  │
-│  │  Singleton  │  │   Scoped    │  │  Transient  │  │
-│  └─────────────┘  └─────────────┘  └─────────────┘  │
-└─────────────────────────┬───────────────────────────┘
-                          │ Build
-                          ▼
+┌────────────────────────────────────┐
+│          ServiceCollection         │
+│  ┌─────────────┐  ┌─────────────┐  │
+│  │ Descriptor 1│  │ Descriptor 2│  │
+│  │  Singleton  │  │   Scoped    │  │
+│  └─────────────┘  └─────────────┘  │
+└─────────────────┬──────────────────┘
+                  │ Build
+                  ▼
 ┌─────────────────────────────────────────────────────┐
 │                    ServiceProvider                  │
 │  ┌──────────────────────────────────────────────┐   │
@@ -36,7 +36,6 @@ godi implements Microsoft-style DI lifetimes on top of Uber's dig:
 
 1. **Singleton**: Services registered at the root dig container
 2. **Scoped**: Services registered in dig scopes
-3. **Transient**: Services wrapped in factory functions
 
 ### Resolution Process
 
@@ -44,8 +43,7 @@ godi implements Microsoft-style DI lifetimes on top of Uber's dig:
 1. Service Resolution Request
    └─> Check service lifetime
        ├─> Singleton: Resolve from root container
-       ├─> Scoped: Resolve from current scope
-       └─> Transient: Call factory function
+       └─> Scoped: Resolve from current scope
 
 2. Dependency Analysis (by dig)
    └─> Build dependency graph

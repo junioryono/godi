@@ -36,23 +36,6 @@ services.AddScoped(func(db *Database, logger Logger) UserRepository {
 })
 ```
 
-### AddTransient
-
-Registers a service that creates a new instance every time it's resolved.
-
-```go
-// For stateless operations
-services.AddTransient(NewEmailMessage)
-
-// Factory pattern
-services.AddTransient(func() EmailMessage {
-    return &EmailMessage{
-        From: "noreply@example.com",
-        Timestamp: time.Now(),
-    }
-})
-```
-
 ## Constructor Patterns
 
 ### Simple Constructor
@@ -322,10 +305,6 @@ services.AddSingleton(NewConfiguration)
 // Scoped: Request-specific, stateful
 services.AddScoped(NewRepository)
 services.AddScoped(NewUnitOfWork)
-
-// Transient: Lightweight, unique state
-services.AddTransient(NewCommand)
-services.AddTransient(NewEmailMessage)
 ```
 
 ### 3. Validate Early

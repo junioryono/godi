@@ -220,18 +220,6 @@ services.AddScoped(NewUserRepository)  // Fresh instance per request
 services.AddScoped(NewAuthService)     // Isolated from other requests
 ```
 
-### Transient - New Every Time
-
-Use for:
-
-- Temporary objects
-- Unique operations
-- Stateful helpers
-
-```go
-services.AddTransient(NewEmailMessage)  // New instance each time
-```
-
 ## Real Example: Why Scoped Services Matter
 
 Here's a real scenario showing why scoped services are powerful:

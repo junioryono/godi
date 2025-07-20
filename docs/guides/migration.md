@@ -146,7 +146,7 @@ func InitializeApp() (*App, error) {
 2. **Convert providers** to service registrations
 3. **Replace wire.Build** with ServiceCollection
 4. **Update build process** - no more wire generation
-5. **Add lifetime management** (scoped, transient)
+5. **Add lifetime management** (singleton, scoped)
 
 ## Migrating from Uber Fx
 
@@ -249,7 +249,6 @@ var services = new ServiceCollection();
 services.AddSingleton<IConfiguration, Configuration>();
 services.AddSingleton<ILogger, Logger>();
 services.AddScoped<IUserRepository, UserRepository>();
-services.AddTransient<IEmailService, EmailService>();
 
 // Build provider
 var provider = services.BuildServiceProvider();
@@ -267,7 +266,6 @@ collection := godi.NewServiceCollection()
 collection.AddSingleton(NewConfiguration)
 collection.AddSingleton(NewLogger)
 collection.AddScoped(NewUserRepository)
-collection.AddTransient(NewEmailService)
 
 // Build provider
 provider, err := collection.BuildServiceProvider()
@@ -278,7 +276,7 @@ userService, err := godi.Resolve[UserService](provider)
 
 ### Familiar Concepts
 
-- Same lifetime semantics (Singleton, Scoped, Transient)
+- Lifetime semantics (Singleton, Scoped)
 - ServiceCollection and ServiceProvider
 - Scopes for request handling
 - Similar API design

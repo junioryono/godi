@@ -54,13 +54,6 @@ func AddScoped(constructor interface{}, opts ...ProvideOption) ModuleOption {
 	}
 }
 
-// AddTransient creates a ModuleBuilder for adding a transient service.
-func AddTransient(constructor interface{}, opts ...ProvideOption) ModuleOption {
-	return func(s ServiceCollection) error {
-		return s.AddTransient(constructor, opts...)
-	}
-}
-
 // AddDecorator creates a ModuleBuilder for adding a decorator.
 func AddDecorator(decorator interface{}, opts ...DecorateOption) ModuleOption {
 	return func(s ServiceCollection) error {
