@@ -174,6 +174,10 @@ func validateConstructor(constructor interface{}) error {
 			return ErrConstructorNoReturn
 		}
 
+		if fnInfo.NumOut == 1 && fnInfo.HasErrorReturn {
+			return ErrConstructorMustReturnValue
+		}
+
 		if fnInfo.NumOut > 2 {
 			return ErrConstructorTooManyReturns
 		}

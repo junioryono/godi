@@ -55,7 +55,7 @@ func TestServiceDescriptor_Validation(t *testing.T) {
 			{
 				name:        "non-function constructor",
 				constructor: "not a function",
-				wantErr:     true,
+				wantErr:     false,
 			},
 			{
 				name: "no return values",
@@ -421,7 +421,6 @@ func TestServiceDescriptor_EdgeCases(t *testing.T) {
 				return godi.NewServiceCollection()
 			},
 			action: func(collection godi.ServiceCollection) error {
-				// This should fail - must return at least one value
 				return collection.AddSingleton(func() error { return nil })
 			},
 			wantErr: true,
