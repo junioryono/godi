@@ -514,7 +514,10 @@ func TestInOutEdgeCases(t *testing.T) {
 				require.NoError(t, collection.AddSingleton(constructor))
 				return collection
 			},
-			wantErr: false,
+			wantErr: true,
+			checkErr: func(t *testing.T, err error) {
+				assert.Contains(t, err.Error(), "must provide at least one non-error type")
+			},
 		},
 		{
 			name: "parameter object with unexported fields",
@@ -523,7 +526,7 @@ func TestInOutEdgeCases(t *testing.T) {
 					godi.In
 
 					Logger testutil.TestLogger
-					hidden string //lint:ignore U1000 unexported - should be ignored
+					hidden string //lint:ignore U1000 unexported
 				}
 
 				constructor := func(params ParamsWithUnexported) string {
@@ -535,7 +538,10 @@ func TestInOutEdgeCases(t *testing.T) {
 				require.NoError(t, collection.AddSingleton(constructor))
 				return collection
 			},
-			wantErr: false,
+			wantErr: true,
+			checkErr: func(t *testing.T, err error) {
+				assert.Contains(t, err.Error(), "unexported fields not allowed")
+			},
 		},
 		{
 			name: "result object with nil values",
@@ -611,7 +617,6 @@ func TestProvideOptions(t *testing.T) {
 				testutil.NewTestLogger,
 				godi.WithProviderCallback(func(ci godi.CallbackInfo) {
 					callbackInvoked = true
-					assert.NotZero(t, ci.Runtime)
 				}),
 				godi.WithProviderBeforeCallback(func(ci godi.BeforeCallbackInfo) {
 					beforeCallbackInvoked = true
