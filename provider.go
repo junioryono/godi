@@ -203,7 +203,7 @@ func newServiceProviderWithOptions(services ServiceCollection, options *ServiceP
 	}
 
 	// Create root scope
-	provider.rootScope = newServiceProviderScope(provider, context.Background())
+	provider.rootScope = newScope(provider, context.Background())
 
 	// Add built-in services
 	if err := provider.addBuiltInServices(); err != nil {
@@ -456,7 +456,7 @@ func (sp *serviceProvider) CreateScope(ctx context.Context) Scope {
 		ctx = context.Background()
 	}
 
-	newScope := newServiceProviderScope(sp, ctx)
+	newScope := newScope(sp, ctx)
 	newScope.parentScope = sp.rootScope
 	return newScope
 }

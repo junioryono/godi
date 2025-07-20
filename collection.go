@@ -43,7 +43,7 @@ type ServiceCollection interface {
 
 	// AddModules applies one or more module configurations to the service collection.
 	// Modules provide a way to group related service registrations.
-	AddModules(modules ...func(ServiceCollection) error) error
+	AddModules(modules ...ModuleOption) error
 
 	// AddSingleton registers a service with singleton lifetime.
 	// Only one instance is created and shared across all resolutions.
@@ -166,7 +166,7 @@ func (sc *serviceCollection) ContainsKeyed(serviceType reflect.Type, key interfa
 }
 
 // AddModules applies one or more module configurations to the service collection.
-func (sc *serviceCollection) AddModules(modules ...func(ServiceCollection) error) error {
+func (sc *serviceCollection) AddModules(modules ...ModuleOption) error {
 	if sc.built {
 		return ErrCollectionModifyAfterBuild
 	}

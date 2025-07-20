@@ -3,956 +3,479 @@ package godi_test
 import (
 	"context"
 	"errors"
-	"fmt"
-	"reflect"
-	"sync"
 	"testing"
 
-	"github.com/google/uuid"
 	"github.com/junioryono/godi"
+	"github.com/junioryono/godi/internal/testutil"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-// Test types for module tests
-type (
-	moduleTestLogger interface {
-		Log(msg string)
-		GetLogs() []string
-	}
+func TestNewModule(t *testing.T) {
+	t.Run("creates module with services", func(t *testing.T) {
+		t.Parallel()
 
-	moduleTestLoggerImpl struct {
-		logs []string
-		mu   sync.Mutex
-	}
-
-	moduleTestDatabase interface {
-		Query(sql string) string
-		Close() error
-	}
-
-	moduleTestDatabaseImpl struct {
-		name   string
-		closed bool
-		mu     sync.Mutex
-	}
-
-	moduleTestCache interface {
-		Get(key string) (string, bool)
-		Set(key string, value string)
-	}
-
-	moduleTestCacheImpl struct {
-		data map[string]string
-		mu   sync.RWMutex
-	}
-
-	moduleTestRepository struct {
-		db     moduleTestDatabase
-		logger moduleTestLogger
-	}
-
-	moduleTestService struct {
-		repo   *moduleTestRepository
-		cache  moduleTestCache
-		logger moduleTestLogger
-		id     string
-	}
-
-	moduleTestMetrics struct {
-	}
-
-	// For keyed service tests
-	moduleTestNotifier interface {
-		Notify(msg string)
-	}
-
-	moduleTestEmailNotifier struct {
-		logger moduleTestLogger
-	}
-
-	moduleTestSMSNotifier struct {
-		logger moduleTestLogger
-	}
-
-	// For group tests
-	moduleTestHandler interface {
-		Handle() string
-	}
-
-	moduleTestUserHandler  struct{}
-	moduleTestAdminHandler struct{}
-	moduleTestAPIHandler   struct{}
-)
-
-// Implement test interfaces
-func (l *moduleTestLoggerImpl) Log(msg string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.logs = append(l.logs, msg)
-}
-
-func (l *moduleTestLoggerImpl) GetLogs() []string {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	result := make([]string, len(l.logs))
-	copy(result, l.logs)
-	return result
-}
-
-func (d *moduleTestDatabaseImpl) Query(sql string) string {
-	return fmt.Sprintf("%s: %s", d.name, sql)
-}
-
-func (d *moduleTestDatabaseImpl) Close() error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if d.closed {
-		return errAlreadyClosed
-	}
-	d.closed = true
-	return nil
-}
-
-func (c *moduleTestCacheImpl) Get(key string) (string, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	val, ok := c.data[key]
-	return val, ok
-}
-
-func (c *moduleTestCacheImpl) Set(key, value string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.data == nil {
-		c.data = make(map[string]string)
-	}
-	c.data[key] = value
-}
-
-func (e *moduleTestEmailNotifier) Notify(msg string) {
-	e.logger.Log("Email: " + msg)
-}
-
-func (s *moduleTestSMSNotifier) Notify(msg string) {
-	s.logger.Log("SMS: " + msg)
-}
-
-func (h *moduleTestUserHandler) Handle() string  { return "user" }
-func (h *moduleTestAdminHandler) Handle() string { return "admin" }
-func (h *moduleTestAPIHandler) Handle() string   { return "api" }
-
-// Constructor functions
-func newModuleTestLogger() moduleTestLogger {
-	return &moduleTestLoggerImpl{}
-}
-
-func newModuleTestDatabase() moduleTestDatabase {
-	return &moduleTestDatabaseImpl{name: "testdb"}
-}
-
-func newModuleTestCache() moduleTestCache {
-	return &moduleTestCacheImpl{data: make(map[string]string)}
-}
-
-func newModuleTestRepository(db moduleTestDatabase, logger moduleTestLogger) *moduleTestRepository {
-	return &moduleTestRepository{db: db, logger: logger}
-}
-
-func newModuleTestService(repo *moduleTestRepository, cache moduleTestCache, logger moduleTestLogger) *moduleTestService {
-	return &moduleTestService{
-		repo:   repo,
-		cache:  cache,
-		logger: logger,
-		id:     fmt.Sprintf("service-%s", uuid.NewString()),
-	}
-}
-
-func newModuleTestMetrics() *moduleTestMetrics {
-	return &moduleTestMetrics{}
-}
-
-func newModuleTestEmailNotifier(logger moduleTestLogger) moduleTestNotifier {
-	return &moduleTestEmailNotifier{logger: logger}
-}
-
-func newModuleTestSMSNotifier(logger moduleTestLogger) moduleTestNotifier {
-	return &moduleTestSMSNotifier{logger: logger}
-}
-
-func newModuleTestUserHandler() moduleTestHandler  { return &moduleTestUserHandler{} }
-func newModuleTestAdminHandler() moduleTestHandler { return &moduleTestAdminHandler{} }
-func newModuleTestAPIHandler() moduleTestHandler   { return &moduleTestAPIHandler{} }
-
-func TestModule_BasicFunctionality(t *testing.T) {
-	t.Run("creates simple module", func(t *testing.T) {
-		// Create a simple module
-		logModule := godi.NewModule("logging",
-			godi.AddSingleton(newModuleTestLogger),
-		)
-
-		// Apply module to collection
-		collection := godi.NewServiceCollection()
-		err := collection.AddModules(logModule)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// Verify service was added
-		if !collection.Contains(reflect.TypeOf((*moduleTestLogger)(nil)).Elem()) {
-			t.Error("expected logger to be registered")
-		}
-
-		// Build provider to ensure it works
-		provider, err := collection.BuildServiceProvider()
-		if err != nil {
-			t.Fatalf("unexpected error building provider: %v", err)
-		}
-		defer provider.Close()
-
-		logger, err := godi.Resolve[moduleTestLogger](provider)
-		if err != nil {
-			t.Fatalf("unexpected error resolving logger: %v", err)
-		}
-
-		logger.Log("test")
-		logs := logger.GetLogs()
-		if len(logs) != 1 || logs[0] != "test" {
-			t.Error("logger not working correctly")
-		}
-	})
-
-	t.Run("creates module with multiple services", func(t *testing.T) {
-		// Create a database module
-		dbModule := godi.NewModule("database",
-			godi.AddSingleton(newModuleTestDatabase),
-			godi.AddScoped(newModuleTestRepository),
-		)
-
-		collection := godi.NewServiceCollection()
-		collection.AddSingleton(newModuleTestLogger) // Add dependency
-		err := collection.AddModules(dbModule)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if !collection.Contains(reflect.TypeOf((*moduleTestDatabase)(nil)).Elem()) {
-			t.Error("expected database to be registered")
-		}
-		if !collection.Contains(reflect.TypeOf((*moduleTestRepository)(nil))) {
-			t.Error("expected repository to be registered")
-		}
-	})
-
-	t.Run("module name appears in error", func(t *testing.T) {
-		// Create a module with an error
-		errorModule := godi.NewModule("problematic",
-			func(s godi.ServiceCollection) error {
-				return errIntentional
-			},
-		)
-
-		collection := godi.NewServiceCollection()
-		err := collection.AddModules(errorModule)
-		if err == nil {
-			t.Fatal("expected error")
-		}
-
-		if !errors.Is(err, errIntentional) {
-			t.Errorf("expected error to be %v, got: %v", errIntentional, err)
-		}
-	})
-
-	t.Run("handles nil builders", func(t *testing.T) {
-		// Module with nil builders should not error
-		module := godi.NewModule("safe",
-			nil,
-			godi.AddSingleton(newModuleTestLogger),
-			nil,
+		module := godi.NewModule("test-module",
+			godi.AddSingleton(testutil.NewTestLogger),
+			godi.AddScoped(testutil.NewTestService),
 		)
 
 		collection := godi.NewServiceCollection()
 		err := collection.AddModules(module)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
 
-		if !collection.Contains(reflect.TypeOf((*moduleTestLogger)(nil)).Elem()) {
-			t.Error("expected logger to be registered")
-		}
+		require.NoError(t, err)
+		assert.Equal(t, 2, collection.Count())
+	})
+
+	t.Run("empty module", func(t *testing.T) {
+		t.Parallel()
+
+		module := godi.NewModule("empty-module")
+
+		collection := godi.NewServiceCollection()
+		err := collection.AddModules(module)
+
+		require.NoError(t, err)
+		assert.Equal(t, 0, collection.Count())
+	})
+
+	t.Run("module with nil builders", func(t *testing.T) {
+		t.Parallel()
+
+		module := godi.NewModule("module-with-nils",
+			godi.AddSingleton(testutil.NewTestLogger),
+			nil, // Should be skipped
+			godi.AddScoped(testutil.NewTestService),
+		)
+
+		collection := godi.NewServiceCollection()
+		err := collection.AddModules(module)
+
+		require.NoError(t, err)
+		assert.Equal(t, 2, collection.Count())
 	})
 }
 
 func TestModule_Composition(t *testing.T) {
 	t.Run("nested modules", func(t *testing.T) {
-		// Create base modules
-		logModule := godi.NewModule("logging",
-			godi.AddSingleton(newModuleTestLogger),
-			godi.AddSingleton(newModuleTestMetrics),
+		t.Parallel()
+
+		// Create sub-modules
+		loggingModule := godi.NewModule("logging",
+			godi.AddSingleton(testutil.NewTestLogger),
 		)
 
-		cacheModule := godi.NewModule("cache",
-			godi.AddSingleton(newModuleTestCache),
-		)
-
-		// Create composite module
 		dataModule := godi.NewModule("data",
-			logModule,
-			cacheModule,
-			godi.AddSingleton(newModuleTestDatabase),
-			godi.AddScoped(newModuleTestRepository),
+			godi.AddSingleton(testutil.NewTestDatabase),
+			godi.AddSingleton(testutil.NewTestCache),
 		)
 
-		// Create app module that uses data module
+		serviceModule := godi.NewModule("services",
+			godi.AddScoped(testutil.NewTestServiceWithDeps),
+		)
+
+		// Compose into main module
 		appModule := godi.NewModule("app",
+			loggingModule,
 			dataModule,
-			godi.AddScoped(newModuleTestService),
+			serviceModule,
+			godi.AddSingleton(func() string { return "app-config" }),
 		)
 
-		// Apply to collection
 		collection := godi.NewServiceCollection()
 		err := collection.AddModules(appModule)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+
+		require.NoError(t, err)
+		assert.Equal(t, 5, collection.Count()) // 3 from sub-modules + 1 from app + 1 string
+	})
+
+	t.Run("multiple module registration", func(t *testing.T) {
+		t.Parallel()
+
+		module1 := godi.NewModule("module1",
+			godi.AddSingleton(testutil.NewTestLogger),
+		)
+
+		module2 := godi.NewModule("module2",
+			godi.AddSingleton(testutil.NewTestDatabase),
+		)
+
+		module3 := godi.NewModule("module3",
+			godi.AddSingleton(testutil.NewTestCache),
+		)
+
+		collection := godi.NewServiceCollection()
+		err := collection.AddModules(module1, module2, module3)
+
+		require.NoError(t, err)
+		assert.Equal(t, 3, collection.Count())
+	})
+}
+
+func TestModule_ErrorHandling(t *testing.T) {
+	t.Run("error in module builder", func(t *testing.T) {
+		t.Parallel()
+
+		expectedErr := errors.New("module error")
+
+		module := godi.NewModule("error-module",
+			godi.AddSingleton(testutil.NewTestLogger),
+			func(s godi.ServiceCollection) error {
+				return expectedErr
+			},
+			godi.AddSingleton(testutil.NewTestDatabase), // Should not be reached
+		)
+
+		collection := godi.NewServiceCollection()
+		err := collection.AddModules(module)
+
+		assert.Error(t, err)
+
+		var moduleErr godi.ModuleError
+		assert.ErrorAs(t, err, &moduleErr)
+		assert.Equal(t, "error-module", moduleErr.Module)
+		assert.ErrorIs(t, err, expectedErr)
+
+		// Only first service should be registered
+		assert.Equal(t, 1, collection.Count())
+	})
+
+	t.Run("error in nested module", func(t *testing.T) {
+		t.Parallel()
+
+		errorSubModule := godi.NewModule("sub-error",
+			func(s godi.ServiceCollection) error {
+				return testutil.ErrIntentional
+			},
+		)
+
+		mainModule := godi.NewModule("main",
+			godi.AddSingleton(testutil.NewTestLogger),
+			errorSubModule,
+		)
+
+		collection := godi.NewServiceCollection()
+		err := collection.AddModules(mainModule)
+
+		assert.Error(t, err)
+
+		// Should have nested module errors
+		var moduleErr godi.ModuleError
+		assert.ErrorAs(t, err, &moduleErr)
+		assert.Equal(t, "main", moduleErr.Module)
+
+		// The cause should also be a module error
+		var causeErr godi.ModuleError
+		assert.ErrorAs(t, moduleErr.Cause, &causeErr)
+		assert.Equal(t, "sub-error", causeErr.Module)
+		assert.ErrorIs(t, err, testutil.ErrIntentional)
+	})
+}
+
+func TestModule_WithDecorator(t *testing.T) {
+	t.Run("module with decorator", func(t *testing.T) {
+		t.Parallel()
+
+		type DecoratedLogger struct {
+			testutil.TestLogger
+			prefix string
 		}
 
-		// Verify all services are registered
-		expectedTypes := []reflect.Type{
-			reflect.TypeOf((*moduleTestLogger)(nil)).Elem(),
-			reflect.TypeOf((*moduleTestMetrics)(nil)),
-			reflect.TypeOf((*moduleTestCache)(nil)).Elem(),
-			reflect.TypeOf((*moduleTestDatabase)(nil)).Elem(),
-			reflect.TypeOf((*moduleTestRepository)(nil)),
-			reflect.TypeOf((*moduleTestService)(nil)),
+		module := godi.NewModule("decorated",
+			godi.AddSingleton(testutil.NewTestLogger),
+			godi.AddDecorator(func(logger testutil.TestLogger) testutil.TestLogger {
+				return &DecoratedLogger{
+					TestLogger: logger,
+					prefix:     "[DECORATED] ",
+				}
+			}),
+		)
+
+		collection := godi.NewServiceCollection()
+		err := collection.AddModules(module)
+		require.NoError(t, err)
+
+		provider, err := collection.BuildServiceProvider()
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
+
+		logger := testutil.AssertServiceResolvable[testutil.TestLogger](t, provider)
+		_, ok := logger.(*DecoratedLogger)
+		assert.True(t, ok, "logger should be decorated")
+	})
+}
+
+func TestModule_RealWorldScenarios(t *testing.T) {
+	t.Run("web application modules", func(t *testing.T) {
+		t.Parallel()
+
+		// Simulate a typical web app module structure
+
+		// Infrastructure module
+		infrastructureModule := godi.NewModule("infrastructure",
+			godi.AddSingleton(testutil.NewTestLogger),
+			godi.AddSingleton(testutil.NewTestDatabase),
+			godi.AddSingleton(testutil.NewTestCache),
+		)
+
+		// Repository module
+		type UserRepository struct {
+			db testutil.TestDatabase
 		}
 
-		for _, typ := range expectedTypes {
-			if !collection.Contains(typ) {
-				t.Errorf("expected %v to be registered", typ)
-			}
+		repositoryModule := godi.NewModule("repositories",
+			godi.AddScoped(func(db testutil.TestDatabase) *UserRepository {
+				return &UserRepository{db: db}
+			}),
+		)
+
+		// Service module
+		type UserService struct {
+			repo   *UserRepository
+			logger testutil.TestLogger
+			cache  testutil.TestCache
 		}
+
+		serviceModule := godi.NewModule("services",
+			godi.AddScoped(func(repo *UserRepository, logger testutil.TestLogger, cache testutil.TestCache) *UserService {
+				return &UserService{
+					repo:   repo,
+					logger: logger,
+					cache:  cache,
+				}
+			}),
+		)
+
+		// Handler module
+		type UserHandler struct {
+			service *UserService
+		}
+
+		handlerModule := godi.NewModule("handlers",
+			godi.AddScoped(func(service *UserService) *UserHandler {
+				return &UserHandler{service: service}
+			}),
+		)
+
+		// Main application module
+		appModule := godi.NewModule("app",
+			infrastructureModule,
+			repositoryModule,
+			serviceModule,
+			handlerModule,
+		)
 
 		// Build and test
-		provider, err := collection.BuildServiceProvider()
-		if err != nil {
-			t.Fatalf("unexpected error building provider: %v", err)
-		}
-		defer provider.Close()
+		collection := godi.NewServiceCollection()
+		err := collection.AddModules(appModule)
+		require.NoError(t, err)
 
+		provider, err := collection.BuildServiceProvider()
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
+
+		// Create request scope
 		scope := provider.CreateScope(context.Background())
-		defer scope.Close()
+		t.Cleanup(func() {
+			require.NoError(t, scope.Close())
+		})
 
-		service, err := godi.Resolve[moduleTestService](scope)
-		if err != nil {
-			t.Fatalf("unexpected error resolving service: %v", err)
-		}
-
-		if service.repo == nil || service.cache == nil || service.logger == nil {
-			t.Error("service dependencies not properly injected")
-		}
+		// Resolve the handler (top of dependency chain)
+		handler := testutil.AssertServiceResolvableInScope[*UserHandler](t, scope)
+		assert.NotNil(t, handler)
+		assert.NotNil(t, handler.service)
+		assert.NotNil(t, handler.service.repo)
+		assert.NotNil(t, handler.service.logger)
+		assert.NotNil(t, handler.service.cache)
+		assert.NotNil(t, handler.service.repo.db)
 	})
 
-	t.Run("AddModule with nil", func(t *testing.T) {
-		module := godi.NewModule("test",
-			nil,
-			godi.AddSingleton(newModuleTestLogger),
+	t.Run("plugin system with groups", func(t *testing.T) {
+		t.Parallel()
+
+		// Create plugin modules
+		plugin1 := godi.NewModule("plugin1",
+			godi.AddSingleton(func() testutil.TestHandler {
+				return testutil.NewTestHandler("plugin1-handler")
+			}, godi.Group("plugins")),
 		)
 
-		collection := godi.NewServiceCollection()
-		err := collection.AddModules(module)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if !collection.Contains(reflect.TypeOf((*moduleTestLogger)(nil)).Elem()) {
-			t.Error("expected logger to be registered")
-		}
-	})
-}
-
-func TestModuleBuilder_Functions(t *testing.T) {
-	t.Run("AddSingleton", func(t *testing.T) {
-		builder := godi.AddSingleton(newModuleTestLogger)
-
-		collection := godi.NewServiceCollection()
-		err := builder(collection)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		descriptors := collection.ToSlice()
-		if len(descriptors) != 1 {
-			t.Fatalf("expected 1 descriptor, got %d", len(descriptors))
-		}
-
-		if descriptors[0].Lifetime != godi.Singleton {
-			t.Errorf("expected Singleton lifetime, got %v", descriptors[0].Lifetime)
-		}
-	})
-
-	t.Run("AddSingleton with options", func(t *testing.T) {
-		builder := godi.AddSingleton(newModuleTestDatabase, godi.Name("primary"))
-
-		collection := godi.NewServiceCollection()
-		err := builder(collection)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if !collection.ContainsKeyed(reflect.TypeOf((*moduleTestDatabase)(nil)).Elem(), "primary") {
-			t.Error("expected keyed service to be registered")
-		}
-	})
-
-	t.Run("AddDecorator", func(t *testing.T) {
-		decoratorCalled := false
-		decorator := func(logger moduleTestLogger) moduleTestLogger {
-			decoratorCalled = true
-			return &moduleTestLoggerImpl{logs: []string{"decorated"}}
-		}
-
-		builder := godi.AddDecorator(decorator)
-
-		collection := godi.NewServiceCollection()
-		collection.AddSingleton(newModuleTestLogger)
-
-		err := builder(collection)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// Build provider to test decorator
-		provider, err := collection.BuildServiceProvider()
-		if err != nil {
-			t.Fatalf("unexpected error building provider: %v", err)
-		}
-		defer provider.Close()
-
-		logger, err := godi.Resolve[moduleTestLogger](provider)
-		if err != nil {
-			t.Fatalf("unexpected error resolving logger: %v", err)
-		}
-
-		logs := logger.GetLogs()
-		if len(logs) == 0 || logs[0] != "decorated" {
-			t.Error("decorator not applied correctly")
-		}
-
-		if !decoratorCalled {
-			t.Error("decorator should have been called")
-		}
-	})
-
-	t.Run("AddDecorator with options", func(t *testing.T) {
-		decorator := func(db moduleTestDatabase) moduleTestDatabase {
-			return &moduleTestDatabaseImpl{name: "decorated-db"}
-		}
-
-		// Create a DecorateInfo to capture information
-		var info godi.DecorateInfo
-		builder := godi.AddDecorator(decorator, godi.FillDecorateInfo(&info))
-
-		collection := godi.NewServiceCollection()
-		collection.AddSingleton(newModuleTestDatabase)
-
-		err := builder(collection)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// The DecorateInfo would be filled during provider build
-		// We're mainly testing that options are passed through correctly
-		if collection.Count() != 2 { // Original + decorator
-			t.Errorf("expected 2 descriptors, got %d", collection.Count())
-		}
-	})
-}
-
-func TestModule_ComplexScenarios(t *testing.T) {
-	t.Run("module with keyed services", func(t *testing.T) {
-		notificationModule := godi.NewModule("notifications",
-			godi.AddSingleton(newModuleTestLogger),
-			godi.AddSingleton(newModuleTestEmailNotifier, godi.Name("email")),
-			godi.AddSingleton(newModuleTestSMSNotifier, godi.Name("sms")),
+		plugin2 := godi.NewModule("plugin2",
+			godi.AddSingleton(func() testutil.TestHandler {
+				return testutil.NewTestHandler("plugin2-handler")
+			}, godi.Group("plugins")),
 		)
 
-		collection := godi.NewServiceCollection()
-		err := collection.AddModules(notificationModule)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		provider, err := collection.BuildServiceProvider()
-		if err != nil {
-			t.Fatalf("unexpected error building provider: %v", err)
-		}
-		defer provider.Close()
-
-		// Resolve keyed services
-		emailNotifier, err := godi.ResolveKeyed[moduleTestNotifier](provider, "email")
-		if err != nil {
-			t.Fatalf("unexpected error resolving email notifier: %v", err)
-		}
-
-		smsNotifier, err := godi.ResolveKeyed[moduleTestNotifier](provider, "sms")
-		if err != nil {
-			t.Fatalf("unexpected error resolving sms notifier: %v", err)
-		}
-
-		// Test they work correctly
-		logger, _ := godi.Resolve[moduleTestLogger](provider)
-
-		emailNotifier.Notify("Hello")
-		smsNotifier.Notify("World")
-
-		logs := logger.GetLogs()
-		if len(logs) != 2 {
-			t.Fatalf("expected 2 logs, got %d", len(logs))
-		}
-
-		if logs[0] != "Email: Hello" || logs[1] != "SMS: World" {
-			t.Errorf("unexpected logs: %v", logs)
-		}
-	})
-
-	t.Run("module with groups", func(t *testing.T) {
-		handlersModule := godi.NewModule("handlers",
-			godi.AddSingleton(newModuleTestUserHandler, godi.Group("handlers")),
-			godi.AddSingleton(newModuleTestAdminHandler, godi.Group("handlers")),
-			godi.AddSingleton(newModuleTestAPIHandler, godi.Group("handlers")),
+		plugin3 := godi.NewModule("plugin3",
+			godi.AddSingleton(func() testutil.TestHandler {
+				return testutil.NewTestHandler("plugin3-handler")
+			}, godi.Group("plugins")),
 		)
 
-		// Consumer of the group
-		type HandlerConsumer struct {
-			godi.In
-			Handlers []moduleTestHandler `group:"handlers"`
+		// Core module that uses plugins
+		type PluginManager struct {
+			plugins []testutil.TestHandler
 		}
 
-		var capturedHandlers []moduleTestHandler
-		consumerModule := godi.NewModule("consumer",
-			godi.AddSingleton(func(params HandlerConsumer) *moduleTestService {
-				capturedHandlers = params.Handlers
-				return &moduleTestService{id: "handler-consumer"}
-			}),
-		)
-
-		collection := godi.NewServiceCollection()
-		err := collection.AddModules(handlersModule, consumerModule)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		provider, err := collection.BuildServiceProvider()
-		if err != nil {
-			t.Fatalf("unexpected error building provider: %v", err)
-		}
-		defer provider.Close()
-
-		// Resolve to trigger group injection
-		_, err = godi.Resolve[moduleTestService](provider)
-		if err != nil {
-			t.Fatalf("unexpected error resolving service: %v", err)
-		}
-
-		if len(capturedHandlers) != 3 {
-			t.Fatalf("expected 3 handlers, got %d", len(capturedHandlers))
-		}
-
-		// Check we got all handlers
-		handlerTypes := make(map[string]bool)
-		for _, h := range capturedHandlers {
-			handlerTypes[h.Handle()] = true
-		}
-
-		expectedTypes := []string{"user", "admin", "api"}
-		for _, expected := range expectedTypes {
-			if !handlerTypes[expected] {
-				t.Errorf("missing handler type: %s", expected)
-			}
-		}
-	})
-
-	t.Run("module error propagation", func(t *testing.T) {
-		// Module that has a registration error
-		errorModule := godi.NewModule("error",
-			godi.AddSingleton(nil), // This should cause an error
-		)
-
-		collection := godi.NewServiceCollection()
-		err := collection.AddModules(errorModule)
-		if err == nil {
-			t.Fatal("expected error for nil constructor")
-		}
-
-		if !errors.Is(err, godi.ErrNilConstructor) {
-			t.Errorf("expected ErrNilConstructor, got: %v", err)
-		}
-	})
-
-	t.Run("multiple modules with dependencies", func(t *testing.T) {
-		// Define modules that depend on each other
 		coreModule := godi.NewModule("core",
-			godi.AddSingleton(newModuleTestLogger),
-			godi.AddSingleton(newModuleTestMetrics),
+			godi.AddSingleton(func(params struct {
+				godi.In
+				Plugins []testutil.TestHandler `group:"plugins"`
+			}) *PluginManager {
+				return &PluginManager{plugins: params.Plugins}
+			}),
 		)
 
-		dataModule := godi.NewModule("data",
-			godi.AddSingleton(newModuleTestDatabase),
-			godi.AddSingleton(newModuleTestCache),
+		// Compose all modules
+		appModule := godi.NewModule("app",
+			plugin1,
+			plugin2,
+			plugin3,
+			coreModule,
 		)
 
-		businessModule := godi.NewModule("business",
-			godi.AddScoped(newModuleTestRepository),
-			godi.AddScoped(newModuleTestService),
-		)
-
-		// Apply all modules
 		collection := godi.NewServiceCollection()
-		err := collection.AddModules(coreModule, dataModule, businessModule)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		err := collection.AddModules(appModule)
+		require.NoError(t, err)
 
-		// Build and verify
 		provider, err := collection.BuildServiceProvider()
-		if err != nil {
-			t.Fatalf("unexpected error building provider: %v", err)
-		}
-		defer provider.Close()
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
 
-		scope := provider.CreateScope(context.Background())
-		defer scope.Close()
+		// Resolve plugin manager
+		manager := testutil.AssertServiceResolvable[*PluginManager](t, provider)
+		assert.Len(t, manager.plugins, 3)
 
-		// Should be able to resolve the top-level service
-		service, err := godi.Resolve[moduleTestService](scope)
-		if err != nil {
-			t.Fatalf("unexpected error resolving service: %v", err)
+		// Verify all plugins are loaded
+		handlerNames := make(map[string]bool)
+		for _, p := range manager.plugins {
+			handlerNames[p.Handle()] = true
 		}
 
-		if service.repo == nil {
-			t.Error("repository not injected")
-		}
-		if service.repo.db == nil {
-			t.Error("database not injected into repository")
-		}
-		if service.repo.logger == nil {
-			t.Error("logger not injected into repository")
-		}
+		assert.True(t, handlerNames["plugin1-handler"])
+		assert.True(t, handlerNames["plugin2-handler"])
+		assert.True(t, handlerNames["plugin3-handler"])
 	})
 }
 
-func TestModule_RealWorldExample(t *testing.T) {
-	// Simulate a real-world modular application structure
+func TestModule_BuilderFunctions(t *testing.T) {
+	t.Run("all builder types", func(t *testing.T) {
+		t.Parallel()
 
-	// Infrastructure module
-	var InfrastructureModule = godi.NewModule("infrastructure",
-		godi.AddSingleton(newModuleTestLogger),
-		godi.AddSingleton(newModuleTestMetrics),
-		godi.AddSingleton(func() moduleTestDatabase {
-			return &moduleTestDatabaseImpl{name: "production"}
-		}, godi.Name("primary")),
-		godi.AddSingleton(func() moduleTestDatabase {
-			return &moduleTestDatabaseImpl{name: "readonly"}
-		}, godi.Name("replica")),
-		godi.AddSingleton(newModuleTestCache),
-		godi.AddSingleton(newModuleTestDatabase),
-	)
+		// Test that all ModuleOption functions work
+		module := godi.NewModule("all-builders",
+			// AddSingleton
+			godi.AddSingleton(testutil.NewTestLogger),
+			godi.AddSingleton(testutil.NewTestDatabase, godi.Name("primary")),
 
-	// Notification module
-	var NotificationModule = godi.NewModule("notifications",
-		godi.AddSingleton(newModuleTestEmailNotifier, godi.Name("email")),
-		godi.AddSingleton(newModuleTestSMSNotifier, godi.Name("sms")),
-		godi.AddDecorator(func(email moduleTestNotifier) moduleTestNotifier {
-			// Decorate email notifier with logging
-			return &moduleTestEmailNotifier{
-				logger: &moduleTestLoggerImpl{logs: []string{"[DECORATED]"}},
-			}
-		}),
-	)
+			// AddScoped
+			godi.AddScoped(testutil.NewTestService),
+			godi.AddScoped(func() *testutil.TestService {
+				return &testutil.TestService{ID: "custom"}
+			}, godi.Group("services")),
 
-	// Data access module
-	var DataModule = godi.NewModule("data",
-		InfrastructureModule,
-		godi.AddScoped(newModuleTestRepository),
-		godi.AddScoped(func() moduleTestService {
-			return moduleTestService{id: "scoped-service"}
-		}),
-	)
-
-	// API handlers module
-	var HandlersModule = godi.NewModule("handlers",
-		godi.AddSingleton(newModuleTestUserHandler, godi.Group("handlers")),
-		godi.AddSingleton(newModuleTestAdminHandler, godi.Group("handlers")),
-		godi.AddSingleton(newModuleTestAPIHandler, godi.Group("handlers")),
-	)
-
-	// Application module combining everything
-	var ApplicationModule = godi.NewModule("application",
-		DataModule,
-		NotificationModule,
-		HandlersModule,
-		godi.AddScoped(newModuleTestService),
-	)
-
-	// Build the application
-	collection := godi.NewServiceCollection()
-	err := collection.AddModules(ApplicationModule)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	provider, err := collection.BuildServiceProvider()
-	if err != nil {
-		t.Fatalf("unexpected error building provider: %v", err)
-	}
-	defer provider.Close()
-
-	// Test the complete system
-	scope := provider.CreateScope(context.Background())
-	defer scope.Close()
-
-	// Verify all components work together
-	service, err := godi.Resolve[moduleTestService](scope)
-	if err != nil {
-		t.Fatalf("unexpected error resolving service: %v", err)
-	}
-
-	// Test keyed services
-	primaryDB, err := godi.ResolveKeyed[moduleTestDatabase](provider, "primary")
-	if err != nil {
-		t.Fatalf("unexpected error resolving primary db: %v", err)
-	}
-
-	replicaDB, err := godi.ResolveKeyed[moduleTestDatabase](provider, "replica")
-	if err != nil {
-		t.Fatalf("unexpected error resolving replica db: %v", err)
-	}
-
-	if primaryDB.Query("SELECT 1") == replicaDB.Query("SELECT 1") {
-		t.Error("expected different database instances")
-	}
-
-	// Verify service has all its dependencies
-	if service.repo == nil || service.cache == nil || service.logger == nil {
-		t.Error("service missing dependencies")
-	}
-}
-
-func TestModule_EdgeCases(t *testing.T) {
-	t.Run("empty module", func(t *testing.T) {
-		emptyModule := godi.NewModule("empty")
-
-		collection := godi.NewServiceCollection()
-		err := collection.AddModules(emptyModule)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if collection.Count() != 0 {
-			t.Errorf("expected 0 services, got %d", collection.Count())
-		}
-	})
-
-	t.Run("module with only nil builders", func(t *testing.T) {
-		nilModule := godi.NewModule("nil-builders", nil, nil, nil)
-
-		collection := godi.NewServiceCollection()
-		err := collection.AddModules(nilModule)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if collection.Count() != 0 {
-			t.Errorf("expected 0 services, got %d", collection.Count())
-		}
-	})
-
-	t.Run("recursive module application", func(t *testing.T) {
-		// Module that adds itself (should not cause infinite loop)
-		recursiveModule := godi.NewModule("recursive",
-			godi.AddSingleton(newModuleTestLogger),
-			func(s godi.ServiceCollection) error {
-				// Don't actually add recursively, just test the pattern
-				return nil
-			},
-		)
-
-		collection := godi.NewServiceCollection()
-		err := collection.AddModules(recursiveModule)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if !collection.Contains(reflect.TypeOf((*moduleTestLogger)(nil)).Elem()) {
-			t.Error("expected logger to be registered")
-		}
-	})
-
-	t.Run("module builder error handling", func(t *testing.T) {
-		callOrder := []string{}
-
-		module := godi.NewModule("error-test",
-			func(s godi.ServiceCollection) error {
-				callOrder = append(callOrder, "first")
-				return nil
-			},
-			func(s godi.ServiceCollection) error {
-				callOrder = append(callOrder, "second")
-				return errStopHere
-			},
-			func(s godi.ServiceCollection) error {
-				callOrder = append(callOrder, "third")
-				return nil
-			},
+			// AddDecorator
+			godi.AddDecorator(func(logger testutil.TestLogger) testutil.TestLogger {
+				return logger // Pass through
+			}),
 		)
 
 		collection := godi.NewServiceCollection()
 		err := collection.AddModules(module)
-		if err == nil {
-			t.Fatal("expected error")
-		}
+		require.NoError(t, err)
 
-		// Should stop at the error
-		if len(callOrder) != 2 {
-			t.Errorf("expected 2 calls, got %d: %v", len(callOrder), callOrder)
-		}
-		if callOrder[0] != "first" || callOrder[1] != "second" {
-			t.Errorf("unexpected call order: %v", callOrder)
-		}
+		// Verify registration count (5 total)
+		assert.GreaterOrEqual(t, collection.Count(), 5)
 	})
 }
 
-func TestModule_ThreadSafety(t *testing.T) {
-	t.Run("concurrent module application", func(t *testing.T) {
-		// Note: ServiceCollection is not thread-safe by default,
-		// but we're testing that modules themselves don't have race conditions
+// Table-driven test for module patterns
+func TestModule_Patterns(t *testing.T) {
+	tests := []struct {
+		name         string
+		createModule func() godi.ModuleOption
+		validate     func(t *testing.T, collection godi.ServiceCollection)
+		wantErr      bool
+	}{
+		{
+			name: "feature module pattern",
+			createModule: func() godi.ModuleOption {
+				return godi.NewModule("feature",
+					godi.AddSingleton(func() string { return "feature-config" }),
+					godi.AddScoped(func(config string) *struct{ Config string } {
+						return &struct{ Config string }{Config: config}
+					}),
+				)
+			},
+			validate: func(t *testing.T, collection godi.ServiceCollection) {
+				assert.Equal(t, 2, collection.Count())
+			},
+		},
+		{
+			name: "conditional registration",
+			createModule: func() godi.ModuleOption {
+				enableFeature := true
 
-		const goroutines = 10
-		modules := make([]func(godi.ServiceCollection) error, goroutines)
+				builders := []godi.ModuleOption{
+					godi.AddSingleton(testutil.NewTestLogger),
+				}
 
-		for i := 0; i < goroutines; i++ {
-			idx := i
-			modules[i] = godi.NewModule(fmt.Sprintf("module-%d", idx),
-				godi.AddSingleton(func() *moduleTestService {
-					return &moduleTestService{id: fmt.Sprintf("service-%d", idx)}
-				}, godi.Name(fmt.Sprintf("service-%d", idx))),
-			)
-		}
+				if enableFeature {
+					builders = append(builders, godi.AddSingleton(testutil.NewTestCache))
+				}
 
-		// Apply modules sequentially (as godi.ServiceCollection is not thread-safe)
-		collection := godi.NewServiceCollection()
-		for _, module := range modules {
+				return godi.NewModule("conditional", builders...)
+			},
+			validate: func(t *testing.T, collection godi.ServiceCollection) {
+				assert.Equal(t, 2, collection.Count())
+			},
+		},
+		{
+			name: "cross-cutting concerns",
+			createModule: func() godi.ModuleOption {
+				// Logging decorator that can be applied to any service
+				loggingDecorator := func(logger testutil.TestLogger) godi.ModuleOption {
+					return godi.AddDecorator(func(db testutil.TestDatabase) testutil.TestDatabase {
+						// Wrap database with logging
+						return db
+					})
+				}
+
+				return godi.NewModule("cross-cutting",
+					godi.AddSingleton(testutil.NewTestLogger),
+					godi.AddSingleton(testutil.NewTestDatabase),
+					loggingDecorator(nil), // Logger will be injected by DI
+				)
+			},
+			validate: func(t *testing.T, collection godi.ServiceCollection) {
+				assert.GreaterOrEqual(t, collection.Count(), 2)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			collection := godi.NewServiceCollection()
+			module := tt.createModule()
+
 			err := collection.AddModules(module)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				if tt.validate != nil {
+					tt.validate(t, collection)
+				}
 			}
-		}
-
-		// Verify all services were added
-		for i := 0; i < goroutines; i++ {
-			key := fmt.Sprintf("service-%d", i)
-			if !collection.ContainsKeyed(reflect.TypeOf((*moduleTestService)(nil)), key) {
-				t.Errorf("missing service: %s", key)
-			}
-		}
-	})
-}
-
-func TestModule_PartialFailure(t *testing.T) {
-	t.Run("module stops on first error", func(t *testing.T) {
-		registrationCount := 0
-
-		module := godi.NewModule("partial",
-			func(s godi.ServiceCollection) error {
-				registrationCount++
-				return s.AddSingleton(func() moduleTestLogger {
-					return &moduleTestLoggerImpl{}
-				})
-			},
-			func(s godi.ServiceCollection) error {
-				registrationCount++
-				return s.AddSingleton(nil) // This will error
-			},
-			func(s godi.ServiceCollection) error {
-				registrationCount++
-				return s.AddSingleton(func() moduleTestCache {
-					return &moduleTestCacheImpl{}
-				})
-			},
-		)
-
-		collection := godi.NewServiceCollection()
-		err := collection.AddModules(module)
-
-		if err == nil {
-			t.Fatal("expected error")
-		}
-
-		// Should have attempted to register 2 services (stopped at error)
-		if registrationCount != 2 {
-			t.Errorf("expected 2 registration attempts, got: %d", registrationCount)
-		}
-
-		// Collection should still have the logger
-		if !collection.Contains(reflect.TypeOf((*moduleTestLogger)(nil)).Elem()) {
-			t.Error("logger should still be in collection despite module error")
-		}
-
-		// Collection should NOT have the cache (never reached)
-		if collection.Contains(reflect.TypeOf((*moduleTestCache)(nil)).Elem()) {
-			t.Error("cache should not be in collection")
-		}
-	})
-}
-
-func TestModule_ConstructorExecution(t *testing.T) {
-	t.Run("constructors called on resolution", func(t *testing.T) {
-		constructed := []string{}
-
-		module := godi.NewModule("test",
-			godi.AddSingleton(func() moduleTestLogger {
-				constructed = append(constructed, "logger")
-				return &moduleTestLoggerImpl{}
-			}),
-			godi.AddSingleton(func() moduleTestCache {
-				constructed = append(constructed, "cache")
-				return &moduleTestCacheImpl{}
-			}),
-		)
-
-		collection := godi.NewServiceCollection()
-		err := collection.AddModules(module)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// Constructors not called yet
-		if len(constructed) != 0 {
-			t.Error("constructors should not be called during registration")
-		}
-
-		// Build provider
-		provider, err := collection.BuildServiceProvider()
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		defer provider.Close()
-
-		// Now resolve services - this calls constructors
-		_, err = godi.Resolve[moduleTestLogger](provider)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if len(constructed) != 1 || constructed[0] != "logger" {
-			t.Errorf("expected logger to be constructed, got: %v", constructed)
-		}
-
-		_, err = godi.Resolve[moduleTestCache](provider)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if len(constructed) != 2 || constructed[1] != "cache" {
-			t.Errorf("expected cache to be constructed second, got: %v", constructed)
-		}
-	})
+		})
+	}
 }

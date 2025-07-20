@@ -89,8 +89,8 @@ type serviceProviderScope struct {
 	disposablesMu sync.RWMutex
 }
 
-// newServiceProviderScope creates a new ServiceProvider scope.
-func newServiceProviderScope(provider *serviceProvider, ctx context.Context) *serviceProviderScope {
+// newScope creates a new ServiceProvider scope.
+func newScope(provider *serviceProvider, ctx context.Context) *serviceProviderScope {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -391,7 +391,7 @@ func (scope *serviceProviderScope) CreateScope(ctx context.Context) Scope {
 		panic(ErrScopeDisposed)
 	}
 
-	newScope := newServiceProviderScope(scope.serviceProvider, ctx)
+	newScope := newScope(scope.serviceProvider, ctx)
 	newScope.parentScope = scope
 	return newScope
 }

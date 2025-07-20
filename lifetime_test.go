@@ -1,173 +1,401 @@
 package godi_test
 
 import (
-	"context"
 	"encoding/json"
 	"testing"
-	"time"
 
 	"github.com/junioryono/godi"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-// Test types for lifetime tests
-type (
-	lifetimeTestDisposableWithContext struct {
-		disposed     bool
-		disposedCtx  context.Context
-		disposeDelay time.Duration
-		disposeError error
+func TestServiceLifetime_String(t *testing.T) {
+	tests := []struct {
+		name     string
+		lifetime godi.ServiceLifetime
+		expected string
+	}{
+		{
+			name:     "singleton",
+			lifetime: godi.Singleton,
+			expected: "Singleton",
+		},
+		{
+			name:     "scoped",
+			lifetime: godi.Scoped,
+			expected: "Scoped",
+		},
+		{
+			name:     "invalid",
+			lifetime: godi.ServiceLifetime(99),
+			expected: "Unknown(99)",
+		},
 	}
-)
 
-func (s *lifetimeTestDisposableWithContext) Close(ctx context.Context) error {
-	s.disposedCtx = ctx
-
-	if s.disposeDelay > 0 {
-		select {
-		case <-time.After(s.disposeDelay):
-			// Normal disposal
-		case <-ctx.Done():
-			// Context cancelled
-			return ctx.Err()
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.expected, tt.lifetime.String())
+		})
 	}
-
-	s.disposed = true
-	return s.disposeError
 }
 
-func TestServiceLifetime(t *testing.T) {
-	t.Run("constants", func(t *testing.T) {
-		// Verify constant values
-		if godi.Singleton != 0 {
-			t.Errorf("Singleton should be 0, got %d", godi.Singleton)
-		}
-		if godi.Scoped != 1 {
-			t.Errorf("Scoped should be 1, got %d", godi.Scoped)
-		}
-	})
+func TestServiceLifetime_IsValid(t *testing.T) {
+	tests := []struct {
+		name     string
+		lifetime godi.ServiceLifetime
+		valid    bool
+	}{
+		{
+			name:     "singleton is valid",
+			lifetime: godi.Singleton,
+			valid:    true,
+		},
+		{
+			name:     "scoped is valid",
+			lifetime: godi.Scoped,
+			valid:    true,
+		},
+		{
+			name:     "negative value is invalid",
+			lifetime: godi.ServiceLifetime(-1),
+			valid:    false,
+		},
+		{
+			name:     "too large value is invalid",
+			lifetime: godi.ServiceLifetime(10),
+			valid:    false,
+		},
+	}
 
-	t.Run("String", func(t *testing.T) {
-		tests := []struct {
-			lifetime godi.ServiceLifetime
-			expected string
-		}{
-			{godi.Singleton, "Singleton"},
-			{godi.Scoped, "Scoped"},
-			{godi.ServiceLifetime(999), "Unknown(999)"},
-		}
-
-		for _, tt := range tests {
-			if got := tt.lifetime.String(); got != tt.expected {
-				t.Errorf("lifetime %d: expected %q, got %q", tt.lifetime, tt.expected, got)
-			}
-		}
-	})
-
-	t.Run("IsValid", func(t *testing.T) {
-		tests := []struct {
-			lifetime godi.ServiceLifetime
-			valid    bool
-		}{
-			{godi.Singleton, true},
-			{godi.Scoped, true},
-			{godi.ServiceLifetime(-1), false},
-			{godi.ServiceLifetime(3), false},
-			{godi.ServiceLifetime(999), false},
-		}
-
-		for _, tt := range tests {
-			if got := tt.lifetime.IsValid(); got != tt.valid {
-				t.Errorf("lifetime %d: expected IsValid=%v, got %v", tt.lifetime, tt.valid, got)
-			}
-		}
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.valid, tt.lifetime.IsValid())
+		})
+	}
 }
 
-func TestServiceLifetime_Marshaling(t *testing.T) {
-	t.Run("MarshalText", func(t *testing.T) {
-		tests := []struct {
-			lifetime godi.ServiceLifetime
-			expected string
-		}{
-			{godi.Singleton, "Singleton"},
-			{godi.Scoped, "Scoped"},
-		}
+func TestServiceLifetime_MarshalText(t *testing.T) {
+	tests := []struct {
+		name     string
+		lifetime godi.ServiceLifetime
+		expected string
+	}{
+		{
+			name:     "marshal singleton",
+			lifetime: godi.Singleton,
+			expected: "Singleton",
+		},
+		{
+			name:     "marshal scoped",
+			lifetime: godi.Scoped,
+			expected: "Scoped",
+		},
+	}
 
-		for _, tt := range tests {
-			data, err := tt.lifetime.MarshalText()
-			if err != nil {
-				t.Errorf("unexpected error: %v", err)
-			}
-			if string(data) != tt.expected {
-				t.Errorf("lifetime %s: expected %q, got %q", tt.lifetime, tt.expected, string(data))
-			}
-		}
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	t.Run("UnmarshalText", func(t *testing.T) {
-		tests := []struct {
-			text     string
-			expected godi.ServiceLifetime
-			wantErr  bool
-		}{
-			{"Singleton", godi.Singleton, false},
-			{"singleton", godi.Singleton, false},
-			{"Scoped", godi.Scoped, false},
-			{"scoped", godi.Scoped, false},
-			{"Invalid", godi.ServiceLifetime(0), true},
-			{"", godi.ServiceLifetime(0), true},
-		}
+			text, err := tt.lifetime.MarshalText()
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, string(text))
+		})
+	}
+}
 
-		for _, tt := range tests {
+func TestServiceLifetime_UnmarshalText(t *testing.T) {
+	tests := []struct {
+		name     string
+		text     string
+		expected godi.ServiceLifetime
+		wantErr  bool
+	}{
+		{
+			name:     "unmarshal Singleton",
+			text:     "Singleton",
+			expected: godi.Singleton,
+		},
+		{
+			name:     "unmarshal singleton (lowercase)",
+			text:     "singleton",
+			expected: godi.Singleton,
+		},
+		{
+			name:     "unmarshal Scoped",
+			text:     "Scoped",
+			expected: godi.Scoped,
+		},
+		{
+			name:     "unmarshal scoped (lowercase)",
+			text:     "scoped",
+			expected: godi.Scoped,
+		},
+		{
+			name:    "unmarshal invalid",
+			text:    "Invalid",
+			wantErr: true,
+		},
+		{
+			name:    "unmarshal empty",
+			text:    "",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			var lifetime godi.ServiceLifetime
 			err := lifetime.UnmarshalText([]byte(tt.text))
 
 			if tt.wantErr {
-				if err == nil {
-					t.Errorf("text %q: expected error, got nil", tt.text)
-				}
-				continue
-			}
+				assert.Error(t, err)
 
-			if err != nil {
-				t.Errorf("text %q: unexpected error: %v", tt.text, err)
+				var lifetimeErr godi.LifetimeError
+				assert.ErrorAs(t, err, &lifetimeErr)
+				assert.Equal(t, tt.text, lifetimeErr.Value)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.expected, lifetime)
 			}
-			if lifetime != tt.expected {
-				t.Errorf("text %q: expected %v, got %v", tt.text, tt.expected, lifetime)
-			}
-		}
-	})
+		})
+	}
+}
 
-	t.Run("JSON roundtrip", func(t *testing.T) {
-		type testStruct struct {
+func TestServiceLifetime_JSON(t *testing.T) {
+	t.Run("marshal to JSON", func(t *testing.T) {
+		t.Parallel()
+
+		type Config struct {
 			Lifetime godi.ServiceLifetime `json:"lifetime"`
 		}
 
-		for _, lifetime := range []godi.ServiceLifetime{godi.Singleton, godi.Scoped} {
-			original := testStruct{Lifetime: lifetime}
+		config := Config{Lifetime: godi.Singleton}
+		data, err := json.Marshal(config)
 
-			data, err := json.Marshal(original)
-			if err != nil {
-				t.Errorf("failed to marshal %v: %v", lifetime, err)
-				continue
-			}
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"lifetime":"Singleton"}`, string(data))
+	})
 
-			var decoded testStruct
-			err = json.Unmarshal(data, &decoded)
-			if err != nil {
-				t.Errorf("failed to unmarshal %v: %v", lifetime, err)
-				continue
-			}
+	t.Run("unmarshal from JSON", func(t *testing.T) {
+		t.Parallel()
 
-			if decoded.Lifetime != original.Lifetime {
-				t.Errorf("roundtrip failed: expected %v, got %v", original.Lifetime, decoded.Lifetime)
-			}
+		type Config struct {
+			Lifetime godi.ServiceLifetime `json:"lifetime"`
+		}
+
+		tests := []struct {
+			name     string
+			json     string
+			expected godi.ServiceLifetime
+			wantErr  bool
+		}{
+			{
+				name:     "valid singleton",
+				json:     `{"lifetime":"Singleton"}`,
+				expected: godi.Singleton,
+			},
+			{
+				name:     "valid scoped",
+				json:     `{"lifetime":"Scoped"}`,
+				expected: godi.Scoped,
+			},
+			{
+				name:     "lowercase singleton",
+				json:     `{"lifetime":"singleton"}`,
+				expected: godi.Singleton,
+			},
+			{
+				name:    "invalid lifetime",
+				json:    `{"lifetime":"Invalid"}`,
+				wantErr: true,
+			},
+			{
+				name:    "numeric value",
+				json:    `{"lifetime":0}`,
+				wantErr: true,
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				var config Config
+				err := json.Unmarshal([]byte(tt.json), &config)
+
+				if tt.wantErr {
+					assert.Error(t, err)
+				} else {
+					require.NoError(t, err)
+					assert.Equal(t, tt.expected, config.Lifetime)
+				}
+			})
 		}
 	})
 }
 
-func TestDisposableWithContextInterface(t *testing.T) {
-	// Verify our test type implements the interface
-	var _ godi.DisposableWithContext = (*lifetimeTestDisposableWithContext)(nil)
+func TestServiceLifetime_RoundTrip(t *testing.T) {
+	lifetimes := []godi.ServiceLifetime{
+		godi.Singleton,
+		godi.Scoped,
+	}
+
+	t.Run("text marshaling round trip", func(t *testing.T) {
+		t.Parallel()
+
+		for _, original := range lifetimes {
+			// Marshal
+			text, err := original.MarshalText()
+			require.NoError(t, err)
+
+			// Unmarshal
+			var result godi.ServiceLifetime
+			err = result.UnmarshalText(text)
+			require.NoError(t, err)
+
+			// Compare
+			assert.Equal(t, original, result)
+		}
+	})
+
+	t.Run("JSON marshaling round trip", func(t *testing.T) {
+		t.Parallel()
+
+		for _, original := range lifetimes {
+			// Marshal
+			data, err := json.Marshal(original)
+			require.NoError(t, err)
+
+			// Unmarshal
+			var result godi.ServiceLifetime
+			err = json.Unmarshal(data, &result)
+			require.NoError(t, err)
+
+			// Compare
+			assert.Equal(t, original, result)
+		}
+	})
+}
+
+func TestServiceLifetime_Usage(t *testing.T) {
+	t.Run("lifetime constants are distinct", func(t *testing.T) {
+		t.Parallel()
+		assert.NotEqual(t, godi.Singleton, godi.Scoped)
+	})
+
+	t.Run("zero value is Singleton", func(t *testing.T) {
+		t.Parallel()
+
+		var lifetime godi.ServiceLifetime
+		assert.Equal(t, godi.Singleton, lifetime)
+		assert.Equal(t, "Singleton", lifetime.String())
+	})
+
+	t.Run("lifetimes can be compared", func(t *testing.T) {
+		t.Parallel()
+
+		lifetime1 := godi.Singleton
+		lifetime2 := godi.Singleton
+		lifetime3 := godi.Scoped
+
+		assert.True(t, lifetime1 == lifetime2)
+		assert.False(t, lifetime1 == lifetime3)
+	})
+
+	t.Run("lifetimes can be used in switch", func(t *testing.T) {
+		t.Parallel()
+
+		checkLifetime := func(lt godi.ServiceLifetime) string {
+			switch lt {
+			case godi.Singleton:
+				return "singleton"
+			case godi.Scoped:
+				return "scoped"
+			default:
+				return "unknown"
+			}
+		}
+
+		assert.Equal(t, "singleton", checkLifetime(godi.Singleton))
+		assert.Equal(t, "scoped", checkLifetime(godi.Scoped))
+		assert.Equal(t, "unknown", checkLifetime(godi.ServiceLifetime(99)))
+	})
+}
+
+// Table-driven tests for edge cases
+func TestServiceLifetime_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name   string
+		action func(t *testing.T)
+	}{
+		{
+			name: "unmarshal with whitespace",
+			action: func(t *testing.T) {
+				var lifetime godi.ServiceLifetime
+				err := lifetime.UnmarshalText([]byte("  Singleton  "))
+				// Should fail because it doesn't trim whitespace
+				assert.Error(t, err)
+			},
+		},
+		{
+			name: "unmarshal case variations",
+			action: func(t *testing.T) {
+				variations := []string{
+					"SINGLETON",
+					"SCOPED",
+					"Singleton",
+					"Scoped",
+					"SiNgLeTon",
+				}
+
+				for _, v := range variations {
+					var lifetime godi.ServiceLifetime
+					err := lifetime.UnmarshalText([]byte(v))
+
+					// Only exact matches should work
+					if v == "Singleton" || v == "singleton" {
+						assert.NoError(t, err)
+						assert.Equal(t, godi.Singleton, lifetime)
+					} else if v == "Scoped" || v == "scoped" {
+						assert.NoError(t, err)
+						assert.Equal(t, godi.Scoped, lifetime)
+					} else {
+						assert.Error(t, err)
+					}
+				}
+			},
+		},
+		{
+			name: "marshal invalid lifetime",
+			action: func(t *testing.T) {
+				lifetime := godi.ServiceLifetime(99)
+				text, err := lifetime.MarshalText()
+
+				// Should still work, returning "Unknown(99)"
+				assert.NoError(t, err)
+				assert.Equal(t, "Unknown(99)", string(text))
+			},
+		},
+		{
+			name: "use in map keys",
+			action: func(t *testing.T) {
+				// Lifetimes should be usable as map keys
+				m := make(map[godi.ServiceLifetime]string)
+				m[godi.Singleton] = "singleton"
+				m[godi.Scoped] = "scoped"
+
+				assert.Equal(t, "singleton", m[godi.Singleton])
+				assert.Equal(t, "scoped", m[godi.Scoped])
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tt.action(t)
+		})
+	}
 }
