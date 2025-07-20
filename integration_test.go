@@ -15,8 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Integration tests that test the entire system working together
-
 func TestIntegration_WebApplicationSimulation(t *testing.T) {
 	t.Run("simulates web request handling", func(t *testing.T) {
 		t.Parallel()
@@ -31,7 +29,6 @@ func TestIntegration_WebApplicationSimulation(t *testing.T) {
 
 		requestErrors := make([]error, numRequests)
 
-		type ctxKeyRequestID struct{}
 		for i := 0; i < numRequests; i++ {
 			go func(requestID int) {
 				defer wg.Done()
@@ -86,7 +83,6 @@ func TestIntegration_BackgroundJobProcessing(t *testing.T) {
 
 				for jobID := range jobQueue {
 					// Each job gets its own scope
-					type ctxKeyJobID struct{}
 					ctx := context.WithValue(context.Background(), ctxKeyJobID{}, jobID)
 					scope := provider.CreateScope(ctx)
 
@@ -127,7 +123,11 @@ func TestIntegration_MicroserviceArchitecture(t *testing.T) {
 			// Start all services
 			assert.True(t, health.IsHealthy())
 			assert.Equal(t, "running", api.Status())
+
+			// Give worker time to process
+			time.Sleep(5 * time.Millisecond)
 			assert.Greater(t, worker.ProcessedCount(), 0)
+
 			assert.NotEmpty(t, metrics.Collect())
 			return nil
 		})
@@ -349,7 +349,7 @@ func TestIntegration_LifecycleManagement(t *testing.T) {
 					atomic.AddInt32(&singletonDisposed, 1)
 				},
 			}
-		}))
+		}, godi.Name("singleton")))
 
 		// Scoped with disposal tracking
 		require.NoError(t, collection.AddScoped(func() *TrackedService {
@@ -370,7 +370,7 @@ func TestIntegration_LifecycleManagement(t *testing.T) {
 			scope := provider.CreateScope(context.Background())
 
 			// Resolve both services
-			singleton := testutil.AssertServiceResolvableInScope[*TrackedService](t, scope)
+			singleton := testutil.AssertKeyedServiceResolvable[*TrackedService](t, scope, "singleton")
 			assert.Equal(t, "singleton", singleton.name)
 
 			scoped := testutil.AssertServiceResolvableInScope[*TrackedService](t, scope)
@@ -403,7 +403,6 @@ func TestIntegration_RealWorldScenarios(t *testing.T) {
 		provider := createRESTAPIProvider(t)
 
 		// Simulate request through middleware chain
-		type ctxKeyPath struct{}
 		ctx := context.WithValue(context.Background(), ctxKeyPath{}, "/api/users/123")
 		scope := provider.CreateScope(ctx)
 		defer scope.Close()
@@ -467,6 +466,9 @@ func TestIntegration_RealWorldScenarios(t *testing.T) {
 }
 
 // Helper types and functions for integration tests
+type ctxKeyRequestID struct{}
+type ctxKeyJobID struct{}
+type ctxKeyPath struct{}
 
 type HealthService struct {
 	healthy bool
@@ -620,8 +622,6 @@ func (t *TrackedService) Close() error {
 	return nil
 }
 
-// Helper functions for creating test providers
-
 func createWebAppProvider(t *testing.T) godi.ServiceProvider {
 	collection := godi.NewServiceCollection()
 
@@ -632,7 +632,7 @@ func createWebAppProvider(t *testing.T) godi.ServiceProvider {
 
 	// Request-scoped services
 	require.NoError(t, collection.AddScoped(func(ctx context.Context) *RequestContext {
-		requestID, _ := ctx.Value("requestID").(string)
+		requestID, _ := ctx.Value(ctxKeyRequestID{}).(string)
 		return &RequestContext{RequestID: requestID}
 	}))
 
@@ -658,7 +658,7 @@ func createJobProcessorProvider(t *testing.T) godi.ServiceProvider {
 
 	require.NoError(t, collection.AddSingleton(testutil.NewTestLogger))
 	require.NoError(t, collection.AddScoped(func(ctx context.Context) *JobProcessor {
-		jobID, _ := ctx.Value("jobID").(int)
+		jobID, _ := ctx.Value(ctxKeyJobID{}).(int)
 		return &JobProcessor{JobID: jobID}
 	}))
 
@@ -705,29 +705,34 @@ func createEventDrivenProvider(t *testing.T) godi.ServiceProvider {
 	require.NoError(t, collection.AddSingleton(NewOrderEventHandler))
 	require.NoError(t, collection.AddSingleton(NewPaymentEventHandler))
 
+	// Create a proper initialization service
+	type EventWiring struct {
+		initialized bool
+	}
+
 	// Wire up handlers to bus
 	require.NoError(t, collection.AddSingleton(func(
 		bus *EventBus,
 		userHandler *UserEventHandler,
 		orderHandler *OrderEventHandler,
 		paymentHandler *PaymentEventHandler,
-	) struct{} {
+	) *EventWiring {
 		bus.Subscribe("user.created", userHandler)
 		bus.Subscribe("order.placed", orderHandler)
 		bus.Subscribe("payment.processed", paymentHandler)
-		return struct{}{}
+		return &EventWiring{initialized: true}
 	}))
 
 	provider, err := collection.BuildServiceProvider()
 	require.NoError(t, err)
 
-	// Ensure wiring happens
-	_, _ = godi.Resolve[struct{}](provider)
+	// Ensure wiring happens by resolving the EventWiring service
+	wiring, err := godi.Resolve[*EventWiring](provider)
+	require.NoError(t, err)
+	require.True(t, wiring.initialized)
 
 	return provider
 }
-
-// Additional helper types
 
 type RequestContext struct {
 	RequestID string
