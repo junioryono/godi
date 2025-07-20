@@ -14,7 +14,6 @@ godi is built on top of Uber's dig, which is highly optimized. However, understa
 | Provider Build       | O(n)        | Once at startup, validates graph |
 | Singleton Resolution | O(1)\*      | Cached after first creation      |
 | Scoped Resolution    | O(1)\*      | Cached within scope              |
-| Transient Resolution | O(d)        | d = dependency depth             |
 | Scope Creation       | O(s)        | s = scoped services count        |
 
 \* After initial creation
@@ -51,16 +50,6 @@ scope2 := provider.CreateScope(ctx)
 repo3, _ := godi.Resolve[Repository](scope2.ServiceProvider()) // ~50μs
 ```
 
-### Transient Services
-
-Transients have the highest overhead - created every time:
-
-```go
-// Every resolution creates a new instance
-cmd1, _ := godi.Resolve[Command](provider) // ~30μs
-cmd2, _ := godi.Resolve[Command](provider) // ~30μs (not cached)
-```
-
 ## Optimization Techniques
 
 ### 1. Cache Service Resolution
@@ -84,22 +73,7 @@ func NewHandler(userService UserService) *Handler {
 }
 ```
 
-### 2. Minimize Transient Usage
-
-Use transients only when necessary:
-
-```go
-// ❌ Bad - transient for stateless service
-collection.AddTransient(NewLogger) // Creates new logger each time
-
-// ✅ Good - singleton for stateless service
-collection.AddSingleton(NewLogger) // Reuses same instance
-
-// ✅ Good - transient for stateful objects
-collection.AddTransient(NewEmailMessage) // Unique state per message
-```
-
-### 3. Optimize Scope Usage
+### 2. Optimize Scope Usage
 
 Create scopes at the right granularity:
 
@@ -119,7 +93,7 @@ processor, _ := godi.Resolve[BatchProcessor](scope.ServiceProvider())
 processor.ProcessItems(items)
 ```
 
-### 4. Lazy Resolution
+### 3. Lazy Resolution
 
 Defer expensive service resolution:
 
@@ -157,7 +131,6 @@ func BenchmarkServiceResolution(b *testing.B) {
     collection.AddSingleton(NewConfig)
     collection.AddSingleton(NewLogger)
     collection.AddScoped(NewRepository)
-    collection.AddTransient(NewCommand)
 
     provider, _ := collection.BuildServiceProvider()
     defer provider.Close()
@@ -176,13 +149,6 @@ func BenchmarkServiceResolution(b *testing.B) {
         b.ResetTimer()
         for i := 0; i < b.N; i++ {
             _, _ = godi.Resolve[*Repository](scope.ServiceProvider())
-        }
-    })
-
-    b.Run("Transient", func(b *testing.B) {
-        b.ResetTimer()
-        for i := 0; i < b.N; i++ {
-            _, _ = godi.Resolve[*Command](provider)
         }
     })
 }
@@ -252,7 +218,7 @@ type GoodSingleton struct {
 ### 3. Pool Expensive Objects
 
 ```go
-// Object pool for expensive transients
+// Object pool for expensive instances
 type PooledService struct {
     pool sync.Pool
 }
@@ -309,22 +275,7 @@ options := &godi.ServiceProviderOptions{
 
 ## Common Performance Pitfalls
 
-### 1. Excessive Transient Usage
-
-```go
-// ❌ Bad - transient for everything
-collection.AddTransient(NewLogger)        // Wasteful
-collection.AddTransient(NewConfig)        // Wasteful
-collection.AddTransient(NewMetrics)       // Wasteful
-
-// ✅ Good - appropriate lifetimes
-collection.AddSingleton(NewLogger)        // Shared, stateless
-collection.AddSingleton(NewConfig)        // Shared, immutable
-collection.AddSingleton(NewMetrics)       // Shared, thread-safe
-collection.AddTransient(NewCommand)       // Unique state needed
-```
-
-### 2. Deep Dependency Chains
+### 1. Deep Dependency Chains
 
 ```go
 // ❌ Bad - deep nesting
@@ -340,7 +291,7 @@ B depends on D
 C depends on D
 ```
 
-### 3. Scope Explosion
+### 2. Scope Explosion
 
 ```go
 // ❌ Bad - nested scopes
@@ -393,7 +344,6 @@ func measureResolution[T any](provider godi.ServiceProvider, name string) (T, er
 | HTTP Client         | Singleton            | Connection pooling         |
 | Request Context     | Scoped               | Request-specific           |
 | Transaction         | Scoped               | Must not be shared         |
-| Command/Query       | Transient            | Unique parameters          |
 
 ### 4. Batch Operations
 
@@ -417,7 +367,6 @@ func ProcessItems(provider godi.ServiceProvider, items []Item) {
 
 - [ ] Use singletons for stateless services
 - [ ] Cache service resolutions in hot paths
-- [ ] Minimize transient usage
 - [ ] Dispose scopes promptly
 - [ ] Avoid deep dependency chains
 - [ ] Profile before optimizing
@@ -430,7 +379,7 @@ func ProcessItems(provider godi.ServiceProvider, items []Item) {
 
 godi is designed for performance, but following these guidelines ensures optimal performance:
 
-1. **Choose appropriate lifetimes** - Singleton > Scoped > Transient
+1. **Choose appropriate lifetimes** - Singleton > Scoped
 2. **Cache resolutions** - Don't resolve in loops
 3. **Manage scopes carefully** - Create at the right granularity
 4. **Monitor in production** - Track slow resolutions

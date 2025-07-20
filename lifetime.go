@@ -22,12 +22,6 @@ const (
 	// Scoped services are disposed when their scope is disposed.
 	// In dig terms, this is a service provided at the scope level.
 	Scoped
-
-	// Transient specifies that a new instance of the service will be created every time it is requested.
-	// Transient services are disposed when their containing scope is disposed.
-	// Use transient lifetime for lightweight, stateless services.
-	// In dig terms, this is achieved by not caching the service.
-	Transient
 )
 
 // String returns the string representation of the ServiceLifetime.
@@ -37,8 +31,6 @@ func (sl ServiceLifetime) String() string {
 		return "Singleton"
 	case Scoped:
 		return "Scoped"
-	case Transient:
-		return "Transient"
 	default:
 		return fmt.Sprintf("Unknown(%d)", int(sl))
 	}
@@ -46,7 +38,7 @@ func (sl ServiceLifetime) String() string {
 
 // IsValid checks if the service lifetime is valid.
 func (sl ServiceLifetime) IsValid() bool {
-	return sl >= Singleton && sl <= Transient
+	return sl >= Singleton && sl <= Scoped
 }
 
 // MarshalText implements encoding.TextMarshaler.
@@ -61,8 +53,6 @@ func (sl *ServiceLifetime) UnmarshalText(text []byte) error {
 		*sl = Singleton
 	case "Scoped", "scoped":
 		*sl = Scoped
-	case "Transient", "transient":
-		*sl = Transient
 	default:
 		return &LifetimeError{Value: string(text)}
 	}

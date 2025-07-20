@@ -4,13 +4,12 @@ Service lifetimes control when instances are created and how long they live. Und
 
 ## Overview
 
-godi supports three service lifetimes:
+godi supports two service lifetimes:
 
-| Lifetime      | Instance Creation    | Instance Sharing    | Disposal                     |
-| ------------- | -------------------- | ------------------- | ---------------------------- |
-| **Singleton** | Once per application | Shared globally     | When provider closes         |
-| **Scoped**    | Once per scope       | Shared within scope | When scope closes            |
-| **Transient** | Every resolution     | Never shared        | When containing scope closes |
+| Lifetime      | Instance Creation    | Instance Sharing    | Disposal             |
+| ------------- | -------------------- | ------------------- | -------------------- |
+| **Singleton** | Once per application | Shared globally     | When provider closes |
+| **Scoped**    | Once per scope       | Shared within scope | When scope closes    |
 
 ## Singleton Services
 
@@ -133,58 +132,6 @@ batchScope := requestScope.ServiceProvider().CreateScope(ctx)
 defer batchScope.Close()
 ```
 
-## Transient Services
-
-Transient services are created every time they're requested.
-
-### Characteristics
-
-- **New instance every time**
-- Never cached or shared
-- Lightweight creation expected
-- Disposed with containing scope
-- Can depend on any lifetime
-
-### When to Use
-
-- **Stateful operations**: Commands, queries, operations
-- **Unique state**: Email messages, notifications
-- **Factory pattern**: When each usage needs configuration
-- **Mutable objects**: When sharing would cause issues
-
-### Example
-
-```go
-// Good transient examples
-collection.AddTransient(NewEmailMessage)    // Unique per send
-collection.AddTransient(NewCommand)         // Stateful operation
-collection.AddTransient(NewGuid)           // Unique value
-collection.AddTransient(NewStopwatch)      // Timing operations
-
-// Usage
-emailService, _ := godi.Resolve[EmailService](provider)
-for _, user := range users {
-    // Each call creates a new EmailMessage
-    emailService.SendWelcome(user.Email)
-}
-```
-
-### Factory Pattern
-
-Transient services in godi use a factory pattern internally:
-
-```go
-// When you register a transient
-collection.AddTransient(NewEmailMessage)
-
-// godi creates a factory function
-// func() EmailMessage
-
-// Each resolution calls the factory
-msg1, _ := godi.Resolve[EmailMessage](provider) // New instance
-msg2, _ := godi.Resolve[EmailMessage](provider) // Different instance
-```
-
 ## Lifetime Compatibility
 
 ### Dependency Rules
@@ -193,18 +140,11 @@ msg2, _ := godi.Resolve[EmailMessage](provider) // Different instance
 
    - ✅ Other singletons
    - ❌ Scoped services (causes captive dependency)
-   - ❌ Transient services (holds reference forever)
 
 2. **Scoped** can depend on:
 
    - ✅ Singletons
    - ✅ Other scoped services
-   - ✅ Transient services
-
-3. **Transient** can depend on:
-   - ✅ Singletons
-   - ✅ Scoped services
-   - ✅ Other transient services
 
 ### Captive Dependencies
 
@@ -264,10 +204,6 @@ collection.AddSingleton(NewConfiguration)
 // Request/operation specific → Scoped
 collection.AddScoped(NewDbContext)
 collection.AddScoped(NewRequestContext)
-
-// Unique state, lightweight → Transient
-collection.AddTransient(NewCommand)
-collection.AddTransient(NewNotification)
 ```
 
 ### Avoid Common Pitfalls
@@ -284,26 +220,6 @@ collection.AddTransient(NewNotification)
    func NewCache(provider ServiceProvider) *Cache {
        return &Cache{provider: provider}
    }
-   ```
-
-2. **Don't make heavy objects transient**
-
-   ```go
-   // ❌ Wrong - expensive to create
-   collection.AddTransient(NewDatabaseConnection)
-
-   // ✅ Correct - reuse connection
-   collection.AddSingleton(NewDatabaseConnection)
-   ```
-
-3. **Don't share mutable transients**
-
-   ```go
-   // ❌ Wrong - transients aren't shared
-   collection.AddTransient(NewSharedState)
-
-   // ✅ Correct - use scoped for sharing
-   collection.AddScoped(NewSharedState)
    ```
 
 ## Testing Considerations
@@ -325,13 +241,6 @@ func TestWithScope(t *testing.T) {
 
     // Test with scoped mocks
 }
-
-// Transient - verify multiple calls
-mockService := &MockService{}
-collection.AddTransient(func() Service {
-    mockService.callCount++
-    return mockService
-})
 ```
 
 ## Performance Implications
@@ -340,20 +249,16 @@ collection.AddTransient(func() Service {
 | --------- | ------------------ | ------------ | --------- |
 | Singleton | Once (low)         | Constant     | Yes       |
 | Scoped    | Per scope (medium) | Per scope    | Per scope |
-| Transient | Per request (high) | Per request  | No        |
 
 ### Optimization Tips
 
 1. **Use singleton for expensive resources**
 2. **Use scoped for request-bound state**
-3. **Use transient only for lightweight objects**
-4. **Consider pooling for transient-like behavior with reuse**
 
 ## Summary
 
 - **Singleton**: Application-wide, shared, thread-safe services
 - **Scoped**: Per-operation services with shared state within scope
-- **Transient**: Unique instances with independent state
 
 Choose lifetimes based on:
 

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+
+	"github.com/junioryono/godi/internal/typecache"
 )
 
 // ServiceCollection represents a collection of service descriptors that define
@@ -20,7 +22,6 @@ import (
 //	collection := godi.NewServiceCollection()
 //	collection.AddSingleton(NewLogger)
 //	collection.AddScoped(NewDatabase)
-//	collection.AddTransient(NewUserService)
 //
 //	provider, err := collection.BuildServiceProvider()
 //	if err != nil {
@@ -42,11 +43,7 @@ type ServiceCollection interface {
 
 	// AddModules applies one or more module configurations to the service collection.
 	// Modules provide a way to group related service registrations.
-	AddModules(modules ...func(ServiceCollection) error) error
-
-	// AddTransient registers a service with transient lifetime.
-	// A new instance is created for each resolution.
-	AddTransient(constructor interface{}, opts ...ProvideOption) error
+	AddModules(modules ...ModuleOption) error
 
 	// AddSingleton registers a service with singleton lifetime.
 	// Only one instance is created and shared across all resolutions.
@@ -169,7 +166,7 @@ func (sc *serviceCollection) ContainsKeyed(serviceType reflect.Type, key interfa
 }
 
 // AddModules applies one or more module configurations to the service collection.
-func (sc *serviceCollection) AddModules(modules ...func(ServiceCollection) error) error {
+func (sc *serviceCollection) AddModules(modules ...ModuleOption) error {
 	if sc.built {
 		return ErrCollectionModifyAfterBuild
 	}
@@ -185,11 +182,6 @@ func (sc *serviceCollection) AddModules(modules ...func(ServiceCollection) error
 	}
 
 	return nil
-}
-
-// AddTransient adds a transient service to the collection.
-func (sc *serviceCollection) AddTransient(constructor interface{}, opts ...ProvideOption) error {
-	return sc.addWithLifetime(constructor, Transient, opts...)
 }
 
 // AddSingleton adds a singleton service to the collection.
@@ -214,7 +206,7 @@ func (sc *serviceCollection) addWithLifetime(constructor interface{}, lifetime S
 
 	// Check if this is a function or a value
 	constructorType := reflect.TypeOf(constructor)
-	constructorInfo := globalTypeCache.getTypeInfo(constructorType)
+	constructorInfo := typecache.GetTypeInfo(constructorType)
 
 	if !constructorInfo.IsFunc {
 		// It's not a function, so it's an instance - wrap it in a constructor
@@ -229,22 +221,19 @@ func (sc *serviceCollection) addWithLifetime(constructor interface{}, lifetime S
 
 		constructor = fnValue.Interface()
 		// Update the type info since we've wrapped it
-		constructorInfo = globalTypeCache.getTypeInfo(fnType)
+		constructorInfo = typecache.GetTypeInfo(fnType)
 	}
 
 	// Check if this returns a result object
 	if constructorInfo.IsFunc && constructorInfo.NumOut > 0 {
-		outInfo := globalTypeCache.getTypeInfo(constructorInfo.OutTypes[0])
+		outInfo := typecache.GetTypeInfo(constructorInfo.OutTypes[0])
 		if outInfo.IsStruct && outInfo.HasOutField {
-			// This is a result object constructor - dig handles it automatically
 			descriptor := &serviceDescriptor{
 				ServiceType:    constructorInfo.OutTypes[0],
 				Lifetime:       lifetime,
 				Constructor:    constructor,
 				ProvideOptions: opts,
-				Metadata:       make(map[string]interface{}),
 			}
-			descriptor.Metadata["isResultObject"] = true
 			return sc.addInternal(descriptor)
 		}
 	}
@@ -258,14 +247,14 @@ func (sc *serviceCollection) addWithLifetime(constructor interface{}, lifetime S
 	// Add any provided options
 	descriptor.ProvideOptions = append(descriptor.ProvideOptions, opts...)
 
-	// Extract metadata from options
-	sc.extractMetadataFromOptions(descriptor, opts)
+	// Extract provide options from the descriptor
+	sc.extractProvideOptions(descriptor, opts)
 
 	return sc.addInternal(descriptor)
 }
 
-// extractMetadataFromOptions extracts metadata from dig options.
-func (sc *serviceCollection) extractMetadataFromOptions(descriptor *serviceDescriptor, opts []ProvideOption) {
+// extractProvideOptions extracts metadata from dig options.
+func (sc *serviceCollection) extractProvideOptions(descriptor *serviceDescriptor, opts []ProvideOption) {
 	for _, opt := range opts {
 		if opt == nil {
 			continue
@@ -275,11 +264,12 @@ func (sc *serviceCollection) extractMetadataFromOptions(descriptor *serviceDescr
 		optStr := fmt.Sprintf("%v", opt)
 
 		// Extract Name
-		if strings.HasPrefix(optStr, "Name(") {
+		if descriptor.ServiceKey == nil && strings.HasPrefix(optStr, "Name(") {
 			start := strings.Index(optStr, `"`) + 1
 			end := strings.LastIndex(optStr, `"`)
 			if start > 0 && end > start {
 				descriptor.ServiceKey = optStr[start:end]
+				descriptor.ProvideOptions = append(descriptor.ProvideOptions, Name(fmt.Sprintf("%v", descriptor.ServiceKey)))
 			}
 		}
 
@@ -289,17 +279,14 @@ func (sc *serviceCollection) extractMetadataFromOptions(descriptor *serviceDescr
 			end := strings.LastIndex(optStr, `"`)
 			if start > 0 && end > start {
 				group := optStr[start:end]
-				descriptor.Metadata["group"] = group
+				descriptor.ProvideOptions = append(descriptor.ProvideOptions, Group(group))
+				descriptor.Groups = append(descriptor.Groups, group)
 			}
 		}
 
 		// Extract As interfaces
 		if strings.HasPrefix(optStr, "As(") {
-			if asOpts, ok := descriptor.Metadata["asOptions"]; !ok {
-				descriptor.Metadata["asOptions"] = []ProvideOption{opt}
-			} else {
-				descriptor.Metadata["asOptions"] = append(asOpts.([]ProvideOption), opt)
-			}
+			descriptor.ProvideOptions = append(descriptor.ProvideOptions, opt)
 		}
 	}
 }
@@ -316,7 +303,7 @@ func (sc *serviceCollection) Decorate(decorator interface{}, opts ...DecorateOpt
 
 	// Create a decorator descriptor
 	fnType := reflect.TypeOf(decorator)
-	fnInfo := globalTypeCache.getTypeInfo(fnType)
+	fnInfo := typecache.GetTypeInfo(fnType)
 
 	if !fnInfo.IsFunc || fnInfo.NumIn == 0 {
 		return ErrDecoratorNoParams
@@ -332,9 +319,7 @@ func (sc *serviceCollection) Decorate(decorator interface{}, opts ...DecorateOpt
 			Decorator:       decorator,
 			DecorateOptions: opts,
 		},
-		Metadata: make(map[string]interface{}),
 	}
-	descriptor.Metadata["isDecorator"] = true
 
 	return sc.addInternal(descriptor)
 }
@@ -347,22 +332,48 @@ func (sc *serviceCollection) Replace(lifetime ServiceLifetime, constructor inter
 
 	// Determine the service type
 	fnType := reflect.TypeOf(constructor)
-	fnInfo := globalTypeCache.getTypeInfo(fnType)
+	fnInfo := typecache.GetTypeInfo(fnType)
 
 	if !fnInfo.IsFunc || fnInfo.NumOut == 0 {
 		return ErrConstructorMustReturnValue
 	}
 
 	serviceType := fnInfo.OutTypes[0]
-	serviceInfo := globalTypeCache.getTypeInfo(serviceType)
+	serviceInfo := typecache.GetTypeInfo(serviceType)
 
 	if serviceInfo.IsStruct && serviceInfo.HasOutField {
 		// For result objects, we can't easily determine what to replace
 		return ErrReplaceResultObject
 	}
 
-	// Remove existing registrations
-	sc.removeByTypeInternal(serviceType)
+	// Extract the service key if provided in options
+	var serviceKey interface{}
+	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
+
+		optStr := fmt.Sprintf("%v", opt)
+		if !strings.HasPrefix(optStr, "Name(") {
+			continue
+		}
+
+		start := strings.Index(optStr, `"`) + 1
+		end := strings.LastIndex(optStr, `"`)
+		if start > 0 && end > start {
+			serviceKey = optStr[start:end]
+			break
+		}
+	}
+
+	// Remove existing registrations based on whether a key is provided
+	if serviceKey != nil {
+		// Replace only the keyed service
+		sc.removeByTypeAndKeyInternal(serviceType, serviceKey)
+	} else {
+		// Replace only non-keyed, non-group services
+		sc.removeNonKeyedByTypeInternal(serviceType)
+	}
 
 	// Add new registration
 	descriptor, err := newServiceDescriptor(constructor, lifetime)
@@ -371,6 +382,8 @@ func (sc *serviceCollection) Replace(lifetime ServiceLifetime, constructor inter
 	}
 
 	descriptor.ProvideOptions = append(descriptor.ProvideOptions, opts...)
+	sc.extractProvideOptions(descriptor, opts)
+
 	return sc.addInternal(descriptor)
 }
 
@@ -412,14 +425,8 @@ func (sc *serviceCollection) addInternal(descriptor *serviceDescriptor) error {
 		return fmt.Errorf("invalid descriptor: %w", err)
 	}
 
-	// Check if this is a group service
-	isGroupService := false
-	if group, ok := descriptor.Metadata["group"].(string); ok && group != "" {
-		isGroupService = true
-	}
-
 	// For non-keyed, non-group services, check lifetime conflicts
-	if !descriptor.isKeyedService() && !descriptor.isDecorator() && !isGroupService {
+	if !descriptor.isKeyedService() && !descriptor.isDecorator() && len(descriptor.Groups) == 0 {
 		// Check if we already have this type registered with a different lifetime
 		if existingLifetime, exists := sc.lifetimeIndex[descriptor.ServiceType]; exists {
 			if existingLifetime != descriptor.Lifetime {
@@ -434,12 +441,7 @@ func (sc *serviceCollection) addInternal(descriptor *serviceDescriptor) error {
 		// Check if we already have a non-keyed, non-group registration
 		if existing := sc.typeIndex[descriptor.ServiceType]; len(existing) > 0 {
 			for _, desc := range existing {
-				existingIsGroup := false
-				if group, ok := desc.Metadata["group"].(string); ok && group != "" {
-					existingIsGroup = true
-				}
-
-				if !desc.isKeyedService() && !desc.isDecorator() && !existingIsGroup {
+				if !desc.isKeyedService() && !desc.isDecorator() && len(desc.Groups) == 0 {
 					return AlreadyRegisteredError{ServiceType: descriptor.ServiceType}
 				}
 			}
@@ -485,6 +487,86 @@ func (sc *serviceCollection) removeByTypeInternal(serviceType reflect.Type) {
 	for key := range sc.keyedTypeIndex {
 		if key.serviceType == serviceType {
 			delete(sc.keyedTypeIndex, key)
+		}
+	}
+}
+
+// removeNonKeyedByTypeInternal removes only non-keyed, non-group descriptors of a given type.
+func (sc *serviceCollection) removeNonKeyedByTypeInternal(serviceType reflect.Type) {
+	// Create new slice without the removed descriptors
+	newDescriptors := make([]*serviceDescriptor, 0, len(sc.descriptors))
+	removedIndexes := make(map[int]bool)
+
+	for i, desc := range sc.descriptors {
+		// Keep the descriptor if:
+		// 1. It's a different type, OR
+		// 2. It's the same type but is keyed, OR
+		// 3. It's the same type but belongs to a group
+		if desc.ServiceType != serviceType || desc.isKeyedService() || len(desc.Groups) > 0 {
+			newDescriptors = append(newDescriptors, desc)
+		} else {
+			removedIndexes[i] = true
+		}
+	}
+	sc.descriptors = newDescriptors
+
+	// Update type index - remove only non-keyed, non-group entries
+	if descs, exists := sc.typeIndex[serviceType]; exists {
+		newTypeDescs := make([]*serviceDescriptor, 0)
+		for _, desc := range descs {
+			if desc.isKeyedService() || len(desc.Groups) > 0 {
+				newTypeDescs = append(newTypeDescs, desc)
+			}
+		}
+		if len(newTypeDescs) > 0 {
+			sc.typeIndex[serviceType] = newTypeDescs
+		} else {
+			delete(sc.typeIndex, serviceType)
+		}
+	}
+
+	// Update lifetime index only if no non-keyed services remain
+	hasNonKeyed := false
+	for _, desc := range sc.descriptors {
+		if desc.ServiceType == serviceType && !desc.isKeyedService() && len(desc.Groups) == 0 {
+			hasNonKeyed = true
+			break
+		}
+	}
+	if !hasNonKeyed {
+		delete(sc.lifetimeIndex, serviceType)
+	}
+}
+
+// removeByTypeAndKeyInternal removes only descriptors with specific type and key.
+func (sc *serviceCollection) removeByTypeAndKeyInternal(serviceType reflect.Type, serviceKey interface{}) {
+	// Create new slice without the removed descriptors
+	newDescriptors := make([]*serviceDescriptor, 0, len(sc.descriptors))
+
+	for _, desc := range sc.descriptors {
+		// Keep the descriptor if it's not the one we're looking for
+		if desc.ServiceType != serviceType || desc.ServiceKey != serviceKey {
+			newDescriptors = append(newDescriptors, desc)
+		}
+	}
+	sc.descriptors = newDescriptors
+
+	// Remove from keyed index
+	key := typeKeyPair{serviceType: serviceType, serviceKey: serviceKey}
+	delete(sc.keyedTypeIndex, key)
+
+	// Update type index
+	if descs, exists := sc.typeIndex[serviceType]; exists {
+		newTypeDescs := make([]*serviceDescriptor, 0)
+		for _, desc := range descs {
+			if desc.ServiceKey != serviceKey {
+				newTypeDescs = append(newTypeDescs, desc)
+			}
+		}
+		if len(newTypeDescs) > 0 {
+			sc.typeIndex[serviceType] = newTypeDescs
+		} else {
+			delete(sc.typeIndex, serviceType)
 		}
 	}
 }

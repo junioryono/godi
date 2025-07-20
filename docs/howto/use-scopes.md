@@ -132,7 +132,7 @@ type RequestContext struct {
 
 func NewRequestContext() *RequestContext {
     return &RequestContext{
-        RequestID: generateID(),
+        RequestID: uuid.NewString(),
         StartTime: time.Now(),
     }
 }
@@ -351,13 +351,6 @@ func MetricsMiddleware(provider godi.ServiceProvider) func(http.Handler) http.Ha
 - Need isolation between operations
 - Managing transactions or units of work
 - Examples: Request Context, User Session, Transaction, Tenant Context
-
-### Use Transient When:
-
-- Need a fresh instance every time
-- Service has mutable state
-- Lightweight to create
-- Examples: Email Messages, Commands, Temporary Calculations
 
 ## Common Patterns
 

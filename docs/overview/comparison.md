@@ -9,7 +9,7 @@ This guide compares godi with other dependency injection solutions in the Go eco
 | **Type Safety**        | ✅ Compile-time with generics | ✅ Code generation | ✅ Runtime     | ✅ Runtime | ✅ Compile-time |
 | **Runtime/Compile**    | Runtime                       | Compile-time       | Runtime        | Runtime    | Manual          |
 | **Scoped Lifetimes**   | ✅ Full support               | ❌ No              | ✅ Via modules | ❌ No      | Manual          |
-| **Service Lifetimes**  | Singleton, Scoped, Transient  | Singleton only     | Singleton      | Singleton  | Manual          |
+| **Service Lifetimes**  | Singleton, Scoped             | Singleton only     | Singleton      | Singleton  | Manual          |
 | **Learning Curve**     | Low (familiar API)            | Medium             | High           | Medium     | Low             |
 | **Boilerplate**        | Minimal                       | Some               | Moderate       | Minimal    | High            |
 | **Testing**            | Excellent                     | Good               | Good           | Good       | Depends         |
@@ -51,7 +51,7 @@ app, _ := godi.Resolve[*App](provider)
 - **Wire** requires build tags and code generation step
 - **godi** works without any build tools
 - **Wire** only supports singleton lifetime
-- **godi** supports singleton, scoped, and transient lifetimes
+- **godi** supports singleton and scoped lifetimes
 
 **When to use Wire:**
 
@@ -151,7 +151,7 @@ service, _ := godi.Resolve[*Service](provider)
 **Key Differences:**
 
 - **godi** is built on top of dig
-- **godi** adds service lifetimes (scoped, transient)
+- **godi** adds service lifetimes (singleton, scoped)
 - **godi** provides Microsoft-style API
 - **dig** is lower level
 - **godi** adds automatic disposal
@@ -241,13 +241,13 @@ func main() {
 
 ### Service Lifetimes
 
-| Framework  | Singleton | Scoped | Transient |
-| ---------- | --------- | ------ | --------- |
-| **godi**   | ✅        | ✅     | ✅        |
-| **wire**   | ✅        | ❌     | ❌        |
-| **fx**     | ✅        | ⚠️\*   | ❌        |
-| **dig**    | ✅        | ⚠️\*   | ❌        |
-| **Manual** | ✅        | ✅     | ✅        |
+| Framework  | Singleton | Scoped |
+| ---------- | --------- | ------ |
+| **godi**   | ✅        | ✅     |
+| **wire**   | ✅        | ❌     |
+| **fx**     | ✅        | ⚠️\*   |
+| **dig**    | ✅        | ⚠️\*   |
+| **Manual** | ✅        | ✅     |
 
 \* Possible with workarounds but not built-in
 
@@ -365,7 +365,6 @@ Choose **godi** if:
 - ✅ You want Microsoft-style DI
 - ✅ You prefer runtime flexibility
 - ✅ You want automatic disposal
-- ✅ You need transient services
 - ✅ You want familiar patterns
 
 Choose **wire** if:
@@ -414,7 +413,7 @@ Choose **manual DI** if:
 **godi** fills a unique niche in the Go DI ecosystem:
 
 - **Familiar API** for developers coming from .NET
-- **Full lifetime support** including scoped and transient
+- **Full lifetime support** including singleton and scoped
 - **Runtime flexibility** without code generation
 - **Built on proven foundation** (Uber's dig)
 - **Excellent for web applications** with request scoping
