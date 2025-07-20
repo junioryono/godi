@@ -154,7 +154,7 @@ func TestServiceLifetime_UnmarshalText(t *testing.T) {
 			if tt.wantErr {
 				assert.Error(t, err)
 
-				var lifetimeErr godi.LifetimeError
+				var lifetimeErr *godi.LifetimeError
 				assert.ErrorAs(t, err, &lifetimeErr)
 				assert.Equal(t, tt.text, lifetimeErr.Value)
 			} else {
