@@ -264,7 +264,7 @@ func (sc *serviceCollection) extractProvideOptions(descriptor *serviceDescriptor
 		optStr := fmt.Sprintf("%v", opt)
 
 		// Extract Name
-		if strings.HasPrefix(optStr, "Name(") {
+		if descriptor.ServiceKey == nil && strings.HasPrefix(optStr, "Name(") {
 			start := strings.Index(optStr, `"`) + 1
 			end := strings.LastIndex(optStr, `"`)
 			if start > 0 && end > start {
@@ -346,8 +346,34 @@ func (sc *serviceCollection) Replace(lifetime ServiceLifetime, constructor inter
 		return ErrReplaceResultObject
 	}
 
-	// Remove existing registrations
-	sc.removeByTypeInternal(serviceType)
+	// Extract the service key if provided in options
+	var serviceKey interface{}
+	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
+
+		optStr := fmt.Sprintf("%v", opt)
+		if !strings.HasPrefix(optStr, "Name(") {
+			continue
+		}
+
+		start := strings.Index(optStr, `"`) + 1
+		end := strings.LastIndex(optStr, `"`)
+		if start > 0 && end > start {
+			serviceKey = optStr[start:end]
+			break
+		}
+	}
+
+	// Remove existing registrations based on whether a key is provided
+	if serviceKey != nil {
+		// Replace only the keyed service
+		sc.removeByTypeAndKeyInternal(serviceType, serviceKey)
+	} else {
+		// Replace only non-keyed, non-group services
+		sc.removeNonKeyedByTypeInternal(serviceType)
+	}
 
 	// Add new registration
 	descriptor, err := newServiceDescriptor(constructor, lifetime)
@@ -356,6 +382,8 @@ func (sc *serviceCollection) Replace(lifetime ServiceLifetime, constructor inter
 	}
 
 	descriptor.ProvideOptions = append(descriptor.ProvideOptions, opts...)
+	sc.extractProvideOptions(descriptor, opts)
+
 	return sc.addInternal(descriptor)
 }
 
@@ -459,6 +487,86 @@ func (sc *serviceCollection) removeByTypeInternal(serviceType reflect.Type) {
 	for key := range sc.keyedTypeIndex {
 		if key.serviceType == serviceType {
 			delete(sc.keyedTypeIndex, key)
+		}
+	}
+}
+
+// removeNonKeyedByTypeInternal removes only non-keyed, non-group descriptors of a given type.
+func (sc *serviceCollection) removeNonKeyedByTypeInternal(serviceType reflect.Type) {
+	// Create new slice without the removed descriptors
+	newDescriptors := make([]*serviceDescriptor, 0, len(sc.descriptors))
+	removedIndexes := make(map[int]bool)
+
+	for i, desc := range sc.descriptors {
+		// Keep the descriptor if:
+		// 1. It's a different type, OR
+		// 2. It's the same type but is keyed, OR
+		// 3. It's the same type but belongs to a group
+		if desc.ServiceType != serviceType || desc.isKeyedService() || len(desc.Groups) > 0 {
+			newDescriptors = append(newDescriptors, desc)
+		} else {
+			removedIndexes[i] = true
+		}
+	}
+	sc.descriptors = newDescriptors
+
+	// Update type index - remove only non-keyed, non-group entries
+	if descs, exists := sc.typeIndex[serviceType]; exists {
+		newTypeDescs := make([]*serviceDescriptor, 0)
+		for _, desc := range descs {
+			if desc.isKeyedService() || len(desc.Groups) > 0 {
+				newTypeDescs = append(newTypeDescs, desc)
+			}
+		}
+		if len(newTypeDescs) > 0 {
+			sc.typeIndex[serviceType] = newTypeDescs
+		} else {
+			delete(sc.typeIndex, serviceType)
+		}
+	}
+
+	// Update lifetime index only if no non-keyed services remain
+	hasNonKeyed := false
+	for _, desc := range sc.descriptors {
+		if desc.ServiceType == serviceType && !desc.isKeyedService() && len(desc.Groups) == 0 {
+			hasNonKeyed = true
+			break
+		}
+	}
+	if !hasNonKeyed {
+		delete(sc.lifetimeIndex, serviceType)
+	}
+}
+
+// removeByTypeAndKeyInternal removes only descriptors with specific type and key.
+func (sc *serviceCollection) removeByTypeAndKeyInternal(serviceType reflect.Type, serviceKey interface{}) {
+	// Create new slice without the removed descriptors
+	newDescriptors := make([]*serviceDescriptor, 0, len(sc.descriptors))
+
+	for _, desc := range sc.descriptors {
+		// Keep the descriptor if it's not the one we're looking for
+		if desc.ServiceType != serviceType || desc.ServiceKey != serviceKey {
+			newDescriptors = append(newDescriptors, desc)
+		}
+	}
+	sc.descriptors = newDescriptors
+
+	// Remove from keyed index
+	key := typeKeyPair{serviceType: serviceType, serviceKey: serviceKey}
+	delete(sc.keyedTypeIndex, key)
+
+	// Update type index
+	if descs, exists := sc.typeIndex[serviceType]; exists {
+		newTypeDescs := make([]*serviceDescriptor, 0)
+		for _, desc := range descs {
+			if desc.ServiceKey != serviceKey {
+				newTypeDescs = append(newTypeDescs, desc)
+			}
+		}
+		if len(newTypeDescs) > 0 {
+			sc.typeIndex[serviceType] = newTypeDescs
+		} else {
+			delete(sc.typeIndex, serviceType)
 		}
 	}
 }
