@@ -237,24 +237,6 @@ func (sp *serviceProvider) registerSingletonService(desc *serviceDescriptor) err
 		return MissingConstructorError{ServiceType: desc.ServiceType, Context: "service"}
 	}
 
-	// Create provider options
-	opts := []ProvideOption{}
-
-	// Handle keyed services
-	if desc.isKeyedService() {
-		opts = append(opts, Name(fmt.Sprintf("%v", desc.ServiceKey)))
-	}
-
-	// Handle groups if specified in metadata
-	if group, ok := desc.Metadata["group"].(string); ok && group != "" {
-		opts = append(opts, Group(group))
-	}
-
-	// Handle 'asOptions' if specified
-	if asOpts, ok := desc.Metadata["asOptions"].([]ProvideOption); ok {
-		opts = append(opts, asOpts...)
-	}
-
 	// Check if this is a result object constructor
 	isResultObject := false
 	fnInfo := typecache.GetTypeInfo(reflect.TypeOf(desc.Constructor))
@@ -269,11 +251,11 @@ func (sp *serviceProvider) registerSingletonService(desc *serviceDescriptor) err
 	if !isResultObject {
 		// Wrap the constructor to capture disposable instances
 		wrappedConstructor := sp.wrapSingletonConstructor(desc.Constructor)
-		return sp.digContainer.Provide(wrappedConstructor, opts...)
+		return sp.digContainer.Provide(wrappedConstructor, desc.ProvideOptions...)
 	}
 
 	// For result objects, register directly
-	return sp.digContainer.Provide(desc.Constructor, opts...)
+	return sp.digContainer.Provide(desc.Constructor, desc.ProvideOptions...)
 }
 
 // wrapSingletonConstructor wraps a singleton constructor to track disposable instances.
@@ -491,7 +473,6 @@ func (sp *serviceProvider) addBuiltInServices() error {
 		Constructor: func() ServiceProvider {
 			return sp.rootScope
 		},
-		Metadata: make(map[string]interface{}),
 	}
 	sp.descriptors = append(sp.descriptors, spDesc)
 	sp.descriptorIndex[spDesc.ServiceType] = []*serviceDescriptor{spDesc}

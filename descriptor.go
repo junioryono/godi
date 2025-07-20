@@ -34,9 +34,8 @@ type serviceDescriptor struct {
 	// DecorateInfo if set, indicates this is a decorator rather than a provider.
 	DecorateInfo *decorateDescriptor
 
-	// Metadata stores optional metadata about the service
-	// for debugging and advanced scenarios.
-	Metadata map[string]interface{}
+	// Groups are the name of the groups this service belongs to.
+	Groups []string
 }
 
 // decorateDescriptor describes a decorator registration.
@@ -110,7 +109,7 @@ func newServiceDescriptor(constructor interface{}, lifetime ServiceLifetime) (*s
 		Lifetime:       lifetime,
 		Constructor:    constructor,
 		ProvideOptions: []ProvideOption{},
-		Metadata:       make(map[string]interface{}),
+		Groups:         []string{},
 	}
 
 	return sd, nil

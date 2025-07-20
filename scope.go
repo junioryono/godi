@@ -135,23 +135,6 @@ func newScope(provider *serviceProvider, ctx context.Context) *serviceProviderSc
 			continue
 		}
 
-		// Create provider options
-		opts := []ProvideOption{}
-
-		if desc.isKeyedService() {
-			opts = append(opts, Name(fmt.Sprintf("%v", desc.ServiceKey)))
-		}
-
-		// Handle groups if specified in metadata
-		if group, ok := desc.Metadata["group"].(string); ok && group != "" {
-			opts = append(opts, Group(group))
-		}
-
-		// Handle 'asOptions' if specified
-		if asOpts, ok := desc.Metadata["asOptions"].([]ProvideOption); ok {
-			opts = append(opts, asOpts...)
-		}
-
 		// Use the constructor from the descriptor
 		if desc.Constructor == nil {
 			// This shouldn't happen if descriptor is validated
@@ -161,7 +144,7 @@ func newScope(provider *serviceProvider, ctx context.Context) *serviceProviderSc
 
 		// Wrap the constructor to track instances for disposal
 		wrappedConstructor := scope.wrapConstructorForTracking(desc.Constructor)
-		err := scope.digScope.Provide(wrappedConstructor, opts...)
+		err := scope.digScope.Provide(wrappedConstructor, desc.ProvideOptions...)
 		if err != nil {
 			panic(fmt.Errorf("failed to register scoped service %s: %w", desc.ServiceType, err))
 		}

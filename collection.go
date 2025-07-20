@@ -228,15 +228,12 @@ func (sc *serviceCollection) addWithLifetime(constructor interface{}, lifetime S
 	if constructorInfo.IsFunc && constructorInfo.NumOut > 0 {
 		outInfo := typecache.GetTypeInfo(constructorInfo.OutTypes[0])
 		if outInfo.IsStruct && outInfo.HasOutField {
-			// This is a result object constructor - dig handles it automatically
 			descriptor := &serviceDescriptor{
 				ServiceType:    constructorInfo.OutTypes[0],
 				Lifetime:       lifetime,
 				Constructor:    constructor,
 				ProvideOptions: opts,
-				Metadata:       make(map[string]interface{}),
 			}
-			descriptor.Metadata["isResultObject"] = true
 			return sc.addInternal(descriptor)
 		}
 	}
@@ -250,14 +247,14 @@ func (sc *serviceCollection) addWithLifetime(constructor interface{}, lifetime S
 	// Add any provided options
 	descriptor.ProvideOptions = append(descriptor.ProvideOptions, opts...)
 
-	// Extract metadata from options
-	sc.extractMetadataFromOptions(descriptor, opts)
+	// Extract provide options from the descriptor
+	sc.extractProvideOptions(descriptor, opts)
 
 	return sc.addInternal(descriptor)
 }
 
-// extractMetadataFromOptions extracts metadata from dig options.
-func (sc *serviceCollection) extractMetadataFromOptions(descriptor *serviceDescriptor, opts []ProvideOption) {
+// extractProvideOptions extracts metadata from dig options.
+func (sc *serviceCollection) extractProvideOptions(descriptor *serviceDescriptor, opts []ProvideOption) {
 	for _, opt := range opts {
 		if opt == nil {
 			continue
@@ -272,6 +269,7 @@ func (sc *serviceCollection) extractMetadataFromOptions(descriptor *serviceDescr
 			end := strings.LastIndex(optStr, `"`)
 			if start > 0 && end > start {
 				descriptor.ServiceKey = optStr[start:end]
+				descriptor.ProvideOptions = append(descriptor.ProvideOptions, Name(fmt.Sprintf("%v", descriptor.ServiceKey)))
 			}
 		}
 
@@ -281,17 +279,14 @@ func (sc *serviceCollection) extractMetadataFromOptions(descriptor *serviceDescr
 			end := strings.LastIndex(optStr, `"`)
 			if start > 0 && end > start {
 				group := optStr[start:end]
-				descriptor.Metadata["group"] = group
+				descriptor.ProvideOptions = append(descriptor.ProvideOptions, Group(group))
+				descriptor.Groups = append(descriptor.Groups, group)
 			}
 		}
 
 		// Extract As interfaces
 		if strings.HasPrefix(optStr, "As(") {
-			if asOpts, ok := descriptor.Metadata["asOptions"]; !ok {
-				descriptor.Metadata["asOptions"] = []ProvideOption{opt}
-			} else {
-				descriptor.Metadata["asOptions"] = append(asOpts.([]ProvideOption), opt)
-			}
+			descriptor.ProvideOptions = append(descriptor.ProvideOptions, opt)
 		}
 	}
 }
@@ -324,9 +319,7 @@ func (sc *serviceCollection) Decorate(decorator interface{}, opts ...DecorateOpt
 			Decorator:       decorator,
 			DecorateOptions: opts,
 		},
-		Metadata: make(map[string]interface{}),
 	}
-	descriptor.Metadata["isDecorator"] = true
 
 	return sc.addInternal(descriptor)
 }
@@ -404,14 +397,8 @@ func (sc *serviceCollection) addInternal(descriptor *serviceDescriptor) error {
 		return fmt.Errorf("invalid descriptor: %w", err)
 	}
 
-	// Check if this is a group service
-	isGroupService := false
-	if group, ok := descriptor.Metadata["group"].(string); ok && group != "" {
-		isGroupService = true
-	}
-
 	// For non-keyed, non-group services, check lifetime conflicts
-	if !descriptor.isKeyedService() && !descriptor.isDecorator() && !isGroupService {
+	if !descriptor.isKeyedService() && !descriptor.isDecorator() && len(descriptor.Groups) == 0 {
 		// Check if we already have this type registered with a different lifetime
 		if existingLifetime, exists := sc.lifetimeIndex[descriptor.ServiceType]; exists {
 			if existingLifetime != descriptor.Lifetime {
@@ -426,12 +413,7 @@ func (sc *serviceCollection) addInternal(descriptor *serviceDescriptor) error {
 		// Check if we already have a non-keyed, non-group registration
 		if existing := sc.typeIndex[descriptor.ServiceType]; len(existing) > 0 {
 			for _, desc := range existing {
-				existingIsGroup := false
-				if group, ok := desc.Metadata["group"].(string); ok && group != "" {
-					existingIsGroup = true
-				}
-
-				if !desc.isKeyedService() && !desc.isDecorator() && !existingIsGroup {
+				if !desc.isKeyedService() && !desc.isDecorator() && len(desc.Groups) == 0 {
 					return AlreadyRegisteredError{ServiceType: descriptor.ServiceType}
 				}
 			}
