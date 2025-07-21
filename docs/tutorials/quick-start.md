@@ -5,7 +5,7 @@ Start simple, add features as you need them. Here's godi from zero to hero.
 ## Install
 
 ```bash
-go get github.com/junioryono/godi
+go get github.com/junioryono/godi/v2
 ```
 
 ## Level 1: Basic DI (Start Here!)

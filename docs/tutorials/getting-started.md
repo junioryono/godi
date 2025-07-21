@@ -11,7 +11,7 @@ Let's build a real web API in 10 minutes. We'll create a user service with authe
 ## Installation
 
 ```bash
-go get github.com/junioryono/godi
+go get github.com/junioryono/godi/v2
 ```
 
 ## Your First App: User API
