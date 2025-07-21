@@ -22,7 +22,7 @@ package main
 
 import (
     "fmt"
-    "github.com/junioryono/godi"
+    "github.com/junioryono/godi/v2"
 )
 
 func main() {

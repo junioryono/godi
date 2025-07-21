@@ -114,7 +114,7 @@ This is where godi shines. Create **modules/modules.go**:
 package modules
 
 import (
-    "github.com/junioryono/godi"
+    "github.com/junioryono/godi/v2"
     "myapp/services"
 )
 
@@ -147,7 +147,7 @@ import (
     "log"
     "net/http"
 
-    "github.com/junioryono/godi"
+    "github.com/junioryono/godi/v2"
     "myapp/modules"
     "myapp/services"
 )
@@ -260,7 +260,7 @@ package services_test
 
 import (
     "testing"
-    "github.com/junioryono/godi"
+    "github.com/junioryono/godi/v2"
     "myapp/services"
 )
 

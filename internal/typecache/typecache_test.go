@@ -626,8 +626,8 @@ func TestLastSegment(t *testing.T) {
 		path     string
 		expected string
 	}{
-		{"github.com/junioryono/godi", "godi"},
-		{"github.com/junioryono/godi/internal", "internal"},
+		{"github.com/junioryono/godi/v2", "godi"},
+		{"github.com/junioryono/godi/v2/internal", "internal"},
 		{"simple", "simple"},
 		{"", ""},
 		{"/leading/slash", "slash"},

@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/junioryono/godi/internal/typecache"
+	"github.com/junioryono/godi/v2/internal/typecache"
 )
 
 // ServiceCollection represents a collection of service descriptors that define

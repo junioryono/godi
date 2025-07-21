@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/junioryono/godi/internal/typecache"
+	"github.com/junioryono/godi/v2/internal/typecache"
 )
 
 // serviceDescriptor describes a service with its type, factory, and lifetime.

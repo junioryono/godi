@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/junioryono/godi/internal/typecache"
+	"github.com/junioryono/godi/v2/internal/typecache"
 	"go.uber.org/dig"
 )
 
