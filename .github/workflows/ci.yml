@@ -157,7 +157,7 @@ jobs:
 
             - Update changelog
             - Bump version
-          preset: "angular"
+          preset: "conventionalcommits"
           tag-prefix: "v"
           release-count: 0
           output-file: "docs/reference/changelog.md"
