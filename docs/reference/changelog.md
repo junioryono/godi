@@ -2,6 +2,13 @@
 
 All notable changes to godi are documented here. This project follows [Semantic Versioning](https://semver.org/) and uses [Conventional Commits](https://www.conventionalcommits.org/) for automatic versioning.
 
+## [2.0.2](https://github.com/junioryono/godi/compare/v2.0.1...v2.0.2) (2025-07-21)
+
+
+### Bug Fixes
+
+* update installation instructions to use v2 of godi ([9c62926](https://github.com/junioryono/godi/commit/9c62926fe975d2dd07e2f2ab53935d034a79c329))
+
 ## [2.0.1](https://github.com/junioryono/godi/compare/v2.0.0...v2.0.1) (2025-07-21)
 
 
