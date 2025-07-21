@@ -1,104 +1,82 @@
 # Service Groups
 
-Service groups allow you to collect multiple services of the same type into a slice. This is perfect for plugin architectures, middleware chains, or any scenario where you need to work with collections of services.
+Service groups let you collect multiple services of the same type and inject them as a slice. Perfect for plugin systems, validators, or middleware chains.
 
-## Basic Concept
-
-Groups collect services registered with the same group name:
+## Basic Example
 
 ```go
-// Register multiple handlers in a group
-services.AddSingleton(NewUserHandler, godi.Group("handlers"))
-services.AddSingleton(NewProductHandler, godi.Group("handlers"))
-services.AddSingleton(NewOrderHandler, godi.Group("handlers"))
-
-// Consume all handlers as a slice
-type Application struct {
-    godi.In
-    Handlers []Handler `group:"handlers"`
-}
-```
-
-## HTTP Handler Example
-
-Building a modular HTTP application:
-
-```go
-// Handler interface
-type Handler interface {
-    Pattern() string
-    ServeHTTP(w http.ResponseWriter, r *http.Request)
+// Common interface
+type Validator interface {
+    Validate(data interface{}) error
 }
 
-// User handler
-type UserHandler struct {
-    userService UserService
-}
-
-func NewUserHandler(userService UserService) Handler {
-    return &UserHandler{userService: userService}
-}
-
-func (h *UserHandler) Pattern() string {
-    return "/users"
-}
-
-func (h *UserHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-    // Handle user requests
-}
-
-// Product handler
-type ProductHandler struct {
-    productService ProductService
-}
-
-func NewProductHandler(productService ProductService) Handler {
-    return &ProductHandler{productService: productService}
-}
-
-func (h *ProductHandler) Pattern() string {
-    return "/products"
-}
-
-func (h *ProductHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-    // Handle product requests
-}
-
-// Register handlers
-services.AddScoped(NewUserService)
-services.AddScoped(NewProductService)
-services.AddSingleton(NewUserHandler, godi.Group("routes"))
-services.AddSingleton(NewProductHandler, godi.Group("routes"))
-
-// Router that consumes all handlers
-type Router struct {
-    godi.In
-    Routes []Handler `group:"routes"`
-}
-
-func NewHTTPServer(params Router) *http.ServeMux {
-    mux := http.NewServeMux()
-
-    for _, route := range params.Routes {
-        mux.Handle(route.Pattern(), route)
+// Multiple validators
+type EmailValidator struct{}
+func (v *EmailValidator) Validate(data interface{}) error {
+    email, ok := data.(string)
+    if !ok || !strings.Contains(email, "@") {
+        return errors.New("invalid email")
     }
+    return nil
+}
 
-    return mux
+type PhoneValidator struct{}
+func (v *PhoneValidator) Validate(data interface{}) error {
+    phone, ok := data.(string)
+    if !ok || len(phone) < 10 {
+        return errors.New("invalid phone")
+    }
+    return nil
+}
+
+// Register as group
+var ValidationModule = godi.NewModule("validation",
+    godi.AddSingleton(func() Validator {
+        return &EmailValidator{}
+    }, godi.Group("validators")),
+
+    godi.AddSingleton(func() Validator {
+        return &PhoneValidator{}
+    }, godi.Group("validators")),
+
+    godi.AddSingleton(func() Validator {
+        return &AddressValidator{}
+    }, godi.Group("validators")),
+)
+
+// Use all validators
+type ValidationService struct {
+    validators []Validator
+}
+
+func NewValidationService(params struct {
+    godi.In
+    Validators []Validator `group:"validators"`
+}) *ValidationService {
+    return &ValidationService{
+        validators: params.Validators,
+    }
+}
+
+func (s *ValidationService) ValidateAll(data interface{}) error {
+    for _, validator := range s.validators {
+        if err := validator.Validate(data); err != nil {
+            return err
+        }
+    }
+    return nil
 }
 ```
 
-## Middleware Chain
-
-Creating a middleware pipeline:
+## Real-World Example: HTTP Middleware
 
 ```go
 // Middleware interface
 type Middleware interface {
-    Wrap(next http.Handler) http.Handler
-    Priority() int // Lower numbers run first
+    Handle(next http.Handler) http.Handler
 }
 
-// Logging middleware
+// Various middleware
 type LoggingMiddleware struct {
     logger Logger
 }
@@ -107,21 +85,19 @@ func NewLoggingMiddleware(logger Logger) Middleware {
     return &LoggingMiddleware{logger: logger}
 }
 
-func (m *LoggingMiddleware) Wrap(next http.Handler) http.Handler {
+func (m *LoggingMiddleware) Handle(next http.Handler) http.Handler {
     return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
         start := time.Now()
+        m.logger.Info("Request started", "path", r.URL.Path)
+
         next.ServeHTTP(w, r)
-        m.logger.Info("Request processed",
-            "method", r.Method,
+
+        m.logger.Info("Request completed",
             "path", r.URL.Path,
-            "duration", time.Since(start),
-        )
+            "duration", time.Since(start))
     })
 }
 
-func (m *LoggingMiddleware) Priority() int { return 10 }
-
-// Auth middleware
 type AuthMiddleware struct {
     authService AuthService
 }
@@ -130,157 +106,199 @@ func NewAuthMiddleware(authService AuthService) Middleware {
     return &AuthMiddleware{authService: authService}
 }
 
-func (m *AuthMiddleware) Wrap(next http.Handler) http.Handler {
+func (m *AuthMiddleware) Handle(next http.Handler) http.Handler {
     return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
         token := r.Header.Get("Authorization")
         if !m.authService.ValidateToken(token) {
-            http.Error(w, "Unauthorized", http.StatusUnauthorized)
+            http.Error(w, "Unauthorized", 401)
             return
         }
         next.ServeHTTP(w, r)
     })
 }
 
-func (m *AuthMiddleware) Priority() int { return 20 }
+// Register middleware
+var MiddlewareModule = godi.NewModule("middleware",
+    godi.AddScoped(NewLoggingMiddleware, godi.Group("middleware")),
+    godi.AddScoped(NewAuthMiddleware, godi.Group("middleware")),
+    godi.AddScoped(NewRateLimitMiddleware, godi.Group("middleware")),
+    godi.AddScoped(NewCORSMiddleware, godi.Group("middleware")),
+)
 
-// Register middlewares
-services.AddSingleton(NewLoggingMiddleware, godi.Group("middleware"))
-services.AddSingleton(NewAuthMiddleware, godi.Group("middleware"))
-services.AddSingleton(NewRateLimitMiddleware, godi.Group("middleware"))
-services.AddSingleton(NewCORSMiddleware, godi.Group("middleware"))
-
-// Middleware chain builder
-type MiddlewareChain struct {
-    godi.In
-    Middlewares []Middleware `group:"middleware"`
+// HTTP server using middleware chain
+type HTTPServer struct {
+    middleware []Middleware
+    router     *mux.Router
 }
 
-func BuildMiddlewareChain(params MiddlewareChain, handler http.Handler) http.Handler {
-    // Sort by priority
-    sort.Slice(params.Middlewares, func(i, j int) bool {
-        return params.Middlewares[i].Priority() < params.Middlewares[j].Priority()
-    })
+func NewHTTPServer(
+    router *mux.Router,
+    params struct {
+        godi.In
+        Middleware []Middleware `group:"middleware"`
+    },
+) *HTTPServer {
+    return &HTTPServer{
+        middleware: params.Middleware,
+        router:     router,
+    }
+}
 
-    // Apply in reverse order (innermost first)
-    for i := len(params.Middlewares) - 1; i >= 0; i-- {
-        handler = params.Middlewares[i].Wrap(handler)
+func (s *HTTPServer) Start() {
+    // Build middleware chain
+    handler := http.Handler(s.router)
+
+    // Apply in reverse order (so first registered runs first)
+    for i := len(s.middleware) - 1; i >= 0; i-- {
+        handler = s.middleware[i].Handle(handler)
     }
 
-    return handler
+    log.Fatal(http.ListenAndServe(":8080", handler))
 }
 ```
 
-## Event Handlers
-
-Event-driven architecture with groups:
+## Plugin System Example
 
 ```go
-// Event handler interface
-type EventHandler interface {
-    EventType() string
-    Handle(ctx context.Context, event Event) error
+// Plugin interface
+type Plugin interface {
+    Name() string
+    Initialize(app *Application) error
+    Shutdown() error
 }
 
-// User created handler
-type UserCreatedHandler struct {
-    emailService EmailService
-    logger       Logger
+// Various plugins
+type MetricsPlugin struct {
+    collector *MetricsCollector
 }
 
-func NewUserCreatedHandler(emailService EmailService, logger Logger) EventHandler {
-    return &UserCreatedHandler{
-        emailService: emailService,
-        logger:       logger,
+func NewMetricsPlugin(collector *MetricsCollector) Plugin {
+    return &MetricsPlugin{collector: collector}
+}
+
+func (p *MetricsPlugin) Name() string { return "metrics" }
+
+func (p *MetricsPlugin) Initialize(app *Application) error {
+    app.Router.Handle("/metrics", p.collector.Handler())
+    return nil
+}
+
+// Plugin registration
+var PluginModule = godi.NewModule("plugins",
+    godi.AddSingleton(NewMetricsPlugin, godi.Group("plugins")),
+    godi.AddSingleton(NewHealthCheckPlugin, godi.Group("plugins")),
+    godi.AddSingleton(NewAdminPlugin, godi.Group("plugins")),
+)
+
+// Application with plugins
+type Application struct {
+    plugins []Plugin
+    Router  *mux.Router
+}
+
+func NewApplication(
+    router *mux.Router,
+    params struct {
+        godi.In
+        Plugins []Plugin `group:"plugins"`
+    },
+) *Application {
+    return &Application{
+        plugins: params.Plugins,
+        Router:  router,
     }
 }
 
-func (h *UserCreatedHandler) EventType() string {
-    return "user.created"
-}
-
-func (h *UserCreatedHandler) Handle(ctx context.Context, event Event) error {
-    userEvent := event.(*UserCreatedEvent)
-
-    // Send welcome email
-    err := h.emailService.SendWelcomeEmail(userEvent.Email)
-    if err != nil {
-        h.logger.Error("Failed to send welcome email", err)
+func (app *Application) Start() error {
+    // Initialize all plugins
+    for _, plugin := range app.plugins {
+        log.Printf("Initializing plugin: %s", plugin.Name())
+        if err := plugin.Initialize(app); err != nil {
+            return fmt.Errorf("failed to initialize %s: %w", plugin.Name(), err)
+        }
     }
 
     return nil
 }
 
-// Order placed handler
-type OrderPlacedHandler struct {
-    inventoryService InventoryService
-    notifyService    NotificationService
-}
-
-func NewOrderPlacedHandler(
-    inventoryService InventoryService,
-    notifyService NotificationService,
-) EventHandler {
-    return &OrderPlacedHandler{
-        inventoryService: inventoryService,
-        notifyService:    notifyService,
+func (app *Application) Shutdown() error {
+    // Shutdown in reverse order
+    for i := len(app.plugins) - 1; i >= 0; i-- {
+        if err := app.plugins[i].Shutdown(); err != nil {
+            log.Printf("Error shutting down %s: %v",
+                app.plugins[i].Name(), err)
+        }
     }
+    return nil
+}
+```
+
+## Event System Example
+
+```go
+// Event handler interface
+type EventHandler interface {
+    EventType() string
+    Handle(event Event) error
 }
 
-func (h *OrderPlacedHandler) EventType() string {
-    return "order.placed"
+// Various event handlers
+type UserCreatedHandler struct {
+    emailService EmailService
 }
 
-func (h *OrderPlacedHandler) Handle(ctx context.Context, event Event) error {
-    orderEvent := event.(*OrderPlacedEvent)
+func NewUserCreatedHandler(emailService EmailService) EventHandler {
+    return &UserCreatedHandler{emailService: emailService}
+}
 
-    // Update inventory
-    if err := h.inventoryService.Reserve(orderEvent.Items); err != nil {
-        return err
-    }
+func (h *UserCreatedHandler) EventType() string { return "user.created" }
 
-    // Send notification
-    return h.notifyService.NotifyOrderPlaced(orderEvent.OrderID)
+func (h *UserCreatedHandler) Handle(event Event) error {
+    user := event.Data.(*User)
+    return h.emailService.SendWelcomeEmail(user.Email)
 }
 
 // Register handlers
-services.AddSingleton(NewUserCreatedHandler, godi.Group("event-handlers"))
-services.AddSingleton(NewOrderPlacedHandler, godi.Group("event-handlers"))
-services.AddSingleton(NewPaymentProcessedHandler, godi.Group("event-handlers"))
+var EventModule = godi.NewModule("events",
+    godi.AddScoped(NewUserCreatedHandler, godi.Group("event-handlers")),
+    godi.AddScoped(NewOrderPlacedHandler, godi.Group("event-handlers")),
+    godi.AddScoped(NewPaymentProcessedHandler, godi.Group("event-handlers")),
+)
 
 // Event dispatcher
 type EventDispatcher struct {
-    godi.In
-    Handlers []EventHandler `group:"event-handlers"`
+    handlers map[string][]EventHandler
 }
 
-func NewEventBus(params EventDispatcher) *EventBus {
-    bus := &EventBus{
+func NewEventDispatcher(params struct {
+    godi.In
+    Handlers []EventHandler `group:"event-handlers"`
+}) *EventDispatcher {
+    dispatcher := &EventDispatcher{
         handlers: make(map[string][]EventHandler),
     }
 
     // Group handlers by event type
     for _, handler := range params.Handlers {
         eventType := handler.EventType()
-        bus.handlers[eventType] = append(bus.handlers[eventType], handler)
+        dispatcher.handlers[eventType] = append(
+            dispatcher.handlers[eventType],
+            handler,
+        )
     }
 
-    return bus
+    return dispatcher
 }
 
-type EventBus struct {
-    handlers map[string][]EventHandler
-}
-
-func (bus *EventBus) Publish(ctx context.Context, event Event) error {
-    handlers, ok := bus.handlers[event.Type()]
+func (d *EventDispatcher) Dispatch(event Event) error {
+    handlers, ok := d.handlers[event.Type]
     if !ok {
         return nil // No handlers for this event
     }
 
-    // Execute all handlers
     var errs []error
     for _, handler := range handlers {
-        if err := handler.Handle(ctx, event); err != nil {
+        if err := handler.Handle(event); err != nil {
             errs = append(errs, err)
         }
     }
@@ -293,406 +311,112 @@ func (bus *EventBus) Publish(ctx context.Context, event Event) error {
 }
 ```
 
-## Validation Rules
+## Combining Groups with Keys
 
-Composable validation system:
-
-```go
-// Validation rule interface
-type ValidationRule interface {
-    Name() string
-    Validate(value interface{}) error
-}
-
-// Required rule
-type RequiredRule struct{}
-
-func NewRequiredRule() ValidationRule {
-    return &RequiredRule{}
-}
-
-func (r *RequiredRule) Name() string { return "required" }
-
-func (r *RequiredRule) Validate(value interface{}) error {
-    if value == nil || value == "" {
-        return errors.New("field is required")
-    }
-    return nil
-}
-
-// Email rule
-type EmailRule struct{}
-
-func NewEmailRule() ValidationRule {
-    return &EmailRule{}
-}
-
-func (r *EmailRule) Name() string { return "email" }
-
-func (r *EmailRule) Validate(value interface{}) error {
-    email, ok := value.(string)
-    if !ok {
-        return errors.New("value must be string")
-    }
-
-    if !strings.Contains(email, "@") {
-        return errors.New("invalid email format")
-    }
-
-    return nil
-}
-
-// Register rules
-services.AddSingleton(NewRequiredRule, godi.Group("validators"))
-services.AddSingleton(NewEmailRule, godi.Group("validators"))
-services.AddSingleton(NewMinLengthRule, godi.Group("validators"))
-services.AddSingleton(NewMaxLengthRule, godi.Group("validators"))
-
-// Validator service
-type ValidatorParams struct {
-    godi.In
-    Rules []ValidationRule `group:"validators"`
-}
-
-type Validator struct {
-    rules map[string]ValidationRule
-}
-
-func NewValidator(params ValidatorParams) *Validator {
-    rules := make(map[string]ValidationRule)
-
-    for _, rule := range params.Rules {
-        rules[rule.Name()] = rule
-    }
-
-    return &Validator{rules: rules}
-}
-
-func (v *Validator) ValidateStruct(s interface{}) error {
-    // Use reflection to validate struct fields
-    // Apply rules based on struct tags
-    // Example: `validate:"required,email"`
-    return nil
-}
-```
-
-## Plugin System
-
-Building a plugin architecture:
+You can use both groups and keys together:
 
 ```go
-// Plugin interface
-type Plugin interface {
-    Name() string
-    Version() string
-    Initialize(app *Application) error
-    Start(ctx context.Context) error
-    Stop(ctx context.Context) error
-}
+// Different validator groups
+var ValidationModule = godi.NewModule("validation",
+    // User validators
+    godi.AddSingleton(NewEmailValidator,
+        godi.Group("validators"),
+        godi.Name("user-validators")),
+    godi.AddSingleton(NewPasswordValidator,
+        godi.Group("validators"),
+        godi.Name("user-validators")),
 
-// Analytics plugin
-type AnalyticsPlugin struct {
-    config AnalyticsConfig
-    client AnalyticsClient
-}
-
-func NewAnalyticsPlugin(config AnalyticsConfig) Plugin {
-    return &AnalyticsPlugin{
-        config: config,
-        client: NewAnalyticsClient(config),
-    }
-}
-
-func (p *AnalyticsPlugin) Name() string    { return "analytics" }
-func (p *AnalyticsPlugin) Version() string { return "1.0.0" }
-
-func (p *AnalyticsPlugin) Initialize(app *Application) error {
-    // Register routes, middleware, etc.
-    app.RegisterMiddleware(p.trackingMiddleware())
-    return nil
-}
-
-// Search plugin
-type SearchPlugin struct {
-    searchEngine SearchEngine
-    indexer      Indexer
-}
-
-func NewSearchPlugin(config SearchConfig) Plugin {
-    return &SearchPlugin{
-        searchEngine: NewElasticSearch(config),
-        indexer:      NewIndexer(config),
-    }
-}
-
-func (p *SearchPlugin) Name() string    { return "search" }
-func (p *SearchPlugin) Version() string { return "2.1.0" }
-
-// Register plugins
-services.AddSingleton(NewAnalyticsPlugin, godi.Group("plugins"))
-services.AddSingleton(NewSearchPlugin, godi.Group("plugins"))
-services.AddSingleton(NewCachePlugin, godi.Group("plugins"))
-
-// Plugin manager
-type PluginManager struct {
-    godi.In
-    Plugins []Plugin `group:"plugins"`
-}
-
-func NewApplication(params PluginManager) (*Application, error) {
-    app := &Application{
-        plugins: make(map[string]Plugin),
-    }
-
-    // Initialize all plugins
-    for _, plugin := range params.Plugins {
-        log.Printf("Loading plugin: %s v%s", plugin.Name(), plugin.Version())
-
-        if err := plugin.Initialize(app); err != nil {
-            return nil, fmt.Errorf("failed to initialize plugin %s: %w",
-                plugin.Name(), err)
-        }
-
-        app.plugins[plugin.Name()] = plugin
-    }
-
-    return app, nil
-}
-
-type Application struct {
-    plugins map[string]Plugin
-}
-
-func (app *Application) Start(ctx context.Context) error {
-    // Start all plugins
-    for _, plugin := range app.plugins {
-        if err := plugin.Start(ctx); err != nil {
-            return fmt.Errorf("failed to start plugin %s: %w",
-                plugin.Name(), err)
-        }
-    }
-
-    return nil
-}
-```
-
-## Observers and Listeners
-
-Observer pattern with groups:
-
-```go
-// Observer interface
-type Observer interface {
-    OnEvent(event interface{})
-}
-
-// Metrics observer
-type MetricsObserver struct {
-    metrics MetricsCollector
-}
-
-func NewMetricsObserver(metrics MetricsCollector) Observer {
-    return &MetricsObserver{metrics: metrics}
-}
-
-func (o *MetricsObserver) OnEvent(event interface{}) {
-    switch e := event.(type) {
-    case RequestEvent:
-        o.metrics.IncrementCounter("requests", e.Method, e.Path)
-    case ErrorEvent:
-        o.metrics.IncrementCounter("errors", e.Type)
-    }
-}
-
-// Logging observer
-type LoggingObserver struct {
-    logger Logger
-}
-
-func NewLoggingObserver(logger Logger) Observer {
-    return &LoggingObserver{logger: logger}
-}
-
-func (o *LoggingObserver) OnEvent(event interface{}) {
-    o.logger.Info("Event occurred", "event", event)
-}
-
-// Register observers
-services.AddSingleton(NewMetricsObserver, godi.Group("observers"))
-services.AddSingleton(NewLoggingObserver, godi.Group("observers"))
-services.AddSingleton(NewAuditObserver, godi.Group("observers"))
-
-// Observable service
-type ObservableService struct {
-    godi.In
-    Observers []Observer `group:"observers"`
-}
-
-type EventEmitter struct {
-    observers []Observer
-}
-
-func NewEventEmitter(params ObservableService) *EventEmitter {
-    return &EventEmitter{
-        observers: params.Observers,
-    }
-}
-
-func (e *EventEmitter) Emit(event interface{}) {
-    for _, observer := range e.observers {
-        // Run observers asynchronously
-        go observer.OnEvent(event)
-    }
-}
-```
-
-## Conditional Registration
-
-Register in groups conditionally:
-
-```go
-func ConfigureFeatures(services godi.ServiceCollection, features FeatureFlags) {
-    // Always register core features
-    services.AddSingleton(NewCoreFeature, godi.Group("features"))
-
-    // Conditionally register features
-    if features.IsEnabled("advanced-search") {
-        services.AddSingleton(NewAdvancedSearchFeature, godi.Group("features"))
-    }
-
-    if features.IsEnabled("real-time-sync") {
-        services.AddSingleton(NewRealTimeSyncFeature, godi.Group("features"))
-    }
-
-    if features.IsEnabled("ai-recommendations") {
-        services.AddSingleton(NewAIRecommendationsFeature, godi.Group("features"))
-    }
-}
-
-// Feature manager consumes whatever is registered
-type FeatureManager struct {
-    godi.In
-    Features []Feature `group:"features"`
-}
-
-func (fm *FeatureManager) ListEnabledFeatures() []string {
-    names := make([]string, len(fm.Features))
-    for i, f := range fm.Features {
-        names[i] = f.Name()
-    }
-    return names
-}
-```
-
-## Testing with Groups
-
-Groups make testing modular components easy:
-
-```go
-func TestMiddlewareOrder(t *testing.T) {
-    services := godi.NewServiceCollection()
-
-    // Register test middlewares with specific priorities
-    services.AddSingleton(func() Middleware {
-        return &TestMiddleware{name: "first", priority: 1}
-    }, godi.Group("middleware"))
-
-    services.AddSingleton(func() Middleware {
-        return &TestMiddleware{name: "second", priority: 2}
-    }, godi.Group("middleware"))
-
-    services.AddSingleton(func() Middleware {
-        return &TestMiddleware{name: "third", priority: 3}
-    }, godi.Group("middleware"))
-
-    provider, _ := services.BuildServiceProvider()
-    defer provider.Close()
-
-    // Verify middleware order
-    var params MiddlewareChain
-    provider.Invoke(func(p MiddlewareChain) {
-        params = p
-    })
-
-    assert.Len(t, params.Middlewares, 3)
-
-    // Test that they execute in correct order
-    handler := BuildMiddlewareChain(params, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        w.Write([]byte("handled"))
-    }))
-
-    // Make request and verify middleware execution order
-    // ...
-}
+    // Product validators
+    godi.AddSingleton(NewPriceValidator,
+        godi.Group("validators"),
+        godi.Name("product-validators")),
+    godi.AddSingleton(NewSKUValidator,
+        godi.Group("validators"),
+        godi.Name("product-validators")),
+)
 ```
 
 ## Best Practices
 
-### 1. Use Meaningful Group Names
+### 1. Order Matters
+
+Services are injected in registration order:
 
 ```go
-// Good
-godi.Group("http-routes")
-godi.Group("event-handlers")
-godi.Group("validation-rules")
-
-// Avoid
-godi.Group("stuff")
-godi.Group("things")
+// Middleware runs in this order: Auth -> RateLimit -> Logging
+var MiddlewareModule = godi.NewModule("middleware",
+    godi.AddScoped(NewAuthMiddleware, godi.Group("middleware")),
+    godi.AddScoped(NewRateLimitMiddleware, godi.Group("middleware")),
+    godi.AddScoped(NewLoggingMiddleware, godi.Group("middleware")),
+)
 ```
 
 ### 2. Document Group Members
 
 ```go
-// HealthChecker performs health checks.
-// Register implementations with group:"health-checks"
-type HealthChecker interface {
-    Name() string
-    Check(ctx context.Context) error
-}
+// Package middleware provides HTTP middleware.
+//
+// Available middleware (in execution order):
+// 1. Authentication - Validates JWT tokens
+// 2. Rate Limiting - Limits requests per IP
+// 3. Logging - Logs all requests
+// 4. CORS - Handles cross-origin requests
+var MiddlewareModule = godi.NewModule("middleware",
+    // ...
+)
 ```
 
-### 3. Handle Empty Groups
+### 3. Empty Groups are OK
+
+If no services are registered for a group, an empty slice is injected:
 
 ```go
-type ServiceParams struct {
+func NewPluginManager(params struct {
     godi.In
-    Handlers []Handler `group:"handlers"`
-}
-
-func NewService(params ServiceParams) *Service {
-    if len(params.Handlers) == 0 {
-        log.Warn("No handlers registered")
-    }
-
-    return &Service{handlers: params.Handlers}
+    Plugins []Plugin `group:"plugins"`
+}) *PluginManager {
+    // params.Plugins might be empty - that's fine
+    return &PluginManager{plugins: params.Plugins}
 }
 ```
 
-### 4. Order Matters Sometimes
+### 4. Type Safety
+
+Groups maintain type safety:
 
 ```go
-// When order is important, use a priority or order field
-type OrderedHandler interface {
-    Handler
-    Order() int
+// This won't compile if any service in the group
+// doesn't implement Validator
+type MyService struct {
+    validators []Validator
 }
 
-// Sort before use
-sort.Slice(handlers, func(i, j int) bool {
-    return handlers[i].Order() < handlers[j].Order()
-})
+func NewMyService(params struct {
+    godi.In
+    Validators []Validator `group:"validators"`
+}) *MyService {
+    return &MyService{validators: params.Validators}
+}
 ```
+
+## When to Use Groups
+
+Use service groups for:
+
+- **Plugin systems** - Extensible functionality
+- **Middleware chains** - Ordered processing
+- **Event handlers** - Multiple handlers per event
+- **Validators** - Run all validations
+- **Processors** - Pipeline processing
+- **Observers** - Notification systems
 
 ## Summary
 
-Service groups enable:
+Service groups are powerful for:
 
-- Plugin architectures
-- Middleware chains
-- Event handling systems
-- Modular applications
-- Feature toggles
-- Extensible systems
+- Collecting similar services
+- Building extensible systems
+- Creating processing pipelines
+- Implementing plugin architectures
 
-They provide a clean way to work with collections of services while maintaining type safety and dependency injection benefits.
+The key is having a common interface and meaningful grouping!

@@ -1,516 +1,419 @@
-# Modules
+# How to Use Modules
 
-Modules provide a way to organize and group related service registrations. They promote code organization, reusability, and maintainability in larger applications.
+Modules are the best way to organize your godi services. Think of them as packages of related functionality.
 
-## What are Modules?
+## Basic Module
 
-A module is a function that configures a set of related services. Modules can:
-
-- Group related services together
-- Be reused across different applications
-- Depend on other modules
-- Encapsulate configuration logic
-
-## Creating a Module
-
-### Basic Module
+Start simple - group related services:
 
 ```go
-var DatabaseModule = godi.NewModule("database",
-    godi.AddSingleton(NewDatabaseConfig),
-    godi.AddSingleton(NewDatabaseConnection),
-    godi.AddScoped(NewUnitOfWork),
-    godi.AddScoped(NewUserRepository),
-    godi.AddScoped(NewOrderRepository),
+// email/module.go
+package email
+
+import "github.com/junioryono/godi"
+
+var Module = godi.NewModule("email",
+    godi.AddSingleton(NewSMTPClient),
+    godi.AddScoped(NewEmailService),
+    godi.AddScoped(NewEmailValidator),
 )
 ```
 
-### Module with Dependencies
+Use it:
 
 ```go
-var LoggingModule = godi.NewModule("logging",
+// main.go
+services := godi.NewServiceCollection()
+services.AddModules(email.Module)
+
+provider, _ := services.BuildServiceProvider()
+```
+
+## Module Dependencies
+
+Modules can include other modules:
+
+```go
+// core/module.go
+var CoreModule = godi.NewModule("core",
+    godi.AddSingleton(NewConfig),
+    godi.AddSingleton(NewLogger),
+)
+
+// database/module.go
+var DatabaseModule = godi.NewModule("database",
+    CoreModule, // Depends on core!
+    godi.AddSingleton(NewDatabaseConnection),
+    godi.AddScoped(NewTransaction),
+)
+
+// user/module.go
+var UserModule = godi.NewModule("user",
+    DatabaseModule, // Depends on database (which includes core)
+    godi.AddScoped(NewUserRepository),
+    godi.AddScoped(NewUserService),
+)
+```
+
+## Real-World Examples
+
+### Example 1: Web API Module Structure
+
+```go
+// infrastructure/logger/module.go
+var LoggerModule = godi.NewModule("logger",
     godi.AddSingleton(NewLogConfig),
     godi.AddSingleton(NewLogger),
 )
 
+// infrastructure/database/module.go
 var DatabaseModule = godi.NewModule("database",
-    LoggingModule, // Depend on logging
+    LoggerModule,
+    godi.AddSingleton(NewDatabaseConfig),
     godi.AddSingleton(NewDatabaseConnection),
-    godi.AddScoped(NewRepository),
-)
-```
-
-## Using Modules
-
-### Single Module
-
-```go
-func main() {
-    collection := godi.NewServiceCollection()
-
-    // Add a module
-    err := collection.AddModules(DatabaseModule)
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    provider, _ := collection.BuildServiceProvider()
-    defer provider.Close()
-}
-```
-
-### Multiple Modules
-
-```go
-func main() {
-    collection := godi.NewServiceCollection()
-
-    // Add multiple modules
-    err := collection.AddModules(
-        CoreModule,
-        DatabaseModule,
-        CacheModule,
-        APIModule,
-    )
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    provider, _ := collection.BuildServiceProvider()
-    defer provider.Close()
-}
-```
-
-## Module Patterns
-
-### Layered Architecture
-
-```go
-// Core layer - no dependencies
-var CoreModule = godi.NewModule("core",
-    godi.AddSingleton(NewConfig),
-    godi.AddSingleton(NewLogger),
-    godi.AddSingleton(NewMetrics),
+    godi.AddScoped(NewTransaction),
 )
 
-// Infrastructure layer - depends on core
-var InfrastructureModule = godi.NewModule("infrastructure",
-    CoreModule,
-    godi.AddSingleton(NewDatabase),
-    godi.AddSingleton(NewCache),
-    godi.AddSingleton(NewMessageQueue),
+// infrastructure/cache/module.go
+var CacheModule = godi.NewModule("cache",
+    LoggerModule,
+    godi.AddSingleton(NewRedisConfig),
+    godi.AddSingleton(NewRedisClient),
 )
 
-// Domain layer - depends on infrastructure
-var DomainModule = godi.NewModule("domain",
-    InfrastructureModule,
-    godi.AddScoped(NewUserService),
-    godi.AddScoped(NewOrderService),
-    godi.AddScoped(NewProductService),
-)
-
-// API layer - depends on domain
-var APIModule = godi.NewModule("api",
-    DomainModule,
-    godi.AddScoped(NewUserController),
-    godi.AddScoped(NewOrderController),
-    godi.AddScoped(NewProductController),
-)
-```
-
-### Feature Modules
-
-```go
-// User feature module
-var UserFeatureModule = godi.NewModule("user-feature",
+// features/user/module.go
+var UserModule = godi.NewModule("user",
+    DatabaseModule,
+    CacheModule,
     godi.AddScoped(NewUserRepository),
     godi.AddScoped(NewUserService),
-    godi.AddScoped(NewUserController),
-    godi.AddSingleton(NewUserValidator),
+    godi.AddScoped(NewUserHandler),
 )
 
-// Order feature module
-var OrderFeatureModule = godi.NewModule("order-feature",
-    godi.AddScoped(NewOrderRepository),
-    godi.AddScoped(NewOrderService),
-    godi.AddScoped(NewOrderController),
-    godi.AddScoped(NewPaymentGateway),
+// features/auth/module.go
+var AuthModule = godi.NewModule("auth",
+    UserModule, // Auth depends on users
+    godi.AddSingleton(NewJWTService),
+    godi.AddScoped(NewAuthService),
+    godi.AddScoped(NewAuthMiddleware),
 )
 
-// Combine features
-var ApplicationModule = godi.NewModule("application",
-    CoreModule,
-    UserFeatureModule,
-    OrderFeatureModule,
+// app/module.go
+var AppModule = godi.NewModule("app",
+    UserModule,
+    AuthModule,
+    // Add more feature modules as needed
 )
 ```
 
-### Environment-Specific Modules
+### Example 2: Environment-Specific Modules
 
 ```go
-// Development module
-var DevelopmentModule = godi.NewModule("development",
-    godi.AddSingleton(func() Cache { return NewMemoryCache() }),
-    godi.AddSingleton(func() Database { return NewSQLiteDB() }),
-    godi.AddSingleton(func() EmailService { return NewMockEmailService() }),
+// environments/development.go
+var DevelopmentModule = godi.NewModule("dev",
+    godi.AddSingleton(func() Database {
+        return NewSQLiteDatabase(":memory:")
+    }),
+    godi.AddSingleton(func() Cache {
+        return NewMemoryCache()
+    }),
+    godi.AddSingleton(func() EmailClient {
+        return NewMockEmailClient()
+    }),
 )
 
-// Production module
-var ProductionModule = godi.NewModule("production",
-    godi.AddSingleton(func() Cache { return NewRedisCache() }),
-    godi.AddSingleton(func() Database { return NewPostgresDB() }),
-    godi.AddSingleton(func() EmailService { return NewSMTPEmailService() }),
+// environments/production.go
+var ProductionModule = godi.NewModule("prod",
+    godi.AddSingleton(func() Database {
+        return NewPostgresDatabase(os.Getenv("DATABASE_URL"))
+    }),
+    godi.AddSingleton(func() Cache {
+        return NewRedisCache(os.Getenv("REDIS_URL"))
+    }),
+    godi.AddSingleton(func() EmailClient {
+        return NewSendGridClient(os.Getenv("SENDGRID_KEY"))
+    }),
 )
 
-// Select module based on environment
-func GetEnvironmentModule(env string) func(godi.ServiceCollection) error {
-    switch env {
-    case "production":
-        return ProductionModule
-    case "development":
-        return DevelopmentModule
-    default:
-        return DevelopmentModule
+// main.go
+func main() {
+    // Base module with business logic
+    baseModule := godi.NewModule("base",
+        UserModule,
+        AuthModule,
+        OrderModule,
+    )
+
+    // Choose environment
+    var envModule godi.ModuleOption
+    if os.Getenv("ENV") == "production" {
+        envModule = ProductionModule
+    } else {
+        envModule = DevelopmentModule
     }
+
+    // Combine modules
+    appModule := godi.NewModule("app",
+        envModule,
+        baseModule,
+    )
+
+    // Build and run
+    services := godi.NewServiceCollection()
+    services.AddModules(appModule)
+    provider, _ := services.BuildServiceProvider()
 }
 ```
 
-## Advanced Module Techniques
-
-### Module with Configuration
+### Example 3: Plugin System with Modules
 
 ```go
-func DatabaseModuleWithConfig(dbConfig DatabaseConfig) func(godi.ServiceCollection) error {
+// plugin/interface.go
+type Plugin interface {
+    Name() string
+    Initialize() error
+}
+
+// plugins/analytics/module.go
+var AnalyticsModule = godi.NewModule("analytics-plugin",
+    godi.AddSingleton(NewAnalyticsClient),
+    godi.AddSingleton(func(client *AnalyticsClient) Plugin {
+        return &AnalyticsPlugin{client: client}
+    }, godi.Group("plugins")),
+)
+
+// plugins/monitoring/module.go
+var MonitoringModule = godi.NewModule("monitoring-plugin",
+    godi.AddSingleton(NewMetricsCollector),
+    godi.AddSingleton(func(collector *MetricsCollector) Plugin {
+        return &MonitoringPlugin{collector: collector}
+    }, godi.Group("plugins")),
+)
+
+// app/plugin_manager.go
+type PluginManager struct {
+    plugins []Plugin
+}
+
+func NewPluginManager(in struct {
+    godi.In
+    Plugins []Plugin `group:"plugins"`
+}) *PluginManager {
+    return &PluginManager{plugins: in.Plugins}
+}
+
+// main.go
+var AppModule = godi.NewModule("app",
+    CoreModule,
+    AnalyticsModule,
+    MonitoringModule,
+    godi.AddSingleton(NewPluginManager),
+)
+```
+
+## Advanced Patterns
+
+### Dynamic Module Configuration
+
+```go
+func DatabaseModule(config DatabaseConfig) godi.ModuleOption {
     return godi.NewModule("database",
-        godi.AddSingleton(func() *DatabaseConfig { return &dbConfig }),
+        godi.AddSingleton(func() *DatabaseConfig {
+            return &config
+        }),
         godi.AddSingleton(NewDatabaseConnection),
-        godi.AddScoped(NewRepository),
     )
 }
 
-// Usage
+// Use with configuration
 dbConfig := DatabaseConfig{
     Host:     "localhost",
     Port:     5432,
     Database: "myapp",
 }
 
-collection.AddModules(DatabaseModuleWithConfig(dbConfig))
+appModule := godi.NewModule("app",
+    DatabaseModule(dbConfig),
+    UserModule,
+)
 ```
 
-### Conditional Registration in Modules
+### Conditional Module Registration
 
 ```go
-func APIModuleWithFeatures(features FeatureFlags) func(godi.ServiceCollection) error {
-    return func(collection godi.ServiceCollection) error {
-        // Always register core API services
-        collection.AddScoped(NewUserController)
-        collection.AddScoped(NewProductController)
-
-        // Conditionally register features
-        if features.OrdersEnabled {
-            collection.AddScoped(NewOrderController)
-            collection.AddScoped(NewOrderService)
-        }
-
-        if features.AnalyticsEnabled {
-            collection.AddScoped(NewAnalyticsController)
-            collection.AddSingleton(NewAnalyticsService)
-        }
-
-        if features.AdminEnabled {
-            collection.AddScoped(NewAdminController)
-            collection.AddScoped(NewAdminService)
-        }
-
-        return nil
+func AppModule(features FeatureFlags) godi.ModuleOption {
+    modules := []godi.ModuleOption{
+        CoreModule,
+        DatabaseModule,
     }
+
+    if features.UsersEnabled {
+        modules = append(modules, UserModule)
+    }
+
+    if features.BillingEnabled {
+        modules = append(modules, BillingModule)
+    }
+
+    if features.AnalyticsEnabled {
+        modules = append(modules, AnalyticsModule)
+    }
+
+    return godi.NewModule("app", modules...)
 }
 ```
 
-### Module Composition
+### Testing with Module Overrides
 
 ```go
-// Base modules
-var LoggingModule = godi.NewModule("logging",
-    godi.AddSingleton(NewLogger),
-)
-
-var MetricsModule = godi.NewModule("metrics",
-    godi.AddSingleton(NewMetricsCollector),
-)
-
-var TracingModule = godi.NewModule("tracing",
-    godi.AddSingleton(NewTracer),
-)
-
-// Composite module
-var ObservabilityModule = godi.NewModule("observability",
-    LoggingModule,
-    MetricsModule,
-    TracingModule,
-    godi.AddSingleton(NewObservabilityService),
-)
-```
-
-## Testing with Modules
-
-### Test Module
-
-```go
-var TestModule = godi.NewModule("test",
-    godi.AddSingleton(func() Database { return NewInMemoryDB() }),
-    godi.AddSingleton(func() Cache { return NewMockCache() }),
-    godi.AddSingleton(func() EmailService { return NewMockEmailService() }),
+// Create test module that replaces services
+var TestOverridesModule = godi.NewModule("test-overrides",
+    godi.AddSingleton(func() Database {
+        return &MockDatabase{
+            users: []User{
+                {ID: "1", Name: "Test User"},
+            },
+        }
+    }),
+    godi.AddSingleton(func() EmailClient {
+        return &MockEmailClient{
+            sentEmails: []Email{},
+        }
+    }),
 )
 
 func TestUserService(t *testing.T) {
-    collection := godi.NewServiceCollection()
-
-    // Use test module instead of production modules
-    collection.AddModules(
-        TestModule,
-        UserFeatureModule,
+    // Combine production module with test overrides
+    testModule := godi.NewModule("test",
+        UserModule,        // Production user logic
+        TestOverridesModule, // Test implementations
     )
 
-    provider, _ := collection.BuildServiceProvider()
-    defer provider.Close()
+    services := godi.NewServiceCollection()
+    services.AddModules(testModule)
 
+    provider, _ := services.BuildServiceProvider()
     // Test with mocked dependencies
-    userService, _ := godi.Resolve[*UserService](provider)
-    // ... run tests
 }
-```
-
-### Module Override Pattern
-
-```go
-func TestWithOverrides(t *testing.T) {
-    collection := godi.NewServiceCollection()
-
-    // Add production module
-    collection.AddModules(ProductionModule)
-
-    // Override specific services for testing
-    collection.Replace(godi.Singleton, func() EmailService {
-        return &MockEmailService{
-            shouldFail: true, // Test error cases
-        }
-    })
-
-    provider, _ := collection.BuildServiceProvider()
-    // ... run tests
-}
-```
-
-## Module Organization
-
-### Directory Structure
-
-```
-internal/
-├── modules/
-│   ├── core.go
-│   ├── infrastructure.go
-│   ├── domain.go
-│   └── api.go
-├── services/
-│   ├── user/
-│   ├── order/
-│   └── product/
-└── main.go
-```
-
-### Module File Example
-
-```go
-// internal/modules/infrastructure.go
-package modules
-
-import (
-    "github.com/junioryono/godi"
-    "myapp/internal/infrastructure/cache"
-    "myapp/internal/infrastructure/database"
-    "myapp/internal/infrastructure/messaging"
-)
-
-var InfrastructureModule = godi.NewModule("infrastructure",
-    // Database
-    godi.AddSingleton(database.NewConfig),
-    godi.AddSingleton(database.NewConnection),
-    godi.AddScoped(database.NewTransaction),
-
-    // Cache
-    godi.AddSingleton(cache.NewRedisConfig),
-    godi.AddSingleton(cache.NewRedisClient),
-
-    // Messaging
-    godi.AddSingleton(messaging.NewRabbitMQConfig),
-    godi.AddSingleton(messaging.NewPublisher),
-    godi.AddSingleton(messaging.NewSubscriber),
-)
 ```
 
 ## Best Practices
 
-### 1. Single Responsibility
-
-Each module should have a single, clear purpose:
+### 1. One Module Per Package
 
 ```go
-// ✅ Good - focused modules
+// ✅ Good: user/module.go
+package user
+
+var Module = godi.NewModule("user",
+    godi.AddScoped(NewRepository),
+    godi.AddScoped(NewService),
+    godi.AddScoped(NewHandler),
+)
+```
+
+### 2. Clear Module Dependencies
+
+```go
+// ✅ Good: Explicit dependencies
+var OrderModule = godi.NewModule("order",
+    UserModule,     // Orders need users
+    InventoryModule, // Orders need inventory
+    PaymentModule,   // Orders need payment
+    godi.AddScoped(NewOrderService),
+)
+```
+
+### 3. Module Naming Conventions
+
+```go
+// ✅ Good: Clear, consistent names
+var UserModule = godi.NewModule("user", ...)
 var AuthModule = godi.NewModule("auth", ...)
-var PaymentModule = godi.NewModule("payment", ...)
+var CoreModule = godi.NewModule("core", ...)
 
-// ❌ Bad - mixed concerns
-var UtilityModule = godi.NewModule("utility",
-    godi.AddSingleton(NewAuth),
-    godi.AddSingleton(NewPayment),
-    godi.AddSingleton(NewEmail),
-)
-```
-
-### 2. Clear Dependencies
-
-Make module dependencies explicit:
-
-```go
-// ✅ Good - clear dependency chain
-var AppModule = godi.NewModule("app",
-    CoreModule,      // Explicit dependency
-    DatabaseModule,  // Explicit dependency
-    godi.AddScoped(NewAppService),
-)
-```
-
-### 3. Avoid Circular Dependencies
-
-```go
-// ❌ Bad - circular dependency
-var ModuleA = godi.NewModule("A",
-    ModuleB, // A depends on B
-)
-
-var ModuleB = godi.NewModule("B",
-    ModuleA, // B depends on A - circular!
-)
+// ❌ Bad: Inconsistent or unclear
+var UsrMod = godi.NewModule("usr", ...)
+var Authentication = godi.NewModule("authentication", ...)
+var BasicStuff = godi.NewModule("basic", ...)
 ```
 
 ### 4. Document Module Purpose
 
 ```go
-// Package auth provides authentication and authorization services.
+// Package user provides user management functionality.
 //
-// The AuthModule includes:
-// - JWT token generation and validation
-// - User authentication service
-// - Permission checking service
-// - Password hashing utilities
+// The UserModule includes:
+// - User repository for database operations
+// - User service for business logic
+// - User handler for HTTP endpoints
+// - User validator for input validation
 //
 // Dependencies:
-// - CoreModule (for logging and configuration)
-// - DatabaseModule (for user storage)
-var AuthModule = godi.NewModule("auth",
-    // ... registrations
+// - DatabaseModule (for database connection)
+// - CacheModule (for caching user data)
+var UserModule = godi.NewModule("user",
+    DatabaseModule,
+    CacheModule,
+    godi.AddScoped(NewUserRepository),
+    godi.AddScoped(NewUserService),
+    godi.AddScoped(NewUserHandler),
+    godi.AddScoped(NewUserValidator),
 )
 ```
 
-### 5. Test Modules Independently
+## Common Patterns
+
+### Feature Toggle Module
 
 ```go
-func TestAuthModule(t *testing.T) {
-    collection := godi.NewServiceCollection()
+type Features struct {
+    NewCheckout bool
+    BetaSearch  bool
+}
 
-    // Test module can be loaded
-    err := collection.AddModules(AuthModule)
-    assert.NoError(t, err)
+func FeatureModule(features Features) godi.ModuleOption {
+    return godi.NewModule("features",
+        godi.AddSingleton(func() Features { return features }),
+    )
+}
 
-    // Test module provides expected services
-    provider, _ := collection.BuildServiceProvider()
-
-    _, err = godi.Resolve[AuthService](provider)
-    assert.NoError(t, err)
+// In services
+func NewSearchService(features Features, /* other deps */) *SearchService {
+    if features.BetaSearch {
+        return &BetaSearchService{/* ... */}
+    }
+    return &SearchService{/* ... */}
 }
 ```
 
-## Module Patterns for Common Scenarios
-
-### Web Application Module
+### Multi-Tenant Module
 
 ```go
-var WebModule = godi.NewModule("web",
-    // Core web services
-    godi.AddSingleton(NewRouter),
-    godi.AddSingleton(NewMiddlewareChain),
-
-    // Request-scoped services
-    godi.AddScoped(NewRequestContext),
-    godi.AddScoped(NewRequestLogger),
-
-    // Controllers as groups
-    godi.AddScoped(NewUserController, godi.Group("controllers")),
-    godi.AddScoped(NewProductController, godi.Group("controllers")),
-
-    // Middleware as groups
-    godi.AddSingleton(NewAuthMiddleware, godi.Group("middleware")),
-    godi.AddSingleton(NewLoggingMiddleware, godi.Group("middleware")),
+var TenantModule = godi.NewModule("tenant",
+    godi.AddScoped(func(ctx context.Context) *TenantContext {
+        tenantID := ctx.Value("tenantID").(string)
+        return &TenantContext{TenantID: tenantID}
+    }),
 )
-```
 
-### Background Jobs Module
-
-```go
-var JobsModule = godi.NewModule("jobs",
-    // Job infrastructure
-    godi.AddSingleton(NewJobScheduler),
-    godi.AddSingleton(NewJobQueue),
-    godi.AddScoped(NewJobExecutor),
-
-    // Job handlers as groups
-    godi.AddSingleton(NewEmailJob, godi.Group("jobs")),
-    godi.AddSingleton(NewReportJob, godi.Group("jobs")),
-    godi.AddSingleton(NewCleanupJob, godi.Group("jobs")),
-)
-```
-
-### Plugin System Module
-
-```go
-// Plugin interface
-type Plugin interface {
-    Name() string
-    Initialize(app *Application) error
-}
-
-// Create module that loads plugins
-func PluginModule(pluginDir string) func(godi.ServiceCollection) error {
-    return func(collection godi.ServiceCollection) error {
-        // Scan plugin directory
-        plugins, err := loadPlugins(pluginDir)
-        if err != nil {
-            return err
-        }
-
-        // Register each plugin
-        for _, plugin := range plugins {
-            p := plugin // capture
-            collection.AddSingleton(func() Plugin { return p },
-                godi.Group("plugins"))
-        }
-
-        return nil
+// Services automatically get tenant context
+func NewUserRepository(db *Database, tenant *TenantContext) *UserRepository {
+    return &UserRepository{
+        db:       db,
+        tenantID: tenant.TenantID,
     }
 }
 ```
 
 ## Summary
 
-Modules provide powerful organization capabilities:
+Modules are powerful because they:
 
-- **Group** related services together
-- **Reuse** common configurations
-- **Compose** complex applications from simple parts
-- **Test** components in isolation
-- **Manage** dependencies explicitly
+- **Organize** your code into logical units
+- **Encapsulate** dependencies
+- **Enable** reuse across projects
+- **Simplify** testing with easy overrides
+- **Scale** from simple apps to complex systems
 
-Use modules to keep your dependency injection configuration clean, maintainable, and testable as your application grows.
+Start with simple modules and add complexity as needed. The goal is clarity and maintainability!

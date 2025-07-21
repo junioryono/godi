@@ -1,73 +1,34 @@
 # Getting Started with godi
 
-Let's build something real - a web API that needs database connections, logging, and user sessions. This tutorial will show you why dependency injection makes your life easier.
+Let's build a real web API in 10 minutes. We'll create a user service with authentication to show you how godi makes your life easier.
 
-## Why Use Dependency Injection?
+## Why Dependency Injection?
 
-Imagine you're building a web app. Without DI, you might write:
+**The Problem**: Your app is growing. Every time you add a dependency, you update 20 files. Testing requires complex setup. Sound familiar?
 
-```go
-func main() {
-    // Manual setup - everything depends on everything else
-    logger := NewLogger()
-    db := NewDatabase(logger)
-    userRepo := NewUserRepository(db, logger)
-    authService := NewAuthService(userRepo, logger)
-    handler := NewHandler(authService, logger)
+**The Solution**: godi wires everything automatically. Change a constructor once, godi handles the rest.
 
-    // What if you need to add email service to authService?
-    // You'd have to update EVERY place that creates authService!
-}
-```
-
-With godi, you just describe what you need:
-
-```go
-func main() {
-    services := godi.NewServiceCollection()
-
-    // Tell godi about your services
-    services.AddSingleton(NewLogger)
-    services.AddSingleton(NewDatabase)
-    services.AddScoped(NewUserRepository)
-    services.AddScoped(NewAuthService)
-
-    // godi figures out the wiring for you!
-    provider, _ := services.BuildServiceProvider()
-
-    // Get what you need
-    handler, _ := godi.Resolve[*Handler](provider)
-}
-```
-
-## Your First App: A Simple API
-
-Let's build a real API with users and sessions. Create a new project:
+## Installation
 
 ```bash
-mkdir my-api && cd my-api
-go mod init my-api
 go get github.com/junioryono/godi
 ```
 
+## Your First App: User API
+
+Let's build a real API with users and authentication. We'll use modules to keep things organized.
+
 ### Step 1: Define Your Services
 
-Create `main.go`:
+Create these files in your project:
+
+**services/logger.go**
 
 ```go
-package main
+package services
 
-import (
-    "context"
-    "fmt"
-    "log"
-    "sync"
-    "time"
+import "log"
 
-    "github.com/junioryono/godi"
-)
-
-// Logger - everyone needs logging
 type Logger interface {
     Info(msg string)
     Error(msg string)
@@ -86,227 +47,297 @@ func (l *ConsoleLogger) Info(msg string) {
 func (l *ConsoleLogger) Error(msg string) {
     log.Printf("[ERROR] %s", msg)
 }
+```
 
-// Database - shared connection
+**services/database.go**
+
+```go
+package services
+
 type Database struct {
     logger Logger
-    // In real app: *sql.DB
 }
 
 func NewDatabase(logger Logger) *Database {
-    logger.Info("Connecting to database...")
+    logger.Info("Database connected")
     return &Database{logger: logger}
 }
 
-// UserRepository - data access
-type UserRepository struct {
+func (db *Database) Query(sql string) []map[string]interface{} {
+    db.logger.Info("Executing: " + sql)
+    // Simulate database query
+    return []map[string]interface{}{
+        {"id": 1, "name": "Alice"},
+        {"id": 2, "name": "Bob"},
+    }
+}
+```
+
+**services/user.go**
+
+```go
+package services
+
+import "fmt"
+
+type UserService struct {
     db     *Database
     logger Logger
 }
 
-func NewUserRepository(db *Database, logger Logger) *UserRepository {
-    return &UserRepository{db: db, logger: logger}
+func NewUserService(db *Database, logger Logger) *UserService {
+    return &UserService{db: db, logger: logger}
 }
 
-func (r *UserRepository) GetUser(id string) string {
-    r.logger.Info(fmt.Sprintf("Getting user %s", id))
-    return fmt.Sprintf("User-%s", id)
+func (s *UserService) GetUser(id int) (string, error) {
+    s.logger.Info(fmt.Sprintf("Getting user %d", id))
+    users := s.db.Query(fmt.Sprintf("SELECT * FROM users WHERE id = %d", id))
+
+    if len(users) > 0 {
+        return users[0]["name"].(string), nil
+    }
+    return "", fmt.Errorf("user not found")
 }
 
-// AuthService - business logic
-type AuthService struct {
-    repo   *UserRepository
-    logger Logger
-}
-
-func NewAuthService(repo *UserRepository, logger Logger) *AuthService {
-    return &AuthService{repo: repo, logger: logger}
-}
-
-func (s *AuthService) Login(userID string) string {
-    user := s.repo.GetUser(userID)
-    s.logger.Info(fmt.Sprintf("User %s logged in", user))
-    return fmt.Sprintf("session-for-%s", user)
+func (s *UserService) CreateUser(name string) error {
+    s.logger.Info(fmt.Sprintf("Creating user: %s", name))
+    // In real app, insert into database
+    return nil
 }
 ```
 
-### Step 2: Wire Everything with godi
+### Step 2: Create Modules
 
-Add to your `main.go`:
+This is where godi shines. Create **modules/modules.go**:
 
 ```go
+package modules
+
+import (
+    "github.com/junioryono/godi"
+    "myapp/services"
+)
+
+// CoreModule - Infrastructure services that rarely change
+var CoreModule = godi.NewModule("core",
+    godi.AddSingleton(services.NewLogger),
+    godi.AddSingleton(services.NewDatabase),
+)
+
+// UserModule - All user-related services
+var UserModule = godi.NewModule("user",
+    CoreModule, // Depends on core services
+    godi.AddScoped(services.NewUserService),
+)
+
+// AppModule - Your complete application
+var AppModule = godi.NewModule("app",
+    UserModule,
+    // Add more modules as your app grows!
+)
+```
+
+### Step 3: Wire Everything in main.go
+
+```go
+package main
+
+import (
+    "fmt"
+    "log"
+    "net/http"
+
+    "github.com/junioryono/godi"
+    "myapp/modules"
+    "myapp/services"
+)
+
 func main() {
-    // Create service collection
-    services := godi.NewServiceCollection()
+    // Create DI container
+    collection := godi.NewServiceCollection()
 
-    // Register services - order doesn't matter!
-    services.AddSingleton(NewLogger)        // One logger for entire app
-    services.AddSingleton(NewDatabase)      // One DB connection
-    services.AddScoped(NewUserRepository)   // New repo per request
-    services.AddScoped(NewAuthService)      // New service per request
+    // Add your app module (includes everything!)
+    if err := collection.AddModules(modules.AppModule); err != nil {
+        log.Fatal(err)
+    }
 
-    // Build the container
-    provider, err := services.BuildServiceProvider()
+    // Build the provider
+    provider, err := collection.BuildServiceProvider()
     if err != nil {
         log.Fatal(err)
     }
     defer provider.Close()
 
-    // Simulate handling requests
-    simulateRequests(provider)
+    // Set up HTTP handlers
+    http.HandleFunc("/users/", handleUser(provider))
+
+    log.Println("Server starting on :8080")
+    log.Fatal(http.ListenAndServe(":8080", nil))
 }
 
-func simulateRequests(provider godi.ServiceProvider) {
-    // Simulate 3 concurrent requests
-    var wg sync.WaitGroup
+func handleUser(provider godi.ServiceProvider) http.HandlerFunc {
+    return func(w http.ResponseWriter, r *http.Request) {
+        // Create a scope for this request
+        scope := provider.CreateScope(r.Context())
+        defer scope.Close()
 
-    for i := 1; i <= 3; i++ {
-        wg.Add(1)
-        go func(requestID int) {
-            defer wg.Done()
+        // Get services for this request
+        userService, err := godi.Resolve[*services.UserService](scope.ServiceProvider())
+        if err != nil {
+            http.Error(w, "Service error", http.StatusInternalServerError)
+            return
+        }
 
-            // Each request gets its own scope
-            scope := provider.CreateScope(context.Background())
-            defer scope.Close()
+        // Use the service
+        user, err := userService.GetUser(1)
+        if err != nil {
+            http.Error(w, "User not found", http.StatusNotFound)
+            return
+        }
 
-            // Get the auth service - godi injects all dependencies!
-            authService, _ := godi.Resolve[*AuthService](scope)
-
-            // Use the service
-            session := authService.Login(fmt.Sprintf("user-%d", requestID))
-            fmt.Printf("Request %d: %s\n", requestID, session)
-        }(i)
+        fmt.Fprintf(w, "User: %s\n", user)
     }
-
-    wg.Wait()
 }
 ```
 
-Run it:
+### Step 4: Run Your App
 
 ```bash
-go run main.go
+go run .
+
+# In another terminal:
+curl http://localhost:8080/users/
+# Output: User: Alice
 ```
 
-You'll see the logger and database are created once (singleton), but each request gets its own service instances (scoped).
+## What Just Happened?
 
-## Understanding Service Lifetimes
+1. **We defined services** - Just regular Go types
+2. **We created modules** - Grouped related services
+3. **We used scopes** - Each request gets fresh instances
+4. **godi wired everything** - No manual dependency management!
 
-### Singleton - Shared Across Everything
+## Adding Features is Easy
 
-Use for:
-
-- Loggers
-- Database connections
-- Configuration
-- Caches
+Want to add caching? Just update the module:
 
 ```go
-services.AddSingleton(NewLogger)     // Created once, shared by all
-services.AddSingleton(NewDatabase)   // One connection pool
-```
-
-### Scoped - One Per Request/Operation
-
-Use for:
-
-- Database transactions
-- Request context
-- User sessions
-- Unit of work
-
-```go
-services.AddScoped(NewUserRepository)  // Fresh instance per request
-services.AddScoped(NewAuthService)     // Isolated from other requests
-```
-
-## Real Example: Why Scoped Services Matter
-
-Here's a real scenario showing why scoped services are powerful:
-
-```go
-// Session holds user info for current request
-type Session struct {
-    UserID    string
-    UserName  string
-    StartTime time.Time
+// services/cache.go
+type Cache interface {
+    Get(key string) (interface{}, bool)
+    Set(key string, value interface{})
 }
 
-func NewSession() *Session {
-    return &Session{
-        StartTime: time.Now(),
+type MemoryCache struct {
+    data map[string]interface{}
+}
+
+func NewCache() Cache {
+    return &MemoryCache{data: make(map[string]interface{})}
+}
+
+// Update UserService constructor
+func NewUserService(db *Database, logger Logger, cache Cache) *UserService {
+    return &UserService{db: db, logger: logger, cache: cache}
+}
+
+// Update CoreModule
+var CoreModule = godi.NewModule("core",
+    godi.AddSingleton(services.NewLogger),
+    godi.AddSingleton(services.NewDatabase),
+    godi.AddSingleton(services.NewCache), // Just add this!
+)
+```
+
+That's it! godi automatically provides the cache to UserService. No need to update main.go or anywhere else.
+
+## Testing is a Breeze
+
+Create **services/user_test.go**:
+
+```go
+package services_test
+
+import (
+    "testing"
+    "github.com/junioryono/godi"
+    "myapp/services"
+)
+
+// Mock implementations
+type MockDatabase struct{}
+
+func (m *MockDatabase) Query(sql string) []map[string]interface{} {
+    return []map[string]interface{}{
+        {"id": 1, "name": "Test User"},
     }
 }
 
-// AuditLogger logs with session context
-type AuditLogger struct {
-    session *Session
-    logger  Logger
-}
+type MockLogger struct{}
+func (m *MockLogger) Info(msg string) {}
+func (m *MockLogger) Error(msg string) {}
 
-func NewAuditLogger(session *Session, logger Logger) *AuditLogger {
-    return &AuditLogger{session: session, logger: logger}
-}
+func TestUserService(t *testing.T) {
+    // Create test module with mocks
+    testModule := godi.NewModule("test",
+        godi.AddSingleton(func() services.Logger { return &MockLogger{} }),
+        godi.AddSingleton(func() *services.Database { return &MockDatabase{} }),
+        godi.AddScoped(services.NewUserService),
+    )
 
-func (a *AuditLogger) LogAction(action string) {
-    a.logger.Info(fmt.Sprintf("[User: %s] %s (session time: %v)",
-        a.session.UserName, action, time.Since(a.session.StartTime)))
-}
+    // Set up DI
+    collection := godi.NewServiceCollection()
+    collection.AddModules(testModule)
 
-// UserService uses the audit logger
-type UserServiceV2 struct {
-    audit *AuditLogger
-}
+    provider, _ := collection.BuildServiceProvider()
+    defer provider.Close()
 
-func NewUserServiceV2(audit *AuditLogger) *UserServiceV2 {
-    return &UserServiceV2{audit: audit}
-}
+    // Test your service
+    userService, _ := godi.Resolve[*services.UserService](provider)
 
-func (s *UserServiceV2) UpdateProfile(name string) {
-    s.audit.LogAction(fmt.Sprintf("Updated profile to %s", name))
-}
+    user, err := userService.GetUser(1)
+    if err != nil {
+        t.Fatal(err)
+    }
 
-// Usage
-func handleRequest(provider godi.ServiceProvider, userID, userName string) {
-    // Create scope for this request
-    scope := provider.CreateScope(context.Background())
-    defer scope.Close()
-
-    // Get session and populate it
-    session, _ := godi.Resolve[*Session](scope)
-    session.UserID = userID
-    session.UserName = userName
-
-    // Get service - it automatically has access to this request's session!
-    userService, _ := godi.Resolve[*UserServiceV2](scope)
-    userService.UpdateProfile("New Name")
-
-    // The audit log shows: [User: John] Updated profile to New Name (session time: 50ms)
+    if user != "Test User" {
+        t.Errorf("Expected Test User, got %s", user)
+    }
 }
 ```
 
-The magic: Every service in this request's scope automatically shares the same Session instance!
+## Key Concepts
+
+### 1. Services
+
+Your regular Go types - no magic, no framework dependencies.
+
+### 2. Modules
+
+Groups of related services. Makes your code organized and reusable.
+
+### 3. Lifetimes
+
+- **Singleton**: One instance for the entire app (database, logger)
+- **Scoped**: New instance per request (user service, repositories)
+
+### 4. Scopes
+
+Isolate each request. Perfect for web apps!
 
 ## Next Steps
 
-Now you understand the basics:
+✅ You've learned the basics! Here's what to explore next:
 
-1. **Services** are just regular Go types
-2. **Constructors** are functions that godi calls
-3. **Lifetimes** control when instances are created
-4. **Scopes** isolate requests from each other
+1. **[Web Application Tutorial](web-application.md)** - Build a complete REST API
+2. **[Testing Guide](testing.md)** - Write better tests with DI
+3. **[Module Patterns](../howto/modules.md)** - Advanced module techniques
 
-Ready for more? Check out:
+## Tips for Success
 
-- [Building a Web API](web-application.md) - Real HTTP server with DI
-- [Using Modules](../howto/modules.md) - Organize services into groups
-- [Testing with DI](testing.md) - Mock services easily
+1. **Start with modules** - Even for small apps, they keep things organized
+2. **Use scopes for web apps** - Each request should be isolated
+3. **Keep constructors simple** - Just dependency injection, no logic
+4. **Test with mocks** - Swap real services for test doubles
 
-## Key Takeaways
-
-✅ **Start simple** - You don't need every feature right away
-✅ **Use scopes for requests** - Each request gets isolated instances
-✅ **Let godi wire dependencies** - Just describe what you need
-✅ **Test easily** - Swap real services for mocks
-
-Remember: The goal is to write less boilerplate and focus on your business logic!
+Remember: godi is just a tool to wire your dependencies. Your code stays clean, testable, and Go-idiomatic!

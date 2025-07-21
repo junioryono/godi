@@ -1,10 +1,16 @@
-# Quick Start: From Simple to Advanced
+# Quick Start - Learn godi in 5 Minutes
 
-This guide shows you how to progressively adopt godi features as your needs grow.
+Start simple, add features as you need them. Here's godi from zero to hero.
 
-## Level 1: Just the Basics (5 minutes)
+## Install
 
-Start with the absolute minimum:
+```bash
+go get github.com/junioryono/godi
+```
+
+## Level 1: Basic DI (Start Here!)
+
+The simplest possible example:
 
 ```go
 package main
@@ -14,291 +20,326 @@ import (
     "github.com/junioryono/godi"
 )
 
-// Your types
+// Your service
+type Greeter struct {
+    name string
+}
+
+func NewGreeter() *Greeter {
+    return &Greeter{name: "World"}
+}
+
+func (g *Greeter) Greet() string {
+    return fmt.Sprintf("Hello, %s!", g.name)
+}
+
+// Module to organize services
+var AppModule = godi.NewModule("app",
+    godi.AddSingleton(NewGreeter),
+)
+
+func main() {
+    // Setup
+    services := godi.NewServiceCollection()
+    services.AddModules(AppModule)
+
+    provider, _ := services.BuildServiceProvider()
+    defer provider.Close()
+
+    // Use
+    greeter, _ := godi.Resolve[*Greeter](provider)
+    fmt.Println(greeter.Greet()) // Hello, World!
+}
+```
+
+**That's it!** You're using dependency injection.
+
+## Level 2: Multiple Services
+
+Real apps have multiple services that depend on each other:
+
+```go
+// Logger service
 type Logger struct{}
-func (l *Logger) Log(msg string) { fmt.Println(msg) }
 
-type Database struct {
-    logger *Logger
-}
-
-type UserService struct {
-    db     *Database
-    logger *Logger
-}
-
-// Constructors
 func NewLogger() *Logger {
     return &Logger{}
 }
 
+func (l *Logger) Log(msg string) {
+    fmt.Printf("[LOG] %s\n", msg)
+}
+
+// Database service (depends on Logger)
+type Database struct {
+    logger *Logger
+}
+
 func NewDatabase(logger *Logger) *Database {
+    logger.Log("Database connected")
     return &Database{logger: logger}
+}
+
+// Module with multiple services
+var AppModule = godi.NewModule("app",
+    godi.AddSingleton(NewLogger),
+    godi.AddSingleton(NewDatabase),
+)
+
+func main() {
+    services := godi.NewServiceCollection()
+    services.AddModules(AppModule)
+
+    provider, _ := services.BuildServiceProvider()
+    defer provider.Close()
+
+    // godi automatically injects Logger into Database!
+    db, _ := godi.Resolve[*Database](provider)
+    // Output: [LOG] Database connected
+}
+```
+
+**Key insight**: You never manually created the Logger for Database. godi did it!
+
+## Level 3: Web Apps with Scopes
+
+For web apps, you want each request to have its own instances:
+
+```go
+// User service (scoped - new instance per request)
+type UserService struct {
+    db     *Database
+    logger *Logger
 }
 
 func NewUserService(db *Database, logger *Logger) *UserService {
     return &UserService{db: db, logger: logger}
 }
 
-func main() {
-    // Setup
-    services := godi.NewServiceCollection()
-    services.AddSingleton(NewLogger)
-    services.AddSingleton(NewDatabase)
-    services.AddSingleton(NewUserService)
+func (s *UserService) GetUser(id int) string {
+    s.logger.Log(fmt.Sprintf("Getting user %d", id))
+    return fmt.Sprintf("User-%d", id)
+}
 
-    // Use
+// Modules can depend on other modules
+var CoreModule = godi.NewModule("core",
+    godi.AddSingleton(NewLogger),
+    godi.AddSingleton(NewDatabase),
+)
+
+var WebModule = godi.NewModule("web",
+    CoreModule, // Include core services
+    godi.AddScoped(NewUserService), // Scoped for requests!
+)
+
+// HTTP handler
+func handleRequest(provider godi.ServiceProvider) http.HandlerFunc {
+    return func(w http.ResponseWriter, r *http.Request) {
+        // Create scope for this request
+        scope := provider.CreateScope(r.Context())
+        defer scope.Close()
+
+        // Get service for this request
+        userService, _ := godi.Resolve[*UserService](scope.ServiceProvider())
+
+        user := userService.GetUser(1)
+        fmt.Fprint(w, user)
+    }
+}
+```
+
+**Why scopes?** Each request gets its own UserService. Perfect for request-specific data!
+
+## Level 4: Testing with Mocks
+
+Testing is where DI really shines:
+
+```go
+// Define interfaces for mocking
+type Database interface {
+    Query(sql string) []string
+}
+
+type Logger interface {
+    Log(msg string)
+}
+
+// Real implementations
+type SQLDatabase struct{}
+func (d *SQLDatabase) Query(sql string) []string {
+    // Real database query
+    return []string{"real", "data"}
+}
+
+// Test implementations
+type MockDatabase struct{}
+func (d *MockDatabase) Query(sql string) []string {
+    return []string{"test", "data"}
+}
+
+type MockLogger struct{}
+func (l *MockLogger) Log(msg string) {
+    // Silent in tests
+}
+
+// Test module with mocks
+var TestModule = godi.NewModule("test",
+    godi.AddSingleton(func() Database { return &MockDatabase{} }),
+    godi.AddSingleton(func() Logger { return &MockLogger{} }),
+    godi.AddScoped(NewUserService),
+)
+
+func TestUserService(t *testing.T) {
+    services := godi.NewServiceCollection()
+    services.AddModules(TestModule) // Use test module!
+
     provider, _ := services.BuildServiceProvider()
     defer provider.Close()
 
     userService, _ := godi.Resolve[*UserService](provider)
-    userService.logger.Log("It works!")
+    // Test with mocks - no real database needed!
 }
 ```
 
-**That's it!** You're using DI. Everything else builds on this.
+## Level 5: Module Organization
 
-## Level 2: Add Scopes for Web Apps (10 minutes)
-
-When building web APIs, use scopes for request isolation:
+As your app grows, organize with multiple modules:
 
 ```go
-// Add a request-scoped service
-type RequestContext struct {
-    UserID    string
-    RequestID string
-}
-
-func NewRequestContext() *RequestContext {
-    return &RequestContext{
-        RequestID: uuid.NewString(),
-    }
-}
-
-// Update registration
-services.AddSingleton(NewLogger)
-services.AddSingleton(NewDatabase)
-services.AddScoped(NewRequestContext)  // One per request!
-services.AddScoped(NewUserService)      // One per request!
-
-// Handle HTTP requests
-func HandleRequest(provider godi.ServiceProvider) http.HandlerFunc {
-    return func(w http.ResponseWriter, r *http.Request) {
-        // Create request scope
-        scope := provider.CreateScope(r.Context())
-        defer scope.Close()
-
-        // Set request info
-        ctx, _ := godi.Resolve[*RequestContext](scope.ServiceProvider())
-        ctx.UserID = getUserID(r)
-
-        // Get service - it has access to request context!
-        service, _ := godi.Resolve[*UserService](scope.ServiceProvider())
-        service.DoSomething()
-    }
-}
-```
-
-**Why scopes?** Each request gets its own instances. No data leaks between requests!
-
-## Level 3: Add Interfaces for Testing (15 minutes)
-
-Make testing easy with interfaces:
-
-```go
-// Define interfaces
-type Logger interface {
-    Log(string)
-}
-
-type Database interface {
-    Query(string) ([]Row, error)
-}
-
-type UserRepository interface {
-    GetUser(id string) (*User, error)
-}
-
-// Implementations
-type ConsoleLogger struct{}
-func (l *ConsoleLogger) Log(msg string) { fmt.Println(msg) }
-
-type PostgresDB struct { conn *sql.DB }
-func (d *PostgresDB) Query(sql string) ([]Row, error) { /* ... */ }
-
-// Easy testing
-func TestUserService(t *testing.T) {
-    services := godi.NewServiceCollection()
-
-    // Use mocks
-    services.AddSingleton(func() Logger {
-        return &MockLogger{t: t}
-    })
-    services.AddSingleton(func() Database {
-        return &MockDB{
-            users: []User{{ID: "123", Name: "Test"}},
-        }
-    })
-    services.AddScoped(NewUserService)
-
-    provider, _ := services.BuildServiceProvider()
-    service, _ := godi.Resolve[UserService](provider)
-
-    // Test with mocks!
-    user, err := service.GetUser("123")
-    assert.NoError(t, err)
-    assert.Equal(t, "Test", user.Name)
-}
-```
-
-**Why interfaces?** Swap real implementations for test doubles easily.
-
-## Level 4: Organize with Modules (20 minutes)
-
-When your app grows, organize with modules:
-
-```go
-// auth/module.go
-package auth
-
-var Module = godi.Module("auth",
-    godi.AddSingleton(NewPasswordHasher),
-    godi.AddSingleton(NewJWTService),
-    godi.AddScoped(NewAuthService),
-)
-
-// database/module.go
-package database
-
-var Module = godi.Module("database",
-    godi.AddSingleton(NewConnection),
-    godi.AddScoped(NewTransaction),
+// features/user/module.go
+var UserModule = godi.NewModule("user",
     godi.AddScoped(NewUserRepository),
+    godi.AddScoped(NewUserService),
+    godi.AddScoped(NewUserHandler),
 )
 
-// main.go - clean and organized!
+// features/auth/module.go
+var AuthModule = godi.NewModule("auth",
+    godi.AddSingleton(NewTokenService),
+    godi.AddScoped(NewAuthService),
+    godi.AddScoped(NewAuthMiddleware),
+)
+
+// infrastructure/module.go
+var InfraModule = godi.NewModule("infra",
+    godi.AddSingleton(NewLogger),
+    godi.AddSingleton(NewDatabase),
+    godi.AddSingleton(NewCache),
+)
+
+// main.go
+var AppModule = godi.NewModule("app",
+    InfraModule,
+    UserModule,
+    AuthModule,
+)
+
 func main() {
     services := godi.NewServiceCollection()
-
-    services.AddModules(
-        config.Module,
-        database.Module,
-        auth.Module,
-        api.Module,
-    )
-
-    provider, _ := services.BuildServiceProvider()
+    services.AddModules(AppModule) // Everything wired!
     // ...
 }
 ```
 
-**Why modules?** Keep related services together. Reuse across projects.
+## Common Patterns
 
-## Level 5: Advanced Patterns (as needed)
-
-### Keyed Services (Multiple Implementations)
+### Pattern 1: Configuration
 
 ```go
-// Register variants
-services.AddSingleton(NewFileLogger, godi.Name("file"))
-services.AddSingleton(NewConsoleLogger, godi.Name("console"))
-
-// Use specific one
-logger, _ := godi.ResolveKeyed[Logger](provider, "file")
-```
-
-### Service Groups (Collections)
-
-```go
-// Register multiple
-services.AddSingleton(NewUserValidator, godi.Group("validators"))
-services.AddSingleton(NewEmailValidator, godi.Group("validators"))
-
-// Get all
-type App struct {
-    godi.In
-    Validators []Validator `group:"validators"`
-}
-```
-
-### Decorators (Wrap Services)
-
-```go
-// Add behavior
-func LoggingDecorator(service UserService, logger Logger) UserService {
-    return &loggingUserService{inner: service, logger: logger}
+type Config struct {
+    DatabaseURL string
+    Port        int
 }
 
-services.Decorate(LoggingDecorator)
-```
+func NewConfig() *Config {
+    return &Config{
+        DatabaseURL: os.Getenv("DATABASE_URL"),
+        Port:        8080,
+    }
+}
 
-## Decision Tree: What Do I Need?
-
-```
-Start Here
-    │
-    ├─ Building a small CLI tool?
-    │   └─ Use Level 1 (Basic DI)
-    │
-    ├─ Building a web API?
-    │   └─ Use Level 2 (Add Scopes)
-    │
-    ├─ Need unit tests?
-    │   └─ Use Level 3 (Add Interfaces)
-    │
-    ├─ App has 20+ services?
-    │   └─ Use Level 4 (Add Modules)
-    │
-    └─ Need multiple implementations or advanced patterns?
-        └─ Use Level 5 (Advanced features)
-```
-
-## Common Progression Path
-
-Most projects follow this path:
-
-1. **Week 1**: Basic DI for wiring (Level 1)
-2. **Week 2**: Add scopes for web requests (Level 2)
-3. **Week 3**: Add interfaces for testing (Level 3)
-4. **Month 2**: Organize with modules (Level 4)
-5. **Month 3+**: Add advanced features as needed (Level 5)
-
-## Key Principle: Start Simple
-
-❌ **Don't** start with every feature:
-
-```go
-// Too much too soon!
-services.AddModules(
-    CoreModule,
-    WithDecoration(LoggingDecorator),
-    WithKeyedServices("primary", "secondary"),
-    WithGroups("validators", "handlers"),
+var ConfigModule = godi.NewModule("config",
+    godi.AddSingleton(NewConfig),
 )
 ```
 
-✅ **Do** start simple and evolve:
+### Pattern 2: Interfaces for Flexibility
 
 ```go
-// Day 1
-services.AddSingleton(NewLogger)
-services.AddSingleton(NewDatabase)
+type Cache interface {
+    Get(key string) (interface{}, bool)
+    Set(key string, value interface{})
+}
 
-// Week 2 - add scopes
-services.AddScoped(NewUserService)
+// Easy to swap implementations
+var DevModule = godi.NewModule("dev",
+    godi.AddSingleton(func() Cache { return NewMemoryCache() }),
+)
 
-// Month 2 - add modules
-services.AddModules(DatabaseModule)
+var ProdModule = godi.NewModule("prod",
+    godi.AddSingleton(func() Cache { return NewRedisCache() }),
+)
 ```
 
-## Summary
+### Pattern 3: Groups of Services
 
-1. **Start with basic DI** - It's just functions and types
-2. **Add scopes** when you build web apps
-3. **Add interfaces** when you need tests
-4. **Add modules** when organization matters
-5. **Add advanced features** when you actually need them
+```go
+// Register multiple validators
+var ValidatorModule = godi.NewModule("validators",
+    godi.AddScoped(NewEmailValidator, godi.Group("validators")),
+    godi.AddScoped(NewPhoneValidator, godi.Group("validators")),
+    godi.AddScoped(NewAddressValidator, godi.Group("validators")),
+)
 
-The beauty of godi: You can start simple and grow as your needs grow. No big rewrites, just progressive enhancement.
+// Use all validators
+type ValidationService struct {
+    validators []Validator
+}
 
-**Ready?** Copy the Level 1 example and start coding!
+func NewValidationService(in struct {
+    godi.In
+    Validators []Validator `group:"validators"`
+}) *ValidationService {
+    return &ValidationService{validators: in.Validators}
+}
+```
+
+## Cheat Sheet
+
+```go
+// 1. Create modules (group related services)
+var MyModule = godi.NewModule("name",
+    godi.AddSingleton(NewService),  // One instance
+    godi.AddScoped(NewService),      // Per-request instance
+)
+
+// 2. Include other modules
+var AppModule = godi.NewModule("app",
+    CoreModule,    // Include dependencies
+    MyModule,
+)
+
+// 3. Setup container
+services := godi.NewServiceCollection()
+services.AddModules(AppModule)
+provider, _ := services.BuildServiceProvider()
+defer provider.Close()
+
+// 4. Use services
+service, _ := godi.Resolve[*MyService](provider)
+
+// 5. For web requests
+scope := provider.CreateScope(ctx)
+defer scope.Close()
+service, _ := godi.Resolve[*MyService](scope.ServiceProvider())
+```
+
+## What's Next?
+
+You now know 90% of what you need! For more:
+
+- **[Full Tutorial](getting-started.md)** - Build a complete API
+- **[Module Patterns](../howto/modules.md)** - Advanced organization
+- **[Testing Guide](testing.md)** - Test like a pro
+
+**Remember**: Start simple with basic modules, add features as you need them!
