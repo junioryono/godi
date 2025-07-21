@@ -338,7 +338,7 @@ import (
     "strings"
 
     "blog-api/services"
-    "github.com/junioryono/godi"
+    "github.com/junioryono/godi/v2"
 )
 
 type contextKey string
@@ -399,7 +399,7 @@ import (
 
     "blog-api/models"
     "blog-api/services"
-    "github.com/junioryono/godi"
+    "github.com/junioryono/godi/v2"
 )
 
 type AuthHandler struct {
@@ -484,7 +484,7 @@ import (
 
     "blog-api/models"
     "blog-api/services"
-    "github.com/junioryono/godi"
+    "github.com/junioryono/godi/v2"
 )
 
 type PostHandler struct {
@@ -557,7 +557,7 @@ package modules
 
 import (
     "blog-api/services"
-    "github.com/junioryono/godi"
+    "github.com/junioryono/godi/v2"
 )
 
 // CoreModule contains shared infrastructure
@@ -573,7 +573,7 @@ package modules
 
 import (
     "blog-api/services"
-    "github.com/junioryono/godi"
+    "github.com/junioryono/godi/v2"
 )
 
 // AuthModule contains authentication services
@@ -590,7 +590,7 @@ package modules
 
 import (
     "blog-api/services"
-    "github.com/junioryono/godi"
+    "github.com/junioryono/godi/v2"
 )
 
 // BlogModule contains blog services
@@ -608,7 +608,7 @@ package modules
 
 import (
     "blog-api/handlers"
-    "github.com/junioryono/godi"
+    "github.com/junioryono/godi/v2"
 )
 
 // WebModule contains HTTP handlers
@@ -634,7 +634,7 @@ import (
     "blog-api/handlers"
     "blog-api/modules"
     "github.com/gorilla/mux"
-    "github.com/junioryono/godi"
+    "github.com/junioryono/godi/v2"
 )
 
 func main() {
