@@ -10,7 +10,7 @@ Get up and running in 30 seconds.
 ## Install
 
 ```bash
-go get github.com/junioryono/godi
+go get github.com/junioryono/godi/v2
 ```
 
 ## Verify Installation
@@ -79,7 +79,7 @@ Make sure you're in a Go module:
 
 ```bash
 go mod init myapp
-go get github.com/junioryono/godi
+go get github.com/junioryono/godi/v2
 ```
 
 ### "Cannot find package"

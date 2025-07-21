@@ -105,7 +105,7 @@ services.AddSingleton(func() Database {
 ## Installation
 
 ```bash
-go get github.com/junioryono/godi
+go get github.com/junioryono/godi/v2
 ```
 
 ## Common Patterns

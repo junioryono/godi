@@ -19,7 +19,7 @@ Create a new project:
 ```bash
 mkdir blog-api && cd blog-api
 go mod init blog-api
-go get github.com/junioryono/godi
+go get github.com/junioryono/godi/v2
 go get github.com/gorilla/mux
 go get github.com/golang-jwt/jwt/v5
 ```
