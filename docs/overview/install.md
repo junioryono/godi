@@ -1,37 +1,21 @@
 # Installing godi
 
-godi is distributed as a Go module with zero runtime dependencies (besides the excellent [dig](https://github.com/uber-go/dig) which is bundled).
+Get up and running in 30 seconds.
 
 ## Requirements
 
 - Go 1.21 or later
-- A Go module (recommended)
+- That's it!
 
-## Installation
-
-### Using Go Modules (Recommended)
-
-Add godi to your project:
+## Install
 
 ```bash
 go get github.com/junioryono/godi
 ```
 
-This will add godi to your `go.mod` file:
-
-```go
-go get github.com/junioryono/godi@{sub}`version`
-```
-
-### Import in Your Code
-
-```go
-import "github.com/junioryono/godi"
-```
-
 ## Verify Installation
 
-Create a simple test file to verify the installation:
+Create `main.go`:
 
 ```go
 package main
@@ -42,9 +26,23 @@ import (
 )
 
 func main() {
-    collection := godi.NewServiceCollection()
-    fmt.Println("godi installed successfully!")
-    fmt.Printf("Collection type: %T\n", collection)
+    // Create a simple module
+    appModule := godi.NewModule("app",
+        godi.AddSingleton(func() string {
+            return "Hello from godi!"
+        }),
+    )
+
+    // Build container
+    services := godi.NewServiceCollection()
+    services.AddModules(appModule)
+
+    provider, _ := services.BuildServiceProvider()
+    defer provider.Close()
+
+    // Use it
+    message, _ := godi.Resolve[string](provider)
+    fmt.Println(message)
 }
 ```
 
@@ -52,60 +50,52 @@ Run it:
 
 ```bash
 go run main.go
+# Output: Hello from godi!
 ```
 
-## Version Management
+Success! You're ready to use godi.
 
-### Check Current Version
+## VS Code Setup (Recommended)
+
+For the best experience:
+
+1. Install the [Go extension](https://marketplace.visualstudio.com/items?itemName=golang.go)
+2. You'll get:
+   - Auto-completion for godi functions
+   - Type checking
+   - Quick documentation
+
+## What's Next?
+
+- **New to DI?** Read [Why Dependency Injection?](why-di.md)
+- **Ready to code?** Jump to [Quick Start](../tutorials/quick-start.md)
+- **Building a web app?** See [Getting Started](../tutorials/getting-started.md)
+
+## Troubleshooting
+
+### "Module not found"
+
+Make sure you're in a Go module:
 
 ```bash
-go list -m github.com/junioryono/godi
+go mod init myapp
+go get github.com/junioryono/godi
 ```
 
-### Update to Latest
+### "Cannot find package"
+
+Update your Go version:
 
 ```bash
-go get -u github.com/junioryono/godi
+go version  # Should be 1.21+
 ```
 
-### Use Specific Version
+### IDE not recognizing godi
+
+Restart your IDE after installation, or run:
 
 ```bash
-go get github.com/junioryono/godi@{sub}`version`
-```
-
-## Development Setup
-
-If you want to contribute to godi:
-
-```bash
-# Clone the repository
-git clone https://github.com/junioryono/godi.git
-cd godi
-
-# Install dependencies
 go mod download
-
-# Run tests
-go test ./...
-
-# Run tests with coverage
-go test -cover ./...
 ```
 
-## Editor Support
-
-godi works great with any Go development environment:
-
-- **VS Code**: Install the official Go extension
-- **GoLand**: Full support out of the box
-- **Vim/Neovim**: Use gopls for LSP support
-- **Emacs**: Use go-mode or lsp-mode
-
-The type-safe generic helpers in godi provide excellent IDE support with auto-completion and type checking.
-
-## Next Steps
-
-- Read [Why Dependency Injection?](why-di.md) to understand the benefits
-- Follow the [Getting Started Tutorial](../tutorials/getting-started.md)
-- Explore [Core Concepts](concepts.md)
+That's all! godi has zero runtime dependencies (except the excellent [dig](https://github.com/uber-go/dig) which is included).

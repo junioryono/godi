@@ -1,302 +1,234 @@
 # Best Practices
 
-This guide covers best practices for using godi effectively in your Go applications.
+Follow these guidelines to build clean, maintainable applications with godi.
 
-## Service Design
+## Use Modules from the Start
 
-### Use Interfaces
-
-Always define your services as interfaces:
+Even for small apps, modules keep your code organized:
 
 ```go
-// Good: Interface-based design
-type UserService interface {
-    GetUser(ctx context.Context, id string) (*User, error)
-    CreateUser(ctx context.Context, user *User) error
-    UpdateUser(ctx context.Context, user *User) error
-    DeleteUser(ctx context.Context, id string) error
-}
+// ✅ Good: Organized with modules
+var CoreModule = godi.NewModule("core",
+    godi.AddSingleton(NewConfig),
+    godi.AddSingleton(NewLogger),
+)
 
-type userService struct {
-    repo   UserRepository
-    logger Logger
-    cache  Cache
-}
+var DataModule = godi.NewModule("data",
+    CoreModule,
+    godi.AddSingleton(NewDatabase),
+    godi.AddScoped(NewRepository),
+)
 
-func NewUserService(repo UserRepository, logger Logger, cache Cache) UserService {
-    return &userService{
-        repo:   repo,
-        logger: logger,
-        cache:  cache,
-    }
-}
+var AppModule = godi.NewModule("app",
+    DataModule,
+    godi.AddScoped(NewUserService),
+)
+
+// ❌ Avoid: Scattered registrations
+services.AddSingleton(NewConfig)
+services.AddSingleton(NewLogger)
+services.AddSingleton(NewDatabase)
+services.AddScoped(NewRepository)
+services.AddScoped(NewUserService)
 ```
 
-**Benefits:**
+## Design for Interfaces
 
-- Easy testing with mocks
-- Clear contracts between components
-- Flexibility to change implementations
-- Better documentation
-
-### Constructor Injection
-
-Always use constructor injection, not property injection:
+Always use interfaces for your services to enable testing and flexibility:
 
 ```go
-// Good: Constructor injection
-type OrderService struct {
-    userRepo  UserRepository
-    orderRepo OrderRepository
-    payment   PaymentGateway
-    logger    Logger
-}
-
-func NewOrderService(
-    userRepo UserRepository,
-    orderRepo OrderRepository,
-    payment PaymentGateway,
-    logger Logger,
-) *OrderService {
-    return &OrderService{
-        userRepo:  userRepo,
-        orderRepo: orderRepo,
-        payment:   payment,
-        logger:    logger,
-    }
-}
-
-// Bad: Property injection
-type BadOrderService struct {
-    UserRepo  UserRepository // Public fields
-    OrderRepo OrderRepository
-}
-```
-
-### Single Responsibility
-
-Each service should have a single, well-defined responsibility:
-
-```go
-// Good: Focused services
-type AuthService interface {
-    Login(username, password string) (*User, error)
-    Logout(token string) error
-    ValidateToken(token string) (*Claims, error)
-}
-
-type UserService interface {
+// ✅ Good: Interface-based design
+type UserRepository interface {
     GetUser(id string) (*User, error)
-    UpdateProfile(id string, profile Profile) error
+    SaveUser(user *User) error
 }
 
-// Bad: Mixed responsibilities
-type BadService interface {
-    // Auth methods
-    Login(username, password string) (*User, error)
+type userRepository struct {
+    db Database
+}
 
-    // User methods
-    GetUser(id string) (*User, error)
+func NewUserRepository(db Database) UserRepository {
+    return &userRepository{db: db}
+}
 
-    // Email methods
-    SendEmail(to, subject, body string) error
+// ❌ Bad: Concrete types everywhere
+func NewUserService(repo *userRepository) *UserService {
+    // Can't mock in tests!
 }
 ```
 
-## Lifetime Management
+## Choose the Right Lifetime
 
-### Choose the Right Lifetime
+### Singleton - Shared Forever
+
+Use for stateless, thread-safe services:
 
 ```go
-// Singleton: Stateless, thread-safe, shared resources
-services.AddSingleton(NewLogger)           // ✅ Stateless
-services.AddSingleton(NewConfiguration)    // ✅ Immutable
-services.AddSingleton(NewMetricsCollector) // ✅ Thread-safe
-
-// Scoped: Request-specific, holds state during request
-services.AddScoped(NewUnitOfWork)          // ✅ Transaction boundary
-services.AddScoped(NewRequestContext)      // ✅ Request metadata
-services.AddScoped(NewRepository)          // ✅ May use scoped transaction
+var InfrastructureModule = godi.NewModule("infra",
+    godi.AddSingleton(NewLogger),        // ✅ Stateless
+    godi.AddSingleton(NewConfiguration), // ✅ Immutable
+    godi.AddSingleton(NewHTTPClient),    // ✅ Thread-safe with pooling
+)
 ```
 
-### Avoid Captive Dependencies
+### Scoped - Per Request/Operation
 
-Never inject a service with a shorter lifetime into one with a longer lifetime:
+Use for stateful, request-specific services:
 
 ```go
-// Bad: Scoped service in singleton
-type BadSingleton struct {
-    scopedService ScopedService // ❌ Will capture first scope's instance
+var RequestModule = godi.NewModule("request",
+    godi.AddScoped(NewTransaction),    // ✅ Request-specific
+    godi.AddScoped(NewUserContext),    // ✅ Contains request data
+    godi.AddScoped(NewAuditLogger),    // ✅ Logs for this request
+)
+```
+
+### Common Mistake: Captive Dependencies
+
+Never inject scoped services into singletons:
+
+```go
+// ❌ BAD: Singleton captures first request's transaction!
+type BadService struct {
+    tx Transaction // Scoped service in singleton
 }
 
-// Good: Use a factory or service provider
-type GoodSingleton struct {
+func NewBadService(tx Transaction) *BadService {
+    return &BadService{tx: tx}
+}
+
+// ✅ GOOD: Use a factory pattern
+type GoodService struct {
     provider godi.ServiceProvider
 }
 
-func (s *GoodSingleton) DoWork(ctx context.Context) error {
+func NewGoodService(provider godi.ServiceProvider) *GoodService {
+    return &GoodService{provider: provider}
+}
+
+func (s *GoodService) DoWork(ctx context.Context) error {
     scope := s.provider.CreateScope(ctx)
     defer scope.Close()
 
-    scopedService, _ := godi.Resolve[ScopedService](scope.ServiceProvider())
-    return scopedService.Process()
+    tx, _ := godi.Resolve[Transaction](scope.ServiceProvider())
+    // Use transaction for this request only
 }
 ```
 
-## Scope Management
-
-### Always Close Scopes
+## Always Close Scopes
 
 ```go
-// Good: Always use defer
+// ✅ Good: Always use defer
 func HandleRequest(provider godi.ServiceProvider) http.HandlerFunc {
     return func(w http.ResponseWriter, r *http.Request) {
         scope := provider.CreateScope(r.Context())
-        defer scope.Close() // ✅ Always cleanup
+        defer scope.Close() // Guaranteed cleanup
 
-        // Handle request
+        // Handle request...
     }
 }
 
-// Bad: Manual cleanup
+// ❌ Bad: Manual cleanup
 func BadHandler(provider godi.ServiceProvider) http.HandlerFunc {
     return func(w http.ResponseWriter, r *http.Request) {
         scope := provider.CreateScope(r.Context())
-
-        // Handle request
-
-        scope.Close() // ❌ May not run if panic occurs
-    }
-}
-```
-
-### One Scope Per Operation
-
-```go
-// Web request = one scope
-// Background job = one scope
-// Test case = one scope
-
-// Good: Scope per job
-func ProcessJobs(provider godi.ServiceProvider, jobs <-chan Job) {
-    for job := range jobs {
-        func(j Job) {
-            scope := provider.CreateScope(context.Background())
-            defer scope.Close()
-
-            processor, _ := godi.Resolve[JobProcessor](scope.ServiceProvider())
-            processor.Process(j)
-        }(job)
+        // Handle request...
+        scope.Close() // Might not run if panic!
     }
 }
 ```
 
 ## Error Handling
 
-### Check Resolution Errors
-
-Always handle errors from service resolution:
+Always check errors from DI operations:
 
 ```go
-// Good: Check errors
+// ✅ Good: Check all errors
+provider, err := services.BuildServiceProvider()
+if err != nil {
+    log.Fatal("Failed to build provider:", err)
+}
+
 service, err := godi.Resolve[UserService](provider)
 if err != nil {
-    if godi.IsNotFound(err) {
-        return nil, fmt.Errorf("user service not registered")
-    }
-    return nil, fmt.Errorf("failed to resolve user service: %w", err)
+    http.Error(w, "Service unavailable", 500)
+    return
 }
 
-// Bad: Ignoring errors
-service, _ := godi.Resolve[UserService](provider) // ❌
+// ❌ Bad: Ignoring errors
+provider, _ := services.BuildServiceProvider()
+service, _ := godi.Resolve[UserService](provider)
 ```
 
-### Constructor Validation
+## Module Organization
 
-Validate dependencies in constructors:
+Structure your modules by feature or layer:
 
 ```go
-func NewPaymentService(
-    gateway PaymentGateway,
-    logger Logger,
-    config *PaymentConfig,
-) (*PaymentService, error) {
-    if gateway == nil {
-        return nil, errors.New("gateway is required")
-    }
-    if logger == nil {
-        return nil, errors.New("logger is required")
-    }
-    if config == nil {
-        return nil, errors.New("config is required")
-    }
-    if config.APIKey == "" {
-        return nil, errors.New("API key is required")
-    }
+// Feature-based (recommended for most apps)
+project/
+├── features/
+│   ├── user/
+│   │   ├── module.go
+│   │   ├── service.go
+│   │   └── repository.go
+│   ├── auth/
+│   │   ├── module.go
+│   │   └── service.go
+│   └── billing/
+│       ├── module.go
+│       └── service.go
+└── main.go
 
-    return &PaymentService{
-        gateway: gateway,
-        logger:  logger,
-        config:  config,
-    }, nil
+// Layer-based (for larger apps)
+project/
+├── modules/
+│   ├── core.go
+│   ├── data.go
+│   ├── business.go
+│   └── web.go
+└── main.go
+```
+
+## Testing Best Practices
+
+### Create Test Modules
+
+```go
+// testutil/modules.go
+func NewMockDataModule() godi.ModuleOption {
+    return godi.NewModule("test-data",
+        godi.AddSingleton(func() Database {
+            return &MockDatabase{
+                users: []User{{ID: "1", Name: "Test"}},
+            }
+        }),
+        godi.AddSingleton(func() Cache {
+            return &MockCache{}
+        }),
+    )
 }
-```
 
-## Testing
-
-### Use Test Containers
-
-Create separate service collections for tests:
-
-```go
+// In tests
 func TestUserService(t *testing.T) {
-    // Test-specific container
-    services := godi.NewServiceCollection()
+    testModule := godi.NewModule("test",
+        NewMockDataModule(),
+        godi.AddScoped(NewUserService),
+    )
 
-    // Register mocks
-    services.AddSingleton(func() UserRepository {
-        return &MockUserRepository{
-            users: map[string]*User{
-                "1": {ID: "1", Name: "Test User"},
-            },
-        }
-    })
-    services.AddSingleton(func() Logger {
-        return &TestLogger{t: t}
-    })
-    services.AddScoped(NewUserService)
-
-    provider, err := services.BuildServiceProvider()
-    require.NoError(t, err)
-    defer provider.Close()
-
-    // Test with mocks
-    service, err := godi.Resolve[UserService](provider)
-    require.NoError(t, err)
-
-    user, err := service.GetUser(context.Background(), "1")
-    assert.NoError(t, err)
-    assert.Equal(t, "Test User", user.Name)
+    // Test with mocks...
 }
 ```
 
-### Test Helpers
-
-Create helpers for common test scenarios:
+### Use Helper Functions
 
 ```go
 // testutil/di.go
-func NewTestProvider(t *testing.T, opts ...TestOption) godi.ServiceProvider {
+func BuildTestProvider(t *testing.T, modules ...godi.ModuleOption) godi.ServiceProvider {
     services := godi.NewServiceCollection()
 
-    // Default test services
-    services.AddSingleton(NewTestLogger)
-    services.AddSingleton(NewTestConfig)
-
-    // Apply options
-    for _, opt := range opts {
-        opt(services)
-    }
+    err := services.AddModules(modules...)
+    require.NoError(t, err)
 
     provider, err := services.BuildServiceProvider()
     require.NoError(t, err)
@@ -307,176 +239,24 @@ func NewTestProvider(t *testing.T, opts ...TestOption) godi.ServiceProvider {
 
     return provider
 }
-
-type TestOption func(godi.ServiceCollection)
-
-func WithMockDatabase(mock Database) TestOption {
-    return func(s godi.ServiceCollection) {
-        s.AddSingleton(func() Database { return mock })
-    }
-}
 ```
 
-## Module Organization
+## Common Anti-Patterns to Avoid
 
-### Group Related Services
-
-```go
-// modules/auth.go
-var AuthModule = godi.Module("auth",
-    godi.AddSingleton(NewPasswordHasher),
-    godi.AddSingleton(NewJWTService),
-    godi.AddScoped(NewAuthService),
-    godi.AddScoped(NewPermissionService),
-)
-
-// modules/data.go
-var DataModule = godi.Module("data",
-    godi.AddSingleton(NewDatabaseConnection),
-    godi.AddScoped(NewUnitOfWork),
-    godi.AddScoped(NewUserRepository),
-    godi.AddScoped(NewOrderRepository),
-)
-
-// modules/api.go
-var APIModule = godi.Module("api",
-    godi.AddModule(AuthModule),
-    godi.AddModule(DataModule),
-    godi.AddScoped(NewUserHandler),
-    godi.AddScoped(NewOrderHandler),
-)
-```
-
-### Module Dependencies
-
-Define clear module dependencies:
+### 1. Service Locator Pattern
 
 ```go
-// Core module has no dependencies
-var CoreModule = godi.Module("core",
-    godi.AddSingleton(NewConfig),
-    godi.AddSingleton(NewLogger),
-    godi.AddSingleton(NewMetrics),
-)
-
-// Data module depends on core
-var DataModule = godi.Module("data",
-    godi.AddModule(CoreModule), // Explicit dependency
-    godi.AddSingleton(NewDatabase),
-    godi.AddScoped(NewRepository),
-)
-
-// Business module depends on data
-var BusinessModule = godi.Module("business",
-    godi.AddModule(DataModule), // Includes core transitively
-    godi.AddScoped(NewUserService),
-    godi.AddScoped(NewOrderService),
-)
-```
-
-## Performance
-
-### Cache Service Resolution
-
-For hot paths, cache resolved services:
-
-```go
-type CachedHandler struct {
-    provider godi.ServiceProvider
-    service  UserService
-    mu       sync.RWMutex
-}
-
-func (h *CachedHandler) getService() (UserService, error) {
-    h.mu.RLock()
-    if h.service != nil {
-        h.mu.RUnlock()
-        return h.service, nil
-    }
-    h.mu.RUnlock()
-
-    h.mu.Lock()
-    defer h.mu.Unlock()
-
-    if h.service != nil {
-        return h.service, nil
-    }
-
-    service, err := godi.Resolve[UserService](h.provider)
-    if err != nil {
-        return nil, err
-    }
-
-    h.service = service
-    return service, nil
-}
-```
-
-### Avoid Over-Injection
-
-Don't inject everything:
-
-```go
-// Good: Inject services
-func NewOrderService(repo OrderRepository, payment PaymentGateway) *OrderService
-
-// Bad: Injecting simple values
-func NewBadService(
-    repo Repository,
-    timeout time.Duration,      // ❌ Pass in config instead
-    maxRetries int,            // ❌ Pass in config instead
-    debugMode bool,            // ❌ Pass in config instead
-) *BadService
-
-// Good: Group configuration
-type ServiceConfig struct {
-    Timeout    time.Duration
-    MaxRetries int
-    DebugMode  bool
-}
-
-func NewGoodService(repo Repository, config ServiceConfig) *GoodService
-```
-
-## Common Pitfalls
-
-### 1. Circular Dependencies
-
-```go
-// Bad: Circular dependency
-type UserService struct {
-    orderService OrderService
-}
-
-type OrderService struct {
-    userService UserService // ❌ Circular!
-}
-
-// Good: Break the cycle
-type UserService struct {
-    orderRepo OrderRepository // Use repository instead
-}
-
-type OrderService struct {
-    userRepo UserRepository // Use repository instead
-}
-```
-
-### 2. Service Locator Anti-Pattern
-
-```go
-// Bad: Service locator
+// ❌ Bad: Service locator
 type BadService struct {
     provider godi.ServiceProvider
 }
 
-func (s *BadService) DoWork() error {
-    // Resolving services in methods
-    repo, _ := godi.Resolve[Repository](s.provider) // ❌
-    return repo.Save(data)
+func (s *BadService) DoWork() {
+    // Resolving inside methods = hidden dependencies
+    repo, _ := godi.Resolve[Repository](s.provider)
 }
 
-// Good: Constructor injection
+// ✅ Good: Constructor injection
 type GoodService struct {
     repo Repository
 }
@@ -486,36 +266,88 @@ func NewGoodService(repo Repository) *GoodService {
 }
 ```
 
-### 3. Leaking Abstractions
+### 2. Over-Injection
 
 ```go
-// Bad: Exposing DI framework
-func NewBadService(provider godi.ServiceProvider) *BadService // ❌
+// ❌ Bad: Too many dependencies
+func NewBadService(
+    logger Logger,
+    db Database,
+    cache Cache,
+    email EmailService,
+    sms SMSService,
+    push PushService,
+    config Config,
+    metrics Metrics,
+    // ... 10 more
+) *BadService
 
-// Good: Hide DI details
-func NewGoodService(dep1 Dep1, dep2 Dep2) *GoodService // ✅
+// ✅ Good: Group related dependencies
+type NotificationServices struct {
+    Email EmailService
+    SMS   SMSService
+    Push  PushService
+}
+
+func NewGoodService(
+    logger Logger,
+    db Database,
+    notifications NotificationServices,
+) *GoodService
 ```
+
+## Performance Tips
+
+1. **Use Singletons for Expensive Resources**
+
+   ```go
+   godi.AddSingleton(NewDatabasePool)    // Connection pooling
+   godi.AddSingleton(NewHTTPClient)      // Reuse connections
+   ```
+
+2. **Dispose Scopes Promptly**
+
+   ```go
+   // Process each item in its own scope
+   for _, item := range items {
+       func() {
+           scope := provider.CreateScope(ctx)
+           defer scope.Close()
+           processItem(scope, item)
+       }()
+   }
+   ```
+
+3. **Cache Resolutions in Hot Paths**
+
+   ```go
+   // Resolve once, use many times
+   handler, _ := godi.Resolve[Handler](provider)
+
+   for _, request := range requests {
+       handler.Process(request)
+   }
+   ```
 
 ## Summary Checklist
 
 ✅ **DO:**
 
-- Use interfaces for services
+- Use modules to organize services
+- Design with interfaces
 - Choose appropriate lifetimes
 - Always close scopes with defer
-- Handle resolution errors
-- Test with mock implementations
-- Group services in modules
-- Validate in constructors
+- Handle all errors
+- Create test modules for mocking
+- Keep constructors simple
 
 ❌ **DON'T:**
 
-- Mix service lifetimes incorrectly
+- Mix singleton and scoped incorrectly
 - Use service locator pattern
 - Ignore errors
-- Create circular dependencies
-- Expose DI framework details
-- Over-inject simple values
 - Forget to close scopes
+- Over-inject dependencies
+- Put logic in constructors
 
-Following these best practices will help you build maintainable, testable, and scalable applications with godi.
+Following these practices will help you build maintainable, testable Go applications with godi!

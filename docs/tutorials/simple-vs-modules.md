@@ -1,179 +1,197 @@
-# AddScoped vs Modules: When to Use What
+# Simple Registration vs Modules
 
-One of the most common questions: "Should I use `services.AddScoped(...)` or create a module?" Let's make this simple.
+When should you use modules? Always! But let's understand why.
 
-## Start Simple: Direct Registration
+## The Evolution of Your Code
 
-For most apps, start with direct registration. It's clear, straightforward, and easy to understand:
+### Day 1: Simple Registration
+
+When you first start, you might think this is fine:
 
 ```go
 func main() {
     services := godi.NewServiceCollection()
 
-    // Just list what you need
+    // Just a few services...
     services.AddSingleton(NewLogger)
+    services.AddSingleton(NewConfig)
     services.AddSingleton(NewDatabase)
-    services.AddScoped(NewUserRepository)
     services.AddScoped(NewUserService)
-    services.AddScoped(NewAuthService)
 
     provider, _ := services.BuildServiceProvider()
-    // ... use your app
+    // ...
 }
 ```
 
-**Use direct registration when:**
+### Week 2: Growing Pains
 
-- Your app has < 20 services
-- Everything is in one package
-- You're just getting started
-- The setup fits in one screen
-
-## When You Need Modules
-
-Modules are just a way to group related registrations together. Think of them as "setup functions" that you can reuse.
-
-### Example: Your App Grows
-
-When your main.go starts looking like this, it's time for modules:
+Now you have more services:
 
 ```go
 func main() {
     services := godi.NewServiceCollection()
 
-    // Database stuff
-    services.AddSingleton(NewDatabaseConfig)
-    services.AddSingleton(NewDatabaseConnection)
-    services.AddSingleton(NewMigrationRunner)
-    services.AddScoped(NewTransaction)
+    // Getting messy...
+    services.AddSingleton(NewLogger)
+    services.AddSingleton(NewConfig)
+    services.AddSingleton(NewDatabase)
+    services.AddSingleton(NewCache)
+    services.AddSingleton(NewEmailClient)
+    services.AddSingleton(NewSMSClient)
     services.AddScoped(NewUserRepository)
     services.AddScoped(NewOrderRepository)
     services.AddScoped(NewProductRepository)
-
-    // Auth stuff
-    services.AddSingleton(NewJWTConfig)
-    services.AddSingleton(NewPasswordHasher)
+    services.AddScoped(NewUserService)
+    services.AddScoped(NewOrderService)
+    services.AddScoped(NewNotificationService)
     services.AddScoped(NewAuthService)
-    services.AddScoped(NewTokenService)
-    services.AddScoped(NewPermissionService)
 
-    // Email stuff
-    services.AddSingleton(NewEmailConfig)
-    services.AddSingleton(NewSMTPClient)
-    services.AddScoped(NewEmailService)
+    // Where does what belong?
+    // What depends on what?
+    // How do I test parts of this?
 
-    // ... 50 more lines
+    provider, _ := services.BuildServiceProvider()
 }
 ```
 
 ### The Module Solution
 
-Break it into logical groups:
+Organize from the start with modules:
 
 ```go
-// database/module.go
-package database
+// modules/core.go
+var CoreModule = godi.NewModule("core",
+    godi.AddSingleton(NewLogger),
+    godi.AddSingleton(NewConfig),
+)
 
-var Module = godi.Module("database",
-    godi.AddSingleton(NewDatabaseConfig),
-    godi.AddSingleton(NewDatabaseConnection),
-    godi.AddSingleton(NewMigrationRunner),
-    godi.AddScoped(NewTransaction),
+// modules/data.go
+var DataModule = godi.NewModule("data",
+    CoreModule, // Depends on core
+    godi.AddSingleton(NewDatabase),
+    godi.AddSingleton(NewCache),
     godi.AddScoped(NewUserRepository),
     godi.AddScoped(NewOrderRepository),
     godi.AddScoped(NewProductRepository),
 )
 
-// auth/module.go
-package auth
+// modules/notifications.go
+var NotificationModule = godi.NewModule("notifications",
+    CoreModule, // Also needs logging
+    godi.AddSingleton(NewEmailClient),
+    godi.AddSingleton(NewSMSClient),
+    godi.AddScoped(NewNotificationService),
+)
 
-var Module = godi.Module("auth",
-    godi.AddSingleton(NewJWTConfig),
-    godi.AddSingleton(NewPasswordHasher),
+// modules/business.go
+var BusinessModule = godi.NewModule("business",
+    DataModule,
+    NotificationModule,
+    godi.AddScoped(NewUserService),
+    godi.AddScoped(NewOrderService),
     godi.AddScoped(NewAuthService),
-    godi.AddScoped(NewTokenService),
-    godi.AddScoped(NewPermissionService),
 )
 
-// email/module.go
-package email
-
-var Module = godi.Module("email",
-    godi.AddSingleton(NewEmailConfig),
-    godi.AddSingleton(NewSMTPClient),
-    godi.AddScoped(NewEmailService),
-)
-
-// main.go - Now it's clean!
+// main.go - Clean and simple!
 func main() {
     services := godi.NewServiceCollection()
-
-    services.AddModules(
-        database.Module,
-        auth.Module,
-        email.Module,
-    )
+    services.AddModules(BusinessModule) // Includes everything!
 
     provider, _ := services.BuildServiceProvider()
 }
 ```
 
-## Real-World Module Examples
+## Why Always Use Modules?
 
-### Module Example 1: Feature Modules
+### 1. Organization
 
-When you have distinct features:
+Without modules:
 
 ```go
-// features/user/module.go
-var UserModule = godi.Module("user",
-    godi.AddScoped(NewUserRepository),
-    godi.AddScoped(NewUserService),
-    godi.AddScoped(NewUserController),
-    godi.AddScoped(NewUserValidator),
-)
-
-// features/billing/module.go
-var BillingModule = godi.Module("billing",
-    godi.AddSingleton(NewStripeClient),
-    godi.AddScoped(NewInvoiceRepository),
-    godi.AddScoped(NewPaymentService),
-    godi.AddScoped(NewSubscriptionService),
-)
-
-// features/notifications/module.go
-var NotificationModule = godi.Module("notifications",
-    godi.AddSingleton(NewEmailClient),
-    godi.AddSingleton(NewSMSClient),
-    godi.AddScoped(NewNotificationService),
-)
+// 50 lines of service registrations
+// No clear structure
+// Hard to find anything
 ```
 
-### Module Example 2: Environment-Specific Modules
-
-Different setups for different environments:
+With modules:
 
 ```go
-// infrastructure/development.go
-var DevelopmentModule = godi.Module("dev",
+// Clear structure
+CoreModule       // Config, logging
+DataModule       // Database, repositories
+BusinessModule   // Services, use cases
+WebModule        // HTTP handlers, middleware
+```
+
+### 2. Dependencies Are Clear
+
+```go
+var OrderModule = godi.NewModule("orders",
+    UserModule,      // Orders need users
+    InventoryModule, // Orders need inventory
+    PaymentModule,   // Orders need payment
+
+    godi.AddScoped(NewOrderService),
+    godi.AddScoped(NewOrderRepository),
+)
+
+// Dependencies are explicit!
+```
+
+### 3. Testing Is Easier
+
+```go
+// Test just the order functionality
+func TestOrderService(t *testing.T) {
+    testModule := godi.NewModule("test",
+        // Mock dependencies
+        MockUserModule,
+        MockInventoryModule,
+        MockPaymentModule,
+
+        // Real order services
+        godi.AddScoped(NewOrderService),
+    )
+
+    // Test in isolation!
+}
+```
+
+### 4. Reusability
+
+```go
+// auth/module.go - Reusable auth module
+var AuthModule = godi.NewModule("auth",
+    godi.AddSingleton(NewJWTService),
+    godi.AddScoped(NewAuthService),
+    godi.AddScoped(NewPermissionService),
+)
+
+// Use in different apps
+// app1/main.go
+services.AddModules(AuthModule, App1Module)
+
+// app2/main.go
+services.AddModules(AuthModule, App2Module)
+```
+
+### 5. Environment Switching
+
+```go
+// environments/dev.go
+var DevModule = godi.NewModule("dev",
     godi.AddSingleton(func() Database {
-        return NewSQLiteDatabase("dev.db")
-    }),
-    godi.AddSingleton(func() Cache {
-        return NewMemoryCache()
+        return NewSQLiteDatabase(":memory:")
     }),
     godi.AddSingleton(func() EmailClient {
         return NewMockEmailClient()
     }),
 )
 
-// infrastructure/production.go
-var ProductionModule = godi.Module("prod",
+// environments/prod.go
+var ProdModule = godi.NewModule("prod",
     godi.AddSingleton(func() Database {
         return NewPostgresDatabase(os.Getenv("DATABASE_URL"))
-    }),
-    godi.AddSingleton(func() Cache {
-        return NewRedisCache(os.Getenv("REDIS_URL"))
     }),
     godi.AddSingleton(func() EmailClient {
         return NewSendGridClient(os.Getenv("SENDGRID_KEY"))
@@ -184,150 +202,123 @@ var ProductionModule = godi.Module("prod",
 func main() {
     services := godi.NewServiceCollection()
 
-    // Core services always needed
-    services.AddSingleton(NewLogger)
-    services.AddSingleton(NewConfig)
+    // Core business logic
+    services.AddModules(BusinessModule)
 
-    // Environment-specific module
+    // Environment-specific
     if os.Getenv("ENV") == "production" {
-        services.AddModules(ProductionModule)
+        services.AddModules(ProdModule)
     } else {
-        services.AddModules(DevelopmentModule)
+        services.AddModules(DevModule)
     }
-
-    // Feature modules
-    services.AddModules(
-        UserModule,
-        BillingModule,
-        NotificationModule,
-    )
-}
-```
-
-### Module Example 3: Shared Libraries
-
-When you have common services used across projects:
-
-```go
-// In shared library: github.com/mycompany/shared/observability
-var ObservabilityModule = godi.Module("observability",
-    godi.AddSingleton(NewLogger),
-    godi.AddSingleton(NewMetricsCollector),
-    godi.AddSingleton(NewTracer),
-    godi.AddScoped(NewRequestLogger),
-    godi.AddScoped(NewRequestTracer),
-)
-
-// In your app
-import "github.com/mycompany/shared/observability"
-
-func main() {
-    services := godi.NewServiceCollection()
-
-    // Use shared module
-    services.AddModules(observability.ObservabilityModule)
-
-    // Add app-specific services
-    services.AddScoped(NewUserService)
-    // ...
 }
 ```
 
 ## Module Best Practices
 
-### 1. One Module Per Package
+### Start with Modules from Day 1
 
-```
-project/
-├── auth/
-│   ├── service.go
-│   ├── repository.go
-│   └── module.go      # auth.Module
-├── user/
-│   ├── service.go
-│   ├── repository.go
-│   └── module.go      # user.Module
-└── main.go
-```
-
-### 2. Module Dependencies
+Even for small apps:
 
 ```go
-var DatabaseModule = godi.Module("database",
-    godi.AddSingleton(NewConnection),
-    godi.AddScoped(NewTransaction),
+// Even tiny apps benefit from modules
+var AppModule = godi.NewModule("app",
+    godi.AddSingleton(NewConfig),
+    godi.AddSingleton(NewService),
 )
 
-var UserModule = godi.Module("user",
-    DatabaseModule, // Depends on database
-    godi.AddScoped(NewUserRepository),
+func main() {
+    services := godi.NewServiceCollection()
+    services.AddModules(AppModule) // Clean from the start
+}
+```
+
+### One Module Per Feature/Layer
+
+```go
+// ✅ Good - Clear, focused modules
+var UserModule = godi.NewModule("user", ...)
+var OrderModule = godi.NewModule("order", ...)
+var PaymentModule = godi.NewModule("payment", ...)
+
+// ❌ Bad - Everything in one module
+var AppModule = godi.NewModule("app",
+    // 100 services here...
+)
+```
+
+### Module Naming
+
+```go
+// ✅ Good names
+var DatabaseModule = ...      // Infrastructure
+var UserFeatureModule = ...    // Feature
+var AuthenticationModule = ... // Capability
+
+// ❌ Vague names
+var StuffModule = ...
+var Module1 = ...
+var MiscModule = ...
+```
+
+## Migration Path
+
+If you started with simple registration:
+
+### Step 1: Group by Purpose
+
+```go
+// Before: main.go has everything
+services.AddSingleton(NewLogger)
+services.AddSingleton(NewDatabase)
+services.AddScoped(NewUserService)
+// ... 50 more lines
+
+// After: Organized modules
+var CoreModule = godi.NewModule("core",
+    godi.AddSingleton(NewLogger),
+)
+
+var DataModule = godi.NewModule("data",
+    CoreModule,
+    godi.AddSingleton(NewDatabase),
+)
+
+var UserModule = godi.NewModule("user",
+    DataModule,
     godi.AddScoped(NewUserService),
 )
 ```
 
-### 3. Keep Modules Focused
+### Step 2: Extract to Files
 
 ```go
-// ✅ Good - focused module
-var AuthModule = godi.Module("auth",
-    godi.AddSingleton(NewJWTService),
-    godi.AddScoped(NewAuthService),
-    godi.AddScoped(NewPermissionService),
-)
+// modules/core.go
+package modules
 
-// ❌ Bad - kitchen sink module
-var UtilModule = godi.Module("util",
-    godi.AddSingleton(NewLogger),      // Should be in ObservabilityModule
-    godi.AddSingleton(NewDatabase),    // Should be in DatabaseModule
-    godi.AddScoped(NewEmailService),   // Should be in EmailModule
-)
-```
+var CoreModule = godi.NewModule("core", ...)
 
-## Decision Guide
+// modules/data.go
+package modules
 
-### Use Direct Registration When:
+var DataModule = godi.NewModule("data", ...)
 
-- ✅ Small applications (< 20 services)
-- ✅ Prototyping or getting started
-- ✅ All code in one package
-- ✅ Simple scripts or tools
+// main.go
+import "myapp/modules"
 
-### Use Modules When:
-
-- ✅ Services are organized in packages
-- ✅ You want to reuse configurations
-- ✅ Different environments need different setups
-- ✅ You're building a library others will use
-- ✅ Your main.go is getting too long
-
-### Mix Both!
-
-```go
-func main() {
-    services := godi.NewServiceCollection()
-
-    // Use modules for organized features
-    services.AddModules(
-        database.Module,
-        auth.Module,
-    )
-
-    // Direct registration for app-specific stuff
-    services.AddSingleton(NewAppConfig)
-    services.AddScoped(NewMainController)
-
-    provider, _ := services.BuildServiceProvider()
-}
+services.AddModules(modules.AppModule)
 ```
 
 ## Summary
 
-**Start simple with direct registration.** When you find yourself:
+**Always use modules because they:**
 
-- Scrolling through a long list of registrations
-- Copying registration code between projects
-- Wanting different setups for different environments
+- Keep code organized
+- Make dependencies explicit
+- Enable easy testing
+- Support reusability
+- Allow environment switching
 
-...then it's time to use modules.
+**Start with modules from day 1** - even tiny apps benefit from the organization.
 
-Modules are just a way to say "here's a group of related services that go together." They're not required - they're a convenience for when your app grows.
+The question isn't "should I use modules?" but "how should I organize my modules?"

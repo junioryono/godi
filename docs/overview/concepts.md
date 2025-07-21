@@ -1,262 +1,262 @@
 # Core Concepts
 
-Let's understand godi's core concepts through real examples. No fluff, just what you need to know.
+Understanding these 5 concepts is all you need to master godi.
 
-## Services: Your Application Building Blocks
+## 1. Services
 
-A **service** is any type that does something useful in your app:
+A **service** is any type that does something useful in your app.
 
 ```go
-// This is a service - it sends emails
-type EmailService struct {
-    smtp SMTPClient
+// This is a service
+type EmailSender struct {
+    apiKey string
 }
 
-// This is also a service - it logs things
-type Logger interface {
-    Log(message string)
+func NewEmailSender() *EmailSender {
+    return &EmailSender{apiKey: "secret"}
 }
 
-// Services can be interfaces or structs - your choice!
+func (e *EmailSender) Send(to, subject, body string) error {
+    // Send email...
+    return nil
+}
 ```
 
-## Constructors: How Services Are Created
+**Key Points:**
 
-A **constructor** is just a function that creates your service:
+- Services are just regular Go types
+- No special interfaces or base types needed
+- If it does work, it's probably a service
+
+## 2. Constructors
+
+A **constructor** is a function that creates a service. godi calls these for you.
 
 ```go
-// Constructor for EmailService
-func NewEmailService(smtp SMTPClient) *EmailService {
-    return &EmailService{smtp: smtp}
+// Simple constructor
+func NewLogger() *Logger {
+    return &Logger{}
 }
 
-// Constructor for Logger
-func NewLogger(config *Config) Logger {
-    return &FileLogger{
-        path: config.LogPath,
+// Constructor with dependencies
+func NewEmailService(sender *EmailSender, logger *Logger) *EmailService {
+    return &EmailService{
+        sender: sender,
+        logger: logger,
     }
 }
-
-// godi calls these functions and provides the parameters automatically!
 ```
 
-## The Container: Where Everything Comes Together
+**godi's Magic**: When you ask for EmailService, godi:
 
-Think of godi as having two main parts:
+1. Sees it needs EmailSender and Logger
+2. Creates those first (if needed)
+3. Passes them to NewEmailService
+4. Returns your ready-to-use service
 
-### 1. ServiceCollection - The Recipe Book
+## 3. Modules
 
-This is where you tell godi about your services:
+A **module** groups related services together. Think of it as a package of functionality.
 
 ```go
-services := godi.NewServiceCollection()
+// Group email-related services
+var EmailModule = godi.NewModule("email",
+    godi.AddSingleton(NewEmailSender),
+    godi.AddScoped(NewEmailService),
+    godi.AddScoped(NewEmailValidator),
+)
 
-// Tell godi about your services
-services.AddSingleton(NewLogger)      // "Here's how to make a Logger"
-services.AddScoped(NewEmailService)   // "Here's how to make an EmailService"
+// Group user-related services
+var UserModule = godi.NewModule("user",
+    EmailModule, // Modules can include other modules!
+    godi.AddScoped(NewUserRepository),
+    godi.AddScoped(NewUserService),
+)
 ```
 
-### 2. ServiceProvider - The Kitchen
+**Why Modules?**
 
-This is what actually creates and manages your services:
+- **Organization**: Keep related things together
+- **Reusability**: Use the same module in different apps
+- **Clarity**: See dependencies at a glance
 
-```go
-// Build the provider from your collection
-provider, _ := services.BuildServiceProvider()
+## 4. Lifetimes
 
-// Now you can get your services
-logger, _ := godi.Resolve[Logger](provider)
-emailService, _ := godi.Resolve[*EmailService](provider)
-```
+A **lifetime** controls when and how instances are created.
 
-## Service Lifetimes: When Things Are Created
-
-This is the most important concept in godi. There are two lifetimes:
-
-### Singleton - One for the Whole App
+### Singleton (One Forever)
 
 ```go
-services.AddSingleton(NewLogger)
-
 // Created once, reused everywhere
-logger1, _ := godi.Resolve[Logger](provider)  // Creates new logger
-logger2, _ := godi.Resolve[Logger](provider)  // Returns SAME logger
-// logger1 == logger2
+godi.AddSingleton(NewDatabase)
+
+// Everyone gets the same database connection
+db1, _ := godi.Resolve[*Database](provider)
+db2, _ := godi.Resolve[*Database](provider)
+// db1 == db2 (same instance)
 ```
 
-**Use for:** Database connections, loggers, configuration, caches
+**Use for:** Databases, loggers, caches, configuration
 
-### Scoped - One per "Operation"
+### Scoped (One Per Request)
 
 ```go
-services.AddScoped(NewShoppingCart)
+// New instance for each scope
+godi.AddScoped(NewShoppingCart)
 
-// In web apps, typically one per HTTP request
+// Different requests get different carts
 scope1 := provider.CreateScope(ctx)
 cart1, _ := godi.Resolve[*ShoppingCart](scope1.ServiceProvider())
 
 scope2 := provider.CreateScope(ctx)
 cart2, _ := godi.Resolve[*ShoppingCart](scope2.ServiceProvider())
-// cart1 != cart2 (different scopes = different instances)
+// cart1 != cart2 (different instances)
 ```
 
-**Use for:** Database transactions, request context, user sessions
+**Use for:** Request handlers, repositories, business logic
 
-## Scopes: Isolation for Operations
+## 5. Scopes
 
-A **scope** creates a boundary for scoped services. Think of it as a "bubble":
+A **scope** creates a boundary for scoped services. Perfect for web requests!
 
 ```go
-// Web request example
-func HandleRequest(provider godi.ServiceProvider) http.HandlerFunc {
+func handleRequest(provider godi.ServiceProvider) http.HandlerFunc {
     return func(w http.ResponseWriter, r *http.Request) {
         // Create scope for this request
         scope := provider.CreateScope(r.Context())
-        defer scope.Close()
+        defer scope.Close() // Clean up when done
 
-        // Everything in this scope shares the same instances
-        repo, _ := godi.Resolve[*UserRepository](scope.ServiceProvider())
-        service, _ := godi.Resolve[*UserService](scope.ServiceProvider())
+        // All scoped services in this request share the same instances
+        userService, _ := godi.Resolve[*UserService](scope.ServiceProvider())
+        cartService, _ := godi.Resolve[*CartService](scope.ServiceProvider())
 
-        // Both repo and service share the same transaction!
+        // Both services might share the same transaction!
     }
 }
 ```
 
-## Real Example: Putting It All Together
-
-Let's see how these concepts work in a real app:
+**Real Example**: Request with Database Transaction
 
 ```go
-package main
-
-import (
-    "context"
-    "database/sql"
-    "fmt"
-    "github.com/junioryono/godi"
-)
-
-// 1. Define your services
-type Logger interface {
-    Log(msg string)
-}
-
-type Database struct {
-    conn *sql.DB
-}
-
+// Transaction service (scoped)
 type Transaction struct {
     tx *sql.Tx
 }
 
+func NewTransaction(db *Database) *Transaction {
+    tx, _ := db.Begin()
+    return &Transaction{tx: tx}
+}
+
+// Repository uses the transaction
 type UserRepository struct {
     tx *Transaction
-}
-
-type EmailService struct {
-    logger Logger
-}
-
-type UserService struct {
-    repo  *UserRepository
-    email *EmailService
-    tx    *Transaction
-}
-
-// 2. Create constructors
-func NewLogger() Logger {
-    return &ConsoleLogger{}
-}
-
-func NewDatabase() *Database {
-    conn, _ := sql.Open("sqlite3", ":memory:")
-    return &Database{conn: conn}
-}
-
-func NewTransaction(db *Database) *Transaction {
-    tx, _ := db.conn.Begin()
-    return &Transaction{tx: tx}
 }
 
 func NewUserRepository(tx *Transaction) *UserRepository {
     return &UserRepository{tx: tx}
 }
 
-func NewEmailService(logger Logger) *EmailService {
-    return &EmailService{logger: logger}
-}
-
-func NewUserService(repo *UserRepository, email *EmailService, tx *Transaction) *UserService {
-    return &UserService{repo: repo, email: email, tx: tx}
-}
-
-// 3. Wire everything up
-func main() {
-    // Configure services
-    services := godi.NewServiceCollection()
-
-    // Singletons - shared across app
-    services.AddSingleton(NewLogger)
-    services.AddSingleton(NewDatabase)
-    services.AddSingleton(NewEmailService)
-
-    // Scoped - per operation
-    services.AddScoped(NewTransaction)
-    services.AddScoped(NewUserRepository)
-    services.AddScoped(NewUserService)
-
-    // Build container
-    provider, _ := services.BuildServiceProvider()
-    defer provider.Close()
-
-    // Simulate handling a request
-    handleUserCreation(provider)
-}
-
-func handleUserCreation(provider godi.ServiceProvider) {
-    // Create scope for this operation
-    scope := provider.CreateScope(context.Background())
-    defer scope.Close() // Transaction rollback if not committed
-
-    // Get user service - everything is wired automatically!
-    userService, _ := godi.Resolve[*UserService](scope.ServiceProvider())
-
-    // Use it
-    userService.CreateUser("john@example.com")
-    userService.tx.Commit() // Explicit commit
-}
+// In a request scope:
+// 1. Transaction is created (once per scope)
+// 2. All repositories in this scope use the SAME transaction
+// 3. When scope closes, transaction commits/rollbacks
 ```
-
-## The Magic of Dependency Injection
-
-Notice what we DIDN'T have to do:
-
-- ❌ Manually create each service in the right order
-- ❌ Pass dependencies through multiple layers
-- ❌ Worry about cleanup/disposal
-- ❌ Handle transaction passing
-
-godi handled all of that for us!
 
 ## Quick Reference
 
-| Concept               | What It Is                      | When to Use            |
-| --------------------- | ------------------------------- | ---------------------- |
-| **Service**           | Any type that does work         | Everything in your app |
-| **Constructor**       | Function that creates a service | One per service type   |
-| **ServiceCollection** | Where you register services     | Once at startup        |
-| **ServiceProvider**   | What creates service instances  | Throughout your app    |
-| **Singleton**         | One instance forever            | Shared resources       |
-| **Scoped**            | One instance per scope          | Request-specific data  |
-| **Scope**             | Boundary for scoped services    | Per request/operation  |
+| Concept         | What It Is                      | When to Use            |
+| --------------- | ------------------------------- | ---------------------- |
+| **Service**     | Any type that does work         | Everything in your app |
+| **Constructor** | Function that creates a service | One per service        |
+| **Module**      | Group of related services       | Organize your app      |
+| **Singleton**   | One instance forever            | Shared resources       |
+| **Scoped**      | One instance per scope          | Request-specific       |
+| **Scope**       | Boundary for scoped services    | Web requests           |
+
+## Visual: How It All Works
+
+```
+1. Define Module
+   EmailModule = [EmailSender(singleton), EmailService(scoped)]
+
+2. Build Provider
+   provider = Build(EmailModule)
+
+3. Handle Request
+   scope = provider.CreateScope()
+
+4. Resolve Service
+   service = Resolve[EmailService](scope)
+   // godi creates: EmailSender (if needed) → EmailService
+
+5. Clean Up
+   scope.Close()
+```
+
+## Common Patterns
+
+### Pattern 1: Shared Database, Scoped Transaction
+
+```go
+var DatabaseModule = godi.NewModule("db",
+    godi.AddSingleton(NewDatabase),      // Shared connection
+    godi.AddScoped(NewTransaction),      // Per-request transaction
+    godi.AddScoped(NewUserRepository),   // Uses transaction
+)
+```
+
+### Pattern 2: Request Context
+
+```go
+// Scoped service that holds request data
+type RequestContext struct {
+    UserID    string
+    RequestID string
+}
+
+func NewRequestContext(ctx context.Context) *RequestContext {
+    return &RequestContext{
+        UserID:    ctx.Value("userID").(string),
+        RequestID: ctx.Value("requestID").(string),
+    }
+}
+
+// Other services can use it
+func NewAuditLogger(ctx *RequestContext, logger *Logger) *AuditLogger {
+    return &AuditLogger{ctx: ctx, logger: logger}
+}
+```
+
+### Pattern 3: Module Composition
+
+```go
+// Small, focused modules
+var LoggingModule = godi.NewModule("logging", ...)
+var MetricsModule = godi.NewModule("metrics", ...)
+var TracingModule = godi.NewModule("tracing", ...)
+
+// Combine into larger module
+var ObservabilityModule = godi.NewModule("observability",
+    LoggingModule,
+    MetricsModule,
+    TracingModule,
+)
+
+// Use in your app
+var AppModule = godi.NewModule("app",
+    ObservabilityModule,
+    DatabaseModule,
+    BusinessModule,
+)
+```
 
 ## Next Steps
 
-Now that you understand the basics:
+Now that you understand the concepts:
 
-1. Try the [Getting Started Tutorial](../tutorials/getting-started.md)
-2. Learn about [Scoped Services in Detail](../tutorials/scoped-services-explained.md)
-3. Understand [When to Use Modules](../tutorials/simple-vs-modules.md)
+1. **[Quick Start](quick-start.md)** - See it all in action
+2. **[Getting Started](getting-started.md)** - Build something real
+3. **[Module Patterns](../howto/modules.md)** - Advanced techniques
 
 Remember: Start simple, add complexity only when needed!
