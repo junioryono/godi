@@ -1,271 +1,200 @@
-# Why Use Dependency Injection?
+# Why Dependency Injection?
 
-Let's be honest - Go developers are skeptical of dependency injection. "It's too complex!" "Go is simple!" "I can wire things manually!"
+Let's be honest: "Dependency Injection" sounds complicated. It's not. It's just a tool to solve real problems you face every day.
 
-They're not wrong. But here's what changes when your app grows...
+## The Problem You're Having Right Now
 
-## The Problem: A Real Example
-
-You start with a simple app:
+Your Go app started simple:
 
 ```go
 func main() {
-    logger := log.New(os.Stdout, "", log.LstdFlags)
-    db := openDatabase()
-
-    userRepo := &UserRepository{db: db, logger: logger}
-    emailService := &EmailService{logger: logger}
-    userService := &UserService{repo: userRepo, email: emailService, logger: logger}
-
-    handler := &Handler{userService: userService, logger: logger}
-    http.ListenAndServe(":8080", handler)
+    db := NewDatabase()
+    service := NewUserService(db)
+    handler := NewHandler(service)
+    // Easy!
 }
 ```
 
-Looks fine, right? Now your boss says: "We need to add caching."
-
-## The Cascade of Changes
-
-You add a cache parameter to UserRepository:
+Then reality hit:
 
 ```go
-type UserRepository struct {
-    db     *sql.DB
-    logger Logger
-    cache  Cache  // NEW!
+func main() {
+    config := LoadConfig()
+    logger := NewLogger(config.LogLevel)
+
+    db := NewDatabase(config.DBUrl, logger)
+    cache := NewCache(config.RedisUrl, logger)
+
+    emailClient := NewEmailClient(config.SMTPHost, logger)
+    smsClient := NewSMSClient(config.TwilioKey, logger)
+
+    userRepo := NewUserRepository(db, cache, logger)
+    authService := NewAuthService(userRepo, emailClient, logger)
+    userService := NewUserService(userRepo, authService, logger)
+
+    notificationService := NewNotificationService(emailClient, smsClient, logger)
+    orderRepo := NewOrderRepository(db, cache, logger)
+    orderService := NewOrderService(orderRepo, userService, notificationService, logger)
+
+    handler := NewHandler(userService, orderService, authService, logger)
+
+    // 😱 And this is just the beginning...
 }
 ```
 
-Now you have to update EVERYWHERE that creates a UserRepository:
+## Problem #1: The Constructor Cascade
+
+You need to add a rate limiter to your auth service:
 
 ```go
-// main.go
-cache := createCache()  // Add this
-userRepo := &UserRepository{db: db, logger: logger, cache: cache}  // Update this
+// Before: Update the constructor
+func NewAuthService(repo UserRepository, email EmailClient, logger Logger) *AuthService
 
-// user_test.go - Update 15 test files
-repo := &UserRepository{db: mockDB, logger: testLogger, cache: mockCache}
-
-// integration_test.go - Update integration tests
-repo := &UserRepository{db: testDB, logger: logger, cache: testCache}
-
-// benchmarks_test.go - Update benchmarks too
-repo := &UserRepository{db: benchDB, logger: perfLogger, cache: benchCache}
+// After: Now with rate limiter
+func NewAuthService(repo UserRepository, email EmailClient, logger Logger, limiter RateLimiter) *AuthService
 ```
 
-**You just wanted to add caching, but you touched 20 files!**
+**Without DI**: Update every single place that creates AuthService (main.go, tests, integration tests...)
 
-## The DI Solution
-
-With godi, you change exactly ONE place:
+**With DI**: Update just the constructor. Done.
 
 ```go
-// Just update the constructor
-func NewUserRepository(db *sql.DB, logger Logger, cache Cache) *UserRepository {
-    return &UserRepository{db: db, logger: logger, cache: cache}
+// Just change the constructor
+func NewAuthService(repo UserRepository, email EmailClient, logger Logger, limiter RateLimiter) *AuthService {
+    return &AuthService{repo, email, logger, limiter}
 }
 
-// That's it. Seriously. godi handles the rest.
+// godi handles injecting the rate limiter everywhere!
 ```
 
-## Real-World Benefits
+## Problem #2: Testing Nightmare
 
-### 1. Testing Becomes Trivial
+Want to test your user service?
 
-**Without DI:**
+**Without DI**:
 
 ```go
 func TestUserService(t *testing.T) {
-    // Oh no, I need to create the entire dependency tree!
-    logger := &MockLogger{}
-    db := createTestDB()
-    cache := &MockCache{}
-    emailClient := &MockEmailClient{}
+    // Set up real database 😱
+    db := NewDatabase("postgres://test...")
 
-    userRepo := &UserRepository{db: db, logger: logger, cache: cache}
-    emailService := &EmailService{client: emailClient, logger: logger}
-    userService := &UserService{repo: userRepo, email: emailService, logger: logger}
+    // Set up real cache 😱
+    cache := NewCache("redis://test...")
 
-    // Finally can test...
+    // Set up real logger
+    logger := NewLogger("test.log")
+
+    // Finally create service
+    service := NewUserService(db, cache, logger)
+
+    // Test... if the database is running... and Redis... and...
 }
 ```
 
-**With DI:**
+**With DI**:
 
 ```go
 func TestUserService(t *testing.T) {
-    services := godi.NewServiceCollection()
+    // Use test module with mocks
+    testModule := godi.NewModule("test",
+        godi.AddSingleton(func() Database { return &MockDB{} }),
+        godi.AddSingleton(func() Cache { return &MockCache{} }),
+        godi.AddScoped(NewUserService),
+    )
 
-    // Just register mocks
-    services.AddSingleton(func() UserRepository { return &MockUserRepository{} })
-    services.AddSingleton(func() EmailService { return &MockEmailService{} })
-    services.AddScoped(NewUserService)
+    provider := BuildProvider(testModule)
+    service, _ := godi.Resolve[*UserService](provider)
 
-    provider, _ := services.BuildServiceProvider()
-    userService, _ := godi.Resolve[*UserService](provider)
-
-    // Test away!
+    // Test with fast, reliable mocks!
 }
 ```
 
-### 2. Request Isolation in Web Apps
+## Problem #3: Request Isolation
 
-**Without DI:**
+In web apps, each request needs its own context:
+
+**Without DI**: Pass request context through every function
 
 ```go
-// Dangerous! Shared transaction across requests
-var globalTx *sql.Tx
+func (h *Handler) CreateUser(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+    tx := h.db.BeginTx(ctx)
+    userID := GetUserID(ctx)
 
-func HandleRequest(w http.ResponseWriter, r *http.Request) {
-    tx, _ := db.Begin()
-    globalTx = tx  // Race condition!
+    // Pass tx and userID to EVERYTHING
+    user, err := h.userService.Create(ctx, tx, userID, userData)
+    h.auditService.Log(ctx, tx, userID, "created user")
+    h.emailService.SendWelcome(ctx, tx, userID, user.Email)
 
-    // ... do work ...
-
+    // Don't forget to commit!
     tx.Commit()
 }
 ```
 
-**With DI:**
+**With DI**: Use scopes
 
 ```go
-func HandleRequest(provider godi.ServiceProvider) http.HandlerFunc {
-    return func(w http.ResponseWriter, r *http.Request) {
-        // Each request gets its own scope
-        scope := provider.CreateScope(r.Context())
-        defer scope.Close()
+func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
+    scope := h.provider.CreateScope(r.Context())
+    defer scope.Close()
 
-        // Automatic transaction per request!
-        service, _ := godi.Resolve[*UserService](scope.ServiceProvider())
-        service.CreateUser(...)  // Uses this request's transaction
-    }
+    // Services automatically share the same transaction!
+    userService, _ := godi.Resolve[*UserService](scope.ServiceProvider())
+    user, _ := userService.Create(userData)
+
+    // Transaction commits when scope closes
 }
 ```
 
-### 3. Clean Architectural Boundaries
+## Problem #4: Environment Differences
 
-**Without DI:**
+Different services for different environments:
 
-```go
-// Everything knows about everything
-type UserService struct {
-    db       *sql.DB        // Knows about database
-    logger   *log.Logger    // Knows about logging
-    smtp     *smtp.Client   // Knows about email
-    redis    *redis.Client  // Knows about caching
-    config   *Config        // Knows about config
-}
-```
-
-**With DI:**
+**Without DI**: If/else everywhere
 
 ```go
-// Clean interfaces
-type UserService struct {
-    repo    UserRepository  // Just interfaces!
-    email   EmailSender
-    cache   Cache
-    logger  Logger
+var emailClient EmailClient
+if env == "production" {
+    emailClient = NewSendGridClient(apiKey)
+} else if env == "staging" {
+    emailClient = NewSMTPClient(smtpHost)
+} else {
+    emailClient = NewMockEmailClient()
 }
 
-// Easy to swap implementations
-services.AddSingleton(func() EmailSender {
-    if config.Dev {
-        return &MockEmailSender{}
-    }
-    return &SMTPEmailSender{}
-})
+// Repeat for every service... 😭
 ```
 
-### 4. Resource Management
-
-**Without DI:**
+**With DI**: Clean modules
 
 ```go
-func main() {
-    logger := createLogger()
-    defer logger.Close()  // Don't forget!
-
-    db := createDB()
-    defer db.Close()  // Don't forget!
-
-    cache := createCache()
-    defer cache.Close()  // Don't forget!
-
-    queue := createQueue()
-    defer queue.Close()  // Getting error-prone...
-
-    // ... 20 more resources
-}
-```
-
-**With DI:**
-
-```go
-func main() {
-    services := godi.NewServiceCollection()
-    services.AddSingleton(NewLogger)
-    services.AddSingleton(NewDatabase)
-    services.AddSingleton(NewCache)
-    services.AddSingleton(NewQueue)
-
-    provider, _ := services.BuildServiceProvider()
-    defer provider.Close()  // Closes EVERYTHING in the right order!
-}
-```
-
-## Common Concerns Addressed
-
-### "But I like Go's simplicity!"
-
-godi IS simple. Look at this:
-
-```go
-// 1. Say what you have
-services.AddSingleton(NewLogger)
-services.AddScoped(NewUserService)
-
-// 2. Get what you need
-userService, _ := godi.Resolve[*UserService](provider)
-
-// That's it. No magic, no reflection, no struct tags.
-```
-
-### "I don't want a framework!"
-
-godi isn't a framework. It's a container. Your services don't know about godi:
-
-```go
-// This is just a normal Go function
-func NewUserService(repo UserRepository, logger Logger) *UserService {
-    return &UserService{repo: repo, logger: logger}
+// Choose module based on environment
+var appModule godi.ModuleOption
+switch env {
+case "production":
+    appModule = ProductionModule
+case "staging":
+    appModule = StagingModule
+default:
+    appModule = DevelopmentModule
 }
 
-// No imports from godi, no base classes, no annotations
+// That's it!
+provider := BuildProvider(appModule)
 ```
-
-### "It's overkill for small apps!"
-
-True! If your entire app is 200 lines, you don't need DI. But when you have:
-
-- Multiple services
-- Unit tests
-- Integration tests
-- Different environments
-- Team members
-
-...DI pays for itself quickly.
 
 ## The Real Magic: Examples
 
 ### Adding Multi-Tenancy
 
-Without DI: Rewrite half your app to pass tenant context everywhere.
+Without DI: Rewrite half your app to pass tenant ID everywhere.
 
 With DI: Add one scoped service:
 
 ```go
-services.AddScoped(NewTenantContext)
+var TenantModule = godi.NewModule("tenant",
+    godi.AddScoped(NewTenantContext),
+)
+
 // Now every service in that scope has access to the tenant!
 ```
 
@@ -276,49 +205,101 @@ Without DI: Add traceID parameter to 50 functions.
 With DI: Add one scoped service:
 
 ```go
-services.AddScoped(NewRequestTracing)
-// Every service automatically includes trace IDs in logs!
+var TracingModule = godi.NewModule("tracing",
+    godi.AddScoped(NewTraceContext),
+)
+
+// Every log automatically includes trace IDs!
 ```
 
 ### Switching Databases
 
 Without DI: Find and update every place that creates connections.
 
-With DI: Change one line:
+With DI: Change one module:
 
 ```go
 // From
-services.AddSingleton(NewMySQLDatabase)
+var DBModule = godi.NewModule("db",
+    godi.AddSingleton(NewMySQLDatabase),
+)
+
 // To
-services.AddSingleton(NewPostgresDatabase)
+var DBModule = godi.NewModule("db",
+    godi.AddSingleton(NewPostgresDatabase),
+)
 ```
 
-## When You Really Need DI
+## Common Concerns Addressed
 
-You **need** DI when:
+### "But I like Go's simplicity!"
 
-- ✅ Adding a dependency means updating 10+ files
-- ✅ Testing requires complex setup
-- ✅ You have request-scoped state (transactions, user context)
-- ✅ Different environments need different implementations
-- ✅ You're copying setup code between tests
+godi IS simple:
 
-You **don't need** DI when:
+```go
+// 1. Create a module
+var AppModule = godi.NewModule("app",
+    godi.AddSingleton(NewLogger),
+    godi.AddScoped(NewUserService),
+)
 
-- ❌ Your app is a single file
-- ❌ You have no tests
-- ❌ You never change dependencies
-- ❌ It's a simple CLI tool
+// 2. Use it
+provider := BuildProvider(AppModule)
+service, _ := godi.Resolve[*UserService](provider)
 
-## Summary: The 80/20 of DI
+// No magic, no annotations, no reflection abuse
+```
 
-**80% of DI value comes from these 20% of features:**
+### "I don't want a framework!"
 
-1. **Automatic Wiring** - Change constructors, not callers
-2. **Easy Testing** - Swap implementations trivially
-3. **Request Scoping** - Isolate operations from each other
-4. **Lifecycle Management** - Automatic cleanup
+godi isn't a framework. Your services don't know about godi:
 
-That's it. Not complex. Not magic. Just solving real problems.
+```go
+// This is just a normal Go function
+func NewUserService(repo UserRepository, logger Logger) *UserService {
+    return &UserService{repo: repo, logger: logger}
+}
 
-**Ready to try it?** Start with the [Getting Started Tutorial](../tutorials/getting-started.md). You'll be productive in 10 minutes.
+// No imports from godi, no base classes, nothing
+```
+
+### "It's overkill for small apps!"
+
+True! If your app is 200 lines, you don't need DI. But when you have:
+
+- Multiple services (5+)
+- Any tests
+- HTTP handlers
+- Different environments
+
+...DI saves time immediately.
+
+## When You Need DI
+
+✅ **You need DI when:**
+
+- Adding a dependency means updating 10+ files
+- Testing requires complex setup
+- You have request-scoped data (user context, transactions)
+- Different environments need different implementations
+- You're tired of writing boilerplate
+
+❌ **You don't need DI when:**
+
+- Your app is a single file
+- You have no tests
+- Dependencies never change
+- It's a simple CLI tool
+
+## The Bottom Line
+
+Dependency injection solves real problems:
+
+1. **Change Management** - Update constructors, not callers
+2. **Testing** - Swap implementations instantly
+3. **Request Isolation** - Each request gets its own world
+4. **Environment Flexibility** - Dev/staging/prod made easy
+
+It's not about being "enterprise" or "sophisticated". It's about writing less boilerplate and focusing on your actual business logic.
+
+**Ready to try it?** Check out the [Quick Start](quick-start.md) - you'll be productive in 5 minutes.

@@ -1,1259 +1,516 @@
 # Testing with godi
 
-One of the greatest benefits of dependency injection is how it transforms testing. This tutorial shows you how to write comprehensive tests for applications using godi.
+Testing with dependency injection is a game-changer. No more complex setups, no more slow tests, just fast and reliable unit tests.
 
-## Why DI Makes Testing Better
+## Why DI Makes Testing Amazing
 
-Without DI, testing often involves:
+**Without DI**: Tests are painful
 
-- Complex setup with real databases
-- Slow tests due to external dependencies
-- Brittle tests that fail due to network issues
-- Difficulty isolating components
+- Real database connections
+- Complex test fixtures
+- Slow test suites
+- Flaky tests due to external dependencies
 
-With godi:
+**With DI**: Tests are a joy
 
-- Easy mock injection
-- Fast, isolated unit tests
-- Reliable and repeatable
-- Clear test boundaries
+- Use mocks instead of real services
+- Tests run in milliseconds
+- Completely isolated tests
+- Easy to test edge cases
 
-## Setting Up
+## Quick Example
 
-We'll test the blog API from the [Web Application Tutorial](web-application.md). First, create a test utilities package:
-
-```bash
-mkdir -p internal/testutil
-```
-
-## Step 1: Create Test Utilities
-
-Create `internal/testutil/di.go`:
+Here's how simple testing becomes:
 
 ```go
-package testutil
-
-import (
-    "testing"
-    "github.com/junioryono/godi"
-    "github.com/stretchr/testify/require"
-)
-
-// TestProvider creates a DI provider for tests
-type TestProvider struct {
-    provider godi.ServiceProvider
-    t        *testing.T
+// production code
+type UserService struct {
+    db     Database
+    logger Logger
 }
 
-// NewTestProvider creates a new test provider
-func NewTestProvider(t *testing.T, opts ...Option) *TestProvider {
-    services := godi.NewServiceCollection()
+func NewUserService(db Database, logger Logger) *UserService {
+    return &UserService{db: db, logger: logger}
+}
 
-    // Apply options
-    cfg := &config{
-        services: services,
-    }
-    for _, opt := range opts {
-        opt(cfg)
-    }
+func (s *UserService) GetUser(id string) (*User, error) {
+    s.logger.Log("Getting user " + id)
+    return s.db.FindUser(id)
+}
+
+// test code
+func TestUserService_GetUser(t *testing.T) {
+    // Create test module with mocks
+    testModule := godi.NewModule("test",
+        godi.AddSingleton(func() Database {
+            return &MockDatabase{
+                users: map[string]*User{
+                    "123": {ID: "123", Name: "Alice"},
+                },
+            }
+        }),
+        godi.AddSingleton(func() Logger {
+            return &MockLogger{}
+        }),
+        godi.AddScoped(NewUserService),
+    )
 
     // Build provider
-    provider, err := services.BuildServiceProvider()
-    require.NoError(t, err)
+    services := godi.NewServiceCollection()
+    services.AddModules(testModule)
+    provider, _ := services.BuildServiceProvider()
+    defer provider.Close()
 
-    // Auto-cleanup
-    t.Cleanup(func() {
-        provider.Close()
-    })
+    // Test!
+    service, _ := godi.Resolve[*UserService](provider)
+    user, err := service.GetUser("123")
 
-    return &TestProvider{
-        provider: provider,
-        t:        t,
-    }
-}
-
-// Provider returns the underlying service provider
-func (tp *TestProvider) Provider() godi.ServiceProvider {
-    return tp.provider
-}
-
-// Resolve resolves a service with automatic error checking
-func (tp *TestProvider) Resolve(service interface{}) {
-    err := tp.provider.Invoke(func(svc interface{}) {
-        // Use reflection to set the service
-        reflect.ValueOf(service).Elem().Set(reflect.ValueOf(svc))
-    })
-    require.NoError(tp.t, err)
-}
-
-// WithScope creates a test scope
-func (tp *TestProvider) WithScope(fn func(scope godi.Scope)) {
-    scope := tp.provider.CreateScope(context.Background())
-    defer scope.Close()
-    fn(scope)
-}
-
-// Option configures the test provider
-type Option func(*config)
-
-type config struct {
-    services godi.ServiceCollection
-}
-
-// WithService adds a service to the test container
-func WithService(lifetime godi.ServiceLifetime, constructor interface{}) Option {
-    return func(c *config) {
-        switch lifetime {
-        case godi.Singleton:
-            c.services.AddSingleton(constructor)
-        case godi.Scoped:
-            c.services.AddScoped(constructor)
-        }
-    }
-}
-
-// WithMock adds a mock service
-func WithMock(serviceType reflect.Type, mock interface{}) Option {
-    return func(c *config) {
-        c.services.AddSingleton(func() interface{} {
-            return mock
-        })
-    }
+    assert.NoError(t, err)
+    assert.Equal(t, "Alice", user.Name)
 }
 ```
 
-## Step 2: Create Mocks
+## Step-by-Step Guide
 
-Create `internal/mocks/repositories.go`:
+### Step 1: Define Interfaces
+
+First, use interfaces for your dependencies:
 
 ```go
-package mocks
-
-import (
-    "context"
-    "errors"
-    "sync"
-
-    "blog-api/internal/models"
-)
-
-// MockUserRepository is a mock implementation of UserRepository
-type MockUserRepository struct {
-    mu      sync.RWMutex
-    users   map[string]*models.User
-    calls   []string
-    err     error // Can be set to simulate errors
+// interfaces.go
+type Database interface {
+    FindUser(id string) (*User, error)
+    SaveUser(user *User) error
 }
 
-func NewMockUserRepository() *MockUserRepository {
-    return &MockUserRepository{
-        users: make(map[string]*models.User),
+type Logger interface {
+    Log(message string)
+    Error(message string)
+}
+
+type EmailClient interface {
+    Send(to, subject, body string) error
+}
+```
+
+### Step 2: Create Mock Implementations
+
+```go
+// mocks/database.go
+type MockDatabase struct {
+    users     map[string]*User
+    saveError error // Control errors
+}
+
+func NewMockDatabase() *MockDatabase {
+    return &MockDatabase{
+        users: make(map[string]*User),
     }
 }
 
-// WithUsers sets initial users
-func (m *MockUserRepository) WithUsers(users ...*models.User) *MockUserRepository {
-    for _, user := range users {
-        m.users[user.ID] = user
+func (m *MockDatabase) FindUser(id string) (*User, error) {
+    user, ok := m.users[id]
+    if !ok {
+        return nil, errors.New("user not found")
     }
-    return m
+    return user, nil
 }
 
-// WithError simulates an error
-func (m *MockUserRepository) WithError(err error) *MockUserRepository {
-    m.err = err
-    return m
-}
-
-func (m *MockUserRepository) Create(ctx context.Context, user *models.User) error {
-    m.mu.Lock()
-    defer m.mu.Unlock()
-
-    m.calls = append(m.calls, "Create")
-
-    if m.err != nil {
-        return m.err
+func (m *MockDatabase) SaveUser(user *User) error {
+    if m.saveError != nil {
+        return m.saveError
     }
-
-    if user.ID == "" {
-        user.ID = "test-id"
-    }
-
     m.users[user.ID] = user
     return nil
 }
 
-func (m *MockUserRepository) GetByID(ctx context.Context, id string) (*models.User, error) {
-    m.mu.RLock()
-    defer m.mu.RUnlock()
-
-    m.calls = append(m.calls, "GetByID")
-
-    if m.err != nil {
-        return nil, m.err
-    }
-
-    user, exists := m.users[id]
-    if !exists {
-        return nil, errors.New("not found")
-    }
-
-    return user, nil
-}
-
-func (m *MockUserRepository) GetByUsername(ctx context.Context, username string) (*models.User, error) {
-    m.mu.RLock()
-    defer m.mu.RUnlock()
-
-    m.calls = append(m.calls, "GetByUsername")
-
-    if m.err != nil {
-        return nil, m.err
-    }
-
-    for _, user := range m.users {
-        if user.Username == username {
-            return user, nil
-        }
-    }
-
-    return nil, errors.New("not found")
-}
-
-// GetCalls returns the method calls made
-func (m *MockUserRepository) GetCalls() []string {
-    m.mu.RLock()
-    defer m.mu.RUnlock()
-
-    calls := make([]string, len(m.calls))
-    copy(calls, m.calls)
-    return calls
-}
-
-// MockLogger for testing
+// mocks/logger.go
 type MockLogger struct {
-    mu       sync.Mutex
-    messages []LogMessage
+    messages []string
 }
 
-type LogMessage struct {
-    Level   string
-    Message string
-    Args    []interface{}
+func (m *MockLogger) Log(message string) {
+    m.messages = append(m.messages, message)
 }
 
-func NewMockLogger() *MockLogger {
-    return &MockLogger{}
+func (m *MockLogger) Error(message string) {
+    m.messages = append(m.messages, "ERROR: " + message)
 }
 
-func (l *MockLogger) Info(msg string, args ...interface{}) {
-    l.mu.Lock()
-    defer l.mu.Unlock()
-
-    l.messages = append(l.messages, LogMessage{
-        Level:   "INFO",
-        Message: msg,
-        Args:    args,
-    })
+// mocks/email.go
+type MockEmailClient struct {
+    sentEmails []SentEmail
+    shouldFail bool
 }
 
-func (l *MockLogger) Error(msg string, err error, args ...interface{}) {
-    l.mu.Lock()
-    defer l.mu.Unlock()
-
-    l.messages = append(l.messages, LogMessage{
-        Level:   "ERROR",
-        Message: msg,
-        Args:    append([]interface{}{err}, args...),
-    })
+type SentEmail struct {
+    To      string
+    Subject string
+    Body    string
 }
 
-func (l *MockLogger) GetMessages() []LogMessage {
-    l.mu.Lock()
-    defer l.mu.Unlock()
-
-    messages := make([]LogMessage, len(l.messages))
-    copy(messages, l.messages)
-    return messages
-}
-```
-
-## Step 3: Unit Testing Services
-
-Create `internal/services/auth_test.go`:
-
-```go
-package services_test
-
-import (
-    "context"
-    "testing"
-
-    "blog-api/internal/config"
-    "blog-api/internal/models"
-    "blog-api/internal/mocks"
-    "blog-api/internal/services"
-
-    "github.com/junioryono/godi"
-    "github.com/stretchr/testify/assert"
-    "github.com/stretchr/testify/require"
-)
-
-func TestAuthService_Register(t *testing.T) {
-    tests := []struct {
-        name      string
-        setup     func(*mocks.MockUserRepository)
-        request   *models.RegisterRequest
-        wantErr   bool
-        errMsg    string
-        checkUser func(*testing.T, *models.User)
-    }{
-        {
-            name: "successful registration",
-            setup: func(repo *mocks.MockUserRepository) {
-                // Empty repo - no existing users
-            },
-            request: &models.RegisterRequest{
-                Username: "newuser",
-                Email:    "new@example.com",
-                Password: "password123",
-            },
-            wantErr: false,
-            checkUser: func(t *testing.T, user *models.User) {
-                assert.Equal(t, "newuser", user.Username)
-                assert.Equal(t, "new@example.com", user.Email)
-                assert.NotEmpty(t, user.ID)
-                assert.NotEqual(t, "password123", user.PasswordHash) // Should be hashed
-            },
-        },
-        {
-            name: "duplicate username",
-            setup: func(repo *mocks.MockUserRepository) {
-                repo.WithUsers(&models.User{
-                    ID:       "existing",
-                    Username: "newuser",
-                    Email:    "other@example.com",
-                })
-            },
-            request: &models.RegisterRequest{
-                Username: "newuser",
-                Email:    "new@example.com",
-                Password: "password123",
-            },
-            wantErr: true,
-            errMsg:  "user already exists",
-        },
-        {
-            name: "duplicate email",
-            setup: func(repo *mocks.MockUserRepository) {
-                repo.WithUsers(&models.User{
-                    ID:       "existing",
-                    Username: "other",
-                    Email:    "new@example.com",
-                })
-            },
-            request: &models.RegisterRequest{
-                Username: "newuser",
-                Email:    "new@example.com",
-                Password: "password123",
-            },
-            wantErr: true,
-            errMsg:  "user already exists",
-        },
+func (m *MockEmailClient) Send(to, subject, body string) error {
+    if m.shouldFail {
+        return errors.New("email failed")
     }
-
-    for _, tt := range tests {
-        t.Run(tt.name, func(t *testing.T) {
-            // Setup DI container
-            services := godi.NewServiceCollection()
-
-            // Register mocks
-            mockRepo := mocks.NewMockUserRepository()
-            if tt.setup != nil {
-                tt.setup(mockRepo)
-            }
-
-            services.AddSingleton(func() repositories.UserRepository {
-                return mockRepo
-            })
-            services.AddSingleton(func() *config.Config {
-                return &config.Config{
-                    JWTSecret:     "test-secret",
-                    JWTExpiration: time.Hour,
-                }
-            })
-            services.AddScoped(services.NewAuthService)
-
-            // Build provider
-            provider, err := services.BuildServiceProvider()
-            require.NoError(t, err)
-            defer provider.Close()
-
-            // Create scope
-            scope := provider.CreateScope(context.Background())
-            defer scope.Close()
-
-            // Resolve service
-            authService, err := godi.Resolve[services.AuthService](scope)
-            require.NoError(t, err)
-
-            // Execute test
-            resp, err := authService.Register(context.Background(), tt.request)
-
-            // Check results
-            if tt.wantErr {
-                assert.Error(t, err)
-                if tt.errMsg != "" {
-                    assert.Contains(t, err.Error(), tt.errMsg)
-                }
-                assert.Nil(t, resp)
-            } else {
-                assert.NoError(t, err)
-                assert.NotNil(t, resp)
-                assert.NotEmpty(t, resp.Token)
-
-                if tt.checkUser != nil {
-                    tt.checkUser(t, resp.User)
-                }
-
-                // Verify user was saved
-                savedUser, _ := mockRepo.GetByID(context.Background(), resp.User.ID)
-                assert.NotNil(t, savedUser)
-            }
-
-            // Verify repository calls
-            calls := mockRepo.GetCalls()
-            assert.Contains(t, calls, "GetByUsername")
-            assert.Contains(t, calls, "GetByEmail")
-            if !tt.wantErr {
-                assert.Contains(t, calls, "Create")
-            }
-        })
-    }
-}
-
-func TestAuthService_Login(t *testing.T) {
-    // Create a test user with hashed password
-    hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("correct-password"), bcrypt.DefaultCost)
-    testUser := &models.User{
-        ID:           "user-123",
-        Username:     "testuser",
-        Email:        "test@example.com",
-        PasswordHash: string(hashedPassword),
-    }
-
-    tests := []struct {
-        name    string
-        setup   func(*mocks.MockUserRepository)
-        request *models.LoginRequest
-        wantErr bool
-        errMsg  string
-    }{
-        {
-            name: "successful login",
-            setup: func(repo *mocks.MockUserRepository) {
-                repo.WithUsers(testUser)
-            },
-            request: &models.LoginRequest{
-                Username: "testuser",
-                Password: "correct-password",
-            },
-            wantErr: false,
-        },
-        {
-            name: "wrong password",
-            setup: func(repo *mocks.MockUserRepository) {
-                repo.WithUsers(testUser)
-            },
-            request: &models.LoginRequest{
-                Username: "testuser",
-                Password: "wrong-password",
-            },
-            wantErr: true,
-            errMsg:  "invalid credentials",
-        },
-        {
-            name: "user not found",
-            setup: func(repo *mocks.MockUserRepository) {
-                // Empty repo
-            },
-            request: &models.LoginRequest{
-                Username: "nonexistent",
-                Password: "password",
-            },
-            wantErr: true,
-            errMsg:  "invalid credentials",
-        },
-    }
-
-    for _, tt := range tests {
-        t.Run(tt.name, func(t *testing.T) {
-            // Use test helper
-            tp := testutil.NewTestProvider(t,
-                testutil.WithService(godi.Singleton, func() repositories.UserRepository {
-                    repo := mocks.NewMockUserRepository()
-                    if tt.setup != nil {
-                        tt.setup(repo)
-                    }
-                    return repo
-                }),
-                testutil.WithService(godi.Singleton, func() *config.Config {
-                    return &config.Config{
-                        JWTSecret:     "test-secret",
-                        JWTExpiration: time.Hour,
-                    }
-                }),
-                testutil.WithService(godi.Scoped, services.NewAuthService),
-            )
-
-            tp.WithScope(func(scope godi.Scope) {
-                authService, err := godi.Resolve[services.AuthService](scope)
-                require.NoError(t, err)
-
-                resp, err := authService.Login(context.Background(), tt.request)
-
-                if tt.wantErr {
-                    assert.Error(t, err)
-                    if tt.errMsg != "" {
-                        assert.Contains(t, err.Error(), tt.errMsg)
-                    }
-                } else {
-                    assert.NoError(t, err)
-                    assert.NotNil(t, resp)
-                    assert.NotEmpty(t, resp.Token)
-                    assert.Equal(t, testUser.ID, resp.User.ID)
-
-                    // Verify token is valid
-                    userID, err := authService.ValidateToken(resp.Token)
-                    assert.NoError(t, err)
-                    assert.Equal(t, testUser.ID, userID)
-                }
-            })
-        })
-    }
-}
-```
-
-## Step 4: Integration Testing
-
-Create `internal/handlers/auth_integration_test.go`:
-
-```go
-package handlers_test
-
-import (
-    "bytes"
-    "encoding/json"
-    "net/http"
-    "net/http/httptest"
-    "testing"
-
-    "blog-api/internal/config"
-    "blog-api/internal/handlers"
-    "blog-api/internal/models"
-    "blog-api/internal/repositories"
-    "blog-api/internal/services"
-
-    "github.com/gorilla/mux"
-    "github.com/junioryono/godi"
-    "github.com/stretchr/testify/assert"
-    "github.com/stretchr/testify/require"
-)
-
-func TestAuthHandler_Integration(t *testing.T) {
-    // Setup DI container with real implementations
-    services := godi.NewServiceCollection()
-
-    // Use in-memory implementations for integration tests
-    services.AddSingleton(repositories.NewInMemoryUserRepository)
-    services.AddSingleton(func() *config.Config {
-        return &config.Config{
-            JWTSecret:     "test-integration-secret",
-            JWTExpiration: time.Hour,
-        }
-    })
-    services.AddScoped(services.NewAuthService)
-    services.AddScoped(handlers.NewAuthHandler)
-
-    provider, err := services.BuildServiceProvider()
-    require.NoError(t, err)
-    defer provider.Close()
-
-    // Setup router
-    router := mux.NewRouter()
-    router.Use(handlers.DIMiddleware(provider))
-
-    router.HandleFunc("/auth/register", func(w http.ResponseWriter, r *http.Request) {
-        scope := handlers.GetScope(r.Context())
-        handler, _ := godi.Resolve[*handlers.AuthHandler](scope)
-        handler.Register(w, r)
-    }).Methods("POST")
-
-    router.HandleFunc("/auth/login", func(w http.ResponseWriter, r *http.Request) {
-        scope := handlers.GetScope(r.Context())
-        handler, _ := godi.Resolve[*handlers.AuthHandler](scope)
-        handler.Login(w, r)
-    }).Methods("POST")
-
-    // Test server
-    server := httptest.NewServer(router)
-    defer server.Close()
-
-    t.Run("full auth flow", func(t *testing.T) {
-        // Register
-        registerReq := models.RegisterRequest{
-            Username: "integrationuser",
-            Email:    "integration@test.com",
-            Password: "testpass123",
-        }
-
-        body, _ := json.Marshal(registerReq)
-        resp, err := http.Post(
-            server.URL+"/auth/register",
-            "application/json",
-            bytes.NewReader(body),
-        )
-        require.NoError(t, err)
-        defer resp.Body.Close()
-
-        assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-        var registerResp models.AuthResponse
-        err = json.NewDecoder(resp.Body).Decode(&registerResp)
-        require.NoError(t, err)
-
-        assert.NotEmpty(t, registerResp.Token)
-        assert.Equal(t, "integrationuser", registerResp.User.Username)
-
-        // Login with same credentials
-        loginReq := models.LoginRequest{
-            Username: "integrationuser",
-            Password: "testpass123",
-        }
-
-        body, _ = json.Marshal(loginReq)
-        resp, err = http.Post(
-            server.URL+"/auth/login",
-            "application/json",
-            bytes.NewReader(body),
-        )
-        require.NoError(t, err)
-        defer resp.Body.Close()
-
-        assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-        var loginResp models.AuthResponse
-        err = json.NewDecoder(resp.Body).Decode(&loginResp)
-        require.NoError(t, err)
-
-        assert.NotEmpty(t, loginResp.Token)
-        assert.Equal(t, registerResp.User.ID, loginResp.User.ID)
-    })
-
-    t.Run("duplicate registration", func(t *testing.T) {
-        // First registration
-        registerReq := models.RegisterRequest{
-            Username: "duplicate",
-            Email:    "duplicate@test.com",
-            Password: "testpass123",
-        }
-
-        body, _ := json.Marshal(registerReq)
-        resp, err := http.Post(
-            server.URL+"/auth/register",
-            "application/json",
-            bytes.NewReader(body),
-        )
-        require.NoError(t, err)
-        resp.Body.Close()
-
-        assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-        // Duplicate registration
-        resp, err = http.Post(
-            server.URL+"/auth/register",
-            "application/json",
-            bytes.NewReader(body),
-        )
-        require.NoError(t, err)
-        defer resp.Body.Close()
-
-        assert.Equal(t, http.StatusConflict, resp.StatusCode)
-    })
-}
-```
-
-## Step 5: Testing Scoped Services
-
-Create `internal/services/scope_test.go`:
-
-```go
-package services_test
-
-import (
-    "context"
-    "sync"
-    "testing"
-
-    "blog-api/internal/services"
-
-    "github.com/junioryono/godi"
-    "github.com/stretchr/testify/assert"
-    "github.com/stretchr/testify/require"
-)
-
-// Service that tracks its instances
-type InstanceTracker struct {
-    ID       string
-    Created  time.Time
-}
-
-type TrackedService struct {
-    instance *InstanceTracker
-}
-
-func NewTrackedService() *TrackedService {
-    return &TrackedService{
-        instance: &InstanceTracker{
-            ID:      uuid.New().String(),
-            Created: time.Now(),
-        },
-    }
-}
-
-func (s *TrackedService) GetInstance() *InstanceTracker {
-    return s.instance
-}
-
-func TestScopedLifetime(t *testing.T) {
-    services := godi.NewServiceCollection()
-
-    // Register as scoped
-    services.AddScoped(NewTrackedService)
-
-    provider, err := services.BuildServiceProvider()
-    require.NoError(t, err)
-    defer provider.Close()
-
-    t.Run("same instance within scope", func(t *testing.T) {
-        scope := provider.CreateScope(context.Background())
-        defer scope.Close()
-
-        // Resolve multiple times
-        svc1, err := godi.Resolve[*TrackedService](scope)
-        require.NoError(t, err)
-
-        svc2, err := godi.Resolve[*TrackedService](scope)
-        require.NoError(t, err)
-
-        // Should be same instance
-        assert.Equal(t, svc1.GetInstance().ID, svc2.GetInstance().ID)
-        assert.Same(t, svc1, svc2)
-    })
-
-    t.Run("different instances across scopes", func(t *testing.T) {
-        scope1 := provider.CreateScope(context.Background())
-        defer scope1.Close()
-
-        scope2 := provider.CreateScope(context.Background())
-        defer scope2.Close()
-
-        svc1, _ := godi.Resolve[*TrackedService](scope1)
-        svc2, _ := godi.Resolve[*TrackedService](scope2)
-
-        // Should be different instances
-        assert.NotEqual(t, svc1.GetInstance().ID, svc2.GetInstance().ID)
-        assert.NotSame(t, svc1, svc2)
-    })
-
-    t.Run("concurrent scope resolution", func(t *testing.T) {
-        const numGoroutines = 100
-        instances := make(map[string]bool)
-        var mu sync.Mutex
-        var wg sync.WaitGroup
-
-        wg.Add(numGoroutines)
-
-        for i := 0; i < numGoroutines; i++ {
-            go func() {
-                defer wg.Done()
-
-                scope := provider.CreateScope(context.Background())
-                defer scope.Close()
-
-                svc, err := godi.Resolve[*TrackedService](scope)
-                require.NoError(t, err)
-
-                mu.Lock()
-                instances[svc.GetInstance().ID] = true
-                mu.Unlock()
-            }()
-        }
-
-        wg.Wait()
-
-        // Should have created numGoroutines different instances
-        assert.Equal(t, numGoroutines, len(instances))
-    })
-}
-
-// Test disposal of scoped services
-type DisposableService struct {
-    ID       string
-    disposed bool
-    mu       sync.Mutex
-}
-
-func NewDisposableService() *DisposableService {
-    return &DisposableService{
-        ID: uuid.New().String(),
-    }
-}
-
-func (s *DisposableService) Close() error {
-    s.mu.Lock()
-    defer s.mu.Unlock()
-
-    if s.disposed {
-        return errors.New("already disposed")
-    }
-
-    s.disposed = true
+    m.sentEmails = append(m.sentEmails, SentEmail{to, subject, body})
     return nil
 }
+```
 
-func (s *DisposableService) IsDisposed() bool {
-    s.mu.Lock()
-    defer s.mu.Unlock()
-    return s.disposed
+### Step 3: Create Test Modules
+
+Organize your test dependencies:
+
+```go
+// testutil/modules.go
+package testutil
+
+import "github.com/junioryono/godi"
+
+// Basic test module with mocks
+func NewTestModule() godi.ModuleOption {
+    return godi.NewModule("test-base",
+        godi.AddSingleton(func() Database {
+            return NewMockDatabase()
+        }),
+        godi.AddSingleton(func() Logger {
+            return &MockLogger{}
+        }),
+        godi.AddSingleton(func() EmailClient {
+            return &MockEmailClient{}
+        }),
+    )
 }
 
-func TestScopeDisposal(t *testing.T) {
+// Test module with preset data
+func NewTestModuleWithData(users []*User) godi.ModuleOption {
+    return godi.NewModule("test-with-data",
+        godi.AddSingleton(func() Database {
+            db := NewMockDatabase()
+            for _, user := range users {
+                db.users[user.ID] = user
+            }
+            return db
+        }),
+        godi.AddSingleton(func() Logger {
+            return &MockLogger{}
+        }),
+    )
+}
+
+// Test module for error scenarios
+func NewErrorTestModule() godi.ModuleOption {
+    return godi.NewModule("test-errors",
+        godi.AddSingleton(func() Database {
+            return &MockDatabase{
+                saveError: errors.New("database error"),
+            }
+        }),
+        godi.AddSingleton(func() EmailClient {
+            return &MockEmailClient{
+                shouldFail: true,
+            }
+        }),
+    )
+}
+```
+
+### Step 4: Write Your Tests
+
+Now testing is easy and clean:
+
+```go
+// user_service_test.go
+func TestUserService_CreateUser(t *testing.T) {
+    // Arrange
+    testModule := godi.NewModule("test",
+        testutil.NewTestModule(),
+        godi.AddScoped(NewUserService),
+    )
+
     services := godi.NewServiceCollection()
-
-    // Track created services
-    var createdServices []*DisposableService
-    var mu sync.Mutex
-
-    services.AddScoped(func() *DisposableService {
-        svc := NewDisposableService()
-
-        mu.Lock()
-        createdServices = append(createdServices, svc)
-        mu.Unlock()
-
-        return svc
-    })
-
-    provider, err := services.BuildServiceProvider()
-    require.NoError(t, err)
+    services.AddModules(testModule)
+    provider, _ := services.BuildServiceProvider()
     defer provider.Close()
 
-    t.Run("services disposed with scope", func(t *testing.T) {
-        scope := provider.CreateScope(context.Background())
+    // Act
+    service, _ := godi.Resolve[*UserService](provider)
+    err := service.CreateUser("Alice", "alice@example.com")
 
-        // Create service
-        svc, err := godi.Resolve[*DisposableService](scope)
-        require.NoError(t, err)
+    // Assert
+    assert.NoError(t, err)
 
-        assert.False(t, svc.IsDisposed())
+    // Verify mock was called
+    db, _ := godi.Resolve[Database](provider)
+    mockDB := db.(*MockDatabase)
+    assert.Contains(t, mockDB.users, "alice")
+}
 
-        // Close scope
-        err = scope.Close()
-        require.NoError(t, err)
+func TestUserService_CreateUser_DatabaseError(t *testing.T) {
+    // Use error module
+    testModule := godi.NewModule("test",
+        testutil.NewErrorTestModule(),
+        godi.AddScoped(NewUserService),
+    )
 
-        // Service should be disposed
-        assert.True(t, svc.IsDisposed())
-    })
+    services := godi.NewServiceCollection()
+    services.AddModules(testModule)
+    provider, _ := services.BuildServiceProvider()
+    defer provider.Close()
 
-    t.Run("disposal order LIFO", func(t *testing.T) {
-        // Clear tracking
-        mu.Lock()
-        createdServices = nil
-        mu.Unlock()
+    service, _ := godi.Resolve[*UserService](provider)
+    err := service.CreateUser("Alice", "alice@example.com")
 
-        scope := provider.CreateScope(context.Background())
-
-        // Create multiple services
-        const numServices = 5
-        for i := 0; i < numServices; i++ {
-            _, err := godi.Resolve[*DisposableService](scope)
-            require.NoError(t, err)
-        }
-
-        // Track disposal order
-        var disposalOrder []string
-        for _, svc := range createdServices {
-            id := svc.ID
-            originalClose := svc.Close
-            svc.Close = func() error {
-                disposalOrder = append(disposalOrder, id)
-                return originalClose()
-            }
-        }
-
-        // Close scope
-        scope.Close()
-
-        // Verify LIFO order
-        assert.Equal(t, numServices, len(disposalOrder))
-        for i := 0; i < numServices; i++ {
-            expectedIdx := numServices - 1 - i
-            assert.Equal(t, createdServices[expectedIdx].ID, disposalOrder[i])
-        }
-    })
+    assert.Error(t, err)
+    assert.Contains(t, err.Error(), "database error")
 }
 ```
 
-## Step 6: Testing Best Practices
+## Advanced Testing Patterns
 
-Create `internal/testutil/assertions.go`:
-
-```go
-package testutil
-
-import (
-    "testing"
-    "github.com/stretchr/testify/assert"
-)
-
-// AssertErrorType checks if an error is of a specific type
-func AssertErrorType[T error](t *testing.T, err error) {
-    t.Helper()
-
-    var target T
-    assert.ErrorAs(t, err, &target, "expected error type %T", target)
-}
-
-// AssertServiceRegistered verifies a service is registered
-func AssertServiceRegistered[T any](t *testing.T, provider godi.ServiceProvider) {
-    t.Helper()
-
-    _, err := godi.Resolve[T](provider)
-    assert.NoError(t, err, "service %T should be registered", *new(T))
-}
-
-// AssertServiceNotRegistered verifies a service is not registered
-func AssertServiceNotRegistered[T any](t *testing.T, provider godi.ServiceProvider) {
-    t.Helper()
-
-    _, err := godi.Resolve[T](provider)
-    assert.Error(t, err, "service %T should not be registered", *new(T))
-}
-```
-
-Create test table helper `internal/testutil/table.go`:
+### Table-Driven Tests with DI
 
 ```go
-package testutil
+func TestUserService_Validation(t *testing.T) {
+    tests := []struct {
+        name      string
+        username  string
+        email     string
+        wantError string
+    }{
+        {
+            name:      "valid user",
+            username:  "alice",
+            email:     "alice@example.com",
+            wantError: "",
+        },
+        {
+            name:      "empty username",
+            username:  "",
+            email:     "alice@example.com",
+            wantError: "username required",
+        },
+        {
+            name:      "invalid email",
+            username:  "alice",
+            email:     "not-an-email",
+            wantError: "invalid email",
+        },
+    }
 
-import (
-    "context"
-    "testing"
-
-    "github.com/junioryono/godi"
-)
-
-// ServiceTest defines a table-driven test for services
-type ServiceTest struct {
-    Name      string
-    Setup     func(godi.ServiceCollection)
-    Test      func(context.Context, godi.ServiceProvider) error
-    WantError bool
-    ErrorMsg  string
-}
-
-// RunServiceTests executes table-driven tests
-func RunServiceTests(t *testing.T, tests []ServiceTest) {
     for _, tt := range tests {
-        t.Run(tt.Name, func(t *testing.T) {
-            // Create container
+        t.Run(tt.name, func(t *testing.T) {
+            // Fresh provider for each test
+            testModule := godi.NewModule("test",
+                testutil.NewTestModule(),
+                godi.AddScoped(NewUserService),
+            )
+
             services := godi.NewServiceCollection()
-
-            // Apply setup
-            if tt.Setup != nil {
-                tt.Setup(services)
-            }
-
-            // Build provider
-            provider, err := services.BuildServiceProvider()
-            if err != nil {
-                t.Fatalf("failed to build provider: %v", err)
-            }
+            services.AddModules(testModule)
+            provider, _ := services.BuildServiceProvider()
             defer provider.Close()
 
-            // Run test
-            ctx := context.Background()
-            err = tt.Test(ctx, provider)
+            service, _ := godi.Resolve[*UserService](provider)
+            err := service.CreateUser(tt.username, tt.email)
 
-            // Check result
-            if tt.WantError {
-                assert.Error(t, err)
-                if tt.ErrorMsg != "" {
-                    assert.Contains(t, err.Error(), tt.ErrorMsg)
-                }
-            } else {
+            if tt.wantError == "" {
                 assert.NoError(t, err)
+            } else {
+                assert.Error(t, err)
+                assert.Contains(t, err.Error(), tt.wantError)
             }
         })
     }
 }
 ```
 
-## Step 7: Benchmark Tests
-
-Create `internal/services/benchmark_test.go`:
+### Testing with Scopes
 
 ```go
-package services_test
+func TestConcurrentRequests(t *testing.T) {
+    // Shared infrastructure
+    appModule := godi.NewModule("app",
+        godi.AddSingleton(func() Database {
+            return NewMockDatabase()
+        }),
+        godi.AddScoped(NewUserService),
+        godi.AddScoped(NewRequestContext),
+    )
 
-import (
-    "context"
-    "testing"
-
-    "blog-api/internal/config"
-    "blog-api/internal/mocks"
-    "blog-api/internal/repositories"
-    "blog-api/internal/services"
-
-    "github.com/junioryono/godi"
-)
-
-func BenchmarkServiceResolution(b *testing.B) {
     services := godi.NewServiceCollection()
-
-    // Register services
-    services.AddSingleton(func() repositories.UserRepository {
-        return mocks.NewMockUserRepository()
-    })
-    services.AddSingleton(func() *config.Config {
-        return &config.Config{
-            JWTSecret:     "bench-secret",
-            JWTExpiration: time.Hour,
-        }
-    })
-    services.AddScoped(services.NewAuthService)
-
+    services.AddModules(appModule)
     provider, _ := services.BuildServiceProvider()
     defer provider.Close()
 
-    b.Run("singleton resolution", func(b *testing.B) {
-        b.ResetTimer()
-        for i := 0; i < b.N; i++ {
-            _, err := godi.Resolve[*config.Config](provider)
-            if err != nil {
-                b.Fatal(err)
-            }
-        }
-    })
+    // Simulate concurrent requests
+    var wg sync.WaitGroup
+    for i := 0; i < 10; i++ {
+        wg.Add(1)
+        go func(requestID int) {
+            defer wg.Done()
 
-    b.Run("scoped resolution", func(b *testing.B) {
-        scope := provider.CreateScope(context.Background())
-        defer scope.Close()
+            // Each request gets its own scope
+            ctx := context.WithValue(context.Background(), "requestID", requestID)
+            scope := provider.CreateScope(ctx)
+            defer scope.Close()
 
-        b.ResetTimer()
-        for i := 0; i < b.N; i++ {
-            _, err := godi.Resolve[services.AuthService](scope)
-            if err != nil {
-                b.Fatal(err)
-            }
-        }
-    })
+            service, _ := godi.Resolve[*UserService](scope.ServiceProvider())
+            // Each request has isolated instances
+            service.DoWork()
+        }(i)
+    }
 
-    b.Run("scope creation and disposal", func(b *testing.B) {
-        b.ResetTimer()
-        for i := 0; i < b.N; i++ {
-            scope := provider.CreateScope(context.Background())
-            godi.Resolve[services.AuthService](scope)
-            scope.Close()
-        }
-    })
+    wg.Wait()
+}
+```
+
+### Spy Pattern for Behavior Verification
+
+```go
+type SpyEmailClient struct {
+    MockEmailClient
+    CallCount   int
+    LastTo      string
+    LastSubject string
 }
 
-func BenchmarkConcurrentResolution(b *testing.B) {
+func (s *SpyEmailClient) Send(to, subject, body string) error {
+    s.CallCount++
+    s.LastTo = to
+    s.LastSubject = subject
+    return s.MockEmailClient.Send(to, subject, body)
+}
+
+func TestUserService_SendsWelcomeEmail(t *testing.T) {
+    spy := &SpyEmailClient{}
+
+    testModule := godi.NewModule("test",
+        godi.AddSingleton(func() EmailClient { return spy }),
+        godi.AddScoped(NewUserService),
+    )
+
+    // ... setup provider ...
+
+    service, _ := godi.Resolve[*UserService](provider)
+    service.CreateUser("alice", "alice@example.com")
+
+    assert.Equal(t, 1, spy.CallCount)
+    assert.Equal(t, "alice@example.com", spy.LastTo)
+    assert.Equal(t, "Welcome!", spy.LastSubject)
+}
+```
+
+## Testing Best Practices
+
+### 1. Use Test Helpers
+
+```go
+// testutil/di.go
+func BuildTestProvider(t *testing.T, modules ...godi.ModuleOption) godi.ServiceProvider {
     services := godi.NewServiceCollection()
 
-    services.AddSingleton(func() repositories.UserRepository {
-        return mocks.NewMockUserRepository()
+    // Always include base test module
+    allModules := append([]godi.ModuleOption{NewTestModule()}, modules...)
+
+    err := services.AddModules(allModules...)
+    require.NoError(t, err)
+
+    provider, err := services.BuildServiceProvider()
+    require.NoError(t, err)
+
+    t.Cleanup(func() {
+        provider.Close()
     })
-    services.AddSingleton(func() *config.Config {
-        return &config.Config{}
-    })
-    services.AddScoped(services.NewAuthService)
 
-    provider, _ := services.BuildServiceProvider()
-    defer provider.Close()
-
-    b.RunParallel(func(pb *testing.PB) {
-        for pb.Next() {
-            scope := provider.CreateScope(context.Background())
-            godi.Resolve[services.AuthService](scope)
-            scope.Close()
-        }
-    })
-}
-```
-
-## Testing Strategies
-
-### 1. Unit Testing with Mocks
-
-- Mock external dependencies
-- Test business logic in isolation
-- Fast and reliable
-
-### 2. Integration Testing
-
-- Use in-memory implementations
-- Test component interactions
-- Verify API contracts
-
-### 3. End-to-End Testing
-
-- Real implementations where possible
-- Test complete user flows
-- Slower but comprehensive
-
-### 4. Test Organization
-
-```
-internal/
-├── services/
-│   ├── auth.go
-│   ├── auth_test.go          # Unit tests
-│   └── auth_integration_test.go
-├── handlers/
-│   ├── auth.go
-│   └── auth_test.go          # Handler tests
-├── mocks/                    # Shared mocks
-│   ├── repositories.go
-│   └── services.go
-└── testutil/                 # Test utilities
-    ├── di.go
-    ├── assertions.go
-    └── fixtures.go
-```
-
-## Key Testing Benefits with godi
-
-### 1. Easy Mock Injection
-
-```go
-// Replace real service with mock
-services.AddSingleton(func() UserRepository {
-    return &MockUserRepository{
-        users: testUsers,
-    }
-})
-```
-
-### 2. Isolated Test Environments
-
-```go
-// Each test gets fresh container
-func TestFeature(t *testing.T) {
-    provider := createTestProvider(t)
-    // Test in isolation
-}
-```
-
-### 3. Parallel Testing
-
-```go
-// Safe parallel tests with separate containers
-func TestParallel(t *testing.T) {
-    t.Parallel()
-
-    provider := createTestProvider(t)
-    // Each test has its own instances
-}
-```
-
-### 4. Test-Specific Configuration
-
-```go
-// Override configuration for tests
-services.AddSingleton(func() *Config {
-    return &Config{
-        Environment: "test",
-        LogLevel:    "debug",
-    }
-})
-```
-
-## Common Testing Patterns
-
-### Factory Pattern for Test Data
-
-```go
-func NewTestUser(opts ...func(*models.User)) *models.User {
-    user := &models.User{
-        ID:       uuid.New().String(),
-        Username: "testuser",
-        Email:    "test@example.com",
-    }
-
-    for _, opt := range opts {
-        opt(user)
-    }
-
-    return user
+    return provider
 }
 
 // Usage
-user := NewTestUser(
-    WithUsername("custom"),
-    WithEmail("custom@test.com"),
-)
+func TestSomething(t *testing.T) {
+    provider := BuildTestProvider(t,
+        godi.AddScoped(NewUserService),
+    )
+
+    service, _ := godi.Resolve[*UserService](provider)
+    // Test...
+}
 ```
 
-### Test Fixtures
+### 2. Test Module Variants
 
 ```go
-type Fixtures struct {
-    Users    []*models.User
-    Posts    []*models.Post
-    Comments []*models.Comment
-}
+// Different scenarios
+var HappyPathModule = godi.NewModule("happy", ...)
+var ErrorModule = godi.NewModule("errors", ...)
+var SlowNetworkModule = godi.NewModule("slow", ...)
 
-func LoadFixtures(t *testing.T, provider godi.ServiceProvider) *Fixtures {
-    // Load test data
-    return &Fixtures{
-        Users: loadTestUsers(t, provider),
-        Posts: loadTestPosts(t, provider),
+func TestUserService_Scenarios(t *testing.T) {
+    scenarios := []struct {
+        name   string
+        module godi.ModuleOption
+        check  func(t *testing.T, service *UserService)
+    }{
+        {
+            name:   "happy path",
+            module: HappyPathModule,
+            check: func(t *testing.T, s *UserService) {
+                err := s.CreateUser("alice", "alice@example.com")
+                assert.NoError(t, err)
+            },
+        },
+        {
+            name:   "database error",
+            module: ErrorModule,
+            check: func(t *testing.T, s *UserService) {
+                err := s.CreateUser("alice", "alice@example.com")
+                assert.Error(t, err)
+            },
+        },
+    }
+
+    for _, sc := range scenarios {
+        t.Run(sc.name, func(t *testing.T) {
+            provider := BuildTestProvider(t,
+                sc.module,
+                godi.AddScoped(NewUserService),
+            )
+
+            service, _ := godi.Resolve[*UserService](provider)
+            sc.check(t, service)
+        })
     }
 }
 ```
 
-### Cleanup Helpers
+### 3. Integration Test Support
 
 ```go
-func TestWithCleanup(t *testing.T) {
-    provider := createTestProvider(t)
-
-    // Automatic cleanup
-    t.Cleanup(func() {
-        provider.Close()
-        cleanupTestData()
-    })
-
-    // Test code
+// Can gradually replace mocks with real services
+func IntegrationTestModule(useRealDB bool) godi.ModuleOption {
+    return godi.NewModule("integration",
+        godi.AddSingleton(func() Database {
+            if useRealDB {
+                return NewPostgresDatabase("postgres://test...")
+            }
+            return NewMockDatabase()
+        }),
+        godi.AddSingleton(func() Logger {
+            return NewLogger() // Always use real logger
+        }),
+    )
 }
 ```
 
 ## Summary
 
-Testing with godi transforms the testing experience:
+Testing with godi gives you:
 
-- **Mock injection** is trivial
-- **Test isolation** is automatic
-- **Parallel tests** are safe
-- **Setup/teardown** is simplified
-- **Integration tests** use same DI pattern
+✅ **Fast tests** - No real dependencies
+✅ **Isolated tests** - Each test is independent  
+✅ **Easy setup** - Modules make it simple
+✅ **Flexible mocking** - Control every scenario
+✅ **Better coverage** - Easy to test edge cases
 
-The combination of dependency injection and Go's testing package creates a powerful testing environment that encourages comprehensive test coverage and maintainable test code.
-
-## Next Steps
-
-- Learn about [Advanced Patterns](../howto/advanced-patterns.md)
-- Read [Best Practices](../guides/best-practices.md)
+The key is to start simple: create basic mocks, use modules to organize them, and let godi handle the wiring. Your tests will be cleaner, faster, and more maintainable.

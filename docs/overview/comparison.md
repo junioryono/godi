@@ -1,179 +1,10 @@
-# Comparison with Other DI Solutions
+# Comparing godi to Other DI Solutions
 
-This guide compares godi with other dependency injection solutions in the Go ecosystem, helping you choose the right tool for your project.
+Quick comparison to help you choose the right tool.
 
-## Comparison Table
+## godi vs Manual Dependency Injection
 
-| Feature                | godi                          | wire               | fx             | dig        | Manual DI       |
-| ---------------------- | ----------------------------- | ------------------ | -------------- | ---------- | --------------- |
-| **Type Safety**        | ✅ Compile-time with generics | ✅ Code generation | ✅ Runtime     | ✅ Runtime | ✅ Compile-time |
-| **Runtime/Compile**    | Runtime                       | Compile-time       | Runtime        | Runtime    | Manual          |
-| **Scoped Lifetimes**   | ✅ Full support               | ❌ No              | ✅ Via modules | ❌ No      | Manual          |
-| **Service Lifetimes**  | Singleton, Scoped             | Singleton only     | Singleton      | Singleton  | Manual          |
-| **Learning Curve**     | Low (familiar API)            | Medium             | High           | Medium     | Low             |
-| **Boilerplate**        | Minimal                       | Some               | Moderate       | Minimal    | High            |
-| **Testing**            | Excellent                     | Good               | Good           | Good       | Depends         |
-| **Performance**        | Good                          | Excellent          | Good           | Good       | Excellent       |
-| **Microsoft DI Style** | ✅ Yes                        | ❌ No              | ❌ No          | ❌ No      | ❌ No           |
-
-## Detailed Comparisons
-
-### godi vs wire (Google)
-
-**Wire** uses code generation to create dependency injection code at compile time.
-
-```go
-// Wire
-//+build wireinject
-
-func InitializeApp() (*App, error) {
-    wire.Build(NewConfig, NewDatabase, NewService, NewApp)
-    return nil, nil // Wire will generate this
-}
-```
-
-```go
-// godi
-services := godi.NewServiceCollection()
-services.AddSingleton(NewConfig)
-services.AddSingleton(NewDatabase)
-services.AddScoped(NewService)
-services.AddScoped(NewApp)
-
-provider, _ := services.BuildServiceProvider()
-app, _ := godi.Resolve[*App](provider)
-```
-
-**Key Differences:**
-
-- **Wire** generates code at compile time (faster runtime)
-- **godi** resolves at runtime (more flexible)
-- **Wire** requires build tags and code generation step
-- **godi** works without any build tools
-- **Wire** only supports singleton lifetime
-- **godi** supports singleton and scoped lifetimes
-
-**When to use Wire:**
-
-- You want zero runtime overhead
-- You prefer compile-time verification
-- You don't need scoped services
-- You're okay with code generation
-
-**When to use godi:**
-
-- You need scoped services (e.g., for web requests)
-- You want Microsoft-style DI
-- You prefer runtime flexibility
-- You want to avoid code generation
-
-### godi vs fx (Uber)
-
-**Fx** is a full application framework with dependency injection.
-
-```go
-// Fx
-app := fx.New(
-    fx.Provide(
-        NewConfig,
-        NewDatabase,
-        NewService,
-        NewHTTPServer,
-    ),
-    fx.Invoke(func(*http.Server) {}),
-)
-app.Run()
-```
-
-```go
-// godi
-services := godi.NewServiceCollection()
-services.AddSingleton(NewConfig)
-services.AddSingleton(NewDatabase)
-services.AddScoped(NewService)
-services.AddSingleton(NewHTTPServer)
-
-provider, _ := services.BuildServiceProvider()
-server, _ := godi.Resolve[*http.Server](provider)
-server.ListenAndServe()
-```
-
-**Key Differences:**
-
-- **Fx** is a full framework with lifecycle management
-- **godi** is just dependency injection
-- **Fx** has built-in app lifecycle (start/stop hooks)
-- **godi** requires manual lifecycle management
-- **Fx** has a steeper learning curve
-- **godi** has familiar API (especially for .NET developers)
-
-**When to use Fx:**
-
-- You want a full application framework
-- You need complex lifecycle management
-- You're building microservices
-- You want built-in logging and metrics
-
-**When to use godi:**
-
-- You want just dependency injection
-- You prefer Microsoft-style API
-- You need scoped services
-- You want to keep things simple
-
-### godi vs dig (Uber)
-
-**Dig** is the underlying DI container used by fx (and godi!).
-
-```go
-// Dig
-container := dig.New()
-container.Provide(NewConfig)
-container.Provide(NewDatabase)
-container.Provide(NewService)
-
-err := container.Invoke(func(s *Service) {
-    // Use service
-})
-```
-
-```go
-// godi
-services := godi.NewServiceCollection()
-services.AddSingleton(NewConfig)
-services.AddSingleton(NewDatabase)
-services.AddScoped(NewService)
-
-provider, _ := services.BuildServiceProvider()
-service, _ := godi.Resolve[*Service](provider)
-```
-
-**Key Differences:**
-
-- **godi** is built on top of dig
-- **godi** adds service lifetimes (singleton, scoped)
-- **godi** provides Microsoft-style API
-- **dig** is lower level
-- **godi** adds automatic disposal
-- **godi** provides type-safe generics
-
-**When to use Dig:**
-
-- You want maximum control
-- You only need singleton services
-- You prefer minimal abstraction
-- You're building your own DI framework
-
-**When to use godi:**
-
-- You want service lifetimes
-- You need scoped services
-- You prefer higher-level API
-- You want automatic disposal
-
-### godi vs Manual DI
-
-**Manual DI** means wiring dependencies yourself.
+**Manual DI**: Wire everything yourself
 
 ```go
 // Manual DI
@@ -181,241 +12,243 @@ func main() {
     config := NewConfig()
     logger := NewLogger(config)
     db := NewDatabase(config, logger)
-    cache := NewCache(config)
-    userRepo := NewUserRepository(db, logger)
-    userService := NewUserService(userRepo, cache, logger)
+    cache := NewCache(config, logger)
+    userRepo := NewUserRepository(db, cache, logger)
+    userService := NewUserService(userRepo, logger)
     handler := NewHandler(userService, logger)
 
     // Manual cleanup
     defer db.Close()
     defer cache.Close()
-
-    http.ListenAndServe(":8080", handler)
 }
 ```
+
+**godi**: Automatic wiring
 
 ```go
-// godi
+// godi with modules
+var AppModule = godi.NewModule("app",
+    godi.AddSingleton(NewConfig),
+    godi.AddSingleton(NewLogger),
+    godi.AddSingleton(NewDatabase),
+    godi.AddSingleton(NewCache),
+    godi.AddScoped(NewUserRepository),
+    godi.AddScoped(NewUserService),
+    godi.AddScoped(NewHandler),
+)
+
 func main() {
     services := godi.NewServiceCollection()
-    services.AddSingleton(NewConfig)
-    services.AddSingleton(NewLogger)
-    services.AddSingleton(NewDatabase)
-    services.AddSingleton(NewCache)
-    services.AddScoped(NewUserRepository)
-    services.AddScoped(NewUserService)
-    services.AddScoped(NewHandler)
+    services.AddModules(AppModule)
 
     provider, _ := services.BuildServiceProvider()
-    defer provider.Close() // Automatic cleanup
+    defer provider.Close() // Automatic cleanup!
 
     handler, _ := godi.Resolve[*Handler](provider)
-    http.ListenAndServe(":8080", handler)
 }
 ```
 
-**Key Differences:**
+**When to use manual DI:**
 
-- **Manual** requires explicit wiring
-- **godi** wires automatically
-- **Manual** is faster (no overhead)
-- **godi** is more maintainable
-- **Manual** requires manual cleanup
-- **godi** has automatic disposal
-
-**When to use Manual DI:**
-
-- Very small applications
-- Performance-critical code
-- You want full control
-- Simple dependency graphs
+- Very small apps (< 10 services)
+- Simple CLI tools
+- Learning projects
 
 **When to use godi:**
 
-- Medium to large applications
-- Complex dependency graphs
-- You want automatic wiring
-- You need service lifetimes
+- Web applications
+- Apps with many services
+- When you need testing
+- Request-scoped isolation
 
-## Feature-by-Feature Comparison
+## godi vs wire (Google)
 
-### Service Lifetimes
-
-| Framework  | Singleton | Scoped |
-| ---------- | --------- | ------ |
-| **godi**   | ✅        | ✅     |
-| **wire**   | ✅        | ❌     |
-| **fx**     | ✅        | ⚠️\*   |
-| **dig**    | ✅        | ⚠️\*   |
-| **Manual** | ✅        | ✅     |
-
-\* Possible with workarounds but not built-in
-
-### Developer Experience
-
-| Framework  | Setup Complexity | API Familiarity  | Documentation | Error Messages |
-| ---------- | ---------------- | ---------------- | ------------- | -------------- |
-| **godi**   | Low              | High (.NET-like) | Good          | Clear          |
-| **wire**   | Medium           | Medium           | Excellent     | Compile-time   |
-| **fx**     | High             | Low              | Good          | Detailed       |
-| **dig**    | Low              | Medium           | Good          | Technical      |
-| **Manual** | None             | N/A              | N/A           | Your own       |
-
-### Testing Support
-
-| Framework  | Mock Injection | Test Isolation | Setup Speed  |
-| ---------- | -------------- | -------------- | ------------ |
-| **godi**   | Excellent      | Excellent      | Fast         |
-| **wire**   | Good           | Good           | Requires gen |
-| **fx**     | Good           | Good           | Moderate     |
-| **dig**    | Good           | Moderate       | Fast         |
-| **Manual** | Depends        | Depends        | Fast         |
-
-### Use Cases
-
-| Use Case                     | Best Choice | Why                              |
-| ---------------------------- | ----------- | -------------------------------- |
-| Web API with request scoping | **godi**    | Built-in scoped lifetime support |
-| CLI tool                     | **wire**    | Zero runtime overhead            |
-| Microservice                 | **fx**      | Full framework with lifecycle    |
-| Library                      | **Manual**  | No dependencies                  |
-| Enterprise app               | **godi**    | Familiar patterns, full features |
-| Performance critical         | **wire**    | Compile-time resolution          |
-
-## Code Examples Side-by-Side
-
-### Basic Setup
+**wire**: Compile-time code generation
 
 ```go
-// godi
-collection := godi.NewServiceCollection()
-collection.AddSingleton(NewService)
-provider, _ := collection.BuildServiceProvider()
+// wire.go
+//+build wireinject
 
-// wire
-wire.Build(NewService)
+func InitializeApp() (*App, error) {
+    wire.Build(
+        NewConfig,
+        NewDatabase,
+        NewService,
+        NewApp,
+    )
+    return nil, nil
+}
 
-// fx
-fx.New(fx.Provide(NewService))
-
-// dig
-container := dig.New()
-container.Provide(NewService)
-
-// manual
-service := NewService()
+// Run: wire gen ./...
+// Generates: wire_gen.go with all wiring code
 ```
 
-### With Dependencies
+**godi**: Runtime dependency injection with modules
 
 ```go
-// godi
-collection.AddSingleton(NewDatabase)
-collection.AddSingleton(NewLogger)
-collection.AddScoped(NewUserService) // Auto-wires Database and Logger
-
-// wire
-wire.Build(NewDatabase, NewLogger, NewUserService)
-
-// fx
-fx.Provide(NewDatabase, NewLogger, NewUserService)
-
-// dig
-container.Provide(NewDatabase)
-container.Provide(NewLogger)
-container.Provide(NewUserService)
-
-// manual
-db := NewDatabase()
-logger := NewLogger()
-userService := NewUserService(db, logger)
-```
-
-### Testing
-
-```go
-// godi
-testCollection := godi.NewServiceCollection()
-testCollection.AddSingleton(func() Database { return &MockDB{} })
-testCollection.AddScoped(NewUserService)
-
-// wire
-// Requires separate injector for tests
-
-// fx
-fx.New(
-    fx.Provide(func() Database { return &MockDB{} }),
-    fx.Provide(NewUserService),
+// No code generation needed!
+var AppModule = godi.NewModule("app",
+    godi.AddSingleton(NewConfig),
+    godi.AddSingleton(NewDatabase),
+    godi.AddScoped(NewService),
+    godi.AddScoped(NewApp),
 )
 
-// dig
-container.Provide(func() Database { return &MockDB{} })
-container.Provide(NewUserService)
-
-// manual
-mockDB := &MockDB{}
-userService := NewUserService(mockDB, mockLogger)
+// Use immediately
+services := godi.NewServiceCollection()
+services.AddModules(AppModule)
+provider, _ := services.BuildServiceProvider()
+app, _ := godi.Resolve[*App](provider)
 ```
 
-## Decision Matrix
+**Key differences:**
 
-Choose **godi** if:
+| Feature         | wire                   | godi           |
+| --------------- | ---------------------- | -------------- |
+| When            | Compile time           | Runtime        |
+| Setup           | Requires wire tool     | Just import    |
+| Scoped services | ❌ No                  | ✅ Yes         |
+| Speed           | Faster (no reflection) | Fast enough    |
+| Flexibility     | Less (compile time)    | More (runtime) |
+| Learning curve  | Steeper                | Easier         |
 
-- ✅ You need scoped services (web apps)
-- ✅ You want Microsoft-style DI
-- ✅ You prefer runtime flexibility
-- ✅ You want automatic disposal
-- ✅ You want familiar patterns
+**Choose wire if:**
 
-Choose **wire** if:
+- You want zero runtime overhead
+- You don't need scoped services
+- You're OK with code generation
 
-- ✅ You want zero runtime overhead
-- ✅ You prefer compile-time safety
-- ✅ You only need singletons
-- ✅ You're building CLIs or tools
-- ✅ You're okay with code generation
+**Choose godi if:**
 
-Choose **fx** if:
+- You need scoped services (web apps)
+- You want runtime flexibility
+- You prefer no build tools
 
-- ✅ You want a full framework
-- ✅ You need lifecycle management
-- ✅ You're building microservices
-- ✅ You want built-in observability
-- ✅ You need module system
+## godi vs fx (Uber)
 
-Choose **dig** if:
+**fx**: Full application framework
 
-- ✅ You want low-level control
-- ✅ You're building a framework
-- ✅ You only need singletons
-- ✅ You want minimal abstraction
+```go
+// fx - application lifecycle
+app := fx.New(
+    fx.Provide(
+        NewConfig,
+        NewDatabase,
+        NewServer,
+    ),
+    fx.Invoke(func(s *Server) {
+        // Automatically called on start
+    }),
+)
 
-Choose **manual DI** if:
+app.Run() // Blocks and manages lifecycle
+```
 
-- ✅ Your app is very small
-- ✅ You have simple dependencies
-- ✅ You want zero overhead
-- ✅ You want full control
+**godi**: Just dependency injection
 
-## Migration Effort
+```go
+// godi - you control the app
+var AppModule = godi.NewModule("app",
+    godi.AddSingleton(NewConfig),
+    godi.AddSingleton(NewDatabase),
+    godi.AddSingleton(NewServer),
+)
 
-| From → To     | Effort | Main Changes                   |
-| ------------- | ------ | ------------------------------ |
-| Manual → godi | Low    | Add service registration       |
-| wire → godi   | Medium | Remove code gen, add lifetimes |
-| fx → godi     | Medium | Remove lifecycle hooks         |
-| dig → godi    | Low    | Add service collection         |
-| godi → wire   | High   | Add code gen, remove scopes    |
-| godi → fx     | Medium | Add lifecycle management       |
+func main() {
+    services := godi.NewServiceCollection()
+    services.AddModules(AppModule)
 
-## Conclusion
+    provider, _ := services.BuildServiceProvider()
+    defer provider.Close()
 
-**godi** fills a unique niche in the Go DI ecosystem:
+    server, _ := godi.Resolve[*Server](provider)
+    server.Run() // You control when/how
+}
+```
 
-- **Familiar API** for developers coming from .NET
-- **Full lifetime support** including singleton and scoped
-- **Runtime flexibility** without code generation
-- **Built on proven foundation** (Uber's dig)
-- **Excellent for web applications** with request scoping
+**Key differences:**
 
-Choose the right tool for your specific needs, but if you want the most feature-complete DI solution with a familiar API, godi is an excellent choice.
+| Feature   | fx               | godi                |
+| --------- | ---------------- | ------------------- |
+| Scope     | Full framework   | Just DI             |
+| Lifecycle | Managed          | Manual              |
+| Hooks     | Start/Stop hooks | Constructor/Dispose |
+| Learning  | More complex     | Simpler             |
+| Control   | Less             | More                |
+
+**Choose fx if:**
+
+- You want a full framework
+- You need complex lifecycle management
+- Building microservices
+
+**Choose godi if:**
+
+- You just want dependency injection
+- You prefer manual control
+- You like .NET-style DI
+
+## Quick Decision Guide
+
+```
+Need DI for Go?
+    │
+    ├─ Very small app?
+    │   └─ Use Manual DI
+    │
+    ├─ Need compile-time safety + zero overhead?
+    │   └─ Use wire
+    │
+    ├─ Need full application framework?
+    │   └─ Use fx
+    │
+    └─ Need scoped services + simple API?
+        └─ Use godi ✓
+```
+
+## Feature Comparison
+
+| Feature             | Manual | wire | fx   | godi |
+| ------------------- | ------ | ---- | ---- | ---- |
+| No setup            | ✅     | ❌   | ❌   | ✅   |
+| Type safe           | ✅     | ✅   | ⚠️   | ✅   |
+| Scoped services     | ❌     | ❌   | ⚠️   | ✅   |
+| Runtime flexibility | ❌     | ❌   | ✅   | ✅   |
+| Zero overhead       | ✅     | ✅   | ❌   | ❌   |
+| Testing support     | ⚠️     | ✅   | ✅   | ✅   |
+| Modules             | ❌     | ❌   | ✅   | ✅   |
+| Auto disposal       | ❌     | ❌   | ✅   | ✅   |
+| Learning curve      | Easy   | Hard | Hard | Easy |
+
+## For .NET Developers
+
+If you're coming from .NET, godi will feel very familiar:
+
+**.NET**:
+
+```csharp
+services.AddSingleton<ILogger, Logger>();
+services.AddScoped<IUserService, UserService>();
+var provider = services.BuildServiceProvider();
+var service = provider.GetService<IUserService>();
+```
+
+**godi**:
+
+```go
+services.AddSingleton(NewLogger)
+services.AddScoped(NewUserService)
+provider, _ := services.BuildServiceProvider()
+service, _ := godi.Resolve[UserService](provider)
+```
+
+Same concepts, Go syntax!
+
+## Summary
+
+- **Manual DI**: For tiny apps
+- **wire**: For compile-time DI without scopes
+- **fx**: For full application frameworks
+- **godi**: For runtime DI with scopes (perfect for web apps)
+
+Choose godi when you want simple, flexible dependency injection with support for request-scoped services!

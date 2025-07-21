@@ -1,99 +1,78 @@
 # Parameter Objects
 
-Parameter objects (using `godi.In` and `godi.Out`) provide a structured way to handle multiple dependencies and return values in your constructors.
+Parameter objects simplify constructors with many dependencies using `godi.In` and `godi.Out`.
 
-## Understanding Parameter Objects
+## Input Parameters (In)
 
-Parameter objects solve several problems:
+Use `godi.In` when a constructor has many dependencies:
 
-- Constructor functions with many parameters
-- Optional dependencies
-- Grouped dependencies
-- Named/keyed dependencies
-- Multiple return values from a single constructor
-
-## Input Parameter Objects (In)
-
-### Basic Usage
-
-Instead of multiple parameters:
+### Basic Example
 
 ```go
-// Without parameter objects - gets unwieldy
-func NewOrderService(
-    db *sql.DB,
-    logger Logger,
+// Instead of this long constructor:
+func NewUserService(
+    db Database,
     cache Cache,
-    emailer EmailService,
-    payment PaymentGateway,
-    inventory InventoryService,
-) *OrderService {
-    return &OrderService{
-        db:        db,
-        logger:    logger,
-        cache:     cache,
-        emailer:   emailer,
-        payment:   payment,
-        inventory: inventory,
-    }
+    logger Logger,
+    emailService EmailService,
+    smsService SMSService,
+    config *Config,
+) *UserService {
+    // ...
 }
-```
 
-Use a parameter object:
-
-```go
-// With parameter object - cleaner and extensible
-type OrderServiceParams struct {
+// Use a parameter object:
+type UserServiceParams struct {
     godi.In
 
-    DB        *sql.DB
-    Logger    Logger
-    Cache     Cache
-    Emailer   EmailService
-    Payment   PaymentGateway
-    Inventory InventoryService
+    DB           Database
+    Cache        Cache
+    Logger       Logger
+    EmailService EmailService
+    SMSService   SMSService
+    Config       *Config
 }
 
-func NewOrderService(params OrderServiceParams) *OrderService {
-    return &OrderService{
-        db:        params.DB,
-        logger:    params.Logger,
-        cache:     params.Cache,
-        emailer:   params.Emailer,
-        payment:   params.Payment,
-        inventory: params.Inventory,
+func NewUserService(params UserServiceParams) *UserService {
+    return &UserService{
+        db:           params.DB,
+        cache:        params.Cache,
+        logger:       params.Logger,
+        emailService: params.EmailService,
+        smsService:   params.SMSService,
+        config:       params.Config,
     }
 }
 ```
 
 ### Optional Dependencies
 
-Mark dependencies as optional:
+Mark dependencies as optional with the `optional` tag:
 
 ```go
 type ServiceParams struct {
     godi.In
 
-    DB     *sql.DB
-    Logger Logger          `optional:"true"`
-    Cache  Cache           `optional:"true"`
-    Tracer Tracer          `optional:"true"`
+    DB     Database
+    Logger Logger
+    Cache  Cache   `optional:"true"` // Might be nil
+    Tracer Tracer  `optional:"true"` // Might be nil
 }
 
 func NewService(params ServiceParams) *Service {
     svc := &Service{
-        db: params.DB,
+        db:     params.DB,
+        logger: params.Logger,
     }
 
-    // Use default logger if not provided
-    if params.Logger != nil {
-        svc.logger = params.Logger
-    } else {
-        svc.logger = NewDefaultLogger()
+    // Check optional dependencies
+    if params.Cache != nil {
+        svc.cache = params.Cache
     }
 
-    // Cache is truly optional
-    svc.cache = params.Cache // might be nil
+    if params.Tracer != nil {
+        svc.tracer = params.Tracer
+    }
 
     return svc
 }
@@ -101,80 +80,60 @@ func NewService(params ServiceParams) *Service {
 
 ### Named Dependencies
 
-Use named services with parameter objects:
+Use specific implementations with the `name` tag:
 
 ```go
 type DatabaseParams struct {
     godi.In
 
     Primary   Database `name:"primary"`
-    Replica   Database `name:"replica"`
+    Secondary Database `name:"secondary"`
     Analytics Database `name:"analytics" optional:"true"`
 }
 
-func NewRepository(params DatabaseParams) *Repository {
-    repo := &Repository{
-        primary: params.Primary,
-        replica: params.Replica,
+func NewUserRepository(params DatabaseParams) *UserRepository {
+    return &UserRepository{
+        primary:   params.Primary,
+        secondary: params.Secondary,
+        analytics: params.Analytics, // Might be nil
     }
-
-    // Analytics DB is optional
-    if params.Analytics != nil {
-        repo.analytics = params.Analytics
-    }
-
-    return repo
 }
 ```
 
-### Groups in Parameters
+### Groups
 
-Collect multiple services of the same type:
+Collect all services of a type with the `group` tag:
 
 ```go
-type ApplicationParams struct {
+type ValidatorParams struct {
     godi.In
 
-    Config     *Config
-    Logger     Logger
-    Handlers   []http.Handler   `group:"routes"`
-    Middleware []Middleware     `group:"middleware"`
-    Validators []Validator      `group:"validators"`
+    Validators []Validator `group:"validators"`
 }
 
-func NewApplication(params ApplicationParams) *Application {
-    app := &Application{
-        config: params.Config,
-        logger: params.Logger,
+func NewValidationService(params ValidatorParams) *ValidationService {
+    return &ValidationService{
+        validators: params.Validators, // Gets all validators
     }
-
-    // Register all handlers
-    for _, handler := range params.Handlers {
-        app.RegisterHandler(handler)
-    }
-
-    // Apply all middleware
-    for _, mw := range params.Middleware {
-        app.Use(mw)
-    }
-
-    // Register validators
-    for _, v := range params.Validators {
-        app.AddValidator(v)
-    }
-
-    return app
 }
+
+// Register validators
+var ValidationModule = godi.NewModule("validation",
+    godi.AddSingleton(NewEmailValidator, godi.Group("validators")),
+    godi.AddSingleton(NewPhoneValidator, godi.Group("validators")),
+    godi.AddSingleton(NewAddressValidator, godi.Group("validators")),
+)
 ```
 
-## Output Result Objects (Out)
+## Output Parameters (Out)
 
-### Basic Usage
+Use `godi.Out` to register multiple services from one constructor:
 
-Return multiple services from one constructor:
+### Basic Example
 
 ```go
-type RepositoryResults struct {
+// Return multiple repositories from one constructor
+type RepositoryBundle struct {
     godi.Out
 
     UserRepo    UserRepository
@@ -182,394 +141,127 @@ type RepositoryResults struct {
     ProductRepo ProductRepository
 }
 
-func NewRepositories(db *sql.DB, logger Logger) RepositoryResults {
-    return RepositoryResults{
-        UserRepo:    NewUserRepository(db, logger),
-        OrderRepo:   NewOrderRepository(db, logger),
-        ProductRepo: NewProductRepository(db, logger),
+func NewRepositories(db Database, logger Logger) RepositoryBundle {
+    return RepositoryBundle{
+        UserRepo:    &userRepository{db: db, logger: logger},
+        OrderRepo:   &orderRepository{db: db, logger: logger},
+        ProductRepo: &productRepository{db: db, logger: logger},
     }
 }
 
-// Register once, get three services
-collection.AddSingleton(NewRepositories)
+// Register once, get three services!
+var DataModule = godi.NewModule("data",
+    godi.AddSingleton(NewDatabase),
+    godi.AddSingleton(NewLogger),
+    godi.AddScoped(NewRepositories), // Registers all three repos
+)
 ```
 
-### Named Results
+### Named Outputs
 
-Provide multiple implementations:
+Register services with specific names:
 
 ```go
-type CacheResults struct {
+type CacheBundle struct {
     godi.Out
 
-    Redis   Cache `name:"redis"`
-    Memory  Cache `name:"memory"`
-    Default Cache // Unnamed, available as regular Cache
+    UserCache    Cache `name:"user-cache"`
+    ProductCache Cache `name:"product-cache"`
+    OrderCache   Cache `name:"order-cache"`
 }
 
-func NewCaches(config *Config) CacheResults {
-    return CacheResults{
-        Redis:   NewRedisCache(config.RedisURL),
-        Memory:  NewMemoryCache(),
-        Default: NewRedisCache(config.RedisURL), // Same as Redis
+func NewCaches() CacheBundle {
+    return CacheBundle{
+        UserCache:    NewRedisCache("user:"),
+        ProductCache: NewRedisCache("product:"),
+        OrderCache:   NewRedisCache("order:"),
     }
 }
 ```
 
-### Group Results
+### Groups in Output
 
-Add multiple services to a group:
+Add services to groups:
 
 ```go
-type HandlerResults struct {
+type HandlerBundle struct {
     godi.Out
 
-    UserHandler    http.Handler `group:"routes"`
-    OrderHandler   http.Handler `group:"routes"`
-    ProductHandler http.Handler `group:"routes"`
-    HealthHandler  http.Handler `group:"routes"`
+    UserHandler    http.Handler `group:"handlers"`
+    OrderHandler   http.Handler `group:"handlers"`
+    ProductHandler http.Handler `group:"handlers"`
 }
 
-func NewHandlers(services *Services) HandlerResults {
-    return HandlerResults{
-        UserHandler:    NewUserHandler(services.UserService),
-        OrderHandler:   NewOrderHandler(services.OrderService),
-        ProductHandler: NewProductHandler(services.ProductService),
-        HealthHandler:  NewHealthHandler(),
+func NewHandlers(/* deps */) HandlerBundle {
+    return HandlerBundle{
+        UserHandler:    &userHandler{/* ... */},
+        OrderHandler:   &orderHandler{/* ... */},
+        ProductHandler: &productHandler{/* ... */},
     }
 }
 ```
 
-## Advanced Patterns
+## Real-World Example
 
-### Nested Parameter Objects
+Complete example showing both In and Out:
 
 ```go
-type DatabaseConfig struct {
-    ConnectionString string
-    MaxConnections   int
-}
-
-type CacheConfig struct {
-    RedisURL string
-    TTL      time.Duration
-}
-
-type ServiceConfig struct {
+// Input parameters for configuration
+type AppConfigParams struct {
     godi.In
 
-    Database DatabaseConfig
-    Cache    CacheConfig
-    Logger   Logger
-}
-
-func NewService(config ServiceConfig) *Service {
-    // Use nested configuration
-    db := connectDB(config.Database.ConnectionString)
-    cache := connectCache(config.Cache.RedisURL)
-
-    return &Service{
-        db:     db,
-        cache:  cache,
-        logger: config.Logger,
+    Env       string `name:"environment"`
+    Databases struct {
+        Primary   Database `name:"primary-db"`
+        Secondary Database `name:"secondary-db"`
     }
-}
-```
-
-### Combining In and Out
-
-```go
-// Input parameters
-type ServiceParams struct {
-    godi.In
-
-    DB     *sql.DB
-    Logger Logger
-    Config *Config
+    Caches []Cache `group:"caches"`
 }
 
-// Output results
-type ServiceResults struct {
+// Output bundle for related services
+type AppServices struct {
     godi.Out
 
-    UserService    *UserService
-    OrderService   *OrderService    `name:"orders"`
-    AdminService   *AdminService    `name:"admin"`
-    PublicHandler  http.Handler     `group:"public-routes"`
-    AdminHandler   http.Handler     `group:"admin-routes"`
+    HealthCheck  http.Handler `group:"handlers"`
+    MetricsRoute http.Handler `group:"handlers"`
+
+    UserService    UserService
+    ProductService ProductService
+    OrderService   OrderService  `name:"order-svc"`
 }
 
-// Constructor using both
-func NewServices(params ServiceParams) ServiceResults {
-    userSvc := newUserService(params.DB, params.Logger)
-    orderSvc := newOrderService(params.DB, params.Logger)
-    adminSvc := newAdminService(params.DB, params.Logger, params.Config)
-
-    return ServiceResults{
-        UserService:   userSvc,
-        OrderService:  orderSvc,
-        AdminService:  adminSvc,
-        PublicHandler: newPublicAPI(userSvc, orderSvc),
-        AdminHandler:  newAdminAPI(adminSvc),
-    }
-}
-```
-
-### Factory Pattern with Parameters
-
-```go
-type FactoryParams struct {
-    godi.In
-
-    Config    *Config
-    Logger    Logger
-    Providers map[string]Provider `group:"providers"`
-}
-
-type FactoryResult struct {
-    godi.Out
-
-    Factory        ServiceFactory
-    DefaultService Service
-}
-
-func NewServiceFactory(params FactoryParams) FactoryResult {
-    factory := &serviceFactory{
-        config:    params.Config,
-        logger:    params.Logger,
-        providers: params.Providers,
-    }
-
-    // Create default service
-    defaultService := factory.CreateService("default")
-
-    return FactoryResult{
-        Factory:        factory,
-        DefaultService: defaultService,
+func NewAppServices(params AppConfigParams) AppServices {
+    // Use all the inputs to create outputs
+    return AppServices{
+        HealthCheck:    NewHealthHandler(params.Databases.Primary),
+        MetricsRoute:   NewMetricsHandler(),
+        UserService:    NewUserService(params.Databases.Primary),
+        ProductService: NewProductService(params.Databases.Secondary),
+        OrderService:   NewOrderService(params.Databases.Primary),
     }
 }
 ```
 
 ## Best Practices
 
-### 1. When to Use Parameter Objects
+1. **Use In for 4+ dependencies** - Keeps constructors clean
+2. **Use Out for related services** - Group initialization logic
+3. **Document optional fields** - Make it clear what can be nil
+4. **Keep parameter objects focused** - Don't create a "god object"
 
-Use parameter objects when:
+## When to Use
 
-- Constructor has more than 3-4 parameters
-- You need optional dependencies
-- You need named or grouped dependencies
-- Parameters are likely to grow over time
+✅ **Use parameter objects when:**
 
-```go
-// ✅ Good candidate for parameter object
-func NewService(db *sql.DB, cache Cache, logger Logger,
-    emailer EmailService, config *Config, metrics Metrics) *Service
+- Constructor has many parameters (4+)
+- You have optional dependencies
+- You need named or grouped services
+- You want to bundle related outputs
 
-// ✅ Simplified with parameter object
-func NewService(params ServiceParams) *Service
-```
+❌ **Don't use when:**
 
-### 2. Naming Conventions
+- Constructor has few parameters (1-3)
+- Dependencies are simple
+- It makes the code harder to understand
 
-```go
-// Input parameter types: add "Params" suffix
-type UserServiceParams struct {
-    godi.In
-    // ...
-}
-
-// Output result types: add "Result" or "Results" suffix
-type RepositoryResults struct {
-    godi.Out
-    // ...
-}
-```
-
-### 3. Field Documentation
-
-```go
-type ServiceParams struct {
-    godi.In
-
-    // DB is the primary database connection (required)
-    DB *sql.DB
-
-    // Logger is used for structured logging (optional)
-    // If not provided, a default console logger will be used
-    Logger Logger `optional:"true"`
-
-    // Cache is used for performance optimization (optional)
-    // If not provided, caching will be disabled
-    Cache Cache `optional:"true"`
-
-    // Handlers are HTTP handlers to be registered (group)
-    // All handlers in the "routes" group will be included
-    Handlers []http.Handler `group:"routes"`
-}
-```
-
-### 4. Validation
-
-```go
-type ServiceParams struct {
-    godi.In
-
-    Config *Config
-    DB     *sql.DB
-}
-
-func NewService(params ServiceParams) (*Service, error) {
-    // Validate required fields
-    if params.Config == nil {
-        return nil, errors.New("config is required")
-    }
-
-    if params.Config.APIKey == "" {
-        return nil, errors.New("API key is required")
-    }
-
-    if params.DB == nil {
-        return nil, errors.New("database is required")
-    }
-
-    return &Service{
-        config: params.Config,
-        db:     params.DB,
-    }, nil
-}
-```
-
-### 5. Avoid Overuse
-
-```go
-// ❌ Overkill for simple cases
-type LoggerParams struct {
-    godi.In
-
-    Config *Config
-}
-
-func NewLogger(params LoggerParams) Logger {
-    return &logger{level: params.Config.LogLevel}
-}
-
-// ✅ Simple is better
-func NewLogger(config *Config) Logger {
-    return &logger{level: config.LogLevel}
-}
-```
-
-## Testing with Parameter Objects
-
-### Mock Specific Fields
-
-```go
-func TestServiceWithMocks(t *testing.T) {
-    collection := godi.NewServiceCollection()
-
-    // Register mocks
-    collection.AddSingleton(func() *sql.DB { return mockDB })
-    collection.AddSingleton(func() Logger { return mockLogger })
-    collection.AddSingleton(func() Cache { return nil }) // Optional
-
-    // Register service that uses parameter object
-    collection.AddScoped(NewService)
-
-    provider, _ := collection.BuildServiceProvider()
-    service, _ := godi.Resolve[*Service](provider)
-
-    // Test with mocked dependencies
-}
-```
-
-### Test Helpers
-
-```go
-func createTestParams() ServiceParams {
-    return ServiceParams{
-        DB:     createTestDB(),
-        Logger: NewTestLogger(),
-        Cache:  NewTestCache(),
-    }
-}
-
-func TestServiceBehavior(t *testing.T) {
-    params := createTestParams()
-
-    // Override specific fields for test
-    params.Cache = nil // Test without cache
-
-    service := NewService(params)
-    // ... test service behavior
-}
-```
-
-## Common Patterns
-
-### Configuration Parameters
-
-```go
-type AppParams struct {
-    godi.In
-
-    // Configuration
-    Config     *Config
-    Secrets    *Secrets         `optional:"true"`
-    FeatureFlags *FeatureFlags  `optional:"true"`
-
-    // Infrastructure
-    DB         *sql.DB
-    Cache      Cache            `optional:"true"`
-    Queue      Queue            `optional:"true"`
-
-    // Services
-    Logger     Logger
-    Metrics    Metrics          `optional:"true"`
-    Tracer     Tracer           `optional:"true"`
-}
-```
-
-### Multi-Database Parameters
-
-```go
-type DatabaseParams struct {
-    godi.In
-
-    // Different databases for different purposes
-    UserDB      Database `name:"users"`
-    OrderDB     Database `name:"orders"`
-    AnalyticsDB Database `name:"analytics" optional:"true"`
-
-    // Connection pooling
-    MaxConns int `optional:"true"`
-}
-```
-
-### Plugin Parameters
-
-```go
-type PluginParams struct {
-    godi.In
-
-    // Core services available to plugins
-    Logger   Logger
-    Config   *Config
-    EventBus EventBus
-
-    // All registered plugins
-    Plugins []Plugin `group:"plugins"`
-}
-```
-
-## Summary
-
-Parameter objects provide:
-
-- **Clean constructors** with many dependencies
-- **Optional dependencies** with `optional:"true"`
-- **Named dependencies** for multiple implementations
-- **Groups** for collections of services
-- **Multiple returns** with result objects
-
-Use them to keep your dependency injection code maintainable and extensible as your application grows.
+Parameter objects are a tool for managing complexity - use them when they make your code cleaner!

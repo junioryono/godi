@@ -57,7 +57,6 @@ Why godi?
    :caption: How-to Guides
    :hidden:
 
-   howto/register-services.md
    howto/use-scopes.md
    howto/keyed-services.md
    howto/service-groups.md
@@ -73,7 +72,6 @@ Why godi?
    :hidden:
 
    reference/api.md
-   reference/lifetimes.md
    reference/errors.md
    reference/options.md
    reference/changelog.md
@@ -85,7 +83,6 @@ Why godi?
 
    guides/architecture.md
    guides/best-practices.md
-   guides/migration.md
    guides/performance.md
    guides/troubleshooting.md
    overview/comparison.md
