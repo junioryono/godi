@@ -110,7 +110,7 @@ func (s *GoodService) DoWork(ctx context.Context) error {
     scope := s.provider.CreateScope(ctx)
     defer scope.Close()
 
-    tx, _ := godi.Resolve[Transaction](scope.ServiceProvider())
+    tx, _ := godi.Resolve[Transaction](scope)
     // Use transaction for this request only
 }
 ```

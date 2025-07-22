@@ -86,7 +86,7 @@ func BadHandler(provider godi.ServiceProvider) {
     scope := provider.CreateScope(ctx)
     scope.Close()
 
-    service, _ := godi.Resolve[Service](scope.ServiceProvider()) // Error!
+    service, _ := godi.Resolve[Service](scope) // Error!
 }
 
 // ✅ Use defer
@@ -94,7 +94,7 @@ func GoodHandler(provider godi.ServiceProvider) {
     scope := provider.CreateScope(ctx)
     defer scope.Close() // Closes AFTER function returns
 
-    service, _ := godi.Resolve[Service](scope.ServiceProvider()) // Works!
+    service, _ := godi.Resolve[Service](scope) // Works!
 }
 ```
 
@@ -130,7 +130,7 @@ func NewCacheService(provider godi.ServiceProvider) *CacheService {
 }
 
 func (c *CacheService) GetUserData(scope godi.Scope) interface{} {
-    ctx, _ := godi.Resolve[UserContext](scope.ServiceProvider())
+    ctx, _ := godi.Resolve[UserContext](scope)
     // Use ctx for this request only
 }
 ```

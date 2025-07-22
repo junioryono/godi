@@ -140,7 +140,7 @@ func handleRequest(provider godi.ServiceProvider) http.HandlerFunc {
         defer scope.Close()
 
         // Get service for this request
-        userService, _ := godi.Resolve[*UserService](scope.ServiceProvider())
+        userService, _ := godi.Resolve[*UserService](scope)
 
         user := userService.GetUser(1)
         fmt.Fprint(w, user)
@@ -331,7 +331,7 @@ service, _ := godi.Resolve[*MyService](provider)
 // 5. For web requests
 scope := provider.CreateScope(ctx)
 defer scope.Close()
-service, _ := godi.Resolve[*MyService](scope.ServiceProvider())
+service, _ := godi.Resolve[*MyService](scope)
 ```
 
 ## What's Next?

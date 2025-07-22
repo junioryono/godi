@@ -131,7 +131,7 @@ func main() {
         defer scope.Close()
 
         // Services are isolated per request
-        repo, _ := godi.Resolve[*UserRepository](scope.ServiceProvider())
+        repo, _ := godi.Resolve[*UserRepository](scope)
         // ... handle request
     })
 }

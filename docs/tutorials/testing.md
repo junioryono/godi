@@ -356,7 +356,7 @@ func TestConcurrentRequests(t *testing.T) {
             scope := provider.CreateScope(ctx)
             defer scope.Close()
 
-            service, _ := godi.Resolve[*UserService](scope.ServiceProvider())
+            service, _ := godi.Resolve[*UserService](scope)
             // Each request has isolated instances
             service.DoWork()
         }(i)

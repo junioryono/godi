@@ -127,8 +127,8 @@ func handleRequest(provider godi.ServiceProvider) http.HandlerFunc {
         defer scope.Close() // Clean up when done
 
         // All scoped services in this request share the same instances
-        userService, _ := godi.Resolve[*UserService](scope.ServiceProvider())
-        cartService, _ := godi.Resolve[*CartService](scope.ServiceProvider())
+        userService, _ := godi.Resolve[*UserService](scope)
+        cartService, _ := godi.Resolve[*CartService](scope)
 
         // Both services might share the same transaction!
     }
