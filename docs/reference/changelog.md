@@ -2,6 +2,14 @@
 
 All notable changes to godi are documented here. This project follows [Semantic Versioning](https://semver.org/) and uses [Conventional Commits](https://www.conventionalcommits.org/) for automatic versioning.
 
+## [2.0.5](https://github.com/junioryono/godi/compare/v2.0.4...v2.0.5) (2025-07-22)
+
+
+### Bug Fixes
+
+* add context and scope as scoped services in service provider ([d269cfc](https://github.com/junioryono/godi/commit/d269cfc30afc642be7e7a8942417d2220790374e))
+* enhance service provider to register built-in services and improve scope handling ([96177a6](https://github.com/junioryono/godi/commit/96177a649f0589d31e9f355f96488fd451cb71ca))
+
 ## [2.0.4](https://github.com/junioryono/godi/compare/v2.0.3...v2.0.4) (2025-07-22)
 
 
