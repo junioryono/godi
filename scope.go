@@ -115,17 +115,17 @@ func newScope(provider *serviceProvider, ctx context.Context) *serviceProviderSc
 	}
 
 	// Register context in the dig scope
-	if err := scope.digScope.Provide(func() context.Context { return scope.ctx }); err != nil {
+	if err := scope.digScope.Decorate(func() context.Context { return scope.ctx }); err != nil {
 		panic(ErrFailedToCreateScope)
 	}
 
 	// Register the ServiceProvider in the dig scope (override the root registration)
-	if err := scope.digScope.Provide(func() ServiceProvider { return scope }); err != nil {
+	if err := scope.digScope.Decorate(func() ServiceProvider { return scope }); err != nil {
 		panic(fmt.Errorf("failed to register context in dig scope %s: %w", scope.scopeID, err))
 	}
 
 	// Register the Scope in the dig scope
-	if err := scope.digScope.Provide(func() Scope { return scope }); err != nil {
+	if err := scope.digScope.Decorate(func() Scope { return scope }); err != nil {
 		panic(fmt.Errorf("failed to register scope in dig scope %s: %w", scope.scopeID, err))
 	}
 
