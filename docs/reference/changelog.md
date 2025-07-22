@@ -2,6 +2,13 @@
 
 All notable changes to godi are documented here. This project follows [Semantic Versioning](https://semver.org/) and uses [Conventional Commits](https://www.conventionalcommits.org/) for automatic versioning.
 
+## [2.1.0](https://github.com/junioryono/godi/compare/v2.0.5...v2.1.0) (2025-07-22)
+
+
+### Features
+
+* add Decorate method to ServiceProvider and ServiceProviderScope for enhanced service modification ([4e19a8c](https://github.com/junioryono/godi/commit/4e19a8c5fde0a18f5dbab0adf71c79b8f2fd7ce8))
+
 ## [2.0.5](https://github.com/junioryono/godi/compare/v2.0.4...v2.0.5) (2025-07-22)
 
 
