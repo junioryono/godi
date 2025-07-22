@@ -220,8 +220,6 @@ func (sc *serviceCollection) addWithLifetime(constructor interface{}, lifetime S
 		})
 
 		constructor = fnValue.Interface()
-		// Update the type info since we've wrapped it
-		constructorInfo = typecache.GetTypeInfo(fnType)
 	}
 
 	// Check if this returns a result object

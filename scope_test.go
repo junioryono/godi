@@ -795,3 +795,40 @@ func TestScope_Scenarios(t *testing.T) {
 
 	testutil.RunTestScenarios(t, scenarios)
 }
+
+func TestContextRegistrationConflict(t *testing.T) {
+	t.Run("user-registered context should not conflict with scope context", func(t *testing.T) {
+		collection := godi.NewServiceCollection()
+
+		// User registers their own context
+		userContext := context.WithValue(context.Background(), ctxKeyRequestID{}, "user-value")
+		err := collection.AddSingleton(func() context.Context {
+			return userContext
+		})
+		require.NoError(t, err)
+
+		provider, err := collection.BuildServiceProvider()
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
+
+		// Creating a scope should not panic
+		scopeCtx := context.WithValue(context.Background(), ctxKeyRequestID{}, "scope-value")
+		scope := provider.CreateScope(scopeCtx)
+		t.Cleanup(func() {
+			require.NoError(t, scope.Close())
+		})
+
+		// Resolve context in scope
+		ctx, err := godi.Resolve[context.Context](scope)
+		require.NoError(t, err)
+
+		// The resolved context should be the wrapped scope context
+		// It should contain both the scope information and the original context value
+		assert.Equal(t, "scope-value", ctx.Value(ctxKeyRequestID{}))
+
+		// Verify it's the same context as scope.Context()
+		assert.Equal(t, scope.Context(), ctx)
+	})
+}

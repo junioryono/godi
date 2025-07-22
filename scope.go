@@ -115,7 +115,7 @@ func newScope(provider *serviceProvider, ctx context.Context) *serviceProviderSc
 	}
 
 	// Register context in the dig scope
-	if err := scope.digScope.Provide(func() context.Context { return ctx }); err != nil {
+	if err := scope.digScope.Provide(func() context.Context { return scope.ctx }); err != nil {
 		panic(ErrFailedToCreateScope)
 	}
 
