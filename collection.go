@@ -244,17 +244,12 @@ func (sc *serviceCollection) addWithLifetime(constructor interface{}, lifetime S
 		return fmt.Errorf("invalid %s constructor: %w", lifetime, err)
 	}
 
-	// Add any provided options
-	descriptor.ProvideOptions = append(descriptor.ProvideOptions, opts...)
-
-	// Extract provide options from the descriptor
-	sc.extractProvideOptions(descriptor, opts)
-
+	sc.processProvideOptions(descriptor, opts)
 	return sc.addInternal(descriptor)
 }
 
-// extractProvideOptions extracts metadata from dig options.
-func (sc *serviceCollection) extractProvideOptions(descriptor *serviceDescriptor, opts []ProvideOption) {
+// processProvideOptions extracts metadata from dig options.
+func (sc *serviceCollection) processProvideOptions(descriptor *serviceDescriptor, opts []ProvideOption) {
 	for _, opt := range opts {
 		if opt == nil {
 			continue
@@ -271,21 +266,15 @@ func (sc *serviceCollection) extractProvideOptions(descriptor *serviceDescriptor
 				descriptor.ServiceKey = optStr[start:end]
 				descriptor.ProvideOptions = append(descriptor.ProvideOptions, Name(fmt.Sprintf("%v", descriptor.ServiceKey)))
 			}
-		}
-
-		// Extract Group
-		if strings.HasPrefix(optStr, "Group(") {
+		} else if strings.HasPrefix(optStr, "Group(") {
 			start := strings.Index(optStr, `"`) + 1
 			end := strings.LastIndex(optStr, `"`)
 			if start > 0 && end > start {
 				group := optStr[start:end]
-				descriptor.ProvideOptions = append(descriptor.ProvideOptions, Group(group))
 				descriptor.Groups = append(descriptor.Groups, group)
+				descriptor.ProvideOptions = append(descriptor.ProvideOptions, Group(group))
 			}
-		}
-
-		// Extract As interfaces
-		if strings.HasPrefix(optStr, "As(") {
+		} else {
 			descriptor.ProvideOptions = append(descriptor.ProvideOptions, opt)
 		}
 	}
@@ -381,9 +370,7 @@ func (sc *serviceCollection) Replace(lifetime ServiceLifetime, constructor inter
 		return fmt.Errorf("invalid constructor: %w", err)
 	}
 
-	descriptor.ProvideOptions = append(descriptor.ProvideOptions, opts...)
-	sc.extractProvideOptions(descriptor, opts)
-
+	sc.processProvideOptions(descriptor, opts)
 	return sc.addInternal(descriptor)
 }
 
