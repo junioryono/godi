@@ -1266,3 +1266,144 @@ func TestGroupWithoutAsOption(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, handlers, 2)
 }
+
+func TestServiceProvider_BuiltInServices(t *testing.T) {
+	t.Run("resolves built-in ServiceProvider", func(t *testing.T) {
+		t.Parallel()
+
+		provider := testutil.NewServiceCollectionBuilder(t).BuildProvider()
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
+
+		// Should be able to resolve ServiceProvider
+		resolvedProvider, err := godi.Resolve[godi.ServiceProvider](provider)
+		require.NoError(t, err)
+		assert.NotNil(t, resolvedProvider)
+
+		// Should be the root scope's ServiceProvider
+		assert.Equal(t, provider.GetRootScope().(godi.ServiceProvider), resolvedProvider)
+	})
+
+	t.Run("resolves built-in context.Context from root scope", func(t *testing.T) {
+		t.Parallel()
+
+		provider := testutil.NewServiceCollectionBuilder(t).BuildProvider()
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
+
+		// Should be able to resolve context.Context
+		ctx, err := godi.Resolve[context.Context](provider)
+		require.NoError(t, err)
+		assert.NotNil(t, ctx)
+
+		// Should be the root scope's context
+		assert.Equal(t, provider.GetRootScope().Context(), ctx)
+	})
+
+	t.Run("resolves built-in Scope from root scope", func(t *testing.T) {
+		t.Parallel()
+
+		provider := testutil.NewServiceCollectionBuilder(t).BuildProvider()
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
+
+		// Should be able to resolve Scope
+		scope, err := godi.Resolve[godi.Scope](provider)
+		require.NoError(t, err)
+		assert.NotNil(t, scope)
+
+		// Should be the root scope
+		assert.Equal(t, provider.GetRootScope(), scope)
+	})
+
+	t.Run("service depending on built-in types", func(t *testing.T) {
+		t.Parallel()
+
+		// Service that depends on all built-in types
+		type ServiceWithBuiltIns struct {
+			Context  context.Context
+			Provider godi.ServiceProvider
+			Scope    godi.Scope
+		}
+
+		constructor := func(ctx context.Context, provider godi.ServiceProvider, scope godi.Scope) *ServiceWithBuiltIns {
+			return &ServiceWithBuiltIns{
+				Context:  ctx,
+				Provider: provider,
+				Scope:    scope,
+			}
+		}
+
+		provider := testutil.NewServiceCollectionBuilder(t).
+			WithSingleton(constructor).
+			BuildProvider()
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
+
+		// Should be able to resolve the service
+		service, err := godi.Resolve[*ServiceWithBuiltIns](provider)
+		require.NoError(t, err)
+		assert.NotNil(t, service)
+		assert.NotNil(t, service.Context)
+		assert.NotNil(t, service.Provider)
+		assert.NotNil(t, service.Scope)
+
+		// All should be from the root scope
+		assert.Equal(t, provider.GetRootScope().Context(), service.Context)
+		assert.Equal(t, provider.GetRootScope().(godi.ServiceProvider), service.Provider)
+		assert.Equal(t, provider.GetRootScope(), service.Scope)
+	})
+
+	t.Run("built-in types work with parameter objects", func(t *testing.T) {
+		t.Parallel()
+
+		type ServiceParams struct {
+			godi.In
+
+			Context  context.Context
+			Provider godi.ServiceProvider
+			Scope    godi.Scope
+			Logger   testutil.TestLogger
+		}
+
+		type ServiceWithParams struct {
+			ctx      context.Context
+			provider godi.ServiceProvider
+			scope    godi.Scope
+		}
+
+		constructor := func(params ServiceParams) *ServiceWithParams {
+			params.Logger.Log("Creating service with built-in types")
+			return &ServiceWithParams{
+				ctx:      params.Context,
+				provider: params.Provider,
+				scope:    params.Scope,
+			}
+		}
+
+		provider := testutil.NewServiceCollectionBuilder(t).
+			WithSingleton(testutil.NewTestLogger).
+			WithScoped(constructor).
+			BuildProvider()
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
+
+		scope := provider.CreateScope(context.Background())
+		t.Cleanup(func() {
+			require.NoError(t, scope.Close())
+		})
+
+		// Should be able to resolve in scope
+		service, err := godi.Resolve[*ServiceWithParams](scope)
+		require.NoError(t, err)
+		assert.NotNil(t, service)
+		assert.NotNil(t, service.ctx)
+		assert.NotNil(t, service.provider)
+		assert.NotNil(t, service.scope)
+	})
+}
