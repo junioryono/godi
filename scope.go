@@ -350,6 +350,19 @@ func (scope *serviceProviderScope) ResolveGroup(serviceType reflect.Type, groupN
 	return results, err
 }
 
+// Decorate provides a decorator for a type that has already been provided in the Scope.
+func (scope *serviceProviderScope) Decorate(decorator interface{}, opts ...DecorateOption) error {
+	if scope.IsDisposed() {
+		return ErrScopeDisposed
+	}
+
+	if decorator == nil {
+		return ErrDecoratorNil
+	}
+
+	return scope.digScope.Decorate(decorator, opts...)
+}
+
 // IsService implements ServiceProvider.
 func (scope *serviceProviderScope) IsService(serviceType reflect.Type) bool {
 	if scope.IsDisposed() {

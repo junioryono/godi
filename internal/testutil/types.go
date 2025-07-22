@@ -317,3 +317,53 @@ type CloserFunc func() error
 func (f CloserFunc) Close() error {
 	return f()
 }
+
+// DecoratedLogger wraps another logger with a prefix
+type DecoratedLogger struct {
+	Inner  TestLogger
+	Prefix string
+}
+
+func (d *DecoratedLogger) Log(message string) {
+	d.Inner.Log(d.Prefix + message)
+}
+
+// GetLogs returns the logs with the prefix applied
+func (d *DecoratedLogger) GetLogs() []string {
+	logs := d.Inner.GetLogs()
+	prefixedLogs := make([]string, len(logs))
+	for i, log := range logs {
+		prefixedLogs[i] = d.Prefix + log
+	}
+	return prefixedLogs
+}
+
+// DecoratedDatabase wraps another database with a prefix
+type DecoratedDatabase struct {
+	Inner  TestDatabase
+	Prefix string
+}
+
+func (d *DecoratedDatabase) Query(sql string) string {
+	return d.Inner.Query(d.Prefix + sql)
+}
+
+func (d *DecoratedDatabase) Close() error {
+	return d.Inner.Close()
+}
+
+// DecoratedHandler wraps another handler with a prefix
+type DecoratedHandler struct {
+	Inner  TestHandler
+	Prefix string
+}
+
+func (d *DecoratedHandler) Handle() string {
+	return d.Prefix + d.Inner.Handle()
+}
+
+// TestServiceWithLogger is a service that has a logger dependency
+type TestServiceWithLogger struct {
+	ID     string
+	Logger TestLogger
+}
