@@ -2,6 +2,13 @@
 
 All notable changes to godi are documented here. This project follows [Semantic Versioning](https://semver.org/) and uses [Conventional Commits](https://www.conventionalcommits.org/) for automatic versioning.
 
+## [2.0.3](https://github.com/junioryono/godi/compare/v2.0.2...v2.0.3) (2025-07-22)
+
+
+### Bug Fixes
+
+* handle duplicate service registrations with As and Group options ([e30fd66](https://github.com/junioryono/godi/commit/e30fd66bc284ec496b2ad2515a7512106ca344b4))
+
 ## [2.0.2](https://github.com/junioryono/godi/compare/v2.0.1...v2.0.2) (2025-07-21)
 
 
