@@ -138,7 +138,7 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
     defer scope.Close()
 
     // Services automatically share the same transaction!
-    userService, _ := godi.Resolve[*UserService](scope.ServiceProvider())
+    userService, _ := godi.Resolve[*UserService](scope)
     user, _ := userService.Create(userData)
 
     // Transaction commits when scope closes

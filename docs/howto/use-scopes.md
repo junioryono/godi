@@ -26,7 +26,7 @@ func HandleRequest(provider godi.ServiceProvider) http.HandlerFunc {
         defer scope.Close() // Always clean up!
 
         // Get services for this request
-        service, err := godi.Resolve[UserService](scope.ServiceProvider())
+        service, err := godi.Resolve[UserService](scope)
         if err != nil {
             http.Error(w, "Service error", 500)
             return
@@ -130,7 +130,7 @@ func CreateUserHandler(provider godi.ServiceProvider) http.HandlerFunc {
         defer scope.Close()
 
         // Get service - it has access to request context!
-        service, err := godi.Resolve[*UserService](scope.ServiceProvider())
+        service, err := godi.Resolve[*UserService](scope)
         if err != nil {
             http.Error(w, "Service error", 500)
             return
@@ -331,7 +331,7 @@ func DIMiddleware(provider godi.ServiceProvider) func(http.Handler) http.Handler
 // In handlers
 func MyHandler(w http.ResponseWriter, r *http.Request) {
     scope := r.Context().Value("scope").(godi.Scope)
-    service, _ := godi.Resolve[MyService](scope.ServiceProvider())
+    service, _ := godi.Resolve[MyService](scope)
     // Use service...
 }
 ```

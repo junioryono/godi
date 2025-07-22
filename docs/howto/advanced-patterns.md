@@ -272,7 +272,7 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID string, items []I
     scope := s.provider.CreateScope(ctx)
     defer scope.Close()
 
-    uow, _ := godi.Resolve[UnitOfWork](scope.ServiceProvider())
+    uow, _ := godi.Resolve[UnitOfWork](scope)
 
     // All operations in same transaction
     user, err := uow.UserRepository().GetByID(userID)

@@ -423,7 +423,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
     }
 
     // Get service
-    authService, err := godi.Resolve[*services.AuthService](scope.ServiceProvider())
+    authService, err := godi.Resolve[*services.AuthService](scope)
     if err != nil {
         http.Error(w, "Internal error", http.StatusInternalServerError)
         return
@@ -451,7 +451,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    authService, err := godi.Resolve[*services.AuthService](scope.ServiceProvider())
+    authService, err := godi.Resolve[*services.AuthService](scope)
     if err != nil {
         http.Error(w, "Internal error", http.StatusInternalServerError)
         return
@@ -510,7 +510,7 @@ func (h *PostHandler) CreatePost(w http.ResponseWriter, r *http.Request) {
     }
 
     // Get service
-    postService, err := godi.Resolve[*services.PostService](scope.ServiceProvider())
+    postService, err := godi.Resolve[*services.PostService](scope)
     if err != nil {
         http.Error(w, "Internal error", http.StatusInternalServerError)
         return
@@ -531,7 +531,7 @@ func (h *PostHandler) GetPosts(w http.ResponseWriter, r *http.Request) {
     scope := h.provider.CreateScope(r.Context())
     defer scope.Close()
 
-    postService, err := godi.Resolve[*services.PostService](scope.ServiceProvider())
+    postService, err := godi.Resolve[*services.PostService](scope)
     if err != nil {
         http.Error(w, "Internal error", http.StatusInternalServerError)
         return

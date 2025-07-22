@@ -248,7 +248,7 @@ service, err := godi.Resolve[*UserService](provider)
 service, err := godi.ResolveKeyed[Database](provider, "primary")
 
 // From scope
-service, err := godi.Resolve[*UserService](scope.ServiceProvider())
+service, err := godi.Resolve[*UserService](scope)
 ```
 
 ## Complete Example

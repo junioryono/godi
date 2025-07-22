@@ -182,7 +182,7 @@ func handleUser(provider godi.ServiceProvider) http.HandlerFunc {
         defer scope.Close()
 
         // Get services for this request
-        userService, err := godi.Resolve[*services.UserService](scope.ServiceProvider())
+        userService, err := godi.Resolve[*services.UserService](scope)
         if err != nil {
             http.Error(w, "Service error", http.StatusInternalServerError)
             return
