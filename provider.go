@@ -460,13 +460,13 @@ func (sp *serviceProvider) Close() error {
 
 // addBuiltInServices adds built-in services.
 func (sp *serviceProvider) addBuiltInServices() error {
+	// Register ServiceProvider (existing code)
 	if err := sp.digContainer.Provide(func() ServiceProvider {
 		return sp.rootScope
 	}); err != nil {
 		return fmt.Errorf("failed to register ServiceProvider: %w", err)
 	}
 
-	// Also add these to our descriptor tracking for IsService checks
 	spDesc := &serviceDescriptor{
 		ServiceType: reflect.TypeOf((*ServiceProvider)(nil)).Elem(),
 		Lifetime:    Singleton,
@@ -476,6 +476,28 @@ func (sp *serviceProvider) addBuiltInServices() error {
 	}
 	sp.descriptors = append(sp.descriptors, spDesc)
 	sp.descriptorIndex[spDesc.ServiceType] = []*serviceDescriptor{spDesc}
+
+	// Add context.Context as a scoped service
+	ctxDesc := &serviceDescriptor{
+		ServiceType: reflect.TypeOf((*context.Context)(nil)).Elem(),
+		Lifetime:    Scoped, // Important: must be scoped
+		Constructor: func() context.Context {
+			return context.Background() // Default, will be overridden in scope
+		},
+	}
+	sp.descriptors = append(sp.descriptors, ctxDesc)
+	sp.descriptorIndex[ctxDesc.ServiceType] = []*serviceDescriptor{ctxDesc}
+
+	// Add Scope as a scoped service
+	scopeDesc := &serviceDescriptor{
+		ServiceType: reflect.TypeOf((*Scope)(nil)).Elem(),
+		Lifetime:    Scoped,
+		Constructor: func() Scope {
+			return sp.rootScope // Default, will be overridden in scope
+		},
+	}
+	sp.descriptors = append(sp.descriptors, scopeDesc)
+	sp.descriptorIndex[scopeDesc.ServiceType] = []*serviceDescriptor{scopeDesc}
 
 	return nil
 }
