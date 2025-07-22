@@ -3,12 +3,14 @@ package godi_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"runtime"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/junioryono/godi/v2"
 	"github.com/junioryono/godi/v2/internal/testutil"
 	"github.com/stretchr/testify/assert"
@@ -1405,5 +1407,511 @@ func TestServiceProvider_BuiltInServices(t *testing.T) {
 		assert.NotNil(t, service.ctx)
 		assert.NotNil(t, service.provider)
 		assert.NotNil(t, service.scope)
+	})
+}
+
+func TestServiceProvider_Decorate(t *testing.T) {
+	t.Run("decorates singleton service", func(t *testing.T) {
+		t.Parallel()
+
+		collection := godi.NewServiceCollection()
+
+		// Add original logger
+		require.NoError(t, collection.AddSingleton(testutil.NewTestLogger))
+
+		provider, err := collection.BuildServiceProvider()
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
+
+		// Decorate the logger to add a prefix
+		err = provider.Decorate(func(logger testutil.TestLogger) testutil.TestLogger {
+			// Wrap the logger with additional functionality
+			return &testutil.DecoratedLogger{
+				Inner:  logger,
+				Prefix: "[DECORATED] ",
+			}
+		})
+		require.NoError(t, err)
+
+		// Resolve should return decorated logger
+		logger, err := godi.Resolve[testutil.TestLogger](provider)
+		require.NoError(t, err)
+
+		decorated, ok := logger.(*testutil.DecoratedLogger)
+		assert.True(t, ok, "expected decorated logger")
+		assert.Equal(t, "[DECORATED] ", decorated.Prefix)
+	})
+
+	t.Run("decorates with multiple dependencies", func(t *testing.T) {
+		t.Parallel()
+
+		type Config struct {
+			AppName string
+		}
+
+		collection := godi.NewServiceCollection()
+
+		// Add services
+		require.NoError(t, collection.AddSingleton(testutil.NewTestLogger))
+		require.NoError(t, collection.AddSingleton(func() *Config {
+			return &Config{AppName: "TestApp"}
+		}))
+
+		provider, err := collection.BuildServiceProvider()
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
+
+		// Decorate logger using config
+		err = provider.Decorate(func(logger testutil.TestLogger, cfg *Config) testutil.TestLogger {
+			return &testutil.DecoratedLogger{
+				Inner:  logger,
+				Prefix: fmt.Sprintf("[%s] ", cfg.AppName),
+			}
+		})
+		require.NoError(t, err)
+
+		// Resolve decorated logger
+		logger, err := godi.Resolve[testutil.TestLogger](provider)
+		require.NoError(t, err)
+
+		decorated, ok := logger.(*testutil.DecoratedLogger)
+		assert.True(t, ok)
+		assert.Equal(t, "[TestApp] ", decorated.Prefix)
+	})
+
+	t.Run("decorates multiple services at once", func(t *testing.T) {
+		t.Parallel()
+
+		collection := godi.NewServiceCollection()
+
+		// Add services
+		require.NoError(t, collection.AddSingleton(testutil.NewTestLogger))
+		require.NoError(t, collection.AddSingleton(testutil.NewTestDatabase))
+
+		provider, err := collection.BuildServiceProvider()
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
+
+		// Decorate both services
+		var decorateCalled bool
+		err = provider.Decorate(func(
+			logger testutil.TestLogger,
+			db testutil.TestDatabase,
+		) (testutil.TestLogger, testutil.TestDatabase) {
+			decorateCalled = true
+
+			// Return decorated versions
+			decoratedLogger := &testutil.DecoratedLogger{
+				Inner:  logger,
+				Prefix: "[MULTI] ",
+			}
+			decoratedDB := &testutil.DecoratedDatabase{
+				Inner:  db,
+				Prefix: "decorated_",
+			}
+
+			return decoratedLogger, decoratedDB
+		})
+		require.NoError(t, err)
+
+		// Resolve both services
+		logger, err := godi.Resolve[testutil.TestLogger](provider)
+		require.NoError(t, err)
+		db, err := godi.Resolve[testutil.TestDatabase](provider)
+		require.NoError(t, err)
+
+		assert.True(t, decorateCalled)
+
+		// Check logger decoration
+		decoratedLogger, ok := logger.(*testutil.DecoratedLogger)
+		assert.True(t, ok)
+		assert.Equal(t, "[MULTI] ", decoratedLogger.Prefix)
+
+		// Check database decoration
+		decoratedDB, ok := db.(*testutil.DecoratedDatabase)
+		assert.True(t, ok)
+		assert.Equal(t, "decorated_", decoratedDB.Prefix)
+	})
+
+	t.Run("decorate affects scoped services", func(t *testing.T) {
+		t.Parallel()
+
+		collection := godi.NewServiceCollection()
+
+		// Add singleton that will be decorated
+		require.NoError(t, collection.AddSingleton(testutil.NewTestLogger))
+		// Add scoped service that depends on the singleton
+		require.NoError(t, collection.AddScoped(func(logger testutil.TestLogger) *testutil.TestServiceWithLogger {
+			return &testutil.TestServiceWithLogger{
+				ID:     uuid.NewString(),
+				Logger: logger,
+			}
+		}))
+
+		provider, err := collection.BuildServiceProvider()
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
+
+		// Decorate the logger
+		err = provider.Decorate(func(logger testutil.TestLogger) testutil.TestLogger {
+			return &testutil.DecoratedLogger{
+				Inner:  logger,
+				Prefix: "[SCOPED-TEST] ",
+			}
+		})
+		require.NoError(t, err)
+
+		// Create scope and resolve scoped service
+		scope := provider.CreateScope(context.Background())
+		t.Cleanup(func() {
+			require.NoError(t, scope.Close())
+		})
+
+		service, err := godi.Resolve[*testutil.TestServiceWithLogger](scope)
+		require.NoError(t, err)
+
+		// The scoped service should have the decorated logger
+		decoratedLogger, ok := service.Logger.(*testutil.DecoratedLogger)
+		assert.True(t, ok)
+		assert.Equal(t, "[SCOPED-TEST] ", decoratedLogger.Prefix)
+	})
+
+	t.Run("decorate chain - multiple decorations not allowed", func(t *testing.T) {
+		t.Parallel()
+
+		collection := godi.NewServiceCollection()
+		require.NoError(t, collection.AddSingleton(testutil.NewTestLogger))
+
+		provider, err := collection.BuildServiceProvider()
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
+
+		// First decoration
+		err = provider.Decorate(func(logger testutil.TestLogger) testutil.TestLogger {
+			return &testutil.DecoratedLogger{
+				Inner:  logger,
+				Prefix: "[FIRST] ",
+			}
+		})
+		require.NoError(t, err)
+
+		// Second decoration should fail - dig doesn't allow decorating the same type twice
+		err = provider.Decorate(func(logger testutil.TestLogger) testutil.TestLogger {
+			return &testutil.DecoratedLogger{
+				Inner:  logger,
+				Prefix: "[SECOND] ",
+			}
+		})
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "already decorated")
+	})
+
+	t.Run("achieve decoration chaining through composition", func(t *testing.T) {
+		t.Parallel()
+
+		// To achieve multiple decorations, use a wrapper service
+		type LoggerWrapper struct {
+			Logger testutil.TestLogger
+		}
+
+		collection := godi.NewServiceCollection()
+		require.NoError(t, collection.AddSingleton(testutil.NewTestLogger))
+		require.NoError(t, collection.AddSingleton(func(logger testutil.TestLogger) *LoggerWrapper {
+			return &LoggerWrapper{Logger: logger}
+		}))
+
+		provider, err := collection.BuildServiceProvider()
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
+
+		// First decoration on the base logger
+		err = provider.Decorate(func(logger testutil.TestLogger) testutil.TestLogger {
+			return &testutil.DecoratedLogger{
+				Inner:  logger,
+				Prefix: "[FIRST] ",
+			}
+		})
+		require.NoError(t, err)
+
+		// Second decoration through the wrapper
+		err = provider.Decorate(func(wrapper *LoggerWrapper) *LoggerWrapper {
+			return &LoggerWrapper{
+				Logger: &testutil.DecoratedLogger{
+					Inner:  wrapper.Logger,
+					Prefix: "[SECOND] ",
+				},
+			}
+		})
+		require.NoError(t, err)
+
+		// Resolve wrapper should have both decorations
+		wrapper, err := godi.Resolve[*LoggerWrapper](provider)
+		require.NoError(t, err)
+
+		// Should be wrapped as [SECOND] -> [FIRST] -> original
+		secondDecorated, ok := wrapper.Logger.(*testutil.DecoratedLogger)
+		assert.True(t, ok)
+		assert.Equal(t, "[SECOND] ", secondDecorated.Prefix)
+
+		firstDecorated, ok := secondDecorated.Inner.(*testutil.DecoratedLogger)
+		assert.True(t, ok)
+		assert.Equal(t, "[FIRST] ", firstDecorated.Prefix)
+	})
+
+	t.Run("decorate with keyed services", func(t *testing.T) {
+		t.Parallel()
+
+		collection := godi.NewServiceCollection()
+
+		// Add keyed logger
+		require.NoError(t, collection.AddSingleton(
+			testutil.NewTestLogger,
+			godi.Name("primary"),
+		))
+
+		provider, err := collection.BuildServiceProvider()
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
+
+		// Decorate with key
+		type keyedParams struct {
+			godi.In
+			Logger testutil.TestLogger `name:"primary"`
+		}
+
+		type keyedResults struct {
+			godi.Out
+			Logger testutil.TestLogger `name:"primary"`
+		}
+
+		err = provider.Decorate(func(params keyedParams) keyedResults {
+			return keyedResults{
+				Logger: &testutil.DecoratedLogger{
+					Inner:  params.Logger,
+					Prefix: "[KEYED] ",
+				},
+			}
+		})
+		require.NoError(t, err)
+
+		// Resolve keyed service
+		logger, err := godi.ResolveKeyed[testutil.TestLogger](provider, "primary")
+		require.NoError(t, err)
+
+		decorated, ok := logger.(*testutil.DecoratedLogger)
+		assert.True(t, ok)
+		assert.Equal(t, "[KEYED] ", decorated.Prefix)
+	})
+
+	t.Run("decorate with group services", func(t *testing.T) {
+		t.Parallel()
+
+		collection := godi.NewServiceCollection()
+
+		// Add multiple handlers in a group
+		require.NoError(t, collection.AddSingleton(
+			func() testutil.TestHandler { return testutil.NewTestHandler("handler1") },
+			godi.Group("handlers"),
+		))
+		require.NoError(t, collection.AddSingleton(
+			func() testutil.TestHandler { return testutil.NewTestHandler("handler2") },
+			godi.Group("handlers"),
+		))
+
+		provider, err := collection.BuildServiceProvider()
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
+
+		// Decorate handlers in group
+		type groupParams struct {
+			godi.In
+			Handlers []testutil.TestHandler `group:"handlers"`
+		}
+
+		type groupResults struct {
+			godi.Out
+			Handlers []testutil.TestHandler `group:"handlers"`
+		}
+
+		err = provider.Decorate(func(params groupParams) groupResults {
+			// Wrap all handlers
+			decorated := make([]testutil.TestHandler, len(params.Handlers))
+			for i, h := range params.Handlers {
+				decorated[i] = &testutil.DecoratedHandler{
+					Inner:  h,
+					Prefix: "decorated_",
+				}
+			}
+			return groupResults{Handlers: decorated}
+		})
+		require.NoError(t, err)
+
+		// Resolve group
+		handlers, err := godi.ResolveGroup[testutil.TestHandler](provider, "handlers")
+		require.NoError(t, err)
+		assert.Len(t, handlers, 2)
+
+		// All should be decorated
+		for _, h := range handlers {
+			decorated, ok := h.(*testutil.DecoratedHandler)
+			assert.True(t, ok)
+			assert.Equal(t, "decorated_", decorated.Prefix)
+		}
+	})
+
+	t.Run("decorate error handling", func(t *testing.T) {
+		t.Parallel()
+
+		collection := godi.NewServiceCollection()
+		require.NoError(t, collection.AddSingleton(testutil.NewTestDatabase))
+
+		provider, err := collection.BuildServiceProvider()
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
+
+		// Nil decorator
+		err = provider.Decorate(nil)
+		assert.ErrorIs(t, err, godi.ErrDecoratorNil)
+
+		// Decorator for non-existent service - this might only fail at resolution time
+		err = provider.Decorate(func(logger testutil.TestLogger) testutil.TestLogger {
+			return &testutil.DecoratedLogger{
+				Inner:  logger,
+				Prefix: "[ERROR] ",
+			}
+		})
+		// Note: dig might accept the decorator but fail later during resolution
+		// Let's test by trying to resolve
+		if err == nil {
+			// If decorator was accepted, resolution should fail
+			_, resolveErr := godi.Resolve[testutil.TestLogger](provider)
+			assert.Error(t, resolveErr, "resolution should fail for non-existent service")
+		} else {
+			// If decorator was rejected immediately, that's also valid
+			assert.Error(t, err)
+		}
+	})
+
+	t.Run("decorate after disposal", func(t *testing.T) {
+		t.Parallel()
+
+		collection := godi.NewServiceCollection()
+		provider, err := collection.BuildServiceProvider()
+		require.NoError(t, err)
+
+		// Close provider
+		require.NoError(t, provider.Close())
+
+		// Attempt to decorate
+		err = provider.Decorate(func(logger testutil.TestLogger) testutil.TestLogger {
+			return logger
+		})
+		assert.ErrorIs(t, err, godi.ErrProviderDisposed)
+	})
+
+	t.Run("decorate with optional dependencies", func(t *testing.T) {
+		t.Parallel()
+
+		type OptionalParams struct {
+			godi.In
+
+			Logger testutil.TestLogger
+			Cache  testutil.TestCache `optional:"true"`
+		}
+
+		collection := godi.NewServiceCollection()
+		require.NoError(t, collection.AddSingleton(testutil.NewTestLogger))
+		// Note: Not adding cache
+
+		provider, err := collection.BuildServiceProvider()
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
+
+		var decorateCalled bool
+		err = provider.Decorate(func(params OptionalParams) testutil.TestLogger {
+			decorateCalled = true
+
+			prefix := "[DECORATED"
+			if params.Cache == nil {
+				prefix += "-NO-CACHE"
+			}
+			prefix += "] "
+
+			return &testutil.DecoratedLogger{
+				Inner:  params.Logger,
+				Prefix: prefix,
+			}
+		})
+		require.NoError(t, err)
+
+		logger, err := godi.Resolve[testutil.TestLogger](provider)
+		require.NoError(t, err)
+
+		assert.True(t, decorateCalled)
+		decorated, ok := logger.(*testutil.DecoratedLogger)
+		assert.True(t, ok)
+		assert.Equal(t, "[DECORATED-NO-CACHE] ", decorated.Prefix)
+	})
+
+	t.Run("scope-specific decoration", func(t *testing.T) {
+		t.Parallel()
+
+		collection := godi.NewServiceCollection()
+		require.NoError(t, collection.AddSingleton(testutil.NewTestLogger))
+		require.NoError(t, collection.AddScoped(testutil.NewTestService))
+
+		provider, err := collection.BuildServiceProvider()
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
+
+		// Create scope
+		scope := provider.CreateScope(context.Background())
+		t.Cleanup(func() {
+			require.NoError(t, scope.Close())
+		})
+
+		// Decorate in scope
+		err = scope.Decorate(func(logger testutil.TestLogger) testutil.TestLogger {
+			return &testutil.DecoratedLogger{
+				Inner:  logger,
+				Prefix: "[SCOPE] ",
+			}
+		})
+		require.NoError(t, err)
+
+		// Resolution in scope should return decorated
+		scopeLogger, err := godi.Resolve[testutil.TestLogger](scope)
+		require.NoError(t, err)
+		decorated, ok := scopeLogger.(*testutil.DecoratedLogger)
+		assert.True(t, ok)
+		assert.Equal(t, "[SCOPE] ", decorated.Prefix)
+
+		// Resolution in provider should return original
+		providerLogger, err := godi.Resolve[testutil.TestLogger](provider)
+		require.NoError(t, err)
+		_, isDecorated := providerLogger.(*testutil.DecoratedLogger)
+		assert.False(t, isDecorated, "provider should have original logger")
 	})
 }

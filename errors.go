@@ -26,6 +26,7 @@ var (
 
 	// Lifecycle errors.
 	ErrDisposed         = errors.New("disposed")
+	ErrNilScope         = errors.New("scope cannot be nil")
 	ErrScopeDisposed    = errors.New("scope has been disposed")
 	ErrProviderDisposed = errors.New("service provider has been disposed")
 
