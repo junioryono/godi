@@ -952,3 +952,317 @@ func TestServiceProvider_AdvancedScenarios(t *testing.T) {
 		assert.Nil(t, service.Cache) // Optional dependency not registered
 	})
 }
+
+// Test types for As option tests
+type TestRepository interface {
+	Get() string
+}
+
+type testUserRepository struct{}
+
+func (u *testUserRepository) Get() string { return "user" }
+
+type TestReader interface {
+	Read() string
+}
+
+type TestWriter interface {
+	Write(string)
+}
+
+type testDatabase struct{ data string }
+
+func (d *testDatabase) Read() string   { return d.data }
+func (d *testDatabase) Write(s string) { d.data = s }
+
+// Test types for Group+As combination tests
+type GroupAsTestInterface interface {
+	GetName() string
+}
+
+type groupAsImpl1 struct{ name string }
+type groupAsImpl2 struct{ name string }
+
+func (g *groupAsImpl1) GetName() string { return g.name }
+func (g *groupAsImpl2) GetName() string { return g.name }
+
+// Test types for exact bug reproduction
+type TestController interface {
+	RegisterRoutes() string
+}
+
+type testGraphQLController struct{ id string }
+type testHealthController struct{ id string }
+type testOAuthController struct{ id string }
+type testTebexController struct{ id string }
+
+func (g *testGraphQLController) RegisterRoutes() string { return g.id }
+func (h *testHealthController) RegisterRoutes() string  { return h.id }
+func (o *testOAuthController) RegisterRoutes() string   { return o.id }
+func (t *testTebexController) RegisterRoutes() string   { return t.id }
+
+// Test types for group without As
+type SimpleHandler interface {
+	Handle() string
+}
+
+type simpleHandlerImpl struct{ name string }
+
+func (h *simpleHandlerImpl) Handle() string { return h.name }
+
+// TestGroupOption verifies that Group option works correctly by itself
+func TestGroupOption(t *testing.T) {
+	t.Run("group registration and resolution", func(t *testing.T) {
+		t.Parallel()
+
+		collection := godi.NewServiceCollection()
+
+		// Register multiple services in the same group
+		require.NoError(t, collection.AddSingleton(
+			func() testutil.TestHandler { return testutil.NewTestHandler("handler1") },
+			godi.Group("handlers"),
+		))
+		require.NoError(t, collection.AddSingleton(
+			func() testutil.TestHandler { return testutil.NewTestHandler("handler2") },
+			godi.Group("handlers"),
+		))
+		require.NoError(t, collection.AddSingleton(
+			func() testutil.TestHandler { return testutil.NewTestHandler("handler3") },
+			godi.Group("handlers"),
+		))
+
+		provider, err := collection.BuildServiceProvider()
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
+
+		// Resolve the group
+		handlers, err := godi.ResolveGroup[testutil.TestHandler](provider, "handlers")
+		require.NoError(t, err)
+		assert.Len(t, handlers, 3)
+
+		// Verify all handlers are present
+		handlerNames := make(map[string]bool)
+		for _, h := range handlers {
+			handlerNames[h.Handle()] = true
+		}
+		assert.True(t, handlerNames["handler1"])
+		assert.True(t, handlerNames["handler2"])
+		assert.True(t, handlerNames["handler3"])
+	})
+
+	t.Run("empty group returns empty slice", func(t *testing.T) {
+		t.Parallel()
+
+		collection := godi.NewServiceCollection()
+		provider, err := collection.BuildServiceProvider()
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
+
+		// Should return empty slice, not error
+		handlers, err := godi.ResolveGroup[testutil.TestHandler](provider, "nonexistent")
+		require.NoError(t, err)
+		assert.Empty(t, handlers)
+	})
+}
+
+// TestAsOption verifies that As option works correctly by itself
+func TestAsOption(t *testing.T) {
+	t.Run("as interface registration", func(t *testing.T) {
+		t.Parallel()
+
+		collection := godi.NewServiceCollection()
+
+		// Register with As option
+		require.NoError(t, collection.AddSingleton(
+			func() *testUserRepository { return &testUserRepository{} },
+			godi.As((*TestRepository)(nil)),
+		))
+
+		provider, err := collection.BuildServiceProvider()
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
+
+		// Should be able to resolve as interface
+		repo, err := godi.Resolve[TestRepository](provider)
+		require.NoError(t, err)
+		assert.Equal(t, "user", repo.Get())
+
+		// Should NOT be able to resolve as concrete type when using As
+		// (unless also registered separately)
+		_, err = godi.Resolve[*testUserRepository](provider)
+		assert.Error(t, err)
+	})
+
+	t.Run("as multiple interfaces", func(t *testing.T) {
+		t.Parallel()
+
+		collection := godi.NewServiceCollection()
+
+		// Register as multiple interfaces
+		require.NoError(t, collection.AddSingleton(
+			func() *testDatabase { return &testDatabase{data: "initial"} },
+			godi.As((*TestReader)(nil), (*TestWriter)(nil)),
+		))
+
+		provider, err := collection.BuildServiceProvider()
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
+
+		// Should resolve as both interfaces
+		reader, err := godi.Resolve[TestReader](provider)
+		require.NoError(t, err)
+		assert.Equal(t, "initial", reader.Read())
+
+		writer, err := godi.Resolve[TestWriter](provider)
+		require.NoError(t, err)
+		writer.Write("updated")
+
+		// Both should be the same instance (singleton)
+		reader2, _ := godi.Resolve[TestReader](provider)
+		assert.Equal(t, "updated", reader2.Read())
+	})
+}
+
+// TestGroupWithAsOption tests the combination that's causing the bug
+func TestGroupWithAsOption(t *testing.T) {
+	t.Run("group with As option should not create duplicates", func(t *testing.T) {
+		t.Parallel()
+
+		collection := godi.NewServiceCollection()
+
+		// Register services with both As and Group options
+		require.NoError(t, collection.AddSingleton(
+			func() *groupAsImpl1 { return &groupAsImpl1{name: "impl1"} },
+			godi.As((*GroupAsTestInterface)(nil)),
+			godi.Group("test-group"),
+		))
+		require.NoError(t, collection.AddSingleton(
+			func() *groupAsImpl2 { return &groupAsImpl2{name: "impl2"} },
+			godi.As((*GroupAsTestInterface)(nil)),
+			godi.Group("test-group"),
+		))
+
+		provider, err := collection.BuildServiceProvider()
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
+
+		// Resolve the group
+		group, err := godi.ResolveGroup[GroupAsTestInterface](provider, "test-group")
+		require.NoError(t, err)
+
+		// Should return exactly 2 services, not 4
+		assert.Len(t, group, 2, "Expected 2 services in group, but got %d", len(group))
+
+		// Verify no duplicates by checking names
+		names := make(map[string]bool)
+		for _, svc := range group {
+			name := svc.GetName()
+			assert.False(t, names[name], "Duplicate service with name %s in group", name)
+			names[name] = true
+		}
+
+		// Verify we got both implementations
+		assert.True(t, names["impl1"], "Missing impl1 in group")
+		assert.True(t, names["impl2"], "Missing impl2 in group")
+	})
+
+	t.Run("exact reproduction of user's bug", func(t *testing.T) {
+		t.Parallel()
+
+		collection := godi.NewServiceCollection()
+
+		// Register exactly as user does
+		require.NoError(t, collection.AddSingleton(
+			func() *testGraphQLController { return &testGraphQLController{id: "graphql"} },
+			godi.As(new(TestController)),
+			godi.Group("routes"),
+		))
+		require.NoError(t, collection.AddSingleton(
+			func() *testHealthController { return &testHealthController{id: "health"} },
+			godi.As(new(TestController)),
+			godi.Group("routes"),
+		))
+		require.NoError(t, collection.AddSingleton(
+			func() *testOAuthController { return &testOAuthController{id: "oauth"} },
+			godi.As(new(TestController)),
+			godi.Group("routes"),
+		))
+		require.NoError(t, collection.AddSingleton(
+			func() *testTebexController { return &testTebexController{id: "tebex"} },
+			godi.As(new(TestController)),
+			godi.Group("routes"),
+		))
+
+		provider, err := collection.BuildServiceProvider()
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
+
+		// Resolve the group
+		controllers, err := godi.ResolveGroup[TestController](provider, "routes")
+		require.NoError(t, err)
+
+		// Should return exactly 4 controllers
+		assert.Len(t, controllers, 4, "Expected 4 controllers in group, but got %d", len(controllers))
+
+		// Track which controllers we've seen
+		seen := make(map[string]int)
+		for _, c := range controllers {
+			id := c.RegisterRoutes()
+			seen[id]++
+		}
+
+		// Each controller should appear exactly once
+		assert.Equal(t, 1, seen["graphql"], "graphql controller appeared %d times", seen["graphql"])
+		assert.Equal(t, 1, seen["health"], "health controller appeared %d times", seen["health"])
+		assert.Equal(t, 1, seen["oauth"], "oauth controller appeared %d times", seen["oauth"])
+		assert.Equal(t, 1, seen["tebex"], "tebex controller appeared %d times", seen["tebex"])
+
+		// Log what we actually got if test fails
+		if len(controllers) != 4 {
+			t.Logf("Controllers returned: %v", seen)
+		}
+	})
+}
+
+// TestGroupWithoutAsOption verifies group functionality without As
+func TestGroupWithoutAsOption(t *testing.T) {
+	t.Parallel()
+
+	collection := godi.NewServiceCollection()
+
+	// Register services that already return the interface type
+	require.NoError(t, collection.AddSingleton(
+		func() SimpleHandler {
+			return &simpleHandlerImpl{name: "handler1"}
+		},
+		godi.Group("handlers"),
+	))
+	require.NoError(t, collection.AddSingleton(
+		func() SimpleHandler {
+			return &simpleHandlerImpl{name: "handler2"}
+		},
+		godi.Group("handlers"),
+	))
+
+	provider, err := collection.BuildServiceProvider()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, provider.Close())
+	})
+
+	handlers, err := godi.ResolveGroup[SimpleHandler](provider, "handlers")
+	require.NoError(t, err)
+	assert.Len(t, handlers, 2)
+}
