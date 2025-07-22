@@ -796,8 +796,8 @@ func TestScope_Scenarios(t *testing.T) {
 	testutil.RunTestScenarios(t, scenarios)
 }
 
-func TestContextRegistrationConflict(t *testing.T) {
-	t.Run("user-registered context should not conflict with scope context", func(t *testing.T) {
+func TestScope_BuiltInServices(t *testing.T) {
+	t.Run("user-registered context should not be allowed with scope context", func(t *testing.T) {
 		collection := godi.NewServiceCollection()
 
 		// User registers their own context
@@ -807,28 +807,257 @@ func TestContextRegistrationConflict(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		provider, err := collection.BuildServiceProvider()
-		require.NoError(t, err)
+		// Building the provider should fail because context.Context is a built-in type
+		// that gets registered automatically by the framework
+		_, err = collection.BuildServiceProvider()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "context.Context")
+		assert.Contains(t, err.Error(), "already provided")
+	})
+
+	t.Run("scope overrides built-in services", func(t *testing.T) {
+		t.Parallel()
+
+		provider := testutil.NewServiceCollectionBuilder(t).BuildProvider()
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
 
-		// Creating a scope should not panic
-		scopeCtx := context.WithValue(context.Background(), ctxKeyRequestID{}, "scope-value")
+		// Create a scope with a specific context
+		type ctxKey struct{}
+		scopeCtx := context.WithValue(context.Background(), ctxKey{}, "scope-value")
 		scope := provider.CreateScope(scopeCtx)
 		t.Cleanup(func() {
 			require.NoError(t, scope.Close())
 		})
 
-		// Resolve context in scope
-		ctx, err := godi.Resolve[context.Context](scope)
+		// Resolve context in root provider
+		rootCtx, err := godi.Resolve[context.Context](provider)
 		require.NoError(t, err)
 
-		// The resolved context should be the wrapped scope context
-		// It should contain both the scope information and the original context value
-		assert.Equal(t, "scope-value", ctx.Value(ctxKeyRequestID{}))
+		// Resolve context in scope
+		resolvedCtx, err := godi.Resolve[context.Context](scope)
+		require.NoError(t, err)
 
-		// Verify it's the same context as scope.Context()
-		assert.Equal(t, scope.Context(), ctx)
+		// They should be different
+		assert.NotEqual(t, rootCtx, resolvedCtx)
+		assert.Equal(t, scope.Context(), resolvedCtx)
+		assert.Equal(t, "scope-value", resolvedCtx.Value(ctxKey{}))
+	})
+
+	t.Run("scope provides different ServiceProvider instance", func(t *testing.T) {
+		t.Parallel()
+
+		provider := testutil.NewServiceCollectionBuilder(t).BuildProvider()
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
+
+		scope := provider.CreateScope(context.Background())
+		t.Cleanup(func() {
+			require.NoError(t, scope.Close())
+		})
+
+		// Resolve ServiceProvider in root
+		rootProvider, err := godi.Resolve[godi.ServiceProvider](provider)
+		require.NoError(t, err)
+
+		// Resolve ServiceProvider in scope
+		scopeProvider, err := godi.Resolve[godi.ServiceProvider](scope)
+		require.NoError(t, err)
+
+		// They should be different
+		assert.NotEqual(t, rootProvider, scopeProvider)
+		assert.Equal(t, scope.(godi.ServiceProvider), scopeProvider)
+	})
+
+	t.Run("scope provides different Scope instance", func(t *testing.T) {
+		t.Parallel()
+
+		provider := testutil.NewServiceCollectionBuilder(t).BuildProvider()
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
+
+		scope := provider.CreateScope(context.Background())
+		t.Cleanup(func() {
+			require.NoError(t, scope.Close())
+		})
+
+		// Resolve Scope in root
+		rootScope, err := godi.Resolve[godi.Scope](provider)
+		require.NoError(t, err)
+
+		// Resolve Scope in scope
+		resolvedScope, err := godi.Resolve[godi.Scope](scope)
+		require.NoError(t, err)
+
+		// They should be different
+		assert.NotEqual(t, rootScope, resolvedScope)
+		assert.Equal(t, scope, resolvedScope)
+	})
+
+	t.Run("scoped service receives scope-specific built-ins", func(t *testing.T) {
+		t.Parallel()
+
+		type ScopedServiceWithBuiltIns struct {
+			Context  context.Context
+			Provider godi.ServiceProvider
+			Scope    godi.Scope
+		}
+
+		constructor := func(ctx context.Context, provider godi.ServiceProvider, scope godi.Scope) *ScopedServiceWithBuiltIns {
+			return &ScopedServiceWithBuiltIns{
+				Context:  ctx,
+				Provider: provider,
+				Scope:    scope,
+			}
+		}
+
+		provider := testutil.NewServiceCollectionBuilder(t).
+			WithScoped(constructor).
+			BuildProvider()
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
+
+		// Create two different scopes
+		type ctxKey struct{}
+		ctx1 := context.WithValue(context.Background(), ctxKey{}, "scope1")
+		scope1 := provider.CreateScope(ctx1)
+		t.Cleanup(func() {
+			require.NoError(t, scope1.Close())
+		})
+
+		ctx2 := context.WithValue(context.Background(), ctxKey{}, "scope2")
+		scope2 := provider.CreateScope(ctx2)
+		t.Cleanup(func() {
+			require.NoError(t, scope2.Close())
+		})
+
+		// Resolve in both scopes
+		service1, err := godi.Resolve[*ScopedServiceWithBuiltIns](scope1)
+		require.NoError(t, err)
+
+		service2, err := godi.Resolve[*ScopedServiceWithBuiltIns](scope2)
+		require.NoError(t, err)
+
+		// Services should be different
+		assert.NotEqual(t, service1, service2)
+
+		// Each should have its scope's context
+		assert.Equal(t, "scope1", service1.Context.Value(ctxKey{}))
+		assert.Equal(t, "scope2", service2.Context.Value(ctxKey{}))
+
+		// Each should have its scope's provider
+		assert.Equal(t, scope1.(godi.ServiceProvider), service1.Provider)
+		assert.Equal(t, scope2.(godi.ServiceProvider), service2.Provider)
+
+		// Each should have its scope
+		assert.Equal(t, scope1, service1.Scope)
+		assert.Equal(t, scope2, service2.Scope)
+	})
+
+	t.Run("nested scopes have correct built-ins", func(t *testing.T) {
+		t.Parallel()
+
+		provider := testutil.NewServiceCollectionBuilder(t).BuildProvider()
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
+
+		// Define a consistent key type for context values
+		type levelKey struct{}
+
+		// Create nested scopes with consistent key types
+		parentScope := provider.CreateScope(context.WithValue(context.Background(), levelKey{}, "parent"))
+		t.Cleanup(func() {
+			require.NoError(t, parentScope.Close())
+		})
+
+		childScope := parentScope.CreateScope(context.WithValue(parentScope.Context(), levelKey{}, "child"))
+		t.Cleanup(func() {
+			require.NoError(t, childScope.Close())
+		})
+
+		// Resolve context in child scope
+		childCtx, err := godi.Resolve[context.Context](childScope)
+		require.NoError(t, err)
+
+		// Should have child scope's context with the correct value
+		assert.Equal(t, "child", childCtx.Value(levelKey{}))
+		assert.Equal(t, childScope.Context(), childCtx)
+
+		// Resolve Scope in child
+		resolvedScope, err := godi.Resolve[godi.Scope](childScope)
+		require.NoError(t, err)
+		assert.Equal(t, childScope, resolvedScope)
+	})
+
+	t.Run("built-in services work with complex dependency graph", func(t *testing.T) {
+		t.Parallel()
+
+		// Repository that needs context
+		type Repository struct {
+			ctx context.Context
+		}
+
+		newRepository := func(ctx context.Context) *Repository {
+			return &Repository{ctx: ctx}
+		}
+
+		// Service that needs repository and scope
+		type Service struct {
+			repo  *Repository
+			scope godi.Scope
+		}
+
+		newService := func(repo *Repository, scope godi.Scope) *Service {
+			return &Service{repo: repo, scope: scope}
+		}
+
+		// Controller that needs service and provider
+		type Controller struct {
+			service  *Service
+			provider godi.ServiceProvider
+		}
+
+		newController := func(service *Service, provider godi.ServiceProvider) *Controller {
+			return &Controller{service: service, provider: provider}
+		}
+
+		provider := testutil.NewServiceCollectionBuilder(t).
+			WithScoped(newRepository).
+			WithScoped(newService).
+			WithScoped(newController).
+			BuildProvider()
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
+
+		// Create scope with specific context
+		scopeCtx := context.WithValue(context.Background(), ctxKeyRequestID{}, "12345")
+		scope := provider.CreateScope(scopeCtx)
+		t.Cleanup(func() {
+			require.NoError(t, scope.Close())
+		})
+
+		// Resolve controller
+		controller, err := godi.Resolve[*Controller](scope)
+		require.NoError(t, err)
+
+		// Verify the dependency chain
+		assert.NotNil(t, controller)
+		assert.NotNil(t, controller.service)
+		assert.NotNil(t, controller.service.repo)
+
+		// Repository should have the scope's context
+		assert.Equal(t, "12345", controller.service.repo.ctx.Value(ctxKeyRequestID{}))
+
+		// Service should have the scope
+		assert.Equal(t, scope, controller.service.scope)
+
+		// Controller should have the scope's provider
+		assert.Equal(t, scope.(godi.ServiceProvider), controller.provider)
 	})
 }

@@ -124,8 +124,8 @@ type serviceProvider struct {
 
 	// Service descriptors
 	descriptors     []*serviceDescriptor
-	descriptorIndex map[reflect.Type][]*serviceDescriptor
-	keyedIndex      map[typeKeyPair][]*serviceDescriptor
+	descriptorIndex map[reflect.Type]struct{}
+	keyedIndex      map[typeKeyPair]struct{}
 
 	// State
 	disposed int32
@@ -169,22 +169,12 @@ func newServiceProviderWithOptions(services ServiceCollection, options *ServiceP
 	provider := &serviceProvider{
 		digContainer:      dig.New(digOpts...),
 		descriptors:       services.ToSlice(),
-		descriptorIndex:   make(map[reflect.Type][]*serviceDescriptor),
-		keyedIndex:        make(map[typeKeyPair][]*serviceDescriptor),
+		descriptorIndex:   make(map[reflect.Type]struct{}),
+		keyedIndex:        make(map[typeKeyPair]struct{}),
 		options:           options,
 		scopes:            make(map[string]*serviceProviderScope),
 		providerCallbacks: make(map[uintptr]Callback),
 		beforeCallbacks:   make(map[uintptr]BeforeCallback),
-	}
-
-	// Build indexes
-	for _, desc := range provider.descriptors {
-		if desc.isKeyedService() {
-			key := typeKeyPair{serviceType: desc.ServiceType, serviceKey: desc.ServiceKey}
-			provider.keyedIndex[key] = append(provider.keyedIndex[key], desc)
-		} else {
-			provider.descriptorIndex[desc.ServiceType] = append(provider.descriptorIndex[desc.ServiceType], desc)
-		}
 	}
 
 	// Register all services with dig based on lifetime
@@ -202,12 +192,60 @@ func newServiceProviderWithOptions(services ServiceCollection, options *ServiceP
 		}
 	}
 
-	// Create root scope
 	provider.rootScope = newScope(provider, context.Background())
 
-	// Add built-in services
-	if err := provider.addBuiltInServices(); err != nil {
-		return nil, err
+	provider.descriptors = append(provider.descriptors, []*serviceDescriptor{
+		{
+			ServiceType: reflect.TypeOf((*context.Context)(nil)).Elem(),
+			Lifetime:    Scoped, // Important: must be scoped
+			Constructor: func() context.Context {
+				return provider.rootScope.ctx
+			},
+		},
+		{
+			ServiceType: reflect.TypeOf((*ServiceProvider)(nil)).Elem(),
+			Lifetime:    Singleton,
+			Constructor: func() ServiceProvider {
+				return provider.rootScope
+			},
+		},
+		{
+			ServiceType: reflect.TypeOf((*Scope)(nil)).Elem(),
+			Lifetime:    Scoped,
+			Constructor: func() Scope {
+				return provider.rootScope // Default, will be overridden in scope
+			},
+		},
+	}...)
+
+	// Build indexes
+	for _, desc := range provider.descriptors {
+		if desc.isKeyedService() {
+			key := typeKeyPair{serviceType: desc.ServiceType, serviceKey: desc.ServiceKey}
+			provider.keyedIndex[key] = struct{}{}
+		} else {
+			provider.descriptorIndex[desc.ServiceType] = struct{}{}
+		}
+	}
+
+	if err := provider.digContainer.Provide(func() context.Context {
+		return provider.rootScope.ctx
+	}); err != nil {
+		return nil, fmt.Errorf("failed to register context.Context: %w", err)
+	}
+
+	// Register ServiceProvider
+	if err := provider.digContainer.Provide(func() ServiceProvider {
+		return provider.rootScope
+	}); err != nil {
+		return nil, fmt.Errorf("failed to register ServiceProvider: %w", err)
+	}
+
+	// Register Scope
+	if err := provider.digContainer.Provide(func() Scope {
+		return provider.rootScope
+	}); err != nil {
+		return nil, fmt.Errorf("failed to register Scope: %w", err)
 	}
 
 	// Validate if requested
@@ -456,50 +494,6 @@ func (sp *serviceProvider) Close() error {
 
 	runtime.SetFinalizer(sp, nil)
 	return sp.rootScope.Close()
-}
-
-// addBuiltInServices adds built-in services.
-func (sp *serviceProvider) addBuiltInServices() error {
-	// Register ServiceProvider (existing code)
-	if err := sp.digContainer.Provide(func() ServiceProvider {
-		return sp.rootScope
-	}); err != nil {
-		return fmt.Errorf("failed to register ServiceProvider: %w", err)
-	}
-
-	spDesc := &serviceDescriptor{
-		ServiceType: reflect.TypeOf((*ServiceProvider)(nil)).Elem(),
-		Lifetime:    Singleton,
-		Constructor: func() ServiceProvider {
-			return sp.rootScope
-		},
-	}
-	sp.descriptors = append(sp.descriptors, spDesc)
-	sp.descriptorIndex[spDesc.ServiceType] = []*serviceDescriptor{spDesc}
-
-	// Add context.Context as a scoped service
-	ctxDesc := &serviceDescriptor{
-		ServiceType: reflect.TypeOf((*context.Context)(nil)).Elem(),
-		Lifetime:    Scoped, // Important: must be scoped
-		Constructor: func() context.Context {
-			return context.Background() // Default, will be overridden in scope
-		},
-	}
-	sp.descriptors = append(sp.descriptors, ctxDesc)
-	sp.descriptorIndex[ctxDesc.ServiceType] = []*serviceDescriptor{ctxDesc}
-
-	// Add Scope as a scoped service
-	scopeDesc := &serviceDescriptor{
-		ServiceType: reflect.TypeOf((*Scope)(nil)).Elem(),
-		Lifetime:    Scoped,
-		Constructor: func() Scope {
-			return sp.rootScope // Default, will be overridden in scope
-		},
-	}
-	sp.descriptors = append(sp.descriptors, scopeDesc)
-	sp.descriptorIndex[scopeDesc.ServiceType] = []*serviceDescriptor{scopeDesc}
-
-	return nil
 }
 
 // Invoke executes a function with automatic dependency injection.
