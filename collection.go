@@ -242,12 +242,12 @@ func (sc *serviceCollection) addWithLifetime(constructor interface{}, lifetime S
 		return fmt.Errorf("invalid %s constructor: %w", lifetime, err)
 	}
 
-	sc.processProvideOptions(descriptor, opts)
+	processProvideOptions(descriptor, opts)
 	return sc.addInternal(descriptor)
 }
 
 // processProvideOptions extracts metadata from dig options.
-func (sc *serviceCollection) processProvideOptions(descriptor *serviceDescriptor, opts []ProvideOption) {
+func processProvideOptions(descriptor *serviceDescriptor, opts []ProvideOption) {
 	for _, opt := range opts {
 		if opt == nil {
 			continue
@@ -368,7 +368,7 @@ func (sc *serviceCollection) Replace(lifetime ServiceLifetime, constructor inter
 		return fmt.Errorf("invalid constructor: %w", err)
 	}
 
-	sc.processProvideOptions(descriptor, opts)
+	processProvideOptions(descriptor, opts)
 	return sc.addInternal(descriptor)
 }
 

@@ -39,13 +39,6 @@ type ServiceProvider interface {
 	// This scope is created automatically when the provider is built.
 	GetRootScope() Scope
 
-	// IsService determines whether the specified service type is available.
-	// This is useful for optional dependencies.
-	IsService(serviceType reflect.Type) bool
-
-	// IsKeyedService determines whether the specified keyed service type is available.
-	IsKeyedService(serviceType reflect.Type, serviceKey interface{}) bool
-
 	// CreateScope creates a new service scope with the given context.
 	// The returned Scope is also a ServiceProvider for that scope.
 	CreateScope(ctx context.Context) Scope
@@ -59,6 +52,13 @@ type ServiceProvider interface {
 	// ResolveGroup gets all services of the specified type registered in a group.
 	// This is useful for plugin systems or when you need multiple implementations.
 	ResolveGroup(serviceType reflect.Type, groupName string) ([]interface{}, error)
+
+	// IsService determines whether the specified service type is available.
+	// This is useful for optional dependencies.
+	IsService(serviceType reflect.Type) bool
+
+	// IsKeyedService determines whether the specified keyed service type is available.
+	IsKeyedService(serviceType reflect.Type, serviceKey interface{}) bool
 
 	// Decorate provides a decorator for a type that has already been provided in the Scope.
 	//
@@ -431,6 +431,21 @@ func (sp *serviceProvider) GetRootScope() Scope {
 	return sp.rootScope
 }
 
+// CreateScope creates a new service scope.
+func (sp *serviceProvider) CreateScope(ctx context.Context) Scope {
+	if sp.IsDisposed() {
+		panic(ErrProviderDisposed)
+	}
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	newScope := newScope(sp, ctx)
+	newScope.parentScope = sp.rootScope
+	return newScope
+}
+
 // Resolve gets the service object of the specified type.
 func (sp *serviceProvider) Resolve(serviceType reflect.Type) (interface{}, error) {
 	if sp.IsDisposed() {
@@ -478,19 +493,6 @@ func (sp *serviceProvider) ResolveGroup(serviceType reflect.Type, groupName stri
 	return sp.rootScope.ResolveGroup(serviceType, groupName)
 }
 
-// Decorate provides a decorator for a type that has already been provided in the Scope.
-func (sp *serviceProvider) Decorate(decorator interface{}, opts ...DecorateOption) error {
-	if sp.IsDisposed() {
-		return ErrProviderDisposed
-	}
-
-	if decorator == nil {
-		return ErrDecoratorNil
-	}
-
-	return sp.digContainer.Decorate(decorator, opts...)
-}
-
 // IsService determines whether the specified service type is available.
 func (sp *serviceProvider) IsService(serviceType reflect.Type) bool {
 	if sp.IsDisposed() {
@@ -518,19 +520,17 @@ func (sp *serviceProvider) IsKeyedService(serviceType reflect.Type, serviceKey i
 	return exists
 }
 
-// CreateScope creates a new service scope.
-func (sp *serviceProvider) CreateScope(ctx context.Context) Scope {
+// Decorate provides a decorator for a type that has already been provided in the Scope.
+func (sp *serviceProvider) Decorate(decorator interface{}, opts ...DecorateOption) error {
 	if sp.IsDisposed() {
-		panic(ErrProviderDisposed)
+		return ErrProviderDisposed
 	}
 
-	if ctx == nil {
-		ctx = context.Background()
+	if decorator == nil {
+		return ErrDecoratorNil
 	}
 
-	newScope := newScope(sp, ctx)
-	newScope.parentScope = sp.rootScope
-	return newScope
+	return sp.digContainer.Decorate(decorator, opts...)
 }
 
 // IsDisposed returns true if the provider is disposed.

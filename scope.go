@@ -40,9 +40,6 @@ type Scope interface {
 	// IsRootScope returns true if this provider is the root scope.
 	IsRootScope() bool
 
-	// GetRootScope returns the root scope of this provider.
-	GetRootScope() Scope
-
 	// Parent returns the parent scope of this scope.
 	Parent() Scope
 }
@@ -133,19 +130,7 @@ func newScope(provider *serviceProvider, ctx context.Context) *serviceProviderSc
 			continue
 		}
 
-		// Use the constructor from the descriptor
-		if desc.Constructor == nil {
-			// This shouldn't happen if descriptor is validated
-			err := MissingConstructorError{ServiceType: desc.ServiceType, Context: "descriptor"}
-			panic(fmt.Errorf("failed to register scoped service %s: %w", desc.ServiceType, err))
-		}
-
-		// Wrap the constructor to track instances for disposal
-		wrappedConstructor := scope.wrapConstructorForTracking(desc.Constructor)
-		err := scope.digScope.Provide(wrappedConstructor, desc.ProvideOptions...)
-		if err != nil {
-			panic(fmt.Errorf("failed to register scoped service %s: %w", desc.ServiceType, err))
-		}
+		scope.registerScopedService(desc)
 	}
 
 	runtime.SetFinalizer(scope, (*serviceProviderScope).finalize)
@@ -203,22 +188,15 @@ func (scope *serviceProviderScope) Parent() Scope {
 	return scope.parentScope
 }
 
-func (scope *serviceProviderScope) wrapConstructorForTracking(constructor interface{}) interface{} {
-	fnType := reflect.TypeOf(constructor)
-	fnValue := reflect.ValueOf(constructor)
+// CreateScope implements ServiceScopeFactory.
+func (scope *serviceProviderScope) CreateScope(ctx context.Context) Scope {
+	if scope.IsDisposed() {
+		panic(ErrScopeDisposed)
+	}
 
-	return reflect.MakeFunc(fnType, func(args []reflect.Value) []reflect.Value {
-		// Call the original constructor
-		results := fnValue.Call(args)
-
-		// Track the instance if successful
-		if len(results) > 0 && results[0].IsValid() {
-			instance := results[0].Interface()
-			scope.captureDisposable(instance)
-		}
-
-		return results
-	}).Interface()
+	newScope := newScope(scope.serviceProvider, ctx)
+	newScope.parentScope = scope
+	return newScope
 }
 
 // Resolve implements ServiceProvider.
@@ -379,20 +357,43 @@ func (scope *serviceProviderScope) IsKeyedService(serviceType reflect.Type, serv
 	return scope.serviceProvider.IsKeyedService(serviceType, serviceKey)
 }
 
-// CreateScope implements ServiceScopeFactory.
-func (scope *serviceProviderScope) CreateScope(ctx context.Context) Scope {
-	if scope.IsDisposed() {
-		panic(ErrScopeDisposed)
-	}
-
-	newScope := newScope(scope.serviceProvider, ctx)
-	newScope.parentScope = scope
-	return newScope
-}
-
 // IsDisposed implements ServiceProvider.
 func (scope *serviceProviderScope) IsDisposed() bool {
 	return atomic.LoadInt32(&scope.disposed) != 0
+}
+
+func (scope *serviceProviderScope) registerScopedService(desc *serviceDescriptor) {
+	// Use the constructor from the descriptor
+	if desc.Constructor == nil {
+		// This shouldn't happen if descriptor is validated
+		err := MissingConstructorError{ServiceType: desc.ServiceType, Context: "descriptor"}
+		panic(fmt.Errorf("failed to register scoped service %s: %w", desc.ServiceType, err))
+	}
+
+	// Wrap the constructor to track instances for disposal
+	wrappedConstructor := scope.wrapConstructorForTracking(desc.Constructor)
+	err := scope.digScope.Provide(wrappedConstructor, desc.ProvideOptions...)
+	if err != nil {
+		panic(fmt.Errorf("failed to register scoped service %s: %w", desc.ServiceType, err))
+	}
+}
+
+func (scope *serviceProviderScope) wrapConstructorForTracking(constructor interface{}) interface{} {
+	fnType := reflect.TypeOf(constructor)
+	fnValue := reflect.ValueOf(constructor)
+
+	return reflect.MakeFunc(fnType, func(args []reflect.Value) []reflect.Value {
+		// Call the original constructor
+		results := fnValue.Call(args)
+
+		// Track the instance if successful
+		if len(results) > 0 && results[0].IsValid() {
+			instance := results[0].Interface()
+			scope.captureDisposable(instance)
+		}
+
+		return results
+	}).Interface()
 }
 
 // captureDisposable captures a service for disposal when the scope is disposed.
