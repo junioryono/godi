@@ -98,24 +98,6 @@ type ServiceProvider interface {
 	Disposable
 }
 
-// Disposable allows disposal with context for graceful shutdown.
-// Services implementing this interface can perform context-aware cleanup.
-//
-// Example:
-//
-//	type DatabaseConnection struct {
-//	    conn *sql.DB
-//	}
-//
-//	func (dc *DatabaseConnection) Close() error {
-//	    return dc.conn.Close()
-//	}
-type Disposable interface {
-	// Close disposes the resource with the provided context.
-	// Implementations should respect context cancellation for graceful shutdown.
-	Close() error
-}
-
 // ServiceProviderOptions configures various ServiceProvider behaviors.
 type ServiceProviderOptions struct {
 	// OnServiceResolved is called after a service is successfully resolved.
@@ -163,8 +145,8 @@ type serviceProvider struct {
 	options *ServiceProviderOptions
 
 	// Root scope for disposal tracking
-	rootScope *serviceProviderScope
-	scopes    map[string]*serviceProviderScope
+	rootScope *scope
+	scopes    map[string]*scope
 	scopesMu  sync.Mutex
 
 	// Callbacks for dig integration
@@ -211,7 +193,7 @@ func NewServiceProviderWithOptions(options *ServiceProviderOptions) ServiceProvi
 		keyedTypeIndex:    make(map[typeKeyPair][]*serviceDescriptor),
 		lifetimeIndex:     make(map[reflect.Type]ServiceLifetime),
 		options:           options,
-		scopes:            make(map[string]*serviceProviderScope),
+		scopes:            make(map[string]*scope),
 		providerCallbacks: make(map[uintptr]Callback),
 		beforeCallbacks:   make(map[uintptr]BeforeCallback),
 	}
@@ -219,50 +201,44 @@ func NewServiceProviderWithOptions(options *ServiceProviderOptions) ServiceProvi
 	// Create root scope
 	provider.rootScope = newScope(provider, context.Background())
 
-	// Register built-in services
-	provider.registerBuiltInServices()
-
-	return provider
-}
-
-// registerBuiltInServices registers context, ServiceProvider, and Scope as built-in services.
-func (sp *serviceProvider) registerBuiltInServices() {
 	// Register context.Context
-	sp.descriptors = append(sp.descriptors, &serviceDescriptor{
+	provider.descriptors = append(provider.descriptors, &serviceDescriptor{
 		ServiceType: reflect.TypeOf((*context.Context)(nil)).Elem(),
 		Lifetime:    Scoped,
 		Constructor: func() context.Context {
-			return sp.rootScope.ctx
+			return provider.rootScope.ctx
 		},
 	})
 
 	// Register ServiceProvider
-	sp.descriptors = append(sp.descriptors, &serviceDescriptor{
+	provider.descriptors = append(provider.descriptors, &serviceDescriptor{
 		ServiceType: reflect.TypeOf((*ServiceProvider)(nil)).Elem(),
 		Lifetime:    Singleton,
 		Constructor: func() ServiceProvider {
-			return sp.rootScope
+			return provider.rootScope
 		},
 	})
 
 	// Register Scope
-	sp.descriptors = append(sp.descriptors, &serviceDescriptor{
+	provider.descriptors = append(provider.descriptors, &serviceDescriptor{
 		ServiceType: reflect.TypeOf((*Scope)(nil)).Elem(),
 		Lifetime:    Scoped,
 		Constructor: func() Scope {
-			return sp.rootScope
+			return provider.rootScope
 		},
 	})
 
 	// Register these in dig container
-	sp.digContainer.Provide(func() context.Context { return sp.rootScope.ctx })
-	sp.digContainer.Provide(func() ServiceProvider { return sp.rootScope })
-	sp.digContainer.Provide(func() Scope { return sp.rootScope })
+	provider.digContainer.Provide(func() context.Context { return provider.rootScope.ctx })
+	provider.digContainer.Provide(func() ServiceProvider { return provider.rootScope })
+	provider.digContainer.Provide(func() Scope { return provider.rootScope })
 
 	// Index built-in services
-	for _, desc := range sp.descriptors {
-		sp.indexDescriptor(desc)
+	for _, desc := range provider.descriptors {
+		provider.indexDescriptor(desc)
 	}
+
+	return provider
 }
 
 func (sp *serviceProvider) AddModules(modules ...ModuleOption) error {
@@ -404,10 +380,11 @@ func (sp *serviceProvider) addInternal(descriptor *serviceDescriptor) error {
 	// Update all existing scopes with the new scoped service
 	if descriptor.Lifetime == Scoped {
 		sp.scopesMu.Lock()
+		defer sp.scopesMu.Unlock()
+
 		for _, scope := range sp.scopes {
 			scope.registerScopedService(descriptor)
 		}
-		sp.scopesMu.Unlock()
 	}
 
 	return nil
