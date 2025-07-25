@@ -64,16 +64,16 @@ var CommonFixtures = struct {
 	},
 }
 
-// BuildFixture adds a fixture to a service collection
-func BuildFixture(t *testing.T, collection godi.ServiceCollection, fixture ServiceFixture) {
+// BuildFixture adds a fixture to a service provider
+func BuildFixture(t *testing.T, provider godi.ServiceProvider, fixture ServiceFixture) {
 	t.Helper()
 
 	var err error
 	switch fixture.Lifetime {
 	case godi.Singleton:
-		err = collection.AddSingleton(fixture.Constructor, fixture.Options...)
+		err = provider.AddSingleton(fixture.Constructor, fixture.Options...)
 	case godi.Scoped:
-		err = collection.AddScoped(fixture.Constructor, fixture.Options...)
+		err = provider.AddScoped(fixture.Constructor, fixture.Options...)
 	default:
 		t.Fatalf("unknown lifetime: %v", fixture.Lifetime)
 	}
@@ -83,39 +83,39 @@ func BuildFixture(t *testing.T, collection godi.ServiceCollection, fixture Servi
 	}
 }
 
-// SetupBasicServices adds common test services to a collection
-func SetupBasicServices(t *testing.T, collection godi.ServiceCollection) {
+// SetupBasicServices adds common test services to a provider
+func SetupBasicServices(t *testing.T, provider godi.ServiceProvider) {
 	t.Helper()
 
-	BuildFixture(t, collection, CommonFixtures.Logger)
-	BuildFixture(t, collection, CommonFixtures.Database)
-	BuildFixture(t, collection, CommonFixtures.Cache)
+	BuildFixture(t, provider, CommonFixtures.Logger)
+	BuildFixture(t, provider, CommonFixtures.Database)
+	BuildFixture(t, provider, CommonFixtures.Cache)
 }
 
 // SetupCompleteServices adds all common services including dependent ones
-func SetupCompleteServices(t *testing.T, collection godi.ServiceCollection) {
+func SetupCompleteServices(t *testing.T, provider godi.ServiceProvider) {
 	t.Helper()
 
-	SetupBasicServices(t, collection)
-	BuildFixture(t, collection, CommonFixtures.Service)
+	SetupBasicServices(t, provider)
+	BuildFixture(t, provider, CommonFixtures.Service)
 }
 
 // CreateProviderWithBasicServices creates a provider with basic test services
 func CreateProviderWithBasicServices(t *testing.T) godi.ServiceProvider {
 	t.Helper()
 
-	builder := NewServiceCollectionBuilder(t)
-	SetupBasicServices(t, builder.Build())
-	return builder.BuildProvider()
+	provider := godi.NewServiceProvider()
+	SetupBasicServices(t, provider)
+	return provider
 }
 
 // CreateProviderWithCompleteServices creates a provider with all test services
 func CreateProviderWithCompleteServices(t *testing.T) godi.ServiceProvider {
 	t.Helper()
 
-	builder := NewServiceCollectionBuilder(t)
-	SetupCompleteServices(t, builder.Build())
-	return builder.BuildProvider()
+	provider := godi.NewServiceProvider()
+	SetupCompleteServices(t, provider)
+	return provider
 }
 
 // TestScenario represents a test scenario configuration

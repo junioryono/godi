@@ -19,30 +19,27 @@ func BenchmarkServiceResolution(b *testing.B) {
 		{
 			name: "singleton_simple",
 			setup: func() (godi.ServiceProvider, func()) {
-				collection := godi.NewServiceCollection()
-				_ = collection.AddSingleton(testutil.NewTestLogger)
-				provider, _ := collection.BuildServiceProvider()
+				provider := godi.NewServiceProvider()
+				_ = provider.AddSingleton(testutil.NewTestLogger)
 				return provider, func() { provider.Close() }
 			},
 		},
 		{
 			name: "singleton_with_deps",
 			setup: func() (godi.ServiceProvider, func()) {
-				collection := godi.NewServiceCollection()
-				_ = collection.AddSingleton(testutil.NewTestLogger)
-				_ = collection.AddSingleton(testutil.NewTestDatabase)
-				_ = collection.AddSingleton(testutil.NewTestCache)
-				_ = collection.AddSingleton(testutil.NewTestServiceWithDeps)
-				provider, _ := collection.BuildServiceProvider()
+				provider := godi.NewServiceProvider()
+				_ = provider.AddSingleton(testutil.NewTestLogger)
+				_ = provider.AddSingleton(testutil.NewTestDatabase)
+				_ = provider.AddSingleton(testutil.NewTestCache)
+				_ = provider.AddSingleton(testutil.NewTestServiceWithDeps)
 				return provider, func() { provider.Close() }
 			},
 		},
 		{
 			name: "scoped_simple",
 			setup: func() (godi.ServiceProvider, func()) {
-				collection := godi.NewServiceCollection()
-				_ = collection.AddScoped(testutil.NewTestService)
-				provider, _ := collection.BuildServiceProvider()
+				provider := godi.NewServiceProvider()
+				_ = provider.AddScoped(testutil.NewTestService)
 				scope := provider.CreateScope(context.Background())
 				return scope, func() { scope.Close(); provider.Close() }
 			},
@@ -50,23 +47,21 @@ func BenchmarkServiceResolution(b *testing.B) {
 		{
 			name: "keyed_service",
 			setup: func() (godi.ServiceProvider, func()) {
-				collection := godi.NewServiceCollection()
-				_ = collection.AddSingleton(testutil.NewTestLogger, godi.Name("primary"))
-				provider, _ := collection.BuildServiceProvider()
+				provider := godi.NewServiceProvider()
+				_ = provider.AddSingleton(testutil.NewTestLogger, godi.Name("primary"))
 				return provider, func() { provider.Close() }
 			},
 		},
 		{
 			name: "group_services",
 			setup: func() (godi.ServiceProvider, func()) {
-				collection := godi.NewServiceCollection()
+				provider := godi.NewServiceProvider()
 				for i := 0; i < 10; i++ {
 					idx := i
-					_ = collection.AddSingleton(func() testutil.TestHandler {
+					_ = provider.AddSingleton(func() testutil.TestHandler {
 						return testutil.NewTestHandler(fmt.Sprintf("h%d", idx))
 					}, godi.Group("handlers"))
 				}
-				provider, _ := collection.BuildServiceProvider()
 				return provider, func() { provider.Close() }
 			},
 		},
@@ -99,11 +94,10 @@ func BenchmarkServiceResolution(b *testing.B) {
 }
 
 func BenchmarkScopeCreation(b *testing.B) {
-	collection := godi.NewServiceCollection()
-	_ = collection.AddSingleton(testutil.NewTestLogger)
-	_ = collection.AddScoped(testutil.NewTestService)
+	provider := godi.NewServiceProvider()
+	_ = provider.AddSingleton(testutil.NewTestLogger)
+	_ = provider.AddScoped(testutil.NewTestService)
 
-	provider, _ := collection.BuildServiceProvider()
 	defer provider.Close()
 
 	b.ResetTimer()
@@ -131,17 +125,16 @@ func BenchmarkProviderBuild(b *testing.B) {
 			b.ReportAllocs()
 
 			for i := 0; i < b.N; i++ {
-				collection := godi.NewServiceCollection()
+				provider := godi.NewServiceProvider()
 
 				// Add services
 				for j := 0; j < bm.serviceCount; j++ {
 					idx := j
-					_ = collection.AddSingleton(func() interface{} {
+					_ = provider.AddSingleton(func() interface{} {
 						return fmt.Sprintf("service-%d", idx)
 					})
 				}
 
-				provider, _ := collection.BuildServiceProvider()
 				provider.Close()
 			}
 		})
@@ -149,12 +142,11 @@ func BenchmarkProviderBuild(b *testing.B) {
 }
 
 func BenchmarkConcurrentResolution(b *testing.B) {
-	collection := godi.NewServiceCollection()
-	_ = collection.AddSingleton(testutil.NewTestLogger)
-	_ = collection.AddSingleton(testutil.NewTestDatabase)
-	_ = collection.AddScoped(testutil.NewTestService)
+	provider := godi.NewServiceProvider()
+	_ = provider.AddSingleton(testutil.NewTestLogger)
+	_ = provider.AddSingleton(testutil.NewTestDatabase)
+	_ = provider.AddScoped(testutil.NewTestService)
 
-	provider, _ := collection.BuildServiceProvider()
 	defer provider.Close()
 
 	b.RunParallel(func(pb *testing.PB) {
@@ -183,13 +175,12 @@ func BenchmarkParameterObjects(b *testing.B) {
 		return testutil.NewTestService()
 	}
 
-	collection := godi.NewServiceCollection()
-	_ = collection.AddSingleton(testutil.NewTestLogger)
-	_ = collection.AddSingleton(testutil.NewTestDatabase)
-	_ = collection.AddSingleton(testutil.NewTestCache)
-	_ = collection.AddSingleton(constructor)
+	provider := godi.NewServiceProvider()
+	_ = provider.AddSingleton(testutil.NewTestLogger)
+	_ = provider.AddSingleton(testutil.NewTestDatabase)
+	_ = provider.AddSingleton(testutil.NewTestCache)
+	_ = provider.AddSingleton(constructor)
 
-	provider, _ := collection.BuildServiceProvider()
 	defer provider.Close()
 
 	b.ResetTimer()
@@ -217,10 +208,9 @@ func BenchmarkResultObjects(b *testing.B) {
 		}
 	}
 
-	collection := godi.NewServiceCollection()
-	_ = collection.AddSingleton(constructor)
+	provider := godi.NewServiceProvider()
+	_ = provider.AddSingleton(constructor)
 
-	provider, _ := collection.BuildServiceProvider()
 	defer provider.Close()
 
 	// Force creation
@@ -261,17 +251,16 @@ func BenchmarkComplexDependencyGraph(b *testing.B) {
 		L2B *Level2B
 	}
 
-	collection := godi.NewServiceCollection()
-	_ = collection.AddSingleton(func() *Level5 { return &Level5{ID: "root"} })
-	_ = collection.AddSingleton(func(l5 *Level5) *Level4A { return &Level4A{L5: l5} })
-	_ = collection.AddSingleton(func(l5 *Level5) *Level4B { return &Level4B{L5: l5} })
-	_ = collection.AddSingleton(func(l4a *Level4A, l4b *Level4B) *Level3A { return &Level3A{L4A: l4a, L4B: l4b} })
-	_ = collection.AddSingleton(func(l4a *Level4A, l4b *Level4B) *Level3B { return &Level3B{L4A: l4a, L4B: l4b} })
-	_ = collection.AddSingleton(func(l3a *Level3A, l3b *Level3B) *Level2A { return &Level2A{L3A: l3a, L3B: l3b} })
-	_ = collection.AddSingleton(func(l3a *Level3A, l3b *Level3B) *Level2B { return &Level2B{L3A: l3a, L3B: l3b} })
-	_ = collection.AddSingleton(func(l2a *Level2A, l2b *Level2B) *Level1 { return &Level1{L2A: l2a, L2B: l2b} })
+	provider := godi.NewServiceProvider()
+	_ = provider.AddSingleton(func() *Level5 { return &Level5{ID: "root"} })
+	_ = provider.AddSingleton(func(l5 *Level5) *Level4A { return &Level4A{L5: l5} })
+	_ = provider.AddSingleton(func(l5 *Level5) *Level4B { return &Level4B{L5: l5} })
+	_ = provider.AddSingleton(func(l4a *Level4A, l4b *Level4B) *Level3A { return &Level3A{L4A: l4a, L4B: l4b} })
+	_ = provider.AddSingleton(func(l4a *Level4A, l4b *Level4B) *Level3B { return &Level3B{L4A: l4a, L4B: l4b} })
+	_ = provider.AddSingleton(func(l3a *Level3A, l3b *Level3B) *Level2A { return &Level2A{L3A: l3a, L3B: l3b} })
+	_ = provider.AddSingleton(func(l3a *Level3A, l3b *Level3B) *Level2B { return &Level2B{L3A: l3a, L3B: l3b} })
+	_ = provider.AddSingleton(func(l2a *Level2A, l2b *Level2B) *Level1 { return &Level1{L2A: l2a, L2B: l2b} })
 
-	provider, _ := collection.BuildServiceProvider()
 	defer provider.Close()
 
 	b.ResetTimer()
@@ -310,7 +299,7 @@ func BenchmarkModuleLoading(b *testing.B) {
 			b.ReportAllocs()
 
 			for i := 0; i < b.N; i++ {
-				collection := godi.NewServiceCollection()
+				provider := godi.NewServiceProvider()
 
 				// Create and add modules
 				modules := make([]godi.ModuleOption, bm.moduleCount)
@@ -318,8 +307,7 @@ func BenchmarkModuleLoading(b *testing.B) {
 					modules[j] = createModule(fmt.Sprintf("module%d", j), bm.servicesEach)
 				}
 
-				_ = collection.AddModules(modules...)
-				provider, _ := collection.BuildServiceProvider()
+				_ = provider.AddModules(modules...)
 				provider.Close()
 			}
 		})
@@ -343,25 +331,23 @@ func BenchmarkDisposal(b *testing.B) {
 			b.ReportAllocs()
 
 			for i := 0; i < b.N; i++ {
-				collection := godi.NewServiceCollection()
+				provider := godi.NewServiceProvider()
 
 				// Add mix of disposable and non-disposable services
 				for j := 0; j < bm.serviceCount; j++ {
 					idx := j
 					if float64(j)/float64(bm.serviceCount) < bm.disposalRatio {
 						// Disposable service
-						_ = collection.AddSingleton(func() *testutil.TestDisposable {
+						_ = provider.AddSingleton(func() *testutil.TestDisposable {
 							return testutil.NewTestDisposable()
 						})
 					} else {
 						// Non-disposable service
-						_ = collection.AddSingleton(func() string {
+						_ = provider.AddSingleton(func() string {
 							return fmt.Sprintf("service-%d", idx)
 						})
 					}
 				}
-
-				provider, _ := collection.BuildServiceProvider()
 
 				// Force creation of all services
 				for j := 0; j < bm.serviceCount; j++ {
@@ -385,28 +371,26 @@ func BenchmarkMemoryAllocation(b *testing.B) {
 		b.ReportAllocs()
 
 		for i := 0; i < b.N; i++ {
-			collection := godi.NewServiceCollection()
-			_ = collection.AddSingleton(testutil.NewTestLogger)
+			provider := godi.NewServiceProvider()
+			_ = provider.AddSingleton(testutil.NewTestLogger)
 		}
 	})
 
 	b.Run("provider_creation", func(b *testing.B) {
-		collection := godi.NewServiceCollection()
-		_ = collection.AddSingleton(testutil.NewTestLogger)
+		provider := godi.NewServiceProvider()
+		_ = provider.AddSingleton(testutil.NewTestLogger)
 
 		b.ResetTimer()
 		b.ReportAllocs()
 
 		for i := 0; i < b.N; i++ {
-			provider, _ := collection.BuildServiceProvider()
 			provider.Close()
 		}
 	})
 
 	b.Run("scope_creation", func(b *testing.B) {
-		collection := godi.NewServiceCollection()
-		_ = collection.AddScoped(testutil.NewTestService)
-		provider, _ := collection.BuildServiceProvider()
+		provider := godi.NewServiceProvider()
+		_ = provider.AddScoped(testutil.NewTestService)
 		defer provider.Close()
 
 		b.ResetTimer()

@@ -34,12 +34,10 @@ func TestParameterObjects(t *testing.T) {
 			}
 		}
 
-		provider := testutil.NewServiceCollectionBuilder(t).
-			WithSingleton(testutil.NewTestLogger).
-			WithSingleton(testutil.NewTestDatabase).
-			WithScoped(constructor).
-			BuildProvider()
-
+		provider := godi.NewServiceProvider()
+		assert.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
+		assert.NoError(t, provider.AddSingleton(testutil.NewTestDatabase))
+		assert.NoError(t, provider.AddScoped(constructor))
 		scope := provider.CreateScope(context.Background())
 		t.Cleanup(func() {
 			require.NoError(t, scope.Close())
@@ -71,22 +69,20 @@ func TestParameterObjects(t *testing.T) {
 		}
 
 		// Test without cache
-		provider1 := testutil.NewServiceCollectionBuilder(t).
-			WithSingleton(testutil.NewTestLogger).
-			WithSingleton(testutil.NewTestDatabase).
-			WithSingleton(constructor).
-			BuildProvider()
+		provider1 := godi.NewServiceProvider()
+		assert.NoError(t, provider1.AddSingleton(testutil.NewTestLogger))
+		assert.NoError(t, provider1.AddSingleton(testutil.NewTestDatabase))
+		assert.NoError(t, provider1.AddSingleton(constructor))
 
 		service1 := testutil.AssertServiceResolvable[*ServiceWithOptional](t, provider1)
 		assert.False(t, service1.hasCache, "should not have cache when not registered")
 
 		// Test with cache
-		provider2 := testutil.NewServiceCollectionBuilder(t).
-			WithSingleton(testutil.NewTestLogger).
-			WithSingleton(testutil.NewTestDatabase).
-			WithSingleton(testutil.NewTestCache).
-			WithSingleton(constructor).
-			BuildProvider()
+		provider2 := godi.NewServiceProvider()
+		assert.NoError(t, provider2.AddSingleton(testutil.NewTestLogger))
+		assert.NoError(t, provider2.AddSingleton(testutil.NewTestDatabase))
+		assert.NoError(t, provider2.AddSingleton(testutil.NewTestCache))
+		assert.NoError(t, provider2.AddSingleton(constructor))
 
 		service2 := testutil.AssertServiceResolvable[*ServiceWithOptional](t, provider2)
 		assert.True(t, service2.hasCache, "should have cache when registered")
@@ -114,15 +110,14 @@ func TestParameterObjects(t *testing.T) {
 			}
 		}
 
-		provider := testutil.NewServiceCollectionBuilder(t).
-			WithSingleton(func() testutil.TestDatabase {
-				return testutil.NewTestDatabaseNamed("primary-db")
-			}, godi.Name("primary")).
-			WithSingleton(func() testutil.TestDatabase {
-				return testutil.NewTestDatabaseNamed("secondary-db")
-			}, godi.Name("secondary")).
-			WithSingleton(constructor).
-			BuildProvider()
+		provider := godi.NewServiceProvider()
+		assert.NoError(t, provider.AddSingleton(func() testutil.TestDatabase {
+			return testutil.NewTestDatabaseNamed("primary-db")
+		}, godi.Name("primary")))
+		assert.NoError(t, provider.AddSingleton(func() testutil.TestDatabase {
+			return testutil.NewTestDatabaseNamed("secondary-db")
+		}, godi.Name("secondary")))
+		assert.NoError(t, provider.AddSingleton(constructor))
 
 		service := testutil.AssertServiceResolvable[*ServiceWithNamedDeps](t, provider)
 		assert.Contains(t, service.primaryResult, "primary-db")
@@ -155,18 +150,17 @@ func TestParameterObjects(t *testing.T) {
 			}
 		}
 
-		provider := testutil.NewServiceCollectionBuilder(t).
-			WithSingleton(func() testutil.TestHandler {
-				return testutil.NewTestHandler("handler1")
-			}, godi.Group("handlers")).
-			WithSingleton(func() testutil.TestHandler {
-				return testutil.NewTestHandler("handler2")
-			}, godi.Group("handlers")).
-			WithSingleton(func() testutil.TestHandler {
-				return testutil.NewTestHandler("handler3")
-			}, godi.Group("handlers")).
-			WithSingleton(constructor).
-			BuildProvider()
+		provider := godi.NewServiceProvider()
+		assert.NoError(t, provider.AddSingleton(func() testutil.TestHandler {
+			return testutil.NewTestHandler("handler1")
+		}, godi.Group("handlers")))
+		assert.NoError(t, provider.AddSingleton(func() testutil.TestHandler {
+			return testutil.NewTestHandler("handler2")
+		}, godi.Group("handlers")))
+		assert.NoError(t, provider.AddSingleton(func() testutil.TestHandler {
+			return testutil.NewTestHandler("handler3")
+		}, godi.Group("handlers")))
+		assert.NoError(t, provider.AddSingleton(constructor))
 
 		manager := testutil.AssertServiceResolvable[*HandlerManager](t, provider)
 		assert.Equal(t, 3, manager.handlerCount)
@@ -203,9 +197,8 @@ func TestResultObjects(t *testing.T) {
 			}
 		}
 
-		provider := testutil.NewServiceCollectionBuilder(t).
-			WithSingleton(constructor).
-			BuildProvider()
+		provider := godi.NewServiceProvider()
+		assert.NoError(t, provider.AddSingleton(constructor))
 
 		// All services should be resolvable
 		logger := testutil.AssertServiceResolvable[testutil.TestLogger](t, provider)
@@ -234,9 +227,8 @@ func TestResultObjects(t *testing.T) {
 			}
 		}
 
-		provider := testutil.NewServiceCollectionBuilder(t).
-			WithSingleton(constructor).
-			BuildProvider()
+		provider := godi.NewServiceProvider()
+		assert.NoError(t, provider.AddSingleton(constructor))
 
 		// Named services should be resolvable
 		userService := testutil.AssertKeyedServiceResolvable[*testutil.TestService](t, provider, "user")
@@ -265,9 +257,8 @@ func TestResultObjects(t *testing.T) {
 			}
 		}
 
-		provider := testutil.NewServiceCollectionBuilder(t).
-			WithSingleton(constructor).
-			BuildProvider()
+		provider := godi.NewServiceProvider()
+		assert.NoError(t, provider.AddSingleton(constructor))
 
 		// Group should contain all handlers
 		handlers, err := godi.ResolveGroup[testutil.TestHandler](provider, "routes")
@@ -299,9 +290,8 @@ func TestResultObjects(t *testing.T) {
 			return ServiceBundle{}, expectedErr
 		}
 
-		provider := testutil.NewServiceCollectionBuilder(t).
-			WithSingleton(constructor).
-			BuildProvider()
+		provider := godi.NewServiceProvider()
+		assert.NoError(t, provider.AddSingleton(constructor))
 
 		// Resolution should fail with the constructor error
 		_, err := godi.Resolve[*testutil.TestService](provider)
@@ -338,10 +328,9 @@ func TestComplexScenarios(t *testing.T) {
 			}
 		}
 
-		provider := testutil.NewServiceCollectionBuilder(t).
-			WithSingleton(testutil.NewTestLogger).
-			WithSingleton(constructor).
-			BuildProvider()
+		provider := godi.NewServiceProvider()
+		assert.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
+		assert.NoError(t, provider.AddSingleton(constructor))
 
 		// Both databases should be available
 		primary := testutil.AssertKeyedServiceResolvable[testutil.TestDatabase](t, provider, "primary")
@@ -369,11 +358,9 @@ func TestComplexScenarios(t *testing.T) {
 			return &OuterService{logger: params.Logger}
 		}
 
-		provider := testutil.NewServiceCollectionBuilder(t).
-			WithSingleton(testutil.NewTestLogger).
-			WithSingleton(innerConstructor).
-			BuildProvider()
-
+		provider := godi.NewServiceProvider()
+		assert.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
+		assert.NoError(t, provider.AddSingleton(innerConstructor))
 		service := testutil.AssertServiceResolvable[*OuterService](t, provider)
 		assert.NotNil(t, service.logger)
 	})
@@ -407,17 +394,16 @@ func TestComplexScenarios(t *testing.T) {
 			}
 		}
 
-		provider := testutil.NewServiceCollectionBuilder(t).
-			WithSingleton(testutil.NewTestLogger).
-			WithSingleton(testutil.NewTestDatabase).
-			WithSingleton(func() testutil.TestHandler {
-				return testutil.NewTestHandler("h1")
-			}, godi.Group("handlers")).
-			WithSingleton(func() testutil.TestHandler {
-				return testutil.NewTestHandler("h2")
-			}, godi.Group("handlers")).
-			WithSingleton(constructor).
-			BuildProvider()
+		provider := godi.NewServiceProvider()
+		assert.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
+		assert.NoError(t, provider.AddSingleton(testutil.NewTestDatabase))
+		assert.NoError(t, provider.AddSingleton(func() testutil.TestHandler {
+			return testutil.NewTestHandler("h1")
+		}, godi.Group("handlers")))
+		assert.NoError(t, provider.AddSingleton(func() testutil.TestHandler {
+			return testutil.NewTestHandler("h2")
+		}, godi.Group("handlers")))
+		assert.NoError(t, provider.AddSingleton(constructor))
 
 		service := testutil.AssertServiceResolvable[*ComplexService](t, provider)
 		assert.Contains(t, service.loggerType, "TestLoggerImpl")
@@ -477,14 +463,12 @@ func TestIsInAndIsOut(t *testing.T) {
 // Table-driven tests for edge cases
 func TestInOutEdgeCases(t *testing.T) {
 	tests := []struct {
-		name     string
-		setup    func(t *testing.T) godi.ServiceCollection
-		wantErr  bool
-		checkErr func(t *testing.T, err error)
+		name   string
+		action func(t *testing.T) godi.ServiceProvider
 	}{
 		{
 			name: "empty parameter object",
-			setup: func(t *testing.T) godi.ServiceCollection {
+			action: func(t *testing.T) godi.ServiceProvider {
 				type EmptyParams struct {
 					godi.In
 				}
@@ -493,15 +477,14 @@ func TestInOutEdgeCases(t *testing.T) {
 					return "success"
 				}
 
-				collection := godi.NewServiceCollection()
-				require.NoError(t, collection.AddSingleton(constructor))
-				return collection
+				provider := godi.NewServiceProvider()
+				require.NoError(t, provider.AddSingleton(constructor))
+				return provider
 			},
-			wantErr: false,
 		},
 		{
 			name: "empty result object",
-			setup: func(t *testing.T) godi.ServiceCollection {
+			action: func(t *testing.T) godi.ServiceProvider {
 				type EmptyResult struct {
 					godi.Out
 				}
@@ -510,18 +493,14 @@ func TestInOutEdgeCases(t *testing.T) {
 					return EmptyResult{}
 				}
 
-				collection := godi.NewServiceCollection()
-				require.NoError(t, collection.AddSingleton(constructor))
-				return collection
-			},
-			wantErr: true,
-			checkErr: func(t *testing.T, err error) {
-				assert.Contains(t, err.Error(), "must provide at least one non-error type")
+				provider := godi.NewServiceProvider()
+				require.Error(t, provider.AddSingleton(constructor), "func() godi_test.EmptyResult must provide at least one non-error type")
+				return provider
 			},
 		},
 		{
 			name: "parameter object with unexported fields",
-			setup: func(t *testing.T) godi.ServiceCollection {
+			action: func(t *testing.T) godi.ServiceProvider {
 				type ParamsWithUnexported struct {
 					godi.In
 
@@ -533,19 +512,15 @@ func TestInOutEdgeCases(t *testing.T) {
 					return "success"
 				}
 
-				collection := godi.NewServiceCollection()
-				require.NoError(t, collection.AddSingleton(testutil.NewTestLogger))
-				require.NoError(t, collection.AddSingleton(constructor))
-				return collection
-			},
-			wantErr: true,
-			checkErr: func(t *testing.T, err error) {
-				assert.Contains(t, err.Error(), "unexported fields not allowed")
+				provider := godi.NewServiceProvider()
+				require.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
+				require.Error(t, provider.AddSingleton(constructor), "unexported fields not allowed in dig.In, did you mean to export \"hidden\" (string)?")
+				return provider
 			},
 		},
 		{
 			name: "result object with nil values",
-			setup: func(t *testing.T) godi.ServiceCollection {
+			action: func(t *testing.T) godi.ServiceProvider {
 				type NilResult struct {
 					godi.Out
 
@@ -558,11 +533,10 @@ func TestInOutEdgeCases(t *testing.T) {
 					}
 				}
 
-				collection := godi.NewServiceCollection()
-				require.NoError(t, collection.AddSingleton(constructor))
-				return collection
+				provider := godi.NewServiceProvider()
+				require.NoError(t, provider.AddSingleton(constructor))
+				return provider
 			},
-			wantErr: false,
 		},
 	}
 
@@ -570,20 +544,10 @@ func TestInOutEdgeCases(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			collection := tt.setup(t)
-			provider, err := collection.BuildServiceProvider()
-
-			if tt.wantErr {
-				assert.Error(t, err)
-				if tt.checkErr != nil {
-					tt.checkErr(t, err)
-				}
-			} else {
-				require.NoError(t, err)
-				t.Cleanup(func() {
-					require.NoError(t, provider.Close())
-				})
-			}
+			provider := tt.action(t)
+			t.Cleanup(func() {
+				require.NoError(t, provider.Close())
+			})
 		})
 	}
 }
@@ -594,9 +558,8 @@ func TestProvideOptions(t *testing.T) {
 
 		var info godi.ProvideInfo
 
-		provider := testutil.NewServiceCollectionBuilder(t).
-			WithSingleton(testutil.NewTestLogger, godi.FillProvideInfo(&info)).
-			BuildProvider()
+		provider := godi.NewServiceProvider()
+		assert.NoError(t, provider.AddSingleton(testutil.NewTestLogger, godi.FillProvideInfo(&info)))
 
 		// Resolve to ensure the constructor runs
 		testutil.AssertServiceResolvable[testutil.TestLogger](t, provider)
@@ -612,17 +575,15 @@ func TestProvideOptions(t *testing.T) {
 		var callbackInvoked bool
 		var beforeCallbackInvoked bool
 
-		provider := testutil.NewServiceCollectionBuilder(t).
-			WithSingleton(
-				testutil.NewTestLogger,
-				godi.WithProviderCallback(func(ci godi.CallbackInfo) {
-					callbackInvoked = true
-				}),
-				godi.WithProviderBeforeCallback(func(ci godi.BeforeCallbackInfo) {
-					beforeCallbackInvoked = true
-				}),
-			).
-			BuildProvider()
+		provider := godi.NewServiceProvider()
+		assert.NoError(t, provider.AddSingleton(testutil.NewTestLogger,
+			godi.WithProviderCallback(func(ci godi.CallbackInfo) {
+				callbackInvoked = true
+			}),
+			godi.WithProviderBeforeCallback(func(ci godi.BeforeCallbackInfo) {
+				beforeCallbackInvoked = true
+			}),
+		))
 
 		// Resolve to trigger callbacks
 		testutil.AssertServiceResolvable[testutil.TestLogger](t, provider)

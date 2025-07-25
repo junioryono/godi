@@ -1,7 +1,7 @@
 package godi
 
 // ModuleOption represents a registration action within a module.
-type ModuleOption func(ServiceCollection) error
+type ModuleOption func(ServiceProvider) error
 
 // NewModule creates a new module with the given name and builders.
 // Modules are a way to group related service registrations together.
@@ -25,7 +25,7 @@ type ModuleOption func(ServiceCollection) error
 //	    godi.AddScoped(NewAppService),
 //	)
 func NewModule(name string, builders ...ModuleOption) ModuleOption {
-	return func(s ServiceCollection) error {
+	return func(s ServiceProvider) error {
 		// Execute all builders in order
 		for _, builder := range builders {
 			if builder == nil {
@@ -42,21 +42,21 @@ func NewModule(name string, builders ...ModuleOption) ModuleOption {
 
 // AddSingleton creates a ModuleBuilder for adding a singleton service.
 func AddSingleton(constructor interface{}, opts ...ProvideOption) ModuleOption {
-	return func(s ServiceCollection) error {
+	return func(s ServiceProvider) error {
 		return s.AddSingleton(constructor, opts...)
 	}
 }
 
 // AddScoped creates a ModuleBuilder for adding a scoped service.
 func AddScoped(constructor interface{}, opts ...ProvideOption) ModuleOption {
-	return func(s ServiceCollection) error {
+	return func(s ServiceProvider) error {
 		return s.AddScoped(constructor, opts...)
 	}
 }
 
 // AddDecorator creates a ModuleBuilder for adding a decorator.
 func AddDecorator(decorator interface{}, opts ...DecorateOption) ModuleOption {
-	return func(s ServiceCollection) error {
+	return func(s ServiceProvider) error {
 		return s.Decorate(decorator, opts...)
 	}
 }
