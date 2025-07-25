@@ -44,41 +44,13 @@ type Scope interface {
 	Parent() Scope
 }
 
-// DisposableWithContext allows disposal with context for graceful shutdown.
-// Services implementing this interface can perform context-aware cleanup.
-//
-// Example:
-//
-//	type DatabaseConnection struct {
-//	    conn *sql.DB
-//	}
-//
-//	func (dc *DatabaseConnection) Close(ctx context.Context) error {
-//	    done := make(chan error, 1)
-//	    go func() {
-//	        done <- dc.conn.Close()
-//	    }()
-//
-//	    select {
-//	    case err := <-done:
-//	        return err
-//	    case <-ctx.Done():
-//	        return ctx.Err()
-//	    }
-//	}
-type DisposableWithContext interface {
-	// Close disposes the resource with the provided context.
-	// Implementations should respect context cancellation for graceful shutdown.
-	Close(ctx context.Context) error
-}
-
-// serviceProviderScope implements Scope, ServiceProvider, ServiceScopeFactory.
-type serviceProviderScope struct {
+// scope implements Scope and ServiceProvider
+type scope struct {
 	ctx     context.Context
 	scopeID string
 
 	digScope        *dig.Scope
-	parentScope     *serviceProviderScope
+	parentScope     *scope
 	serviceProvider *serviceProvider
 
 	disposed      int32
@@ -87,41 +59,41 @@ type serviceProviderScope struct {
 }
 
 // newScope creates a new ServiceProvider scope.
-func newScope(provider *serviceProvider, ctx context.Context) *serviceProviderScope {
+func newScope(provider *serviceProvider, ctx context.Context) *scope {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	scope := &serviceProviderScope{
+	s := &scope{
 		ctx:             ctx,
 		scopeID:         uuid.NewString(),
 		serviceProvider: provider,
 	}
 
-	scope.ctx = contextWithScope(ctx, scope)
+	s.ctx = contextWithScope(ctx, s)
 
 	// Create a dig scope for non-root scopes - must hold provider's mutex
 	provider.scopesMu.Lock()
 	defer provider.scopesMu.Unlock()
 
-	provider.scopes[scope.scopeID] = scope
-	scope.digScope = provider.digContainer.Scope(scope.scopeID)
+	provider.scopes[s.scopeID] = s
+	s.digScope = provider.digContainer.Scope(s.scopeID)
 
-	if scope.digScope == nil {
+	if s.digScope == nil {
 		panic(ErrFailedToCreateScope)
 	}
 
 	// Now handle built-in services with Provide
-	if err := scope.digScope.Decorate(func() context.Context { return scope.ctx }); err != nil {
-		panic(fmt.Errorf("failed to register context in dig scope %s: %w", scope.scopeID, err))
+	if err := s.digScope.Decorate(func() context.Context { return s.ctx }); err != nil {
+		panic(fmt.Errorf("failed to register context in dig scope %s: %w", s.scopeID, err))
 	}
 
-	if err := scope.digScope.Decorate(func() ServiceProvider { return scope }); err != nil {
-		panic(fmt.Errorf("failed to register ServiceProvider in dig scope %s: %w", scope.scopeID, err))
+	if err := s.digScope.Decorate(func() ServiceProvider { return s }); err != nil {
+		panic(fmt.Errorf("failed to register ServiceProvider in dig scope %s: %w", s.scopeID, err))
 	}
 
-	if err := scope.digScope.Decorate(func() Scope { return scope }); err != nil {
-		panic(fmt.Errorf("failed to register Scope in dig scope %s: %w", scope.scopeID, err))
+	if err := s.digScope.Decorate(func() Scope { return s }); err != nil {
+		panic(fmt.Errorf("failed to register Scope in dig scope %s: %w", s.scopeID, err))
 	}
 
 	// Register scoped services in this dig scope
@@ -130,15 +102,15 @@ func newScope(provider *serviceProvider, ctx context.Context) *serviceProviderSc
 			continue
 		}
 
-		scope.registerScopedService(desc)
+		s.registerScopedService(desc)
 	}
 
-	runtime.SetFinalizer(scope, (*serviceProviderScope).finalize)
+	runtime.SetFinalizer(s, (*scope).finalize)
 
-	return scope
+	return s
 }
 
-func (scope *serviceProviderScope) ID() string {
+func (scope *scope) ID() string {
 	if scope.IsDisposed() {
 		panic(ErrScopeDisposed)
 	}
@@ -146,7 +118,7 @@ func (scope *serviceProviderScope) ID() string {
 	return scope.scopeID
 }
 
-func (scope *serviceProviderScope) Context() context.Context {
+func (scope *scope) Context() context.Context {
 	if scope.IsDisposed() {
 		panic(ErrScopeDisposed)
 	}
@@ -154,7 +126,7 @@ func (scope *serviceProviderScope) Context() context.Context {
 	return scope.ctx
 }
 
-func (scope *serviceProviderScope) IsRootScope() bool {
+func (scope *scope) IsRootScope() bool {
 	if scope.IsDisposed() {
 		panic(ErrScopeDisposed)
 	}
@@ -162,7 +134,7 @@ func (scope *serviceProviderScope) IsRootScope() bool {
 	return scope.parentScope == nil
 }
 
-func (scope *serviceProviderScope) GetRootScope() Scope {
+func (scope *scope) GetRootScope() Scope {
 	if scope.IsDisposed() {
 		panic(ErrScopeDisposed)
 	}
@@ -176,7 +148,7 @@ func (scope *serviceProviderScope) GetRootScope() Scope {
 	return current
 }
 
-func (scope *serviceProviderScope) Parent() Scope {
+func (scope *scope) Parent() Scope {
 	if scope.IsDisposed() {
 		panic(ErrScopeDisposed)
 	}
@@ -188,7 +160,7 @@ func (scope *serviceProviderScope) Parent() Scope {
 	return scope.parentScope
 }
 
-func (scope *serviceProviderScope) AddModules(modules ...ModuleOption) error {
+func (scope *scope) AddModules(modules ...ModuleOption) error {
 	if scope.IsDisposed() {
 		return ErrScopeDisposed
 	}
@@ -196,7 +168,7 @@ func (scope *serviceProviderScope) AddModules(modules ...ModuleOption) error {
 	return scope.serviceProvider.AddModules(modules...)
 }
 
-func (scope *serviceProviderScope) AddSingleton(constructor interface{}, opts ...ProvideOption) error {
+func (scope *scope) AddSingleton(constructor interface{}, opts ...ProvideOption) error {
 	if scope.IsDisposed() {
 		return ErrScopeDisposed
 	}
@@ -205,7 +177,7 @@ func (scope *serviceProviderScope) AddSingleton(constructor interface{}, opts ..
 	return scope.serviceProvider.AddSingleton(constructor, opts...)
 }
 
-func (scope *serviceProviderScope) AddScoped(constructor interface{}, opts ...ProvideOption) error {
+func (scope *scope) AddScoped(constructor interface{}, opts ...ProvideOption) error {
 	if scope.IsDisposed() {
 		return ErrScopeDisposed
 	}
@@ -214,7 +186,7 @@ func (scope *serviceProviderScope) AddScoped(constructor interface{}, opts ...Pr
 	return scope.serviceProvider.AddScoped(constructor, opts...)
 }
 
-func (scope *serviceProviderScope) AddService(lifetime ServiceLifetime, constructor interface{}, opts ...ProvideOption) error {
+func (scope *scope) AddService(lifetime ServiceLifetime, constructor interface{}, opts ...ProvideOption) error {
 	if scope.IsDisposed() {
 		return ErrScopeDisposed
 	}
@@ -222,7 +194,7 @@ func (scope *serviceProviderScope) AddService(lifetime ServiceLifetime, construc
 	return scope.serviceProvider.AddService(lifetime, constructor, opts...)
 }
 
-func (scope *serviceProviderScope) Replace(lifetime ServiceLifetime, constructor interface{}, opts ...ProvideOption) error {
+func (scope *scope) Replace(lifetime ServiceLifetime, constructor interface{}, opts ...ProvideOption) error {
 	if scope.IsDisposed() {
 		return ErrScopeDisposed
 	}
@@ -230,7 +202,7 @@ func (scope *serviceProviderScope) Replace(lifetime ServiceLifetime, constructor
 	return scope.serviceProvider.Replace(lifetime, constructor, opts...)
 }
 
-func (scope *serviceProviderScope) RemoveAll(serviceType reflect.Type) error {
+func (scope *scope) RemoveAll(serviceType reflect.Type) error {
 	if scope.IsDisposed() {
 		return ErrScopeDisposed
 	}
@@ -239,7 +211,7 @@ func (scope *serviceProviderScope) RemoveAll(serviceType reflect.Type) error {
 }
 
 // CreateScope implements ServiceScopeFactory.
-func (scope *serviceProviderScope) CreateScope(ctx context.Context) Scope {
+func (scope *scope) CreateScope(ctx context.Context) Scope {
 	if scope.IsDisposed() {
 		panic(ErrScopeDisposed)
 	}
@@ -250,7 +222,7 @@ func (scope *serviceProviderScope) CreateScope(ctx context.Context) Scope {
 }
 
 // Resolve implements ServiceProvider.
-func (scope *serviceProviderScope) Resolve(serviceType reflect.Type) (interface{}, error) {
+func (scope *scope) Resolve(serviceType reflect.Type) (interface{}, error) {
 	if scope.IsDisposed() {
 		return nil, ErrScopeDisposed
 	}
@@ -313,7 +285,7 @@ func (scope *serviceProviderScope) Resolve(serviceType reflect.Type) (interface{
 	return result, err
 }
 
-func (scope *serviceProviderScope) ResolveKeyed(serviceType reflect.Type, serviceKey interface{}) (interface{}, error) {
+func (scope *scope) ResolveKeyed(serviceType reflect.Type, serviceKey interface{}) (interface{}, error) {
 	if scope.IsDisposed() {
 		return nil, ErrScopeDisposed
 	}
@@ -344,7 +316,7 @@ func (scope *serviceProviderScope) ResolveKeyed(serviceType reflect.Type, servic
 	return result, err
 }
 
-func (scope *serviceProviderScope) ResolveGroup(serviceType reflect.Type, groupName string) ([]interface{}, error) {
+func (scope *scope) ResolveGroup(serviceType reflect.Type, groupName string) ([]interface{}, error) {
 	if scope.IsDisposed() {
 		return nil, ErrScopeDisposed
 	}
@@ -379,7 +351,7 @@ func (scope *serviceProviderScope) ResolveGroup(serviceType reflect.Type, groupN
 }
 
 // Decorate provides a decorator for a type that has already been provided in the Scope.
-func (scope *serviceProviderScope) Decorate(decorator interface{}, opts ...DecorateOption) error {
+func (scope *scope) Decorate(decorator interface{}, opts ...DecorateOption) error {
 	if scope.IsDisposed() {
 		return ErrScopeDisposed
 	}
@@ -392,7 +364,7 @@ func (scope *serviceProviderScope) Decorate(decorator interface{}, opts ...Decor
 }
 
 // IsService implements ServiceProvider.
-func (scope *serviceProviderScope) IsService(serviceType reflect.Type) bool {
+func (scope *scope) IsService(serviceType reflect.Type) bool {
 	if scope.IsDisposed() {
 		return false
 	}
@@ -400,7 +372,7 @@ func (scope *serviceProviderScope) IsService(serviceType reflect.Type) bool {
 }
 
 // IsKeyedService implements ServiceProvider.
-func (scope *serviceProviderScope) IsKeyedService(serviceType reflect.Type, serviceKey interface{}) bool {
+func (scope *scope) IsKeyedService(serviceType reflect.Type, serviceKey interface{}) bool {
 	if scope.IsDisposed() {
 		return false
 	}
@@ -408,11 +380,11 @@ func (scope *serviceProviderScope) IsKeyedService(serviceType reflect.Type, serv
 }
 
 // IsDisposed implements ServiceProvider.
-func (scope *serviceProviderScope) IsDisposed() bool {
+func (scope *scope) IsDisposed() bool {
 	return atomic.LoadInt32(&scope.disposed) != 0
 }
 
-func (scope *serviceProviderScope) registerScopedService(desc *serviceDescriptor) {
+func (scope *scope) registerScopedService(desc *serviceDescriptor) {
 	// Use the constructor from the descriptor
 	if desc.Constructor == nil {
 		// This shouldn't happen if descriptor is validated
@@ -428,7 +400,7 @@ func (scope *serviceProviderScope) registerScopedService(desc *serviceDescriptor
 	}
 }
 
-func (scope *serviceProviderScope) wrapConstructorForTracking(constructor interface{}) interface{} {
+func (scope *scope) wrapConstructorForTracking(constructor interface{}) interface{} {
 	fnType := reflect.TypeOf(constructor)
 	fnValue := reflect.ValueOf(constructor)
 
@@ -447,7 +419,7 @@ func (scope *serviceProviderScope) wrapConstructorForTracking(constructor interf
 }
 
 // captureDisposable captures a service for disposal when the scope is disposed.
-func (scope *serviceProviderScope) captureDisposable(service interface{}) {
+func (scope *scope) captureDisposable(service interface{}) {
 	if service == scope {
 		return
 	}
@@ -469,7 +441,7 @@ func (scope *serviceProviderScope) captureDisposable(service interface{}) {
 	scope.disposables = append(scope.disposables, disposable)
 }
 
-func (scope *serviceProviderScope) Close() error {
+func (scope *scope) Close() error {
 	if !atomic.CompareAndSwapInt32(&scope.disposed, 0, 1) {
 		return nil
 	}
@@ -504,7 +476,7 @@ func (scope *serviceProviderScope) Close() error {
 }
 
 // Invoke implements ServiceProvider.
-func (scope *serviceProviderScope) Invoke(function interface{}) error {
+func (scope *scope) Invoke(function interface{}) error {
 	if scope.IsDisposed() {
 		return ErrScopeDisposed
 	}
@@ -516,13 +488,13 @@ func (scope *serviceProviderScope) Invoke(function interface{}) error {
 }
 
 // finalize is called by the garbage collector.
-func (scope *serviceProviderScope) finalize() {
+func (scope *scope) finalize() {
 	if !scope.IsDisposed() {
 		scope.Close()
 	}
 }
 
-func (scope *serviceProviderScope) resolveService(serviceType reflect.Type) (interface{}, error) {
+func (scope *scope) resolveService(serviceType reflect.Type) (interface{}, error) {
 	var result interface{}
 	var resolveErr error
 
@@ -546,7 +518,7 @@ func (scope *serviceProviderScope) resolveService(serviceType reflect.Type) (int
 	return result, resolveErr
 }
 
-func (scope *serviceProviderScope) resolveKeyedService(serviceType reflect.Type, serviceKey interface{}) (interface{}, error) {
+func (scope *scope) resolveKeyedService(serviceType reflect.Type, serviceKey interface{}) (interface{}, error) {
 	paramType := reflect.StructOf([]reflect.StructField{
 		{
 			Name:      "In",
@@ -589,7 +561,7 @@ func (scope *serviceProviderScope) resolveKeyedService(serviceType reflect.Type,
 	return result, nil
 }
 
-func (scope *serviceProviderScope) resolveGroupService(serviceType reflect.Type, groupName string) ([]interface{}, error) {
+func (scope *scope) resolveGroupService(serviceType reflect.Type, groupName string) ([]interface{}, error) {
 	sliceType := reflect.SliceOf(serviceType)
 	paramType := reflect.StructOf([]reflect.StructField{
 		{
@@ -650,7 +622,7 @@ func (w *contextDisposableWrapper) Close(ctx context.Context) error {
 type scopeContextKey struct{}
 
 // contextWithScope returns a context with the current scope.
-func contextWithScope(ctx context.Context, scope *serviceProviderScope) context.Context {
+func contextWithScope(ctx context.Context, scope *scope) context.Context {
 	return context.WithValue(ctx, scopeContextKey{}, scope)
 }
 
