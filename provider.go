@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -14,18 +15,19 @@ import (
 )
 
 // ServiceProvider is the main dependency injection container interface.
-// It provides methods to resolve services and create scopes.
+// It provides methods to resolve services, create scopes, and dynamically register services.
 //
 // ServiceProvider is thread-safe and can be used concurrently.
 // Services are resolved lazily on first request.
 //
 // Example:
 //
-//	provider, err := collection.BuildServiceProvider()
-//	if err != nil {
-//	    log.Fatal(err)
-//	}
+//	provider := godi.NewServiceProvider()
 //	defer provider.Close()
+//
+//	// Register services dynamically
+//	provider.AddSingleton(NewLogger)
+//	provider.AddScoped(NewDatabase)
 //
 //	// Resolve a service
 //	logger, err := godi.Resolve[Logger](provider)
@@ -33,6 +35,28 @@ import (
 //	    log.Fatal(err)
 //	}
 type ServiceProvider interface {
+	// AddModules applies one or more module configurations to the service collection.
+	AddModules(modules ...ModuleOption) error
+
+	// AddSingleton registers a service with singleton lifetime.
+	// Only one instance is created and shared across all resolutions.
+	AddSingleton(constructor interface{}, opts ...ProvideOption) error
+
+	// AddScoped registers a service with scoped lifetime.
+	// One instance is created per scope and shared within that scope.
+	AddScoped(constructor interface{}, opts ...ProvideOption) error
+
+	// AddService registers a service with the specified lifetime.
+	AddService(lifetime ServiceLifetime, constructor interface{}, opts ...ProvideOption) error
+
+	// Replace replaces all registrations of the specified service type.
+	Replace(lifetime ServiceLifetime, constructor interface{}, opts ...ProvideOption) error
+
+	// RemoveAll removes all registrations of the specified service type.
+	RemoveAll(serviceType reflect.Type) error
+
+	// Service Resolution Methods
+
 	// GetRootScope returns the root scope of the service provider.
 	// The root scope is used for singleton services and tracks disposal of singletons.
 	// It is also the default scope for resolving services.
@@ -61,42 +85,6 @@ type ServiceProvider interface {
 	IsKeyedService(serviceType reflect.Type, serviceKey interface{}) bool
 
 	// Decorate provides a decorator for a type that has already been provided in the Scope.
-	//
-	// Similar to Provide, Decorate takes in a function with zero or more dependencies and one
-	// or more results. Decorate can be used to modify a type that was already introduced to the
-	// Scope, or completely replace it with a new object.
-	//
-	// For example,
-	//
-	//	s.Decorate(func(log *zap.Logger) *zap.Logger {
-	//	  return log.Named("myapp")
-	//	})
-	//
-	// This takes in a value, augments it with a name, and returns a replacement for it. Functions
-	// in the Scope's dependency graph that use *zap.Logger will now use the *zap.Logger
-	// returned by this decorator.
-	//
-	// A decorator can also take in multiple parameters and replace one of them:
-	//
-	//	s.Decorate(func(log *zap.Logger, cfg *Config) *zap.Logger {
-	//	  return log.Named(cfg.Name)
-	//	})
-	//
-	// Or replace a subset of them:
-	//
-	//	s.Decorate(func(
-	//	  log *zap.Logger,
-	//	  cfg *Config,
-	//	  scope metrics.Scope
-	//	) (*zap.Logger, metrics.Scope) {
-	//	  log = log.Named(cfg.Name)
-	//	  scope = scope.With(metrics.Tag("service", cfg.Name))
-	//	  return log, scope
-	//	})
-	//
-	// Decorating a Scope affects all the child scopes of this Scope.
-	//
-	// Similar to a provider, the decorator function gets called *at most once*.
 	Decorate(decorator interface{}, opts ...DecorateOption) error
 
 	// Invoke executes a function with dependency injection.
@@ -130,10 +118,6 @@ type Disposable interface {
 
 // ServiceProviderOptions configures various ServiceProvider behaviors.
 type ServiceProviderOptions struct {
-	// ValidateOnBuild determines whether to validate all services can be created during BuildServiceProvider.
-	// This can catch configuration errors early but may impact startup time for large containers.
-	ValidateOnBuild bool
-
 	// OnServiceResolved is called after a service is successfully resolved.
 	// This can be used for logging, metrics, or debugging.
 	OnServiceResolved func(serviceType reflect.Type, instance interface{}, duration time.Duration)
@@ -166,6 +150,11 @@ type serviceProvider struct {
 	descriptorIndex map[reflect.Type]struct{}
 	keyedIndex      map[typeKeyPair]struct{}
 
+	// Indexes for fast lookup (from collection)
+	typeIndex      map[reflect.Type][]*serviceDescriptor
+	keyedTypeIndex map[typeKeyPair][]*serviceDescriptor
+	lifetimeIndex  map[reflect.Type]ServiceLifetime
+
 	// State
 	disposed int32
 	mu       sync.RWMutex
@@ -183,12 +172,20 @@ type serviceProvider struct {
 	beforeCallbacks   map[uintptr]BeforeCallback
 }
 
-// newServiceProviderWithOptions creates a new ServiceProvider from the given service collection.
-func newServiceProviderWithOptions(services ServiceCollection, options *ServiceProviderOptions) (ServiceProvider, error) {
-	if services == nil {
-		return nil, ErrServicesNil
-	}
+// NewServiceProvider creates a new empty ServiceProvider that supports dynamic registration.
+//
+// Example:
+//
+//	provider := godi.NewServiceProvider()
+//	provider.AddSingleton(NewLogger)
+//	provider.AddScoped(NewDatabase)
+//	defer provider.Close()
+func NewServiceProvider() ServiceProvider {
+	return NewServiceProviderWithOptions(nil)
+}
 
+// NewServiceProviderWithOptions creates a new ServiceProvider with custom options.
+func NewServiceProviderWithOptions(options *ServiceProviderOptions) ServiceProvider {
 	if options == nil {
 		options = &ServiceProviderOptions{}
 	}
@@ -207,94 +204,461 @@ func newServiceProviderWithOptions(services ServiceCollection, options *ServiceP
 
 	provider := &serviceProvider{
 		digContainer:      dig.New(digOpts...),
-		descriptors:       services.ToSlice(),
+		descriptors:       make([]*serviceDescriptor, 0),
 		descriptorIndex:   make(map[reflect.Type]struct{}),
 		keyedIndex:        make(map[typeKeyPair]struct{}),
+		typeIndex:         make(map[reflect.Type][]*serviceDescriptor),
+		keyedTypeIndex:    make(map[typeKeyPair][]*serviceDescriptor),
+		lifetimeIndex:     make(map[reflect.Type]ServiceLifetime),
 		options:           options,
 		scopes:            make(map[string]*serviceProviderScope),
 		providerCallbacks: make(map[uintptr]Callback),
 		beforeCallbacks:   make(map[uintptr]BeforeCallback),
 	}
 
-	// Register all services with dig based on lifetime
-	for _, desc := range provider.descriptors {
-		if desc.Lifetime != Singleton {
+	// Create root scope
+	provider.rootScope = newScope(provider, context.Background())
+
+	// Register built-in services
+	provider.registerBuiltInServices()
+
+	return provider
+}
+
+// registerBuiltInServices registers context, ServiceProvider, and Scope as built-in services.
+func (sp *serviceProvider) registerBuiltInServices() {
+	// Register context.Context
+	sp.descriptors = append(sp.descriptors, &serviceDescriptor{
+		ServiceType: reflect.TypeOf((*context.Context)(nil)).Elem(),
+		Lifetime:    Scoped,
+		Constructor: func() context.Context {
+			return sp.rootScope.ctx
+		},
+	})
+
+	// Register ServiceProvider
+	sp.descriptors = append(sp.descriptors, &serviceDescriptor{
+		ServiceType: reflect.TypeOf((*ServiceProvider)(nil)).Elem(),
+		Lifetime:    Singleton,
+		Constructor: func() ServiceProvider {
+			return sp.rootScope
+		},
+	})
+
+	// Register Scope
+	sp.descriptors = append(sp.descriptors, &serviceDescriptor{
+		ServiceType: reflect.TypeOf((*Scope)(nil)).Elem(),
+		Lifetime:    Scoped,
+		Constructor: func() Scope {
+			return sp.rootScope
+		},
+	})
+
+	// Register these in dig container
+	sp.digContainer.Provide(func() context.Context { return sp.rootScope.ctx })
+	sp.digContainer.Provide(func() ServiceProvider { return sp.rootScope })
+	sp.digContainer.Provide(func() Scope { return sp.rootScope })
+
+	// Index built-in services
+	for _, desc := range sp.descriptors {
+		sp.indexDescriptor(desc)
+	}
+}
+
+func (sp *serviceProvider) AddModules(modules ...ModuleOption) error {
+	if sp.IsDisposed() {
+		return ErrProviderDisposed
+	}
+
+	for _, module := range modules {
+		if module == nil {
 			continue
 		}
 
-		if err := provider.registerSingletonService(desc); err != nil {
-			return nil, RegistrationError{
-				ServiceType: desc.ServiceType,
-				Operation:   "register",
-				Cause:       err,
+		if err := module(sp); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// AddSingleton adds a singleton service to the provider.
+func (sp *serviceProvider) AddSingleton(constructor interface{}, opts ...ProvideOption) error {
+	return sp.AddService(Singleton, constructor, opts...)
+}
+
+// AddScoped adds a scoped service to the provider.
+func (sp *serviceProvider) AddScoped(constructor interface{}, opts ...ProvideOption) error {
+	return sp.AddService(Scoped, constructor, opts...)
+}
+
+// AddService adds a service with the specified lifetime.
+func (sp *serviceProvider) AddService(lifetime ServiceLifetime, constructor interface{}, opts ...ProvideOption) error {
+	if sp.IsDisposed() {
+		return ErrProviderDisposed
+	}
+
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+
+	if constructor == nil {
+		return ErrNilConstructor
+	}
+
+	// Check if this is a function or a value
+	constructorType := reflect.TypeOf(constructor)
+	constructorInfo := typecache.GetTypeInfo(constructorType)
+
+	if !constructorInfo.IsFunc {
+		// It's not a function, so it's an instance - wrap it in a constructor
+		instance := constructor
+		instanceType := constructorType
+
+		// Create a properly typed constructor function
+		fnType := reflect.FuncOf([]reflect.Type{}, []reflect.Type{instanceType}, false)
+		fnValue := reflect.MakeFunc(fnType, func(args []reflect.Value) []reflect.Value {
+			return []reflect.Value{reflect.ValueOf(instance)}
+		})
+
+		constructor = fnValue.Interface()
+	}
+
+	// Check if this returns a result object
+	if constructorInfo.IsFunc && constructorInfo.NumOut > 0 {
+		outInfo := typecache.GetTypeInfo(constructorInfo.OutTypes[0])
+		if outInfo.IsStruct && outInfo.HasOutField {
+			descriptor := &serviceDescriptor{
+				ServiceType:    constructorInfo.OutTypes[0],
+				Lifetime:       lifetime,
+				Constructor:    constructor,
+				ProvideOptions: opts,
+			}
+			return sp.addInternal(descriptor)
+		}
+	}
+
+	// Regular service registration
+	descriptor, err := newServiceDescriptor(constructor, lifetime)
+	if err != nil {
+		return fmt.Errorf("invalid %s constructor: %w", lifetime, err)
+	}
+
+	processProvideOptions(descriptor, opts)
+	return sp.addInternal(descriptor)
+}
+
+// addInternal appends a ServiceDescriptor to the provider.
+func (sp *serviceProvider) addInternal(descriptor *serviceDescriptor) error {
+	if descriptor == nil {
+		return ErrDescriptorNil
+	}
+
+	// Validate the descriptor
+	if err := descriptor.validate(); err != nil {
+		return fmt.Errorf("invalid descriptor: %w", err)
+	}
+
+	// For non-keyed, non-group services, check lifetime conflicts
+	if !descriptor.isKeyedService() && !descriptor.isDecorator() && len(descriptor.Groups) == 0 {
+		// Check if we already have this type registered with a different lifetime
+		if existingLifetime, exists := sp.lifetimeIndex[descriptor.ServiceType]; exists {
+			if existingLifetime != descriptor.Lifetime {
+				return LifetimeConflictError{
+					ServiceType: descriptor.ServiceType,
+					Current:     existingLifetime,
+					Requested:   descriptor.Lifetime,
+				}
 			}
 		}
+
+		// Check if we already have a non-keyed, non-group registration
+		if existing := sp.typeIndex[descriptor.ServiceType]; len(existing) > 0 {
+			for _, desc := range existing {
+				if !desc.isKeyedService() && !desc.isDecorator() && len(desc.Groups) == 0 {
+					return AlreadyRegisteredError{ServiceType: descriptor.ServiceType}
+				}
+			}
+		}
+
+		// Track the lifetime for this type
+		sp.lifetimeIndex[descriptor.ServiceType] = descriptor.Lifetime
 	}
 
-	provider.rootScope = newScope(provider, context.Background())
+	// Add to descriptors
+	sp.descriptors = append(sp.descriptors, descriptor)
 
-	provider.descriptors = append(provider.descriptors, []*serviceDescriptor{
-		{
-			ServiceType: reflect.TypeOf((*context.Context)(nil)).Elem(),
-			Lifetime:    Scoped, // Important: must be scoped
-			Constructor: func() context.Context {
-				return provider.rootScope.ctx
-			},
-		},
-		{
-			ServiceType: reflect.TypeOf((*ServiceProvider)(nil)).Elem(),
-			Lifetime:    Singleton,
-			Constructor: func() ServiceProvider {
-				return provider.rootScope
-			},
-		},
-		{
-			ServiceType: reflect.TypeOf((*Scope)(nil)).Elem(),
-			Lifetime:    Scoped,
-			Constructor: func() Scope {
-				return provider.rootScope // Default, will be overridden in scope
-			},
-		},
-	}...)
+	// Index the descriptor
+	sp.indexDescriptor(descriptor)
 
-	// Build indexes
-	for _, desc := range provider.descriptors {
-		if desc.isKeyedService() {
-			key := typeKeyPair{serviceType: desc.ServiceType, serviceKey: desc.ServiceKey}
-			provider.keyedIndex[key] = struct{}{}
+	// Register with dig if singleton
+	if descriptor.Lifetime == Singleton {
+		if err := sp.registerSingletonService(descriptor); err != nil {
+			// Remove from descriptors and indexes on failure
+			sp.descriptors = sp.descriptors[:len(sp.descriptors)-1]
+			sp.removeFromIndexes(descriptor)
+			return err
+		}
+	}
+
+	// Update all existing scopes with the new scoped service
+	if descriptor.Lifetime == Scoped {
+		sp.scopesMu.Lock()
+		for _, scope := range sp.scopes {
+			scope.registerScopedService(descriptor)
+		}
+		sp.scopesMu.Unlock()
+	}
+
+	return nil
+}
+
+// indexDescriptor adds a descriptor to all relevant indexes.
+func (sp *serviceProvider) indexDescriptor(descriptor *serviceDescriptor) {
+	// Update type index
+	sp.typeIndex[descriptor.ServiceType] = append(sp.typeIndex[descriptor.ServiceType], descriptor)
+
+	// Update keyed index if applicable
+	if descriptor.ServiceKey != nil {
+		pair := typeKeyPair{
+			serviceType: descriptor.ServiceType,
+			serviceKey:  descriptor.ServiceKey,
+		}
+		sp.keyedTypeIndex[pair] = append(sp.keyedTypeIndex[pair], descriptor)
+		sp.keyedIndex[pair] = struct{}{}
+	} else {
+		sp.descriptorIndex[descriptor.ServiceType] = struct{}{}
+	}
+}
+
+// removeFromIndexes removes a descriptor from all indexes.
+func (sp *serviceProvider) removeFromIndexes(descriptor *serviceDescriptor) {
+	// Remove from type index
+	if descs, exists := sp.typeIndex[descriptor.ServiceType]; exists {
+		newDescs := make([]*serviceDescriptor, 0, len(descs)-1)
+		for _, d := range descs {
+			if d != descriptor {
+				newDescs = append(newDescs, d)
+			}
+		}
+		if len(newDescs) > 0 {
+			sp.typeIndex[descriptor.ServiceType] = newDescs
 		} else {
-			provider.descriptorIndex[desc.ServiceType] = struct{}{}
+			delete(sp.typeIndex, descriptor.ServiceType)
 		}
 	}
 
-	if err := provider.digContainer.Provide(func() context.Context {
-		return provider.rootScope.ctx
-	}); err != nil {
-		return nil, fmt.Errorf("failed to register context.Context: %w", err)
+	// Remove from keyed index if applicable
+	if descriptor.ServiceKey != nil {
+		pair := typeKeyPair{
+			serviceType: descriptor.ServiceType,
+			serviceKey:  descriptor.ServiceKey,
+		}
+		delete(sp.keyedTypeIndex, pair)
+		delete(sp.keyedIndex, pair)
+	} else {
+		delete(sp.descriptorIndex, descriptor.ServiceType)
 	}
 
-	// Register ServiceProvider
-	if err := provider.digContainer.Provide(func() ServiceProvider {
-		return provider.rootScope
-	}); err != nil {
-		return nil, fmt.Errorf("failed to register ServiceProvider: %w", err)
+	// Remove from lifetime index if it was the only non-keyed service
+	if !descriptor.isKeyedService() && len(descriptor.Groups) == 0 {
+		hasOtherNonKeyed := false
+		for _, desc := range sp.descriptors {
+			if desc.ServiceType == descriptor.ServiceType && desc != descriptor &&
+				!desc.isKeyedService() && len(desc.Groups) == 0 {
+				hasOtherNonKeyed = true
+				break
+			}
+		}
+		if !hasOtherNonKeyed {
+			delete(sp.lifetimeIndex, descriptor.ServiceType)
+		}
+	}
+}
+
+// Replace replaces all registrations of the specified service type.
+func (sp *serviceProvider) Replace(lifetime ServiceLifetime, constructor interface{}, opts ...ProvideOption) error {
+	if sp.IsDisposed() {
+		return ErrProviderDisposed
 	}
 
-	// Register Scope
-	if err := provider.digContainer.Provide(func() Scope {
-		return provider.rootScope
-	}); err != nil {
-		return nil, fmt.Errorf("failed to register Scope: %w", err)
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+
+	// Determine the service type
+	fnType := reflect.TypeOf(constructor)
+	fnInfo := typecache.GetTypeInfo(fnType)
+
+	if !fnInfo.IsFunc || fnInfo.NumOut == 0 {
+		return ErrConstructorMustReturnValue
 	}
 
-	// Validate if requested
-	if options.ValidateOnBuild {
-		if err := provider.validateAllServices(); err != nil {
-			return nil, err
+	serviceType := fnInfo.OutTypes[0]
+	serviceInfo := typecache.GetTypeInfo(serviceType)
+
+	if serviceInfo.IsStruct && serviceInfo.HasOutField {
+		// For result objects, we can't easily determine what to replace
+		return ErrReplaceResultObject
+	}
+
+	// Extract the service key if provided in options
+	var serviceKey interface{}
+	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
+
+		optStr := fmt.Sprintf("%v", opt)
+		if !strings.HasPrefix(optStr, "Name(") {
+			continue
+		}
+
+		start := strings.Index(optStr, `"`) + 1
+		end := strings.LastIndex(optStr, `"`)
+		if start > 0 && end > start {
+			serviceKey = optStr[start:end]
+			break
 		}
 	}
 
-	return provider, nil
+	// Remove existing registrations based on whether a key is provided
+	if serviceKey != nil {
+		// Replace only the keyed service
+		sp.removeByTypeAndKeyInternal(serviceType, serviceKey)
+	} else {
+		// Replace only non-keyed, non-group services
+		sp.removeNonKeyedByTypeInternal(serviceType)
+	}
+
+	// Add new registration
+	descriptor, err := newServiceDescriptor(constructor, lifetime)
+	if err != nil {
+		return fmt.Errorf("invalid constructor: %w", err)
+	}
+
+	processProvideOptions(descriptor, opts)
+	return sp.addInternal(descriptor)
+}
+
+// RemoveAll removes all registrations of the specified service type.
+func (sp *serviceProvider) RemoveAll(serviceType reflect.Type) error {
+	if sp.IsDisposed() {
+		return ErrProviderDisposed
+	}
+
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+
+	if serviceType == nil {
+		return ErrInvalidServiceType
+	}
+
+	sp.removeByTypeInternal(serviceType)
+	return nil
+}
+
+// removeByTypeInternal removes all descriptors of a given type.
+func (sp *serviceProvider) removeByTypeInternal(serviceType reflect.Type) {
+	// Create new slice without the removed descriptors
+	newDescriptors := make([]*serviceDescriptor, 0, len(sp.descriptors))
+	for _, desc := range sp.descriptors {
+		if desc.ServiceType != serviceType {
+			newDescriptors = append(newDescriptors, desc)
+		}
+	}
+	sp.descriptors = newDescriptors
+
+	// Update indexes
+	delete(sp.typeIndex, serviceType)
+	delete(sp.lifetimeIndex, serviceType)
+	delete(sp.descriptorIndex, serviceType)
+
+	// Remove from keyed index
+	for key := range sp.keyedTypeIndex {
+		if key.serviceType == serviceType {
+			delete(sp.keyedTypeIndex, key)
+			delete(sp.keyedIndex, key)
+		}
+	}
+}
+
+// removeNonKeyedByTypeInternal removes only non-keyed, non-group descriptors of a given type.
+func (sp *serviceProvider) removeNonKeyedByTypeInternal(serviceType reflect.Type) {
+	// Create new slice without the removed descriptors
+	newDescriptors := make([]*serviceDescriptor, 0, len(sp.descriptors))
+
+	for _, desc := range sp.descriptors {
+		// Keep the descriptor if:
+		// 1. It's a different type, OR
+		// 2. It's the same type but is keyed, OR
+		// 3. It's the same type but belongs to a group
+		if desc.ServiceType != serviceType || desc.isKeyedService() || len(desc.Groups) > 0 {
+			newDescriptors = append(newDescriptors, desc)
+		}
+	}
+	sp.descriptors = newDescriptors
+
+	// Update type index - remove only non-keyed, non-group entries
+	if descs, exists := sp.typeIndex[serviceType]; exists {
+		newTypeDescs := make([]*serviceDescriptor, 0)
+		for _, desc := range descs {
+			if desc.isKeyedService() || len(desc.Groups) > 0 {
+				newTypeDescs = append(newTypeDescs, desc)
+			}
+		}
+		if len(newTypeDescs) > 0 {
+			sp.typeIndex[serviceType] = newTypeDescs
+		} else {
+			delete(sp.typeIndex, serviceType)
+			delete(sp.descriptorIndex, serviceType)
+		}
+	}
+
+	// Update lifetime index only if no non-keyed services remain
+	hasNonKeyed := false
+	for _, desc := range sp.descriptors {
+		if desc.ServiceType == serviceType && !desc.isKeyedService() && len(desc.Groups) == 0 {
+			hasNonKeyed = true
+			break
+		}
+	}
+	if !hasNonKeyed {
+		delete(sp.lifetimeIndex, serviceType)
+	}
+}
+
+// removeByTypeAndKeyInternal removes only descriptors with specific type and key.
+func (sp *serviceProvider) removeByTypeAndKeyInternal(serviceType reflect.Type, serviceKey interface{}) {
+	// Create new slice without the removed descriptors
+	newDescriptors := make([]*serviceDescriptor, 0, len(sp.descriptors))
+
+	for _, desc := range sp.descriptors {
+		// Keep the descriptor if it's not the one we're looking for
+		if desc.ServiceType != serviceType || desc.ServiceKey != serviceKey {
+			newDescriptors = append(newDescriptors, desc)
+		}
+	}
+	sp.descriptors = newDescriptors
+
+	// Remove from keyed index
+	key := typeKeyPair{serviceType: serviceType, serviceKey: serviceKey}
+	delete(sp.keyedTypeIndex, key)
+	delete(sp.keyedIndex, key)
+
+	// Update type index
+	if descs, exists := sp.typeIndex[serviceType]; exists {
+		newTypeDescs := make([]*serviceDescriptor, 0)
+		for _, desc := range descs {
+			if desc.ServiceKey != serviceKey {
+				newTypeDescs = append(newTypeDescs, desc)
+			}
+		}
+		if len(newTypeDescs) > 0 {
+			sp.typeIndex[serviceType] = newTypeDescs
+		} else {
+			delete(sp.typeIndex, serviceType)
+		}
+	}
 }
 
 // registerSingletonService registers a service descriptor with the dig container.
@@ -377,49 +741,6 @@ func (sp *serviceProvider) wrapSingletonConstructor(constructor interface{}) int
 
 		return results
 	}).Interface()
-}
-
-// validateAllServices validates that all services can be constructed.
-func (sp *serviceProvider) validateAllServices() error {
-	// Use dig's built-in validation by attempting a dry run
-	if sp.options.DryRun {
-		return nil // Already in dry run mode
-	}
-
-	// Create a test invocation that touches all services
-	var testFuncs []interface{}
-	for _, desc := range sp.descriptors {
-		if desc.Lifetime == Singleton && desc.Constructor != nil {
-			// Create a test function that requests this service
-			serviceType := desc.ServiceType
-			testFunc := reflect.MakeFunc(
-				reflect.FuncOf([]reflect.Type{serviceType}, []reflect.Type{}, false),
-				func(args []reflect.Value) []reflect.Value {
-					return nil
-				},
-			).Interface()
-			testFuncs = append(testFuncs, testFunc)
-		}
-	}
-
-	// Try to invoke all test functions
-	for _, testFunc := range testFuncs {
-		err := sp.digContainer.Invoke(testFunc)
-		if err != nil {
-			// Check if it's a cycle error
-			if dig.IsCycleDetected(err) {
-				// Convert to our cycle error format
-				return &CircularDependencyError{
-					ServiceType: reflect.TypeOf(testFunc).In(0),
-					Chain:       []reflect.Type{}, // dig doesn't expose the chain
-					DigError:    err,
-				}
-			}
-			return err
-		}
-	}
-
-	return nil
 }
 
 // GetRootScope returns the root scope of the service provider.
@@ -530,7 +851,30 @@ func (sp *serviceProvider) Decorate(decorator interface{}, opts ...DecorateOptio
 		return ErrDecoratorNil
 	}
 
-	return sp.digContainer.Decorate(decorator, opts...)
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+
+	// Create a decorator descriptor
+	fnType := reflect.TypeOf(decorator)
+	fnInfo := typecache.GetTypeInfo(fnType)
+
+	if !fnInfo.IsFunc || fnInfo.NumIn == 0 {
+		return ErrDecoratorNoParams
+	}
+
+	// The first parameter type is what's being decorated
+	decoratedType := fnInfo.InTypes[0]
+
+	descriptor := &serviceDescriptor{
+		ServiceType: decoratedType,
+		Lifetime:    Singleton, // Decorators don't have lifetime
+		DecorateInfo: &decorateDescriptor{
+			Decorator:       decorator,
+			DecorateOptions: opts,
+		},
+	}
+
+	return sp.addInternal(descriptor)
 }
 
 // IsDisposed returns true if the provider is disposed.
@@ -555,6 +899,44 @@ func (sp *serviceProvider) Invoke(function interface{}) error {
 	}
 
 	return sp.rootScope.Invoke(function)
+}
+
+// Helper function moved from collection.go
+func processProvideOptions(descriptor *serviceDescriptor, opts []ProvideOption) {
+	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
+
+		// Get string representation of the option
+		optStr := fmt.Sprintf("%v", opt)
+
+		// Extract Name
+		if descriptor.ServiceKey == nil && strings.HasPrefix(optStr, "Name(") {
+			start := strings.Index(optStr, `"`) + 1
+			end := strings.LastIndex(optStr, `"`)
+			if start > 0 && end > start {
+				descriptor.ServiceKey = optStr[start:end]
+				descriptor.ProvideOptions = append(descriptor.ProvideOptions, Name(fmt.Sprintf("%v", descriptor.ServiceKey)))
+			}
+		} else if strings.HasPrefix(optStr, "Group(") {
+			start := strings.Index(optStr, `"`) + 1
+			end := strings.LastIndex(optStr, `"`)
+			if start > 0 && end > start {
+				group := optStr[start:end]
+				descriptor.Groups = append(descriptor.Groups, group)
+				descriptor.ProvideOptions = append(descriptor.ProvideOptions, Group(group))
+			}
+		} else {
+			descriptor.ProvideOptions = append(descriptor.ProvideOptions, opt)
+		}
+	}
+}
+
+// typeKeyPair represents a type-key combination for keyed services.
+type typeKeyPair struct {
+	serviceType reflect.Type
+	serviceKey  interface{}
 }
 
 // Resolve is a generic helper function that returns the service as type T.

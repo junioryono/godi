@@ -17,22 +17,22 @@ func TestServiceDescriptor_Validation(t *testing.T) {
 	t.Run("valid descriptors through collection", func(t *testing.T) {
 		t.Parallel()
 
-		collection := godi.NewServiceCollection()
+		provider := godi.NewServiceProvider()
 
 		// Valid singleton
-		err := collection.AddSingleton(testutil.NewTestLogger)
+		err := provider.AddSingleton(testutil.NewTestLogger)
 		assert.NoError(t, err)
 
 		// Valid scoped
-		err = collection.AddScoped(testutil.NewTestService)
+		err = provider.AddScoped(testutil.NewTestService)
 		assert.NoError(t, err)
 
 		// Valid keyed service
-		err = collection.AddSingleton(testutil.NewTestDatabase, godi.Name("primary"))
+		err = provider.AddSingleton(testutil.NewTestDatabase, godi.Name("primary"))
 		assert.NoError(t, err)
 
 		// Valid decorator
-		err = collection.Decorate(func(logger testutil.TestLogger) testutil.TestLogger {
+		err = provider.Decorate(func(logger testutil.TestLogger) testutil.TestLogger {
 			return logger
 		})
 		assert.NoError(t, err)
@@ -96,8 +96,8 @@ func TestServiceDescriptor_Validation(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				collection := godi.NewServiceCollection()
-				err := collection.AddSingleton(tt.constructor)
+				provider := godi.NewServiceProvider()
+				err := provider.AddSingleton(tt.constructor)
 
 				if tt.wantErr {
 					assert.Error(t, err)
@@ -154,8 +154,8 @@ func TestServiceDescriptor_Validation(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				collection := godi.NewServiceCollection()
-				err := collection.Decorate(tt.decorator)
+				provider := godi.NewServiceProvider()
+				err := provider.Decorate(tt.decorator)
 
 				if tt.wantErr {
 					assert.Error(t, err)
@@ -176,8 +176,8 @@ func TestServiceDescriptor_ParameterObjects(t *testing.T) {
 			return &testutil.TestService{ID: "from-params"}
 		}
 
-		collection := godi.NewServiceCollection()
-		err := collection.AddSingleton(constructor)
+		provider := godi.NewServiceProvider()
+		err := provider.AddSingleton(constructor)
 		assert.NoError(t, err)
 	})
 
@@ -199,8 +199,8 @@ func TestServiceDescriptor_ParameterObjects(t *testing.T) {
 			return &testutil.TestService{}
 		}
 
-		collection := godi.NewServiceCollection()
-		err := collection.AddSingleton(constructor)
+		provider := godi.NewServiceProvider()
+		err := provider.AddSingleton(constructor)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "multiple In")
 	})
@@ -219,8 +219,8 @@ func TestServiceDescriptor_ResultObjects(t *testing.T) {
 			}
 		}
 
-		collection := godi.NewServiceCollection()
-		err := collection.AddSingleton(constructor)
+		provider := godi.NewServiceProvider()
+		err := provider.AddSingleton(constructor)
 
 		// Should succeed - result objects are handled specially
 		assert.NoError(t, err)
@@ -238,8 +238,8 @@ func TestServiceDescriptor_ResultObjects(t *testing.T) {
 			}, nil
 		}
 
-		collection := godi.NewServiceCollection()
-		err := collection.AddSingleton(constructor)
+		provider := godi.NewServiceProvider()
+		err := provider.AddSingleton(constructor)
 		assert.NoError(t, err)
 	})
 
@@ -251,8 +251,8 @@ func TestServiceDescriptor_ResultObjects(t *testing.T) {
 			return testutil.TestServiceResult{}, nil, false
 		}
 
-		collection := godi.NewServiceCollection()
-		err := collection.AddSingleton(constructor)
+		provider := godi.NewServiceProvider()
+		err := provider.AddSingleton(constructor)
 		assert.Error(t, err)
 	})
 }
@@ -327,20 +327,20 @@ func TestServiceDescriptor_ServiceTypes(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				collection := godi.NewServiceCollection()
+				provider := godi.NewServiceProvider()
 
 				var err error
 				switch tt.lifetime {
 				case godi.Singleton:
-					err = collection.AddSingleton(tt.constructor)
+					err = provider.AddSingleton(tt.constructor)
 				case godi.Scoped:
-					err = collection.AddScoped(tt.constructor)
+					err = provider.AddScoped(tt.constructor)
 				}
 
 				require.NoError(t, err)
 
 				// Verify the service is registered with correct type
-				assert.True(t, collection.Contains(tt.expectType))
+				assert.True(t, provider.IsService(tt.expectType))
 			})
 		}
 	})
@@ -350,32 +350,29 @@ func TestServiceDescriptor_Metadata(t *testing.T) {
 	t.Run("keyed services have metadata", func(t *testing.T) {
 		t.Parallel()
 
-		collection := godi.NewServiceCollection()
+		provider := godi.NewServiceProvider()
 
 		// Add keyed service
-		err := collection.AddSingleton(testutil.NewTestLogger, godi.Name("primary"))
+		err := provider.AddSingleton(testutil.NewTestLogger, godi.Name("primary"))
 		require.NoError(t, err)
 
 		// The descriptor should have the key
 		loggerType := reflect.TypeOf((*testutil.TestLogger)(nil)).Elem()
-		assert.True(t, collection.ContainsKeyed(loggerType, "primary"))
+		assert.True(t, provider.IsKeyedService(loggerType, "primary"))
 	})
 
 	t.Run("group services have metadata", func(t *testing.T) {
 		t.Parallel()
 
-		collection := godi.NewServiceCollection()
+		provider := godi.NewServiceProvider()
 
 		// Add to group
-		err := collection.AddSingleton(
+		err := provider.AddSingleton(
 			func() testutil.TestHandler { return testutil.NewTestHandler("h1") },
 			godi.Group("handlers"),
 		)
 		require.NoError(t, err)
 
-		// Build provider to test group resolution
-		provider, err := collection.BuildServiceProvider()
-		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
@@ -390,51 +387,51 @@ func TestServiceDescriptor_Metadata(t *testing.T) {
 func TestServiceDescriptor_EdgeCases(t *testing.T) {
 	tests := []struct {
 		name    string
-		setup   func(t *testing.T) godi.ServiceCollection
-		action  func(collection godi.ServiceCollection) error
+		setup   func(t *testing.T) godi.ServiceProvider
+		action  func(provider godi.ServiceProvider) error
 		wantErr bool
-		check   func(t *testing.T, collection godi.ServiceCollection)
+		check   func(t *testing.T, provider godi.ServiceProvider)
 	}{
 		{
 			name: "empty struct as service",
-			setup: func(t *testing.T) godi.ServiceCollection {
-				return godi.NewServiceCollection()
+			setup: func(t *testing.T) godi.ServiceProvider {
+				return godi.NewServiceProvider()
 			},
-			action: func(collection godi.ServiceCollection) error {
-				return collection.AddSingleton(func() struct{} { return struct{}{} })
+			action: func(provider godi.ServiceProvider) error {
+				return provider.AddSingleton(func() struct{} { return struct{}{} })
 			},
 			wantErr: false,
 		},
 		{
 			name: "nil interface return",
-			setup: func(t *testing.T) godi.ServiceCollection {
-				return godi.NewServiceCollection()
+			setup: func(t *testing.T) godi.ServiceProvider {
+				return godi.NewServiceProvider()
 			},
-			action: func(collection godi.ServiceCollection) error {
-				return collection.AddSingleton(func() testutil.TestLogger { return nil })
+			action: func(provider godi.ServiceProvider) error {
+				return provider.AddSingleton(func() testutil.TestLogger { return nil })
 			},
 			wantErr: false,
 		},
 		{
 			name: "error-only return",
-			setup: func(t *testing.T) godi.ServiceCollection {
-				return godi.NewServiceCollection()
+			setup: func(t *testing.T) godi.ServiceProvider {
+				return godi.NewServiceProvider()
 			},
-			action: func(collection godi.ServiceCollection) error {
-				return collection.AddSingleton(func() error { return nil })
+			action: func(provider godi.ServiceProvider) error {
+				return provider.AddSingleton(func() error { return nil })
 			},
 			wantErr: true,
 		},
 		{
 			name: "complex nested types",
-			setup: func(t *testing.T) godi.ServiceCollection {
-				return godi.NewServiceCollection()
+			setup: func(t *testing.T) godi.ServiceProvider {
+				return godi.NewServiceProvider()
 			},
-			action: func(collection godi.ServiceCollection) error {
+			action: func(provider godi.ServiceProvider) error {
 				type NestedService struct {
 					Data map[string][]chan<- func() error
 				}
-				return collection.AddSingleton(func() *NestedService {
+				return provider.AddSingleton(func() *NestedService {
 					return &NestedService{
 						Data: make(map[string][]chan<- func() error),
 					}

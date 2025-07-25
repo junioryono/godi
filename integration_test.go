@@ -21,6 +21,9 @@ func TestIntegration_WebApplicationSimulation(t *testing.T) {
 
 		// Application setup
 		provider := createWebAppProvider(t)
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
 
 		// Simulate multiple concurrent requests
 		const numRequests = 50
@@ -58,6 +61,9 @@ func TestIntegration_BackgroundJobProcessing(t *testing.T) {
 		t.Parallel()
 
 		provider := createJobProcessorProvider(t)
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
 
 		// Job queue
 		jobQueue := make(chan int, 100)
@@ -85,14 +91,15 @@ func TestIntegration_BackgroundJobProcessing(t *testing.T) {
 					// Each job gets its own scope
 					ctx := context.WithValue(context.Background(), ctxKeyJobID{}, jobID)
 					scope := provider.CreateScope(ctx)
+					t.Cleanup(func() {
+						require.NoError(t, provider.Close())
+					})
 
 					success := processJob(t, scope, workerID, jobID)
 
 					resultMu.Lock()
 					jobResults[jobID] = success
 					resultMu.Unlock()
-
-					scope.Close()
 				}
 			}(w)
 		}
@@ -112,6 +119,9 @@ func TestIntegration_MicroserviceArchitecture(t *testing.T) {
 
 		// Create a complex service setup
 		provider := createMicroserviceProvider(t)
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
 
 		// Simulate service startup
 		err := provider.Invoke(func(
@@ -157,11 +167,14 @@ func TestIntegration_PluginSystem(t *testing.T) {
 		t.Parallel()
 
 		// Create base system
-		collection := godi.NewServiceCollection()
+		provider := godi.NewServiceProvider()
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
 
 		// Core services
-		require.NoError(t, collection.AddSingleton(testutil.NewTestLogger))
-		require.NoError(t, collection.AddSingleton(NewPluginRegistry))
+		require.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
+		require.NoError(t, provider.AddSingleton(NewPluginRegistry))
 
 		// Load plugins dynamically
 		plugins := []Plugin{
@@ -172,14 +185,14 @@ func TestIntegration_PluginSystem(t *testing.T) {
 
 		for _, plugin := range plugins {
 			p := plugin // capture
-			require.NoError(t, collection.AddSingleton(
+			require.NoError(t, provider.AddSingleton(
 				func() Plugin { return p },
 				godi.Group("plugins"),
 			))
 		}
 
 		// Plugin manager that uses all plugins
-		require.NoError(t, collection.AddSingleton(func(params struct {
+		require.NoError(t, provider.AddSingleton(func(params struct {
 			godi.In
 			Logger   testutil.TestLogger
 			Registry *PluginRegistry
@@ -197,12 +210,6 @@ func TestIntegration_PluginSystem(t *testing.T) {
 
 			return manager
 		}))
-
-		provider, err := collection.BuildServiceProvider()
-		require.NoError(t, err)
-		t.Cleanup(func() {
-			require.NoError(t, provider.Close())
-		})
 
 		// Use the plugin system
 		manager := testutil.AssertServiceResolvable[*PluginManager](t, provider)
@@ -246,33 +253,30 @@ func TestIntegration_ComplexDependencyGraph(t *testing.T) {
 			E *ServiceE
 		}
 
-		collection := godi.NewServiceCollection()
-
-		// Register in dependency order
-		require.NoError(t, collection.AddSingleton(func() *ServiceD {
-			return &ServiceD{ID: "D"}
-		}))
-		require.NoError(t, collection.AddSingleton(func(d *ServiceD) *ServiceC {
-			return &ServiceC{D: d}
-		}))
-		require.NoError(t, collection.AddSingleton(func(d *ServiceD) *ServiceB {
-			return &ServiceB{D: d}
-		}))
-		require.NoError(t, collection.AddSingleton(func(b *ServiceB, c *ServiceC) *ServiceA {
-			return &ServiceA{B: b, C: c}
-		}))
-		require.NoError(t, collection.AddSingleton(func(b *ServiceB, c *ServiceC) *ServiceE {
-			return &ServiceE{B: b, C: c}
-		}))
-		require.NoError(t, collection.AddSingleton(func(a *ServiceA, e *ServiceE) *ServiceF {
-			return &ServiceF{A: a, E: e}
-		}))
-
-		provider, err := collection.BuildServiceProvider()
-		require.NoError(t, err)
+		provider := godi.NewServiceProvider()
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
+
+		// Register in dependency order
+		require.NoError(t, provider.AddSingleton(func() *ServiceD {
+			return &ServiceD{ID: "D"}
+		}))
+		require.NoError(t, provider.AddSingleton(func(d *ServiceD) *ServiceC {
+			return &ServiceC{D: d}
+		}))
+		require.NoError(t, provider.AddSingleton(func(d *ServiceD) *ServiceB {
+			return &ServiceB{D: d}
+		}))
+		require.NoError(t, provider.AddSingleton(func(b *ServiceB, c *ServiceC) *ServiceA {
+			return &ServiceA{B: b, C: c}
+		}))
+		require.NoError(t, provider.AddSingleton(func(b *ServiceB, c *ServiceC) *ServiceE {
+			return &ServiceE{B: b, C: c}
+		}))
+		require.NoError(t, provider.AddSingleton(func(a *ServiceA, e *ServiceE) *ServiceF {
+			return &ServiceF{A: a, E: e}
+		}))
 
 		// Resolve the most complex service
 		f := testutil.AssertServiceResolvable[*ServiceF](t, provider)
@@ -299,26 +303,23 @@ func TestIntegration_ErrorPropagation(t *testing.T) {
 		type FailingService struct{}
 		type DependentService struct{ Failing *FailingService }
 
-		collection := godi.NewServiceCollection()
-
-		// Service that fails during construction
-		require.NoError(t, collection.AddSingleton(func() (*FailingService, error) {
-			return nil, expectedErr
-		}))
-
-		// Service that depends on failing service
-		require.NoError(t, collection.AddSingleton(func(f *FailingService) *DependentService {
-			return &DependentService{Failing: f}
-		}))
-
-		provider, err := collection.BuildServiceProvider()
-		require.NoError(t, err)
+		provider := godi.NewServiceProvider()
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
 
+		// Service that fails during construction
+		require.NoError(t, provider.AddSingleton(func() (*FailingService, error) {
+			return nil, expectedErr
+		}))
+
+		// Service that depends on failing service
+		require.NoError(t, provider.AddSingleton(func(f *FailingService) *DependentService {
+			return &DependentService{Failing: f}
+		}))
+
 		// Direct resolution should fail
-		_, err = godi.Resolve[*FailingService](provider)
+		_, err := godi.Resolve[*FailingService](provider)
 		assert.ErrorIs(t, err, expectedErr)
 
 		// Dependent resolution should also fail
@@ -338,10 +339,10 @@ func TestIntegration_LifecycleManagement(t *testing.T) {
 			scopedDisposed    int32
 		)
 
-		collection := godi.NewServiceCollection()
+		provider := godi.NewServiceProvider()
 
 		// Singleton with disposal tracking
-		require.NoError(t, collection.AddSingleton(func() *TrackedService {
+		require.NoError(t, provider.AddSingleton(func() *TrackedService {
 			atomic.AddInt32(&singletonCreated, 1)
 			return &TrackedService{
 				name: "singleton",
@@ -352,7 +353,7 @@ func TestIntegration_LifecycleManagement(t *testing.T) {
 		}, godi.Name("singleton")))
 
 		// Scoped with disposal tracking
-		require.NoError(t, collection.AddScoped(func() *TrackedService {
+		require.NoError(t, provider.AddScoped(func() *TrackedService {
 			atomic.AddInt32(&scopedCreated, 1)
 			return &TrackedService{
 				name: "scoped",
@@ -361,9 +362,6 @@ func TestIntegration_LifecycleManagement(t *testing.T) {
 				},
 			}
 		}))
-
-		provider, err := collection.BuildServiceProvider()
-		require.NoError(t, err)
 
 		// Create multiple scopes
 		for i := 0; i < 3; i++ {
@@ -401,6 +399,9 @@ func TestIntegration_RealWorldScenarios(t *testing.T) {
 
 		// Setup DI for REST API
 		provider := createRESTAPIProvider(t)
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
 
 		// Simulate request through middleware chain
 		ctx := context.WithValue(context.Background(), ctxKeyPath{}, "/api/users/123")
@@ -432,6 +433,9 @@ func TestIntegration_RealWorldScenarios(t *testing.T) {
 
 		// Setup event bus with handlers
 		provider := createEventDrivenProvider(t)
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
 
 		// Publish events
 		err := provider.Invoke(func(
@@ -623,20 +627,20 @@ func (t *TrackedService) Close() error {
 }
 
 func createWebAppProvider(t *testing.T) godi.ServiceProvider {
-	collection := godi.NewServiceCollection()
+	provider := godi.NewServiceProvider()
 
 	// Infrastructure
-	require.NoError(t, collection.AddSingleton(testutil.NewTestLogger))
-	require.NoError(t, collection.AddSingleton(testutil.NewTestDatabase))
-	require.NoError(t, collection.AddSingleton(testutil.NewTestCache))
+	require.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
+	require.NoError(t, provider.AddSingleton(testutil.NewTestDatabase))
+	require.NoError(t, provider.AddSingleton(testutil.NewTestCache))
 
 	// Request-scoped services
-	require.NoError(t, collection.AddScoped(func(ctx context.Context) *RequestContext {
+	require.NoError(t, provider.AddScoped(func(ctx context.Context) *RequestContext {
 		requestID, _ := ctx.Value(ctxKeyRequestID{}).(string)
 		return &RequestContext{RequestID: requestID}
 	}))
 
-	require.NoError(t, collection.AddScoped(func(
+	require.NoError(t, provider.AddScoped(func(
 		ctx *RequestContext,
 		logger testutil.TestLogger,
 		db testutil.TestDatabase,
@@ -648,62 +652,54 @@ func createWebAppProvider(t *testing.T) godi.ServiceProvider {
 		}
 	}))
 
-	provider, err := collection.BuildServiceProvider()
-	require.NoError(t, err)
 	return provider
 }
 
 func createJobProcessorProvider(t *testing.T) godi.ServiceProvider {
-	collection := godi.NewServiceCollection()
+	provider := godi.NewServiceProvider()
 
-	require.NoError(t, collection.AddSingleton(testutil.NewTestLogger))
-	require.NoError(t, collection.AddScoped(func(ctx context.Context) *JobProcessor {
+	require.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
+	require.NoError(t, provider.AddScoped(func(ctx context.Context) *JobProcessor {
 		jobID, _ := ctx.Value(ctxKeyJobID{}).(int)
 		return &JobProcessor{JobID: jobID}
 	}))
 
-	provider, err := collection.BuildServiceProvider()
-	require.NoError(t, err)
 	return provider
 }
 
 func createMicroserviceProvider(t *testing.T) godi.ServiceProvider {
-	collection := godi.NewServiceCollection()
+	provider := godi.NewServiceProvider()
 
-	require.NoError(t, collection.AddSingleton(testutil.NewTestLogger))
-	require.NoError(t, collection.AddSingleton(NewHealthService))
-	require.NoError(t, collection.AddSingleton(NewAPIService))
-	require.NoError(t, collection.AddSingleton(NewWorkerService))
-	require.NoError(t, collection.AddSingleton(NewMetricsService))
+	require.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
+	require.NoError(t, provider.AddSingleton(NewHealthService))
+	require.NoError(t, provider.AddSingleton(NewAPIService))
+	require.NoError(t, provider.AddSingleton(NewWorkerService))
+	require.NoError(t, provider.AddSingleton(NewMetricsService))
 
-	provider, err := collection.BuildServiceProvider()
-	require.NoError(t, err)
 	return provider
 }
 
 func createRESTAPIProvider(t *testing.T) godi.ServiceProvider {
-	collection := godi.NewServiceCollection()
+	provider := godi.NewServiceProvider()
 
-	require.NoError(t, collection.AddSingleton(testutil.NewTestLogger))
-	require.NoError(t, collection.AddScoped(NewAuthMiddleware))
-	require.NoError(t, collection.AddScoped(NewLoggingMiddleware))
-	require.NoError(t, collection.AddScoped(NewUserHandler))
+	require.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
+	require.NoError(t, provider.AddScoped(NewAuthMiddleware))
+	require.NoError(t, provider.AddScoped(NewLoggingMiddleware))
+	require.NoError(t, provider.AddScoped(NewUserHandler))
 
-	provider, err := collection.BuildServiceProvider()
-	require.NoError(t, err)
 	return provider
 }
 
 func createEventDrivenProvider(t *testing.T) godi.ServiceProvider {
-	collection := godi.NewServiceCollection()
+	provider := godi.NewServiceProvider()
 
-	require.NoError(t, collection.AddSingleton(testutil.NewTestLogger))
-	require.NoError(t, collection.AddSingleton(NewEventBus))
+	require.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
+	require.NoError(t, provider.AddSingleton(NewEventBus))
 
 	// Register event handlers
-	require.NoError(t, collection.AddSingleton(NewUserEventHandler))
-	require.NoError(t, collection.AddSingleton(NewOrderEventHandler))
-	require.NoError(t, collection.AddSingleton(NewPaymentEventHandler))
+	require.NoError(t, provider.AddSingleton(NewUserEventHandler))
+	require.NoError(t, provider.AddSingleton(NewOrderEventHandler))
+	require.NoError(t, provider.AddSingleton(NewPaymentEventHandler))
 
 	// Create a proper initialization service
 	type EventWiring struct {
@@ -711,7 +707,7 @@ func createEventDrivenProvider(t *testing.T) godi.ServiceProvider {
 	}
 
 	// Wire up handlers to bus
-	require.NoError(t, collection.AddSingleton(func(
+	require.NoError(t, provider.AddSingleton(func(
 		bus *EventBus,
 		userHandler *UserEventHandler,
 		orderHandler *OrderEventHandler,
@@ -722,9 +718,6 @@ func createEventDrivenProvider(t *testing.T) godi.ServiceProvider {
 		bus.Subscribe("payment.processed", paymentHandler)
 		return &EventWiring{initialized: true}
 	}))
-
-	provider, err := collection.BuildServiceProvider()
-	require.NoError(t, err)
 
 	// Ensure wiring happens by resolving the EventWiring service
 	wiring, err := godi.Resolve[*EventWiring](provider)

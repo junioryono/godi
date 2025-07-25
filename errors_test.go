@@ -11,7 +11,6 @@ import (
 	"github.com/junioryono/godi/v2"
 	"github.com/junioryono/godi/v2/internal/testutil"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestLifetimeError(t *testing.T) {
@@ -424,12 +423,9 @@ func TestIsCircularDependency(t *testing.T) {
 	t.Run("dig cycle detected", func(t *testing.T) {
 		t.Parallel()
 
-		collection := godi.NewServiceCollection()
-		collection.AddSingleton(func(b *B) *A { return &A{B: b} })
-		collection.AddSingleton(func(a *A) *B { return &B{A: a} })
-
-		_, err := collection.BuildServiceProvider()
-		require.Error(t, err)
+		provider := godi.NewServiceProvider()
+		provider.AddSingleton(func(b *B) *A { return &A{B: b} })
+		err := provider.AddSingleton(func(a *A) *B { return &B{A: a} })
 		assert.True(t, godi.IsCircularDependency(err))
 	})
 

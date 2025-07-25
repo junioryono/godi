@@ -188,6 +188,56 @@ func (scope *serviceProviderScope) Parent() Scope {
 	return scope.parentScope
 }
 
+func (scope *serviceProviderScope) AddModules(modules ...ModuleOption) error {
+	if scope.IsDisposed() {
+		return ErrScopeDisposed
+	}
+
+	return scope.serviceProvider.AddModules(modules...)
+}
+
+func (scope *serviceProviderScope) AddSingleton(constructor interface{}, opts ...ProvideOption) error {
+	if scope.IsDisposed() {
+		return ErrScopeDisposed
+	}
+
+	// Singletons are registered at the provider level
+	return scope.serviceProvider.AddSingleton(constructor, opts...)
+}
+
+func (scope *serviceProviderScope) AddScoped(constructor interface{}, opts ...ProvideOption) error {
+	if scope.IsDisposed() {
+		return ErrScopeDisposed
+	}
+
+	// Scoped services are registered at the provider level but instantiated per scope
+	return scope.serviceProvider.AddScoped(constructor, opts...)
+}
+
+func (scope *serviceProviderScope) AddService(lifetime ServiceLifetime, constructor interface{}, opts ...ProvideOption) error {
+	if scope.IsDisposed() {
+		return ErrScopeDisposed
+	}
+
+	return scope.serviceProvider.AddService(lifetime, constructor, opts...)
+}
+
+func (scope *serviceProviderScope) Replace(lifetime ServiceLifetime, constructor interface{}, opts ...ProvideOption) error {
+	if scope.IsDisposed() {
+		return ErrScopeDisposed
+	}
+
+	return scope.serviceProvider.Replace(lifetime, constructor, opts...)
+}
+
+func (scope *serviceProviderScope) RemoveAll(serviceType reflect.Type) error {
+	if scope.IsDisposed() {
+		return ErrScopeDisposed
+	}
+
+	return scope.serviceProvider.RemoveAll(serviceType)
+}
+
 // CreateScope implements ServiceScopeFactory.
 func (scope *serviceProviderScope) CreateScope(ctx context.Context) Scope {
 	if scope.IsDisposed() {

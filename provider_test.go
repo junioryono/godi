@@ -18,54 +18,30 @@ import (
 )
 
 func TestServiceProvider_Creation(t *testing.T) {
-	t.Run("creates provider from empty collection", func(t *testing.T) {
+	t.Run("creates provider", func(t *testing.T) {
 		t.Parallel()
 
-		collection := godi.NewServiceCollection()
-		provider, err := collection.BuildServiceProvider()
-
-		require.NoError(t, err)
-		assert.NotNil(t, provider)
-		assert.False(t, provider.IsDisposed())
-
+		provider := godi.NewServiceProvider()
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
+		assert.NotNil(t, provider)
+		assert.False(t, provider.IsDisposed())
 	})
 
 	t.Run("creates provider with services", func(t *testing.T) {
 		t.Parallel()
 
-		builder := testutil.NewServiceCollectionBuilder(t).
-			WithSingleton(testutil.NewTestLogger).
-			WithScoped(testutil.NewTestService)
-
-		provider := builder.BuildProvider()
+		provider := godi.NewServiceProvider()
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
+		assert.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
+		assert.NoError(t, provider.AddScoped(testutil.NewTestService))
 
 		assert.NotNil(t, provider)
 		assert.True(t, provider.IsService(reflect.TypeOf((*testutil.TestLogger)(nil)).Elem()))
 		assert.True(t, provider.IsService(reflect.TypeOf((*testutil.TestService)(nil))))
-	})
-
-	t.Run("validates services on build when requested", func(t *testing.T) {
-		t.Parallel()
-
-		collection := godi.NewServiceCollection()
-
-		// Add service with missing dependency
-		require.NoError(t, collection.AddSingleton(
-			func(missing testutil.TestCache) testutil.TestLogger {
-				return testutil.NewTestLogger()
-			},
-		))
-
-		options := &godi.ServiceProviderOptions{
-			ValidateOnBuild: true,
-		}
-
-		_, err := collection.BuildServiceProviderWithOptions(options)
-		assert.Error(t, err)
-		assert.True(t, godi.IsNotFound(err))
 	})
 
 	t.Run("accepts custom options", func(t *testing.T) {
@@ -84,11 +60,12 @@ func TestServiceProvider_Creation(t *testing.T) {
 			ResolutionTimeout: 5 * time.Second,
 		}
 
-		builder := testutil.NewServiceCollectionBuilder(t).
-			WithSingleton(testutil.NewTestLogger)
+		// builder := testutil.NewServiceCollectionBuilder(t).
+		// 	WithSingleton(testutil.NewTestLogger)
 
-		provider, err := builder.Build().BuildServiceProviderWithOptions(options)
-		require.NoError(t, err)
+		provider := godi.NewServiceProviderWithOptions(options)
+		assert.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
+
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
@@ -102,7 +79,7 @@ func TestServiceProvider_Creation(t *testing.T) {
 		assert.Equal(t, reflect.TypeOf((*testutil.TestLogger)(nil)).Elem(), resolved[0])
 
 		// Try to resolve missing service
-		_, err = provider.Resolve(reflect.TypeOf((*testutil.TestCache)(nil)).Elem())
+		_, err := provider.Resolve(reflect.TypeOf((*testutil.TestCache)(nil)).Elem())
 		assert.Error(t, err)
 
 		// Check error callback was called
@@ -121,9 +98,9 @@ func TestServiceProvider_Resolution(t *testing.T) {
 		{
 			name: "resolves singleton service",
 			setup: func(t *testing.T) godi.ServiceProvider {
-				return testutil.NewServiceCollectionBuilder(t).
-					WithSingleton(testutil.NewTestLogger).
-					BuildProvider()
+				provider := godi.NewServiceProvider()
+				assert.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
+				return provider
 			},
 			resolve: func(provider godi.ServiceProvider) (interface{}, error) {
 				return godi.Resolve[testutil.TestLogger](provider)
@@ -138,9 +115,9 @@ func TestServiceProvider_Resolution(t *testing.T) {
 		{
 			name: "resolves scoped service from root scope",
 			setup: func(t *testing.T) godi.ServiceProvider {
-				return testutil.NewServiceCollectionBuilder(t).
-					WithScoped(testutil.NewTestService).
-					BuildProvider()
+				provider := godi.NewServiceProvider()
+				assert.NoError(t, provider.AddScoped(testutil.NewTestService))
+				return provider
 			},
 			resolve: func(provider godi.ServiceProvider) (interface{}, error) {
 				return godi.Resolve[*testutil.TestService](provider)
@@ -155,12 +132,12 @@ func TestServiceProvider_Resolution(t *testing.T) {
 		{
 			name: "resolves service with dependencies",
 			setup: func(t *testing.T) godi.ServiceProvider {
-				return testutil.NewServiceCollectionBuilder(t).
-					WithSingleton(testutil.NewTestLogger).
-					WithSingleton(testutil.NewTestDatabase).
-					WithSingleton(testutil.NewTestCache).
-					WithScoped(testutil.NewTestServiceWithDeps).
-					BuildProvider()
+				provider := godi.NewServiceProvider()
+				assert.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
+				assert.NoError(t, provider.AddSingleton(testutil.NewTestDatabase))
+				assert.NoError(t, provider.AddSingleton(testutil.NewTestCache))
+				assert.NoError(t, provider.AddScoped(testutil.NewTestServiceWithDeps))
+				return provider
 			},
 			resolve: func(provider godi.ServiceProvider) (interface{}, error) {
 				return godi.Resolve[*testutil.TestServiceWithDeps](provider)
@@ -177,10 +154,10 @@ func TestServiceProvider_Resolution(t *testing.T) {
 		{
 			name: "resolves keyed service",
 			setup: func(t *testing.T) godi.ServiceProvider {
-				return testutil.NewServiceCollectionBuilder(t).
-					WithSingleton(testutil.NewTestLogger, godi.Name("primary")).
-					WithSingleton(testutil.NewTestLogger, godi.Name("secondary")).
-					BuildProvider()
+				provider := godi.NewServiceProvider()
+				assert.NoError(t, provider.AddSingleton(testutil.NewTestLogger, godi.Name("primary")))
+				assert.NoError(t, provider.AddSingleton(testutil.NewTestLogger, godi.Name("secondary")))
+				return provider
 			},
 			resolve: func(provider godi.ServiceProvider) (interface{}, error) {
 				return godi.ResolveKeyed[testutil.TestLogger](provider, "primary")
@@ -193,17 +170,17 @@ func TestServiceProvider_Resolution(t *testing.T) {
 		{
 			name: "resolves group services",
 			setup: func(t *testing.T) godi.ServiceProvider {
-				return testutil.NewServiceCollectionBuilder(t).
-					WithSingleton(func() testutil.TestHandler {
-						return testutil.NewTestHandler("handler1")
-					}, godi.Group("handlers")).
-					WithSingleton(func() testutil.TestHandler {
-						return testutil.NewTestHandler("handler2")
-					}, godi.Group("handlers")).
-					WithSingleton(func() testutil.TestHandler {
-						return testutil.NewTestHandler("handler3")
-					}, godi.Group("handlers")).
-					BuildProvider()
+				provider := godi.NewServiceProvider()
+				assert.NoError(t, provider.AddSingleton(func() testutil.TestHandler {
+					return testutil.NewTestHandler("handler1")
+				}, godi.Group("handlers")))
+				assert.NoError(t, provider.AddSingleton(func() testutil.TestHandler {
+					return testutil.NewTestHandler("handler2")
+				}, godi.Group("handlers")))
+				assert.NoError(t, provider.AddSingleton(func() testutil.TestHandler {
+					return testutil.NewTestHandler("handler3")
+				}, godi.Group("handlers")))
+				return provider
 			},
 			resolve: func(provider godi.ServiceProvider) (interface{}, error) {
 				return godi.ResolveGroup[testutil.TestHandler](provider, "handlers")
@@ -227,7 +204,8 @@ func TestServiceProvider_Resolution(t *testing.T) {
 		{
 			name: "fails to resolve missing service",
 			setup: func(t *testing.T) godi.ServiceProvider {
-				return testutil.NewServiceCollectionBuilder(t).BuildProvider()
+				provider := godi.NewServiceProvider()
+				return provider
 			},
 			resolve: func(provider godi.ServiceProvider) (interface{}, error) {
 				return godi.Resolve[testutil.TestLogger](provider)
@@ -242,9 +220,9 @@ func TestServiceProvider_Resolution(t *testing.T) {
 		{
 			name: "fails to resolve missing keyed service",
 			setup: func(t *testing.T) godi.ServiceProvider {
-				return testutil.NewServiceCollectionBuilder(t).
-					WithSingleton(testutil.NewTestLogger, godi.Name("primary")).
-					BuildProvider()
+				provider := godi.NewServiceProvider()
+				assert.NoError(t, provider.AddSingleton(testutil.NewTestLogger, godi.Name("primary")))
+				return provider
 			},
 			resolve: func(provider godi.ServiceProvider) (interface{}, error) {
 				return godi.ResolveKeyed[testutil.TestLogger](provider, "secondary")
@@ -259,7 +237,8 @@ func TestServiceProvider_Resolution(t *testing.T) {
 		{
 			name: "returns empty slice for missing group",
 			setup: func(t *testing.T) godi.ServiceProvider {
-				return testutil.NewServiceCollectionBuilder(t).BuildProvider()
+				provider := godi.NewServiceProvider()
+				return provider
 			},
 			resolve: func(provider godi.ServiceProvider) (interface{}, error) {
 				return godi.ResolveGroup[testutil.TestHandler](provider, "handlers")
@@ -296,9 +275,11 @@ func TestServiceProvider_SingletonBehavior(t *testing.T) {
 	t.Run("returns same instance for multiple resolutions", func(t *testing.T) {
 		t.Parallel()
 
-		provider := testutil.NewServiceCollectionBuilder(t).
-			WithSingleton(testutil.NewTestLogger).
-			BuildProvider()
+		provider := godi.NewServiceProvider()
+		assert.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
 
 		logger1 := testutil.AssertServiceResolvable[testutil.TestLogger](t, provider)
 		logger2 := testutil.AssertServiceResolvable[testutil.TestLogger](t, provider)
@@ -309,9 +290,11 @@ func TestServiceProvider_SingletonBehavior(t *testing.T) {
 	t.Run("returns same instance across scopes", func(t *testing.T) {
 		t.Parallel()
 
-		provider := testutil.NewServiceCollectionBuilder(t).
-			WithSingleton(testutil.NewTestLogger).
-			BuildProvider()
+		provider := godi.NewServiceProvider()
+		assert.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
 
 		logger1 := testutil.AssertServiceResolvable[testutil.TestLogger](t, provider)
 
@@ -330,10 +313,12 @@ func TestServiceProvider_IsService(t *testing.T) {
 	t.Run("correctly identifies registered services", func(t *testing.T) {
 		t.Parallel()
 
-		provider := testutil.NewServiceCollectionBuilder(t).
-			WithSingleton(testutil.NewTestLogger).
-			WithScoped(testutil.NewTestService).
-			BuildProvider()
+		provider := godi.NewServiceProvider()
+		assert.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
+		assert.NoError(t, provider.AddScoped(testutil.NewTestService))
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
 
 		assert.True(t, provider.IsService(reflect.TypeOf((*testutil.TestLogger)(nil)).Elem()))
 		assert.True(t, provider.IsService(reflect.TypeOf((*testutil.TestService)(nil))))
@@ -343,9 +328,11 @@ func TestServiceProvider_IsService(t *testing.T) {
 	t.Run("identifies keyed services", func(t *testing.T) {
 		t.Parallel()
 
-		provider := testutil.NewServiceCollectionBuilder(t).
-			WithSingleton(testutil.NewTestLogger, godi.Name("primary")).
-			BuildProvider()
+		provider := godi.NewServiceProvider()
+		assert.NoError(t, provider.AddSingleton(testutil.NewTestLogger, godi.Name("primary")))
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
 
 		loggerType := reflect.TypeOf((*testutil.TestLogger)(nil)).Elem()
 
@@ -359,10 +346,12 @@ func TestServiceProvider_Invoke(t *testing.T) {
 	t.Run("invokes function with dependencies", func(t *testing.T) {
 		t.Parallel()
 
-		provider := testutil.NewServiceCollectionBuilder(t).
-			WithSingleton(testutil.NewTestLogger).
-			WithSingleton(testutil.NewTestDatabase).
-			BuildProvider()
+		provider := godi.NewServiceProvider()
+		assert.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
+		assert.NoError(t, provider.AddSingleton(testutil.NewTestDatabase))
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
 
 		var invokedLogger testutil.TestLogger
 		var invokedDB testutil.TestDatabase
@@ -380,9 +369,11 @@ func TestServiceProvider_Invoke(t *testing.T) {
 	t.Run("invokes function returning error", func(t *testing.T) {
 		t.Parallel()
 
-		provider := testutil.NewServiceCollectionBuilder(t).
-			WithSingleton(testutil.NewTestLogger).
-			BuildProvider()
+		provider := godi.NewServiceProvider()
+		assert.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
 
 		expectedErr := errors.New("invoke error")
 
@@ -397,10 +388,14 @@ func TestServiceProvider_Invoke(t *testing.T) {
 	t.Run("fails with missing dependency", func(t *testing.T) {
 		t.Parallel()
 
-		provider := testutil.NewServiceCollectionBuilder(t).BuildProvider()
+		provider := godi.NewServiceProvider()
 
 		err := provider.Invoke(func(logger testutil.TestLogger) {
 			t.Fatal("should not be called")
+		})
+
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
 		})
 
 		assert.Error(t, err)
@@ -414,11 +409,13 @@ func TestServiceProvider_Disposal(t *testing.T) {
 
 		disposable := testutil.NewTestDisposable()
 
-		provider := testutil.NewServiceCollectionBuilder(t).
-			WithSingleton(func() *testutil.TestDisposable {
-				return disposable
-			}).
-			BuildProvider()
+		provider := godi.NewServiceProvider()
+		assert.NoError(t, provider.AddSingleton(func() *testutil.TestDisposable {
+			return disposable
+		}))
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
 
 		// Resolve to create instance
 		d := testutil.AssertServiceResolvable[*testutil.TestDisposable](t, provider)
@@ -436,9 +433,11 @@ func TestServiceProvider_Disposal(t *testing.T) {
 	t.Run("prevents operations after disposal", func(t *testing.T) {
 		t.Parallel()
 
-		provider := testutil.NewServiceCollectionBuilder(t).
-			WithSingleton(testutil.NewTestLogger).
-			BuildProvider()
+		provider := godi.NewServiceProvider()
+		assert.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
 
 		require.NoError(t, provider.Close())
 
@@ -451,11 +450,13 @@ func TestServiceProvider_Disposal(t *testing.T) {
 		expectedErr := errors.New("disposal error")
 		disposable := testutil.NewTestDisposableWithError(expectedErr)
 
-		provider := testutil.NewServiceCollectionBuilder(t).
-			WithSingleton(func() *testutil.TestDisposable {
-				return disposable
-			}).
-			BuildProvider()
+		provider := godi.NewServiceProvider()
+		assert.NoError(t, provider.AddSingleton(func() *testutil.TestDisposable {
+			return disposable
+		}))
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
 
 		// Resolve to create instance
 		testutil.AssertServiceResolvable[*testutil.TestDisposable](t, provider)
@@ -482,11 +483,13 @@ func TestServiceProvider_Disposal(t *testing.T) {
 			}
 		}
 
-		provider := testutil.NewServiceCollectionBuilder(t).
-			WithSingleton(createDisposable("first"), godi.Name("first")).
-			WithSingleton(createDisposable("second"), godi.Name("second")).
-			WithSingleton(createDisposable("third"), godi.Name("third")).
-			BuildProvider()
+		provider := godi.NewServiceProvider()
+		assert.NoError(t, provider.AddSingleton(createDisposable("first"), godi.Name("first")))
+		assert.NoError(t, provider.AddSingleton(createDisposable("second"), godi.Name("second")))
+		assert.NoError(t, provider.AddSingleton(createDisposable("third"), godi.Name("third")))
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
 
 		// Resolve all services to create instances
 		testutil.AssertKeyedServiceResolvable[godi.Disposable](t, provider, "second")
@@ -502,7 +505,10 @@ func TestServiceProvider_Disposal(t *testing.T) {
 	t.Run("idempotent close", func(t *testing.T) {
 		t.Parallel()
 
-		provider := testutil.NewServiceCollectionBuilder(t).BuildProvider()
+		provider := godi.NewServiceProvider()
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
 
 		err1 := provider.Close()
 		err2 := provider.Close()
@@ -516,11 +522,9 @@ func TestServiceProvider_CircularDependency(t *testing.T) {
 	t.Run("detects direct circular dependency", func(t *testing.T) {
 		t.Parallel()
 
-		collection := godi.NewServiceCollection()
-		require.NoError(t, collection.AddSingleton(testutil.NewCircularServiceA))
-		require.NoError(t, collection.AddSingleton(testutil.NewCircularServiceB))
-
-		provider, err := collection.BuildServiceProvider()
+		provider := godi.NewServiceProvider()
+		require.NoError(t, provider.AddSingleton(testutil.NewCircularServiceA))
+		err := provider.AddSingleton(testutil.NewCircularServiceB)
 
 		// Circular dependency might be caught at build time or resolution time
 		if err != nil {
@@ -536,33 +540,19 @@ func TestServiceProvider_CircularDependency(t *testing.T) {
 		_, err = godi.Resolve[*testutil.CircularServiceA](provider)
 		testutil.AssertCircularDependency(t, err)
 	})
-
-	t.Run("detects circular dependency with validation", func(t *testing.T) {
-		t.Parallel()
-
-		collection := godi.NewServiceCollection()
-		require.NoError(t, collection.AddSingleton(testutil.NewCircularServiceA))
-		require.NoError(t, collection.AddSingleton(testutil.NewCircularServiceB))
-
-		options := &godi.ServiceProviderOptions{
-			ValidateOnBuild: true,
-		}
-
-		_, err := collection.BuildServiceProviderWithOptions(options)
-		assert.Error(t, err)
-		testutil.AssertCircularDependency(t, err)
-	})
 }
 
 func TestServiceProvider_Concurrency(t *testing.T) {
 	t.Run("concurrent resolution is safe", func(t *testing.T) {
 		t.Parallel()
 
-		provider := testutil.NewServiceCollectionBuilder(t).
-			WithSingleton(testutil.NewTestLogger).
-			WithSingleton(testutil.NewTestDatabase).
-			WithScoped(testutil.NewTestService).
-			BuildProvider()
+		provider := godi.NewServiceProvider()
+		assert.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
+		assert.NoError(t, provider.AddSingleton(testutil.NewTestDatabase))
+		assert.NoError(t, provider.AddScoped(testutil.NewTestService))
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
 
 		const goroutines = 100
 		var wg sync.WaitGroup
@@ -626,9 +616,11 @@ func TestServiceProvider_Concurrency(t *testing.T) {
 	t.Run("concurrent scope creation is safe", func(t *testing.T) {
 		t.Parallel()
 
-		provider := testutil.NewServiceCollectionBuilder(t).
-			WithScoped(testutil.NewTestService).
-			BuildProvider()
+		provider := godi.NewServiceProvider()
+		assert.NoError(t, provider.AddScoped(testutil.NewTestService))
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
 
 		const goroutines = 50
 		var wg sync.WaitGroup
@@ -677,9 +669,11 @@ func TestServiceProvider_ResultObjects(t *testing.T) {
 			}
 		}
 
-		provider := testutil.NewServiceCollectionBuilder(t).
-			WithSingleton(constructor).
-			BuildProvider()
+		provider := godi.NewServiceProvider()
+		require.NoError(t, provider.AddSingleton(constructor))
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
 
 		// All services from result should be resolvable
 		service := testutil.AssertServiceResolvable[*testutil.TestService](t, provider)
@@ -698,16 +692,14 @@ func TestServiceProvider_ProviderCallback(t *testing.T) {
 
 		var callbackInvoked bool
 
-		collection := godi.NewServiceCollection()
-		require.NoError(t, collection.AddSingleton(
+		provider := godi.NewServiceProvider()
+		require.NoError(t, provider.AddSingleton(
 			testutil.NewTestLogger,
 			godi.WithProviderCallback(func(ci godi.CallbackInfo) {
 				callbackInvoked = true
 			}),
 		))
 
-		provider, err := collection.BuildServiceProvider()
-		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
@@ -723,16 +715,14 @@ func TestServiceProvider_ProviderCallback(t *testing.T) {
 
 		var callbackInvoked bool
 
-		collection := godi.NewServiceCollection()
-		require.NoError(t, collection.AddScoped(
+		provider := godi.NewServiceProvider()
+		require.NoError(t, provider.AddScoped(
 			testutil.NewTestService,
 			godi.WithProviderCallback(func(ci godi.CallbackInfo) {
 				callbackInvoked = true
 			}),
 		))
 
-		provider, err := collection.BuildServiceProvider()
-		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
@@ -763,17 +753,15 @@ func TestServiceProvider_ResolutionTimeout(t *testing.T) {
 			ResolutionTimeout: 10 * time.Millisecond,
 		}
 
-		collection := godi.NewServiceCollection()
-		require.NoError(t, collection.AddSingleton(slowConstructor))
+		provider := godi.NewServiceProviderWithOptions(options)
+		require.NoError(t, provider.AddSingleton(slowConstructor))
 
-		provider, err := collection.BuildServiceProviderWithOptions(options)
-		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
 
 		// Resolution should timeout
-		_, err = godi.Resolve[testutil.TestLogger](provider)
+		_, err := godi.Resolve[testutil.TestLogger](provider)
 		testutil.AssertTimeout(t, err)
 	})
 }
@@ -792,11 +780,9 @@ func TestServiceProvider_DryRun(t *testing.T) {
 			DryRun: true,
 		}
 
-		collection := godi.NewServiceCollection()
-		require.NoError(t, collection.AddSingleton(constructor))
+		provider := godi.NewServiceProviderWithOptions(options)
+		require.NoError(t, provider.AddSingleton(constructor))
 
-		provider, err := collection.BuildServiceProviderWithOptions(options)
-		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
@@ -816,10 +802,12 @@ func TestServiceProvider_MemoryManagement(t *testing.T) {
 
 		// Create and dispose multiple providers
 		for i := 0; i < 10; i++ {
-			provider := testutil.NewServiceCollectionBuilder(t).
-				WithSingleton(testutil.NewTestLogger).
-				WithScoped(testutil.NewTestService).
-				BuildProvider()
+			provider := godi.NewServiceProvider()
+			assert.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
+			assert.NoError(t, provider.AddScoped(testutil.NewTestService))
+			t.Cleanup(func() {
+				require.NoError(t, provider.Close())
+			})
 
 			// Create some scopes
 			for j := 0; j < 5; j++ {
@@ -848,7 +836,8 @@ func TestServiceProvider_ErrorScenarios(t *testing.T) {
 		{
 			Name: "nil service type",
 			Setup: func(t *testing.T) godi.ServiceProvider {
-				return testutil.NewServiceCollectionBuilder(t).BuildProvider()
+				provider := godi.NewServiceProvider()
+				return provider
 			},
 			Action: func(provider godi.ServiceProvider) error {
 				_, err := provider.Resolve(nil)
@@ -859,9 +848,9 @@ func TestServiceProvider_ErrorScenarios(t *testing.T) {
 		{
 			Name: "nil service key",
 			Setup: func(t *testing.T) godi.ServiceProvider {
-				return testutil.NewServiceCollectionBuilder(t).
-					WithSingleton(testutil.NewTestLogger, godi.Name("test")).
-					BuildProvider()
+				provider := godi.NewServiceProvider()
+				assert.NoError(t, provider.AddSingleton(testutil.NewTestLogger, godi.Name("test")))
+				return provider
 			},
 			Action: func(provider godi.ServiceProvider) error {
 				_, err := provider.ResolveKeyed(
@@ -875,7 +864,8 @@ func TestServiceProvider_ErrorScenarios(t *testing.T) {
 		{
 			Name: "empty group name",
 			Setup: func(t *testing.T) godi.ServiceProvider {
-				return testutil.NewServiceCollectionBuilder(t).BuildProvider()
+				provider := godi.NewServiceProvider()
+				return provider
 			},
 			Action: func(provider godi.ServiceProvider) error {
 				_, err := provider.ResolveGroup(
@@ -908,14 +898,22 @@ func TestServiceProvider_AdvancedScenarios(t *testing.T) {
 			C *ServiceC
 		}
 
-		provider := testutil.NewServiceCollectionBuilder(t).
-			WithSingleton(func() *ServiceA { return &ServiceA{Name: "A"} }).
-			WithSingleton(func(a *ServiceA) *ServiceB { return &ServiceB{A: a} }).
-			WithSingleton(func(b *ServiceB) *ServiceC { return &ServiceC{B: b} }).
-			WithSingleton(func(a *ServiceA, c *ServiceC) *ServiceD {
-				return &ServiceD{A: a, C: c}
-			}).
-			BuildProvider()
+		provider := godi.NewServiceProvider()
+		assert.NoError(t, provider.AddSingleton(func() *ServiceA {
+			return &ServiceA{Name: "A"}
+		}))
+		assert.NoError(t, provider.AddSingleton(func(a *ServiceA) *ServiceB {
+			return &ServiceB{A: a}
+		}))
+		assert.NoError(t, provider.AddSingleton(func(b *ServiceB) *ServiceC {
+			return &ServiceC{B: b}
+		}))
+		assert.NoError(t, provider.AddSingleton(func(a *ServiceA, c *ServiceC) *ServiceD {
+			return &ServiceD{A: a, C: c}
+		}))
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
 
 		// Resolve the most complex service
 		d := testutil.AssertServiceResolvable[*ServiceD](t, provider)
@@ -943,11 +941,13 @@ func TestServiceProvider_AdvancedScenarios(t *testing.T) {
 		}
 
 		// Build without cache
-		provider := testutil.NewServiceCollectionBuilder(t).
-			WithSingleton(testutil.NewTestLogger).
-			WithSingleton(testutil.NewTestDatabase).
-			WithSingleton(constructor).
-			BuildProvider()
+		provider := godi.NewServiceProvider()
+		assert.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
+		assert.NoError(t, provider.AddSingleton(testutil.NewTestDatabase))
+		assert.NoError(t, provider.AddSingleton(constructor))
+		t.Cleanup(func() {
+			require.NoError(t, provider.Close())
+		})
 
 		service := testutil.AssertServiceResolvable[*ServiceWithOptional](t, provider)
 		assert.NotNil(t, service.Logger)
@@ -1017,24 +1017,22 @@ func TestGroupOption(t *testing.T) {
 	t.Run("group registration and resolution", func(t *testing.T) {
 		t.Parallel()
 
-		collection := godi.NewServiceCollection()
+		provider := godi.NewServiceProvider()
 
 		// Register multiple services in the same group
-		require.NoError(t, collection.AddSingleton(
+		require.NoError(t, provider.AddSingleton(
 			func() testutil.TestHandler { return testutil.NewTestHandler("handler1") },
 			godi.Group("handlers"),
 		))
-		require.NoError(t, collection.AddSingleton(
+		require.NoError(t, provider.AddSingleton(
 			func() testutil.TestHandler { return testutil.NewTestHandler("handler2") },
 			godi.Group("handlers"),
 		))
-		require.NoError(t, collection.AddSingleton(
+		require.NoError(t, provider.AddSingleton(
 			func() testutil.TestHandler { return testutil.NewTestHandler("handler3") },
 			godi.Group("handlers"),
 		))
 
-		provider, err := collection.BuildServiceProvider()
-		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
@@ -1057,9 +1055,7 @@ func TestGroupOption(t *testing.T) {
 	t.Run("empty group returns empty slice", func(t *testing.T) {
 		t.Parallel()
 
-		collection := godi.NewServiceCollection()
-		provider, err := collection.BuildServiceProvider()
-		require.NoError(t, err)
+		provider := godi.NewServiceProvider()
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
@@ -1076,16 +1072,14 @@ func TestAsOption(t *testing.T) {
 	t.Run("as interface registration", func(t *testing.T) {
 		t.Parallel()
 
-		collection := godi.NewServiceCollection()
+		provider := godi.NewServiceProvider()
 
 		// Register with As option
-		require.NoError(t, collection.AddSingleton(
+		require.NoError(t, provider.AddSingleton(
 			func() *testUserRepository { return &testUserRepository{} },
 			godi.As((*TestRepository)(nil)),
 		))
 
-		provider, err := collection.BuildServiceProvider()
-		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
@@ -1104,16 +1098,14 @@ func TestAsOption(t *testing.T) {
 	t.Run("as multiple interfaces", func(t *testing.T) {
 		t.Parallel()
 
-		collection := godi.NewServiceCollection()
+		provider := godi.NewServiceProvider()
 
 		// Register as multiple interfaces
-		require.NoError(t, collection.AddSingleton(
+		require.NoError(t, provider.AddSingleton(
 			func() *testDatabase { return &testDatabase{data: "initial"} },
 			godi.As((*TestReader)(nil), (*TestWriter)(nil)),
 		))
 
-		provider, err := collection.BuildServiceProvider()
-		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
@@ -1138,22 +1130,20 @@ func TestGroupWithAsOption(t *testing.T) {
 	t.Run("group with As option should not create duplicates", func(t *testing.T) {
 		t.Parallel()
 
-		collection := godi.NewServiceCollection()
+		provider := godi.NewServiceProvider()
 
 		// Register services with both As and Group options
-		require.NoError(t, collection.AddSingleton(
+		require.NoError(t, provider.AddSingleton(
 			func() *groupAsImpl1 { return &groupAsImpl1{name: "impl1"} },
 			godi.As((*GroupAsTestInterface)(nil)),
 			godi.Group("test-group"),
 		))
-		require.NoError(t, collection.AddSingleton(
+		require.NoError(t, provider.AddSingleton(
 			func() *groupAsImpl2 { return &groupAsImpl2{name: "impl2"} },
 			godi.As((*GroupAsTestInterface)(nil)),
 			godi.Group("test-group"),
 		))
 
-		provider, err := collection.BuildServiceProvider()
-		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
@@ -1181,32 +1171,30 @@ func TestGroupWithAsOption(t *testing.T) {
 	t.Run("exact reproduction of user's bug", func(t *testing.T) {
 		t.Parallel()
 
-		collection := godi.NewServiceCollection()
+		provider := godi.NewServiceProvider()
 
 		// Register exactly as user does
-		require.NoError(t, collection.AddSingleton(
+		require.NoError(t, provider.AddSingleton(
 			func() *testGraphQLController { return &testGraphQLController{id: "graphql"} },
 			godi.As(new(TestController)),
 			godi.Group("routes"),
 		))
-		require.NoError(t, collection.AddSingleton(
+		require.NoError(t, provider.AddSingleton(
 			func() *testHealthController { return &testHealthController{id: "health"} },
 			godi.As(new(TestController)),
 			godi.Group("routes"),
 		))
-		require.NoError(t, collection.AddSingleton(
+		require.NoError(t, provider.AddSingleton(
 			func() *testOAuthController { return &testOAuthController{id: "oauth"} },
 			godi.As(new(TestController)),
 			godi.Group("routes"),
 		))
-		require.NoError(t, collection.AddSingleton(
+		require.NoError(t, provider.AddSingleton(
 			func() *testTebexController { return &testTebexController{id: "tebex"} },
 			godi.As(new(TestController)),
 			godi.Group("routes"),
 		))
 
-		provider, err := collection.BuildServiceProvider()
-		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
@@ -1242,24 +1230,22 @@ func TestGroupWithAsOption(t *testing.T) {
 func TestGroupWithoutAsOption(t *testing.T) {
 	t.Parallel()
 
-	collection := godi.NewServiceCollection()
+	provider := godi.NewServiceProvider()
 
 	// Register services that already return the interface type
-	require.NoError(t, collection.AddSingleton(
+	require.NoError(t, provider.AddSingleton(
 		func() SimpleHandler {
 			return &simpleHandlerImpl{name: "handler1"}
 		},
 		godi.Group("handlers"),
 	))
-	require.NoError(t, collection.AddSingleton(
+	require.NoError(t, provider.AddSingleton(
 		func() SimpleHandler {
 			return &simpleHandlerImpl{name: "handler2"}
 		},
 		godi.Group("handlers"),
 	))
 
-	provider, err := collection.BuildServiceProvider()
-	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, provider.Close())
 	})
@@ -1273,7 +1259,7 @@ func TestServiceProvider_BuiltInServices(t *testing.T) {
 	t.Run("resolves built-in ServiceProvider", func(t *testing.T) {
 		t.Parallel()
 
-		provider := testutil.NewServiceCollectionBuilder(t).BuildProvider()
+		provider := godi.NewServiceProvider()
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
@@ -1290,7 +1276,7 @@ func TestServiceProvider_BuiltInServices(t *testing.T) {
 	t.Run("resolves built-in context.Context from root scope", func(t *testing.T) {
 		t.Parallel()
 
-		provider := testutil.NewServiceCollectionBuilder(t).BuildProvider()
+		provider := godi.NewServiceProvider()
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
@@ -1307,7 +1293,7 @@ func TestServiceProvider_BuiltInServices(t *testing.T) {
 	t.Run("resolves built-in Scope from root scope", func(t *testing.T) {
 		t.Parallel()
 
-		provider := testutil.NewServiceCollectionBuilder(t).BuildProvider()
+		provider := godi.NewServiceProvider()
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
@@ -1339,9 +1325,8 @@ func TestServiceProvider_BuiltInServices(t *testing.T) {
 			}
 		}
 
-		provider := testutil.NewServiceCollectionBuilder(t).
-			WithSingleton(constructor).
-			BuildProvider()
+		provider := godi.NewServiceProvider()
+		require.NoError(t, provider.AddSingleton(constructor))
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
@@ -1387,10 +1372,9 @@ func TestServiceProvider_BuiltInServices(t *testing.T) {
 			}
 		}
 
-		provider := testutil.NewServiceCollectionBuilder(t).
-			WithSingleton(testutil.NewTestLogger).
-			WithScoped(constructor).
-			BuildProvider()
+		provider := godi.NewServiceProvider()
+		require.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
+		require.NoError(t, provider.AddScoped(constructor))
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
@@ -1414,19 +1398,17 @@ func TestServiceProvider_Decorate(t *testing.T) {
 	t.Run("decorates singleton service", func(t *testing.T) {
 		t.Parallel()
 
-		collection := godi.NewServiceCollection()
+		provider := godi.NewServiceProvider()
 
 		// Add original logger
-		require.NoError(t, collection.AddSingleton(testutil.NewTestLogger))
+		require.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
 
-		provider, err := collection.BuildServiceProvider()
-		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
 
 		// Decorate the logger to add a prefix
-		err = provider.Decorate(func(logger testutil.TestLogger) testutil.TestLogger {
+		err := provider.Decorate(func(logger testutil.TestLogger) testutil.TestLogger {
 			// Wrap the logger with additional functionality
 			return &testutil.DecoratedLogger{
 				Inner:  logger,
@@ -1451,22 +1433,20 @@ func TestServiceProvider_Decorate(t *testing.T) {
 			AppName string
 		}
 
-		collection := godi.NewServiceCollection()
+		provider := godi.NewServiceProvider()
 
 		// Add services
-		require.NoError(t, collection.AddSingleton(testutil.NewTestLogger))
-		require.NoError(t, collection.AddSingleton(func() *Config {
+		require.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
+		require.NoError(t, provider.AddSingleton(func() *Config {
 			return &Config{AppName: "TestApp"}
 		}))
 
-		provider, err := collection.BuildServiceProvider()
-		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
 
 		// Decorate logger using config
-		err = provider.Decorate(func(logger testutil.TestLogger, cfg *Config) testutil.TestLogger {
+		err := provider.Decorate(func(logger testutil.TestLogger, cfg *Config) testutil.TestLogger {
 			return &testutil.DecoratedLogger{
 				Inner:  logger,
 				Prefix: fmt.Sprintf("[%s] ", cfg.AppName),
@@ -1486,21 +1466,19 @@ func TestServiceProvider_Decorate(t *testing.T) {
 	t.Run("decorates multiple services at once", func(t *testing.T) {
 		t.Parallel()
 
-		collection := godi.NewServiceCollection()
+		provider := godi.NewServiceProvider()
 
 		// Add services
-		require.NoError(t, collection.AddSingleton(testutil.NewTestLogger))
-		require.NoError(t, collection.AddSingleton(testutil.NewTestDatabase))
+		require.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
+		require.NoError(t, provider.AddSingleton(testutil.NewTestDatabase))
 
-		provider, err := collection.BuildServiceProvider()
-		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
 
 		// Decorate both services
 		var decorateCalled bool
-		err = provider.Decorate(func(
+		err := provider.Decorate(func(
 			logger testutil.TestLogger,
 			db testutil.TestDatabase,
 		) (testutil.TestLogger, testutil.TestDatabase) {
@@ -1542,26 +1520,24 @@ func TestServiceProvider_Decorate(t *testing.T) {
 	t.Run("decorate affects scoped services", func(t *testing.T) {
 		t.Parallel()
 
-		collection := godi.NewServiceCollection()
+		provider := godi.NewServiceProvider()
 
 		// Add singleton that will be decorated
-		require.NoError(t, collection.AddSingleton(testutil.NewTestLogger))
+		require.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
 		// Add scoped service that depends on the singleton
-		require.NoError(t, collection.AddScoped(func(logger testutil.TestLogger) *testutil.TestServiceWithLogger {
+		require.NoError(t, provider.AddScoped(func(logger testutil.TestLogger) *testutil.TestServiceWithLogger {
 			return &testutil.TestServiceWithLogger{
 				ID:     uuid.NewString(),
 				Logger: logger,
 			}
 		}))
 
-		provider, err := collection.BuildServiceProvider()
-		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
 
 		// Decorate the logger
-		err = provider.Decorate(func(logger testutil.TestLogger) testutil.TestLogger {
+		err := provider.Decorate(func(logger testutil.TestLogger) testutil.TestLogger {
 			return &testutil.DecoratedLogger{
 				Inner:  logger,
 				Prefix: "[SCOPED-TEST] ",
@@ -1587,17 +1563,15 @@ func TestServiceProvider_Decorate(t *testing.T) {
 	t.Run("decorate chain - multiple decorations not allowed", func(t *testing.T) {
 		t.Parallel()
 
-		collection := godi.NewServiceCollection()
-		require.NoError(t, collection.AddSingleton(testutil.NewTestLogger))
+		provider := godi.NewServiceProvider()
+		require.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
 
-		provider, err := collection.BuildServiceProvider()
-		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
 
 		// First decoration
-		err = provider.Decorate(func(logger testutil.TestLogger) testutil.TestLogger {
+		err := provider.Decorate(func(logger testutil.TestLogger) testutil.TestLogger {
 			return &testutil.DecoratedLogger{
 				Inner:  logger,
 				Prefix: "[FIRST] ",
@@ -1624,20 +1598,18 @@ func TestServiceProvider_Decorate(t *testing.T) {
 			Logger testutil.TestLogger
 		}
 
-		collection := godi.NewServiceCollection()
-		require.NoError(t, collection.AddSingleton(testutil.NewTestLogger))
-		require.NoError(t, collection.AddSingleton(func(logger testutil.TestLogger) *LoggerWrapper {
+		provider := godi.NewServiceProvider()
+		require.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
+		require.NoError(t, provider.AddSingleton(func(logger testutil.TestLogger) *LoggerWrapper {
 			return &LoggerWrapper{Logger: logger}
 		}))
 
-		provider, err := collection.BuildServiceProvider()
-		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
 
 		// First decoration on the base logger
-		err = provider.Decorate(func(logger testutil.TestLogger) testutil.TestLogger {
+		err := provider.Decorate(func(logger testutil.TestLogger) testutil.TestLogger {
 			return &testutil.DecoratedLogger{
 				Inner:  logger,
 				Prefix: "[FIRST] ",
@@ -1673,16 +1645,14 @@ func TestServiceProvider_Decorate(t *testing.T) {
 	t.Run("decorate with keyed services", func(t *testing.T) {
 		t.Parallel()
 
-		collection := godi.NewServiceCollection()
+		provider := godi.NewServiceProvider()
 
 		// Add keyed logger
-		require.NoError(t, collection.AddSingleton(
+		require.NoError(t, provider.AddSingleton(
 			testutil.NewTestLogger,
 			godi.Name("primary"),
 		))
 
-		provider, err := collection.BuildServiceProvider()
-		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
@@ -1698,7 +1668,7 @@ func TestServiceProvider_Decorate(t *testing.T) {
 			Logger testutil.TestLogger `name:"primary"`
 		}
 
-		err = provider.Decorate(func(params keyedParams) keyedResults {
+		err := provider.Decorate(func(params keyedParams) keyedResults {
 			return keyedResults{
 				Logger: &testutil.DecoratedLogger{
 					Inner:  params.Logger,
@@ -1720,20 +1690,18 @@ func TestServiceProvider_Decorate(t *testing.T) {
 	t.Run("decorate with group services", func(t *testing.T) {
 		t.Parallel()
 
-		collection := godi.NewServiceCollection()
+		provider := godi.NewServiceProvider()
 
 		// Add multiple handlers in a group
-		require.NoError(t, collection.AddSingleton(
+		require.NoError(t, provider.AddSingleton(
 			func() testutil.TestHandler { return testutil.NewTestHandler("handler1") },
 			godi.Group("handlers"),
 		))
-		require.NoError(t, collection.AddSingleton(
+		require.NoError(t, provider.AddSingleton(
 			func() testutil.TestHandler { return testutil.NewTestHandler("handler2") },
 			godi.Group("handlers"),
 		))
 
-		provider, err := collection.BuildServiceProvider()
-		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
@@ -1749,7 +1717,7 @@ func TestServiceProvider_Decorate(t *testing.T) {
 			Handlers []testutil.TestHandler `group:"handlers"`
 		}
 
-		err = provider.Decorate(func(params groupParams) groupResults {
+		err := provider.Decorate(func(params groupParams) groupResults {
 			// Wrap all handlers
 			decorated := make([]testutil.TestHandler, len(params.Handlers))
 			for i, h := range params.Handlers {
@@ -1778,17 +1746,15 @@ func TestServiceProvider_Decorate(t *testing.T) {
 	t.Run("decorate error handling", func(t *testing.T) {
 		t.Parallel()
 
-		collection := godi.NewServiceCollection()
-		require.NoError(t, collection.AddSingleton(testutil.NewTestDatabase))
+		provider := godi.NewServiceProvider()
+		require.NoError(t, provider.AddSingleton(testutil.NewTestDatabase))
 
-		provider, err := collection.BuildServiceProvider()
-		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
 
 		// Nil decorator
-		err = provider.Decorate(nil)
+		err := provider.Decorate(nil)
 		assert.ErrorIs(t, err, godi.ErrDecoratorNil)
 
 		// Decorator for non-existent service - this might only fail at resolution time
@@ -1813,15 +1779,13 @@ func TestServiceProvider_Decorate(t *testing.T) {
 	t.Run("decorate after disposal", func(t *testing.T) {
 		t.Parallel()
 
-		collection := godi.NewServiceCollection()
-		provider, err := collection.BuildServiceProvider()
-		require.NoError(t, err)
+		provider := godi.NewServiceProvider()
 
 		// Close provider
 		require.NoError(t, provider.Close())
 
 		// Attempt to decorate
-		err = provider.Decorate(func(logger testutil.TestLogger) testutil.TestLogger {
+		err := provider.Decorate(func(logger testutil.TestLogger) testutil.TestLogger {
 			return logger
 		})
 		assert.ErrorIs(t, err, godi.ErrProviderDisposed)
@@ -1837,18 +1801,16 @@ func TestServiceProvider_Decorate(t *testing.T) {
 			Cache  testutil.TestCache `optional:"true"`
 		}
 
-		collection := godi.NewServiceCollection()
-		require.NoError(t, collection.AddSingleton(testutil.NewTestLogger))
+		provider := godi.NewServiceProvider()
+		require.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
 		// Note: Not adding cache
 
-		provider, err := collection.BuildServiceProvider()
-		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
 
 		var decorateCalled bool
-		err = provider.Decorate(func(params OptionalParams) testutil.TestLogger {
+		err := provider.Decorate(func(params OptionalParams) testutil.TestLogger {
 			decorateCalled = true
 
 			prefix := "[DECORATED"
@@ -1876,12 +1838,10 @@ func TestServiceProvider_Decorate(t *testing.T) {
 	t.Run("scope-specific decoration", func(t *testing.T) {
 		t.Parallel()
 
-		collection := godi.NewServiceCollection()
-		require.NoError(t, collection.AddSingleton(testutil.NewTestLogger))
-		require.NoError(t, collection.AddScoped(testutil.NewTestService))
+		provider := godi.NewServiceProvider()
+		require.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
+		require.NoError(t, provider.AddScoped(testutil.NewTestService))
 
-		provider, err := collection.BuildServiceProvider()
-		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
@@ -1893,7 +1853,7 @@ func TestServiceProvider_Decorate(t *testing.T) {
 		})
 
 		// Decorate in scope
-		err = scope.Decorate(func(logger testutil.TestLogger) testutil.TestLogger {
+		err := scope.Decorate(func(logger testutil.TestLogger) testutil.TestLogger {
 			return &testutil.DecoratedLogger{
 				Inner:  logger,
 				Prefix: "[SCOPE] ",
