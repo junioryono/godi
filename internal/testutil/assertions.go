@@ -11,36 +11,27 @@ import (
 )
 
 // AssertServiceResolvable checks if a service can be resolved
-func AssertServiceResolvable[T any](t *testing.T, provider godi.ServiceProvider) T {
+func AssertServiceResolvable[T any](t *testing.T, scope godi.Scope) T {
 	t.Helper()
-	service, err := godi.Resolve[T](provider)
+	service, err := godi.Resolve[T](scope)
 	require.NoError(t, err, "failed to resolve service of type %T", *new(T))
 	require.NotNil(t, service, "resolved service is nil")
 	return service
 }
 
-// AssertServiceResolvableInScope checks if a service can be resolved in a scope
-func AssertServiceResolvableInScope[T any](t *testing.T, scope godi.Scope) T {
-	t.Helper()
-	service, err := godi.Resolve[T](scope)
-	require.NoError(t, err, "failed to resolve service of type %T in scope", *new(T))
-	require.NotNil(t, service, "resolved service is nil")
-	return service
-}
-
 // AssertKeyedServiceResolvable checks if a keyed service can be resolved
-func AssertKeyedServiceResolvable[T any](t *testing.T, provider godi.ServiceProvider, key interface{}) T {
+func AssertKeyedServiceResolvable[T any](t *testing.T, scope godi.Scope, key interface{}) T {
 	t.Helper()
-	service, err := godi.ResolveKeyed[T](provider, key)
+	service, err := godi.ResolveKeyed[T](scope, key)
 	require.NoError(t, err, "failed to resolve keyed service of type %T with key %v", *new(T), key)
 	require.NotNil(t, service, "resolved keyed service is nil")
 	return service
 }
 
 // AssertGroupServiceResolvable checks if a group service can be resolved
-func AssertGroupServiceResolvable[T any](t *testing.T, provider godi.ServiceProvider, group string) []T {
+func AssertGroupServiceResolvable[T any](t *testing.T, scope godi.Scope, group string) []T {
 	t.Helper()
-	service, err := godi.ResolveGroup[T](provider, group)
+	service, err := godi.ResolveGroup[T](scope, group)
 	require.NoError(t, err, "failed to resolve group service of type %T with group %s", *new(T), group)
 	require.NotNil(t, service, "resolved group service is nil")
 	require.NotEmpty(t, service, "resolved group service is empty")
@@ -48,17 +39,17 @@ func AssertGroupServiceResolvable[T any](t *testing.T, provider godi.ServiceProv
 }
 
 // AssertServiceNotFound checks if a service resolution fails with not found error
-func AssertServiceNotFound[T any](t *testing.T, provider godi.ServiceProvider) {
+func AssertServiceNotFound[T any](t *testing.T, scope godi.Scope) {
 	t.Helper()
-	_, err := godi.Resolve[T](provider)
+	_, err := godi.Resolve[T](scope)
 	assert.Error(t, err)
 	assert.True(t, godi.IsNotFound(err), "expected service not found error, got: %v", err)
 }
 
 // AssertKeyedServiceNotFound checks if a keyed service resolution fails with not found error
-func AssertKeyedServiceNotFound[T any](t *testing.T, provider godi.ServiceProvider, key interface{}) {
+func AssertKeyedServiceNotFound[T any](t *testing.T, scope godi.Scope, key interface{}) {
 	t.Helper()
-	_, err := godi.ResolveKeyed[T](provider, key)
+	_, err := godi.ResolveKeyed[T](scope, key)
 	assert.Error(t, err)
 	assert.True(t, godi.IsNotFound(err), "expected keyed service not found error, got: %v", err)
 }

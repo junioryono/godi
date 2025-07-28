@@ -43,7 +43,7 @@ func TestParameterObjects(t *testing.T) {
 			require.NoError(t, scope.Close())
 		})
 
-		service := testutil.AssertServiceResolvableInScope[*testutil.TestService](t, scope)
+		service := testutil.AssertServiceResolvable[*testutil.TestService](t, scope)
 		assert.Equal(t, "from-params", service.ID)
 	})
 
@@ -74,7 +74,7 @@ func TestParameterObjects(t *testing.T) {
 		assert.NoError(t, provider1.AddSingleton(testutil.NewTestDatabase))
 		assert.NoError(t, provider1.AddSingleton(constructor))
 
-		service1 := testutil.AssertServiceResolvable[*ServiceWithOptional](t, provider1)
+		service1 := testutil.AssertServiceResolvable[*ServiceWithOptional](t, provider1.GetRootScope())
 		assert.False(t, service1.hasCache, "should not have cache when not registered")
 
 		// Test with cache
@@ -84,7 +84,7 @@ func TestParameterObjects(t *testing.T) {
 		assert.NoError(t, provider2.AddSingleton(testutil.NewTestCache))
 		assert.NoError(t, provider2.AddSingleton(constructor))
 
-		service2 := testutil.AssertServiceResolvable[*ServiceWithOptional](t, provider2)
+		service2 := testutil.AssertServiceResolvable[*ServiceWithOptional](t, provider2.GetRootScope())
 		assert.True(t, service2.hasCache, "should have cache when registered")
 	})
 
@@ -119,7 +119,7 @@ func TestParameterObjects(t *testing.T) {
 		}, godi.Name("secondary")))
 		assert.NoError(t, provider.AddSingleton(constructor))
 
-		service := testutil.AssertServiceResolvable[*ServiceWithNamedDeps](t, provider)
+		service := testutil.AssertServiceResolvable[*ServiceWithNamedDeps](t, provider.GetRootScope())
 		assert.Contains(t, service.primaryResult, "primary-db")
 		assert.Contains(t, service.secondaryResult, "secondary-db")
 	})
@@ -162,7 +162,7 @@ func TestParameterObjects(t *testing.T) {
 		}, godi.Group("handlers")))
 		assert.NoError(t, provider.AddSingleton(constructor))
 
-		manager := testutil.AssertServiceResolvable[*HandlerManager](t, provider)
+		manager := testutil.AssertServiceResolvable[*HandlerManager](t, provider.GetRootScope())
 		assert.Equal(t, 3, manager.handlerCount)
 		assert.Len(t, manager.names, 3)
 
@@ -201,9 +201,9 @@ func TestResultObjects(t *testing.T) {
 		assert.NoError(t, provider.AddSingleton(constructor))
 
 		// All services should be resolvable
-		logger := testutil.AssertServiceResolvable[testutil.TestLogger](t, provider)
-		database := testutil.AssertServiceResolvable[testutil.TestDatabase](t, provider)
-		cache := testutil.AssertServiceResolvable[testutil.TestCache](t, provider)
+		logger := testutil.AssertServiceResolvable[testutil.TestLogger](t, provider.GetRootScope())
+		database := testutil.AssertServiceResolvable[testutil.TestDatabase](t, provider.GetRootScope())
+		cache := testutil.AssertServiceResolvable[testutil.TestCache](t, provider.GetRootScope())
 
 		assert.NotNil(t, logger)
 		assert.NotNil(t, database)
@@ -231,8 +231,8 @@ func TestResultObjects(t *testing.T) {
 		assert.NoError(t, provider.AddSingleton(constructor))
 
 		// Named services should be resolvable
-		userService := testutil.AssertKeyedServiceResolvable[*testutil.TestService](t, provider, "user")
-		adminService := testutil.AssertKeyedServiceResolvable[*testutil.TestService](t, provider, "admin")
+		userService := testutil.AssertKeyedServiceResolvable[*testutil.TestService](t, provider.GetRootScope(), "user")
+		adminService := testutil.AssertKeyedServiceResolvable[*testutil.TestService](t, provider.GetRootScope(), "admin")
 
 		assert.Equal(t, "user-service", userService.ID)
 		assert.Equal(t, "admin-service", adminService.ID)
@@ -261,7 +261,7 @@ func TestResultObjects(t *testing.T) {
 		assert.NoError(t, provider.AddSingleton(constructor))
 
 		// Group should contain all handlers
-		handlers, err := godi.ResolveGroup[testutil.TestHandler](provider, "routes")
+		handlers, err := godi.ResolveGroup[testutil.TestHandler](provider.GetRootScope(), "routes")
 		require.NoError(t, err)
 		assert.Len(t, handlers, 3)
 
@@ -294,7 +294,7 @@ func TestResultObjects(t *testing.T) {
 		assert.NoError(t, provider.AddSingleton(constructor))
 
 		// Resolution should fail with the constructor error
-		_, err := godi.Resolve[*testutil.TestService](provider)
+		_, err := godi.Resolve[*testutil.TestService](provider.GetRootScope())
 		assert.Error(t, err)
 		assert.ErrorIs(t, err, expectedErr)
 	})
@@ -333,8 +333,8 @@ func TestComplexScenarios(t *testing.T) {
 		assert.NoError(t, provider.AddSingleton(constructor))
 
 		// Both databases should be available
-		primary := testutil.AssertKeyedServiceResolvable[testutil.TestDatabase](t, provider, "primary")
-		secondary := testutil.AssertKeyedServiceResolvable[testutil.TestDatabase](t, provider, "secondary")
+		primary := testutil.AssertKeyedServiceResolvable[testutil.TestDatabase](t, provider.GetRootScope(), "primary")
+		secondary := testutil.AssertKeyedServiceResolvable[testutil.TestDatabase](t, provider.GetRootScope(), "secondary")
 
 		assert.Contains(t, primary.Query("SELECT 1"), "primary")
 		assert.Contains(t, secondary.Query("SELECT 1"), "secondary")
@@ -361,7 +361,7 @@ func TestComplexScenarios(t *testing.T) {
 		provider := godi.NewServiceProvider()
 		assert.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
 		assert.NoError(t, provider.AddSingleton(innerConstructor))
-		service := testutil.AssertServiceResolvable[*OuterService](t, provider)
+		service := testutil.AssertServiceResolvable[*OuterService](t, provider.GetRootScope())
 		assert.NotNil(t, service.logger)
 	})
 
@@ -405,7 +405,7 @@ func TestComplexScenarios(t *testing.T) {
 		}, godi.Group("handlers")))
 		assert.NoError(t, provider.AddSingleton(constructor))
 
-		service := testutil.AssertServiceResolvable[*ComplexService](t, provider)
+		service := testutil.AssertServiceResolvable[*ComplexService](t, provider.GetRootScope())
 		assert.Contains(t, service.loggerType, "TestLoggerImpl")
 		assert.Equal(t, 2, service.handlerCount)
 		assert.False(t, service.hasConfig) // Optional not provided
@@ -562,7 +562,7 @@ func TestProvideOptions(t *testing.T) {
 		assert.NoError(t, provider.AddSingleton(testutil.NewTestLogger, godi.FillProvideInfo(&info)))
 
 		// Resolve to ensure the constructor runs
-		testutil.AssertServiceResolvable[testutil.TestLogger](t, provider)
+		testutil.AssertServiceResolvable[testutil.TestLogger](t, provider.GetRootScope())
 
 		// Info should be populated
 		assert.NotNil(t, info)
@@ -586,7 +586,7 @@ func TestProvideOptions(t *testing.T) {
 		))
 
 		// Resolve to trigger callbacks
-		testutil.AssertServiceResolvable[testutil.TestLogger](t, provider)
+		testutil.AssertServiceResolvable[testutil.TestLogger](t, provider.GetRootScope())
 
 		assert.True(t, beforeCallbackInvoked, "before callback should be invoked")
 		assert.True(t, callbackInvoked, "after callback should be invoked")

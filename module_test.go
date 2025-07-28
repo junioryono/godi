@@ -210,7 +210,7 @@ func TestModule_WithDecorator(t *testing.T) {
 			require.NoError(t, provider.Close())
 		})
 
-		logger := testutil.AssertServiceResolvable[testutil.TestLogger](t, provider)
+		logger := testutil.AssertServiceResolvable[testutil.TestLogger](t, provider.GetRootScope())
 		_, ok := logger.(*DecoratedLogger)
 		assert.True(t, ok, "logger should be decorated")
 	})
@@ -295,7 +295,7 @@ func TestModule_RealWorldScenarios(t *testing.T) {
 		})
 
 		// Resolve the handler (top of dependency chain)
-		handler := testutil.AssertServiceResolvableInScope[*UserHandler](t, scope)
+		handler := testutil.AssertServiceResolvable[*UserHandler](t, scope)
 		assert.NotNil(t, handler)
 		assert.NotNil(t, handler.service)
 		assert.NotNil(t, handler.service.repo)
@@ -360,7 +360,7 @@ func TestModule_RealWorldScenarios(t *testing.T) {
 		})
 
 		// Resolve plugin manager
-		manager := testutil.AssertServiceResolvable[*PluginManager](t, provider)
+		manager := testutil.AssertServiceResolvable[*PluginManager](t, provider.GetRootScope())
 		assert.Len(t, manager.plugins, 3)
 
 		// Verify all plugins are loaded

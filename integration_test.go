@@ -212,7 +212,7 @@ func TestIntegration_PluginSystem(t *testing.T) {
 		}))
 
 		// Use the plugin system
-		manager := testutil.AssertServiceResolvable[*PluginManager](t, provider)
+		manager := testutil.AssertServiceResolvable[*PluginManager](t, provider.GetRootScope())
 
 		// Execute all plugins
 		results := manager.ExecuteAll("test-data")
@@ -279,7 +279,7 @@ func TestIntegration_ComplexDependencyGraph(t *testing.T) {
 		}))
 
 		// Resolve the most complex service
-		f := testutil.AssertServiceResolvable[*ServiceF](t, provider)
+		f := testutil.AssertServiceResolvable[*ServiceF](t, provider.GetRootScope())
 
 		// Verify the entire graph
 		assert.Equal(t, "D", f.A.B.D.ID)
@@ -319,11 +319,11 @@ func TestIntegration_ErrorPropagation(t *testing.T) {
 		}))
 
 		// Direct resolution should fail
-		_, err := godi.Resolve[*FailingService](provider)
+		_, err := godi.Resolve[*FailingService](provider.GetRootScope())
 		assert.ErrorIs(t, err, expectedErr)
 
 		// Dependent resolution should also fail
-		_, err = godi.Resolve[*DependentService](provider)
+		_, err = godi.Resolve[*DependentService](provider.GetRootScope())
 		assert.ErrorIs(t, err, expectedErr)
 	})
 }
@@ -371,7 +371,7 @@ func TestIntegration_LifecycleManagement(t *testing.T) {
 			singleton := testutil.AssertKeyedServiceResolvable[*TrackedService](t, scope, "singleton")
 			assert.Equal(t, "singleton", singleton.name)
 
-			scoped := testutil.AssertServiceResolvableInScope[*TrackedService](t, scope)
+			scoped := testutil.AssertServiceResolvable[*TrackedService](t, scope)
 			assert.Equal(t, "scoped", scoped.name)
 
 			// Close scope - should dispose scoped service
@@ -720,7 +720,7 @@ func createEventDrivenProvider(t *testing.T) godi.ServiceProvider {
 	}))
 
 	// Ensure wiring happens by resolving the EventWiring service
-	wiring, err := godi.Resolve[*EventWiring](provider)
+	wiring, err := godi.Resolve[*EventWiring](provider.GetRootScope())
 	require.NoError(t, err)
 	require.True(t, wiring.initialized)
 

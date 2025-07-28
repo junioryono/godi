@@ -71,7 +71,7 @@ func TestServiceProvider_Creation(t *testing.T) {
 		})
 
 		// Resolve a service
-		logger := testutil.AssertServiceResolvable[testutil.TestLogger](t, provider)
+		logger := testutil.AssertServiceResolvable[testutil.TestLogger](t, provider.GetRootScope())
 		assert.NotNil(t, logger)
 
 		// Check callback was called
@@ -103,7 +103,7 @@ func TestServiceProvider_Resolution(t *testing.T) {
 				return provider
 			},
 			resolve: func(provider godi.ServiceProvider) (interface{}, error) {
-				return godi.Resolve[testutil.TestLogger](provider)
+				return godi.Resolve[testutil.TestLogger](provider.GetRootScope())
 			},
 			validate: func(t *testing.T, result interface{}, err error) {
 				assert.NotNil(t, result)
@@ -120,7 +120,7 @@ func TestServiceProvider_Resolution(t *testing.T) {
 				return provider
 			},
 			resolve: func(provider godi.ServiceProvider) (interface{}, error) {
-				return godi.Resolve[*testutil.TestService](provider)
+				return godi.Resolve[*testutil.TestService](provider.GetRootScope())
 			},
 			validate: func(t *testing.T, result interface{}, err error) {
 				assert.NotNil(t, result)
@@ -140,7 +140,7 @@ func TestServiceProvider_Resolution(t *testing.T) {
 				return provider
 			},
 			resolve: func(provider godi.ServiceProvider) (interface{}, error) {
-				return godi.Resolve[*testutil.TestServiceWithDeps](provider)
+				return godi.Resolve[*testutil.TestServiceWithDeps](provider.GetRootScope())
 			},
 			validate: func(t *testing.T, result interface{}, err error) {
 				assert.NotNil(t, result)
@@ -160,7 +160,7 @@ func TestServiceProvider_Resolution(t *testing.T) {
 				return provider
 			},
 			resolve: func(provider godi.ServiceProvider) (interface{}, error) {
-				return godi.ResolveKeyed[testutil.TestLogger](provider, "primary")
+				return godi.ResolveKeyed[testutil.TestLogger](provider.GetRootScope(), "primary")
 			},
 			validate: func(t *testing.T, result interface{}, err error) {
 				assert.NotNil(t, result)
@@ -183,7 +183,7 @@ func TestServiceProvider_Resolution(t *testing.T) {
 				return provider
 			},
 			resolve: func(provider godi.ServiceProvider) (interface{}, error) {
-				return godi.ResolveGroup[testutil.TestHandler](provider, "handlers")
+				return godi.ResolveGroup[testutil.TestHandler](provider.GetRootScope(), "handlers")
 			},
 			validate: func(t *testing.T, result interface{}, err error) {
 				handlers, ok := result.([]testutil.TestHandler)
@@ -208,7 +208,7 @@ func TestServiceProvider_Resolution(t *testing.T) {
 				return provider
 			},
 			resolve: func(provider godi.ServiceProvider) (interface{}, error) {
-				return godi.Resolve[testutil.TestLogger](provider)
+				return godi.Resolve[testutil.TestLogger](provider.GetRootScope())
 			},
 			validate: func(t *testing.T, result interface{}, err error) {
 				assert.Nil(t, result)
@@ -225,7 +225,7 @@ func TestServiceProvider_Resolution(t *testing.T) {
 				return provider
 			},
 			resolve: func(provider godi.ServiceProvider) (interface{}, error) {
-				return godi.ResolveKeyed[testutil.TestLogger](provider, "secondary")
+				return godi.ResolveKeyed[testutil.TestLogger](provider.GetRootScope(), "secondary")
 			},
 			validate: func(t *testing.T, result interface{}, err error) {
 				assert.Nil(t, result)
@@ -241,7 +241,7 @@ func TestServiceProvider_Resolution(t *testing.T) {
 				return provider
 			},
 			resolve: func(provider godi.ServiceProvider) (interface{}, error) {
-				return godi.ResolveGroup[testutil.TestHandler](provider, "handlers")
+				return godi.ResolveGroup[testutil.TestHandler](provider.GetRootScope(), "handlers")
 			},
 			validate: func(t *testing.T, result interface{}, err error) {
 				handlers, ok := result.([]testutil.TestHandler)
@@ -281,8 +281,8 @@ func TestServiceProvider_SingletonBehavior(t *testing.T) {
 			require.NoError(t, provider.Close())
 		})
 
-		logger1 := testutil.AssertServiceResolvable[testutil.TestLogger](t, provider)
-		logger2 := testutil.AssertServiceResolvable[testutil.TestLogger](t, provider)
+		logger1 := testutil.AssertServiceResolvable[testutil.TestLogger](t, provider.GetRootScope())
+		logger2 := testutil.AssertServiceResolvable[testutil.TestLogger](t, provider.GetRootScope())
 
 		testutil.AssertSameInstance(t, logger1, logger2)
 	})
@@ -296,7 +296,7 @@ func TestServiceProvider_SingletonBehavior(t *testing.T) {
 			require.NoError(t, provider.Close())
 		})
 
-		logger1 := testutil.AssertServiceResolvable[testutil.TestLogger](t, provider)
+		logger1 := testutil.AssertServiceResolvable[testutil.TestLogger](t, provider.GetRootScope())
 
 		scope := provider.CreateScope(context.Background())
 		t.Cleanup(func() {
@@ -418,7 +418,7 @@ func TestServiceProvider_Disposal(t *testing.T) {
 		})
 
 		// Resolve to create instance
-		d := testutil.AssertServiceResolvable[*testutil.TestDisposable](t, provider)
+		d := testutil.AssertServiceResolvable[*testutil.TestDisposable](t, provider.GetRootScope())
 		assert.False(t, d.IsDisposed())
 
 		// Close provider
@@ -459,7 +459,7 @@ func TestServiceProvider_Disposal(t *testing.T) {
 		})
 
 		// Resolve to create instance
-		testutil.AssertServiceResolvable[*testutil.TestDisposable](t, provider)
+		testutil.AssertServiceResolvable[*testutil.TestDisposable](t, provider.GetRootScope())
 
 		// Close should return the error
 		err := provider.Close()
@@ -492,9 +492,9 @@ func TestServiceProvider_Disposal(t *testing.T) {
 		})
 
 		// Resolve all services to create instances
-		testutil.AssertKeyedServiceResolvable[godi.Disposable](t, provider, "second")
-		testutil.AssertKeyedServiceResolvable[godi.Disposable](t, provider, "first")
-		testutil.AssertKeyedServiceResolvable[godi.Disposable](t, provider, "third")
+		testutil.AssertKeyedServiceResolvable[godi.Disposable](t, provider.GetRootScope(), "second")
+		testutil.AssertKeyedServiceResolvable[godi.Disposable](t, provider.GetRootScope(), "first")
+		testutil.AssertKeyedServiceResolvable[godi.Disposable](t, provider.GetRootScope(), "third")
 
 		require.NoError(t, provider.Close())
 
@@ -537,7 +537,7 @@ func TestServiceProvider_CircularDependency(t *testing.T) {
 		})
 
 		// Try to resolve - should fail
-		_, err = godi.Resolve[*testutil.CircularServiceA](provider)
+		_, err = godi.Resolve[*testutil.CircularServiceA](provider.GetRootScope())
 		testutil.AssertCircularDependency(t, err)
 	})
 }
@@ -568,15 +568,15 @@ func TestServiceProvider_Concurrency(t *testing.T) {
 				// Mix of different service resolutions
 				switch idx % 3 {
 				case 0:
-					svc, err := godi.Resolve[testutil.TestLogger](provider)
+					svc, err := godi.Resolve[testutil.TestLogger](provider.GetRootScope())
 					services[idx] = svc
 					errors[idx] = err
 				case 1:
-					svc, err := godi.Resolve[testutil.TestDatabase](provider)
+					svc, err := godi.Resolve[testutil.TestDatabase](provider.GetRootScope())
 					services[idx] = svc
 					errors[idx] = err
 				case 2:
-					svc, err := godi.Resolve[*testutil.TestService](provider)
+					svc, err := godi.Resolve[*testutil.TestService](provider.GetRootScope())
 					services[idx] = svc
 					errors[idx] = err
 				}
@@ -676,9 +676,9 @@ func TestServiceProvider_ResultObjects(t *testing.T) {
 		})
 
 		// All services from result should be resolvable
-		service := testutil.AssertServiceResolvable[*testutil.TestService](t, provider)
-		logger := testutil.AssertKeyedServiceResolvable[testutil.TestLogger](t, provider, "service")
-		databases := testutil.AssertGroupServiceResolvable[testutil.TestDatabase](t, provider, "databases")
+		service := testutil.AssertServiceResolvable[*testutil.TestService](t, provider.GetRootScope())
+		logger := testutil.AssertKeyedServiceResolvable[testutil.TestLogger](t, provider.GetRootScope(), "service")
+		databases := testutil.AssertGroupServiceResolvable[testutil.TestDatabase](t, provider.GetRootScope(), "databases")
 
 		assert.NotNil(t, service)
 		assert.NotNil(t, logger)
@@ -705,7 +705,7 @@ func TestServiceProvider_ProviderCallback(t *testing.T) {
 		})
 
 		// Resolve to trigger callback
-		logger := testutil.AssertServiceResolvable[testutil.TestLogger](t, provider)
+		logger := testutil.AssertServiceResolvable[testutil.TestLogger](t, provider.GetRootScope())
 		assert.NotNil(t, logger)
 		assert.True(t, callbackInvoked, "callback should have been invoked")
 	})
@@ -761,7 +761,7 @@ func TestServiceProvider_ResolutionTimeout(t *testing.T) {
 		})
 
 		// Resolution should timeout
-		_, err := godi.Resolve[testutil.TestLogger](provider)
+		_, err := godi.Resolve[testutil.TestLogger](provider.GetRootScope())
 		testutil.AssertTimeout(t, err)
 	})
 }
@@ -788,7 +788,7 @@ func TestServiceProvider_DryRun(t *testing.T) {
 		})
 
 		// Try to resolve - in dry run mode this might fail or return nil
-		_, _ = godi.Resolve[testutil.TestLogger](provider)
+		_, _ = godi.Resolve[testutil.TestLogger](provider.GetRootScope())
 
 		assert.False(t, constructed, "constructor should not be called in dry run mode")
 	})
@@ -916,7 +916,7 @@ func TestServiceProvider_AdvancedScenarios(t *testing.T) {
 		})
 
 		// Resolve the most complex service
-		d := testutil.AssertServiceResolvable[*ServiceD](t, provider)
+		d := testutil.AssertServiceResolvable[*ServiceD](t, provider.GetRootScope())
 
 		// Verify the entire graph
 		assert.Equal(t, "A", d.A.Name)
@@ -949,7 +949,7 @@ func TestServiceProvider_AdvancedScenarios(t *testing.T) {
 			require.NoError(t, provider.Close())
 		})
 
-		service := testutil.AssertServiceResolvable[*ServiceWithOptional](t, provider)
+		service := testutil.AssertServiceResolvable[*ServiceWithOptional](t, provider.GetRootScope())
 		assert.NotNil(t, service.Logger)
 		assert.Nil(t, service.Cache) // Optional dependency not registered
 	})
@@ -1038,7 +1038,7 @@ func TestGroupOption(t *testing.T) {
 		})
 
 		// Resolve the group
-		handlers, err := godi.ResolveGroup[testutil.TestHandler](provider, "handlers")
+		handlers, err := godi.ResolveGroup[testutil.TestHandler](provider.GetRootScope(), "handlers")
 		require.NoError(t, err)
 		assert.Len(t, handlers, 3)
 
@@ -1061,7 +1061,7 @@ func TestGroupOption(t *testing.T) {
 		})
 
 		// Should return empty slice, not error
-		handlers, err := godi.ResolveGroup[testutil.TestHandler](provider, "nonexistent")
+		handlers, err := godi.ResolveGroup[testutil.TestHandler](provider.GetRootScope(), "nonexistent")
 		require.NoError(t, err)
 		assert.Empty(t, handlers)
 	})
@@ -1085,13 +1085,13 @@ func TestAsOption(t *testing.T) {
 		})
 
 		// Should be able to resolve as interface
-		repo, err := godi.Resolve[TestRepository](provider)
+		repo, err := godi.Resolve[TestRepository](provider.GetRootScope())
 		require.NoError(t, err)
 		assert.Equal(t, "user", repo.Get())
 
 		// Should NOT be able to resolve as concrete type when using As
 		// (unless also registered separately)
-		_, err = godi.Resolve[*testUserRepository](provider)
+		_, err = godi.Resolve[*testUserRepository](provider.GetRootScope())
 		assert.Error(t, err)
 	})
 
@@ -1111,16 +1111,16 @@ func TestAsOption(t *testing.T) {
 		})
 
 		// Should resolve as both interfaces
-		reader, err := godi.Resolve[TestReader](provider)
+		reader, err := godi.Resolve[TestReader](provider.GetRootScope())
 		require.NoError(t, err)
 		assert.Equal(t, "initial", reader.Read())
 
-		writer, err := godi.Resolve[TestWriter](provider)
+		writer, err := godi.Resolve[TestWriter](provider.GetRootScope())
 		require.NoError(t, err)
 		writer.Write("updated")
 
 		// Both should be the same instance (singleton)
-		reader2, _ := godi.Resolve[TestReader](provider)
+		reader2, _ := godi.Resolve[TestReader](provider.GetRootScope())
 		assert.Equal(t, "updated", reader2.Read())
 	})
 }
@@ -1149,7 +1149,7 @@ func TestGroupWithAsOption(t *testing.T) {
 		})
 
 		// Resolve the group
-		group, err := godi.ResolveGroup[GroupAsTestInterface](provider, "test-group")
+		group, err := godi.ResolveGroup[GroupAsTestInterface](provider.GetRootScope(), "test-group")
 		require.NoError(t, err)
 
 		// Should return exactly 2 services, not 4
@@ -1200,7 +1200,7 @@ func TestGroupWithAsOption(t *testing.T) {
 		})
 
 		// Resolve the group
-		controllers, err := godi.ResolveGroup[TestController](provider, "routes")
+		controllers, err := godi.ResolveGroup[TestController](provider.GetRootScope(), "routes")
 		require.NoError(t, err)
 
 		// Should return exactly 4 controllers
@@ -1250,7 +1250,7 @@ func TestGroupWithoutAsOption(t *testing.T) {
 		require.NoError(t, provider.Close())
 	})
 
-	handlers, err := godi.ResolveGroup[SimpleHandler](provider, "handlers")
+	handlers, err := godi.ResolveGroup[SimpleHandler](provider.GetRootScope(), "handlers")
 	require.NoError(t, err)
 	assert.Len(t, handlers, 2)
 }
@@ -1265,7 +1265,7 @@ func TestServiceProvider_BuiltInServices(t *testing.T) {
 		})
 
 		// Should be able to resolve ServiceProvider
-		resolvedProvider, err := godi.Resolve[godi.ServiceProvider](provider)
+		resolvedProvider, err := godi.Resolve[godi.ServiceProvider](provider.GetRootScope())
 		require.NoError(t, err)
 		assert.NotNil(t, resolvedProvider)
 
@@ -1282,7 +1282,7 @@ func TestServiceProvider_BuiltInServices(t *testing.T) {
 		})
 
 		// Should be able to resolve context.Context
-		ctx, err := godi.Resolve[context.Context](provider)
+		ctx, err := godi.Resolve[context.Context](provider.GetRootScope())
 		require.NoError(t, err)
 		assert.NotNil(t, ctx)
 
@@ -1299,7 +1299,7 @@ func TestServiceProvider_BuiltInServices(t *testing.T) {
 		})
 
 		// Should be able to resolve Scope
-		scope, err := godi.Resolve[godi.Scope](provider)
+		scope, err := godi.Resolve[godi.Scope](provider.GetRootScope())
 		require.NoError(t, err)
 		assert.NotNil(t, scope)
 
@@ -1332,7 +1332,7 @@ func TestServiceProvider_BuiltInServices(t *testing.T) {
 		})
 
 		// Should be able to resolve the service
-		service, err := godi.Resolve[*ServiceWithBuiltIns](provider)
+		service, err := godi.Resolve[*ServiceWithBuiltIns](provider.GetRootScope())
 		require.NoError(t, err)
 		assert.NotNil(t, service)
 		assert.NotNil(t, service.Context)
@@ -1418,7 +1418,7 @@ func TestServiceProvider_Decorate(t *testing.T) {
 		require.NoError(t, err)
 
 		// Resolve should return decorated logger
-		logger, err := godi.Resolve[testutil.TestLogger](provider)
+		logger, err := godi.Resolve[testutil.TestLogger](provider.GetRootScope())
 		require.NoError(t, err)
 
 		decorated, ok := logger.(*testutil.DecoratedLogger)
@@ -1455,7 +1455,7 @@ func TestServiceProvider_Decorate(t *testing.T) {
 		require.NoError(t, err)
 
 		// Resolve decorated logger
-		logger, err := godi.Resolve[testutil.TestLogger](provider)
+		logger, err := godi.Resolve[testutil.TestLogger](provider.GetRootScope())
 		require.NoError(t, err)
 
 		decorated, ok := logger.(*testutil.DecoratedLogger)
@@ -1499,9 +1499,9 @@ func TestServiceProvider_Decorate(t *testing.T) {
 		require.NoError(t, err)
 
 		// Resolve both services
-		logger, err := godi.Resolve[testutil.TestLogger](provider)
+		logger, err := godi.Resolve[testutil.TestLogger](provider.GetRootScope())
 		require.NoError(t, err)
-		db, err := godi.Resolve[testutil.TestDatabase](provider)
+		db, err := godi.Resolve[testutil.TestDatabase](provider.GetRootScope())
 		require.NoError(t, err)
 
 		assert.True(t, decorateCalled)
@@ -1629,7 +1629,7 @@ func TestServiceProvider_Decorate(t *testing.T) {
 		require.NoError(t, err)
 
 		// Resolve wrapper should have both decorations
-		wrapper, err := godi.Resolve[*LoggerWrapper](provider)
+		wrapper, err := godi.Resolve[*LoggerWrapper](provider.GetRootScope())
 		require.NoError(t, err)
 
 		// Should be wrapped as [SECOND] -> [FIRST] -> original
@@ -1679,7 +1679,7 @@ func TestServiceProvider_Decorate(t *testing.T) {
 		require.NoError(t, err)
 
 		// Resolve keyed service
-		logger, err := godi.ResolveKeyed[testutil.TestLogger](provider, "primary")
+		logger, err := godi.ResolveKeyed[testutil.TestLogger](provider.GetRootScope(), "primary")
 		require.NoError(t, err)
 
 		decorated, ok := logger.(*testutil.DecoratedLogger)
@@ -1731,7 +1731,7 @@ func TestServiceProvider_Decorate(t *testing.T) {
 		require.NoError(t, err)
 
 		// Resolve group
-		handlers, err := godi.ResolveGroup[testutil.TestHandler](provider, "handlers")
+		handlers, err := godi.ResolveGroup[testutil.TestHandler](provider.GetRootScope(), "handlers")
 		require.NoError(t, err)
 		assert.Len(t, handlers, 2)
 
@@ -1768,7 +1768,7 @@ func TestServiceProvider_Decorate(t *testing.T) {
 		// Let's test by trying to resolve
 		if err == nil {
 			// If decorator was accepted, resolution should fail
-			_, resolveErr := godi.Resolve[testutil.TestLogger](provider)
+			_, resolveErr := godi.Resolve[testutil.TestLogger](provider.GetRootScope())
 			assert.Error(t, resolveErr, "resolution should fail for non-existent service")
 		} else {
 			// If decorator was rejected immediately, that's also valid
@@ -1826,7 +1826,7 @@ func TestServiceProvider_Decorate(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		logger, err := godi.Resolve[testutil.TestLogger](provider)
+		logger, err := godi.Resolve[testutil.TestLogger](provider.GetRootScope())
 		require.NoError(t, err)
 
 		assert.True(t, decorateCalled)
@@ -1869,7 +1869,7 @@ func TestServiceProvider_Decorate(t *testing.T) {
 		assert.Equal(t, "[SCOPE] ", decorated.Prefix)
 
 		// Resolution in provider should return original
-		providerLogger, err := godi.Resolve[testutil.TestLogger](provider)
+		providerLogger, err := godi.Resolve[testutil.TestLogger](provider.GetRootScope())
 		require.NoError(t, err)
 		_, isDecorated := providerLogger.(*testutil.DecoratedLogger)
 		assert.False(t, isDecorated, "provider should have original logger")
