@@ -917,10 +917,10 @@ type typeKeyPair struct {
 }
 
 // Resolve is a generic helper function that returns the service as type T.
-func Resolve[T any](s ServiceProvider) (T, error) {
+func Resolve[T any](s Scope) (T, error) {
 	var zero T
 	if s == nil {
-		return zero, ErrNilServiceProvider
+		return zero, ErrNilScope
 	}
 
 	serviceType, err := determineServiceType[T]()
@@ -937,10 +937,10 @@ func Resolve[T any](s ServiceProvider) (T, error) {
 }
 
 // ResolveKeyed is a generic helper function that returns the keyed service as type T.
-func ResolveKeyed[T any](s ServiceProvider, serviceKey interface{}) (T, error) {
+func ResolveKeyed[T any](s Scope, serviceKey interface{}) (T, error) {
 	var zero T
 	if s == nil {
-		return zero, ErrNilServiceProvider
+		return zero, ErrNilScope
 	}
 
 	serviceType, err := determineServiceType[T]()
@@ -957,9 +957,9 @@ func ResolveKeyed[T any](s ServiceProvider, serviceKey interface{}) (T, error) {
 }
 
 // ResolveGroup is a generic helper function that returns the group services as type []T.
-func ResolveGroup[T any](s ServiceProvider, groupName string) ([]T, error) {
+func ResolveGroup[T any](s Scope, groupName string) ([]T, error) {
 	if s == nil {
-		return nil, ErrNilServiceProvider
+		return nil, ErrNilScope
 	}
 
 	serviceType, err := determineServiceType[T]()

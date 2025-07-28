@@ -156,7 +156,7 @@ func TestDefaultServiceProvider_RealWorldUsage(t *testing.T) {
 		provider := godi.DefaultServiceProvider()
 		require.NotNil(t, provider)
 
-		logger := testutil.AssertServiceResolvable[testutil.TestLogger](t, provider)
+		logger := testutil.AssertServiceResolvable[testutil.TestLogger](t, provider.GetRootScope())
 		assert.NotNil(t, logger)
 	})
 

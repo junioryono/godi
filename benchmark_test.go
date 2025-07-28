@@ -78,15 +78,15 @@ func BenchmarkServiceResolution(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				switch bm.name {
 				case "singleton_simple":
-					_, _ = godi.Resolve[testutil.TestLogger](provider)
+					_, _ = godi.Resolve[testutil.TestLogger](provider.GetRootScope())
 				case "singleton_with_deps":
-					_, _ = godi.Resolve[*testutil.TestServiceWithDeps](provider)
+					_, _ = godi.Resolve[*testutil.TestServiceWithDeps](provider.GetRootScope())
 				case "scoped_simple":
-					_, _ = godi.Resolve[*testutil.TestService](provider)
+					_, _ = godi.Resolve[*testutil.TestService](provider.GetRootScope())
 				case "keyed_service":
-					_, _ = godi.ResolveKeyed[testutil.TestLogger](provider, "primary")
+					_, _ = godi.ResolveKeyed[testutil.TestLogger](provider.GetRootScope(), "primary")
 				case "group_services":
-					_, _ = godi.ResolveGroup[testutil.TestHandler](provider, "handlers")
+					_, _ = godi.ResolveGroup[testutil.TestHandler](provider.GetRootScope(), "handlers")
 				}
 			}
 		})
@@ -152,8 +152,8 @@ func BenchmarkConcurrentResolution(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			// Mix of resolutions
-			_, _ = godi.Resolve[testutil.TestLogger](provider)
-			_, _ = godi.Resolve[testutil.TestDatabase](provider)
+			_, _ = godi.Resolve[testutil.TestLogger](provider.GetRootScope())
+			_, _ = godi.Resolve[testutil.TestDatabase](provider.GetRootScope())
 
 			scope := provider.CreateScope(context.Background())
 			_, _ = godi.Resolve[*testutil.TestService](scope)
@@ -187,7 +187,7 @@ func BenchmarkParameterObjects(b *testing.B) {
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		_, _ = godi.Resolve[*testutil.TestService](provider)
+		_, _ = godi.Resolve[*testutil.TestService](provider.GetRootScope())
 	}
 }
 
@@ -214,14 +214,14 @@ func BenchmarkResultObjects(b *testing.B) {
 	defer provider.Close()
 
 	// Force creation
-	_, _ = godi.Resolve[*testutil.TestService](provider)
+	_, _ = godi.Resolve[*testutil.TestService](provider.GetRootScope())
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	// Subsequent resolutions should be cached
 	for i := 0; i < b.N; i++ {
-		_, _ = godi.Resolve[*testutil.TestService](provider)
+		_, _ = godi.Resolve[*testutil.TestService](provider.GetRootScope())
 	}
 }
 
@@ -267,7 +267,7 @@ func BenchmarkComplexDependencyGraph(b *testing.B) {
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		_, _ = godi.Resolve[*Level1](provider)
+		_, _ = godi.Resolve[*Level1](provider.GetRootScope())
 	}
 }
 
@@ -352,9 +352,9 @@ func BenchmarkDisposal(b *testing.B) {
 				// Force creation of all services
 				for j := 0; j < bm.serviceCount; j++ {
 					if float64(j)/float64(bm.serviceCount) < bm.disposalRatio {
-						_, _ = godi.Resolve[*testutil.TestDisposable](provider)
+						_, _ = godi.Resolve[*testutil.TestDisposable](provider.GetRootScope())
 					} else {
-						_, _ = godi.Resolve[string](provider)
+						_, _ = godi.Resolve[string](provider.GetRootScope())
 					}
 				}
 

@@ -377,7 +377,7 @@ func TestServiceDescriptor_Metadata(t *testing.T) {
 			require.NoError(t, provider.Close())
 		})
 
-		handlers, err := godi.ResolveGroup[testutil.TestHandler](provider, "handlers")
+		handlers, err := godi.ResolveGroup[testutil.TestHandler](provider.GetRootScope(), "handlers")
 		require.NoError(t, err)
 		assert.Len(t, handlers, 1)
 	})
