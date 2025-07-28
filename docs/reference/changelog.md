@@ -2,6 +2,24 @@
 
 All notable changes to godi are documented here. This project follows [Semantic Versioning](https://semver.org/) and uses [Conventional Commits](https://www.conventionalcommits.org/) for automatic versioning.
 
+## [3.0.0](https://github.com/junioryono/godi/compare/v2.1.0...v3.0.0) (2025-07-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* All resolution functions (Resolve, ResolveKeyed, ResolveGroup)
+now accept a Scope parameter instead of ServiceProvider. This enforces proper
+lifetime constraints between Singleton and Scoped services.
+
+Migration: Replace ServiceProvider parameters with Scope in all calls to:
+- Resolve[T](s ServiceProvider) -> Resolve[T](s Scope)
+- ResolveKeyed[T](s ServiceProvider, key) -> ResolveKeyed[T](s Scope, key)
+- ResolveGroup[T](s ServiceProvider, group) -> ResolveGroup[T](s Scope, group)
+
+### Features
+
+* replace ServiceProvider with Scope in resolution functions ([f131f95](https://github.com/junioryono/godi/commit/f131f9576e358aa0d98a6c1b93a8d5f2bd869a96))
+
 ## [2.1.0](https://github.com/junioryono/godi/compare/v2.0.5...v2.1.0) (2025-07-22)
 
 
