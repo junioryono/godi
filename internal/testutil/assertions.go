@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/junioryono/godi/v2"
+	"github.com/junioryono/godi/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

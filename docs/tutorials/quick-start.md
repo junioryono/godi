@@ -5,7 +5,7 @@ Start simple, add features as you need them. Here's godi from zero to hero.
 ## Install
 
 ```bash
-go get github.com/junioryono/godi/v2
+go get github.com/junioryono/godi/v3
 ```
 
 ## Level 1: Basic DI (Start Here!)
@@ -17,7 +17,7 @@ package main
 
 import (
     "fmt"
-    "github.com/junioryono/godi/v2"
+    "github.com/junioryono/godi/v3"
 )
 
 // Your service

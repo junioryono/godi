@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/junioryono/godi/v2"
+	"github.com/junioryono/godi/v3"
 )
 
 // Common test errors

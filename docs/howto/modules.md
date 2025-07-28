@@ -10,7 +10,7 @@ Start simple - group related services:
 // email/module.go
 package email
 
-import "github.com/junioryono/godi/v2"
+import "github.com/junioryono/godi/v3"
 
 var Module = godi.NewModule("email",
     godi.AddSingleton(NewSMTPClient),

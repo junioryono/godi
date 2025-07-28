@@ -1,4 +1,4 @@
-module github.com/junioryono/godi/v2
+module github.com/junioryono/godi/v3
 
 go 1.24.3
 

@@ -11,7 +11,7 @@ Let's build a real web API in 10 minutes. We'll create a user service with authe
 ## Installation
 
 ```bash
-go get github.com/junioryono/godi/v2
+go get github.com/junioryono/godi/v3
 ```
 
 ## Your First App: User API
@@ -114,7 +114,7 @@ This is where godi shines. Create **modules/modules.go**:
 package modules
 
 import (
-    "github.com/junioryono/godi/v2"
+    "github.com/junioryono/godi/v3"
     "myapp/services"
 )
 
@@ -147,7 +147,7 @@ import (
     "log"
     "net/http"
 
-    "github.com/junioryono/godi/v2"
+    "github.com/junioryono/godi/v3"
     "myapp/modules"
     "myapp/services"
 )
@@ -260,7 +260,7 @@ package services_test
 
 import (
     "testing"
-    "github.com/junioryono/godi/v2"
+    "github.com/junioryono/godi/v3"
     "myapp/services"
 )
 
