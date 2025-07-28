@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/junioryono/godi/v2"
-	"github.com/junioryono/godi/v2/internal/testutil"
+	"github.com/junioryono/godi/v3"
+	"github.com/junioryono/godi/v3/internal/testutil"
 )
 
 // Benchmarks to measure performance of key operations

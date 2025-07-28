@@ -10,7 +10,7 @@ Get up and running in 30 seconds.
 ## Install
 
 ```bash
-go get github.com/junioryono/godi/v2
+go get github.com/junioryono/godi/v3
 ```
 
 ## Verify Installation
@@ -22,7 +22,7 @@ package main
 
 import (
     "fmt"
-    "github.com/junioryono/godi/v2"
+    "github.com/junioryono/godi/v3"
 )
 
 func main() {
@@ -79,7 +79,7 @@ Make sure you're in a Go module:
 
 ```bash
 go mod init myapp
-go get github.com/junioryono/godi/v2
+go get github.com/junioryono/godi/v3
 ```
 
 ### "Cannot find package"

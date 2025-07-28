@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/junioryono/godi/v2/internal/typecache"
+	"github.com/junioryono/godi/v3/internal/typecache"
 	"go.uber.org/dig"
 )
 

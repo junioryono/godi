@@ -3,7 +3,7 @@ package testutil
 import (
 	"testing"
 
-	"github.com/junioryono/godi/v2"
+	"github.com/junioryono/godi/v3"
 	"github.com/stretchr/testify/assert"
 )
 
