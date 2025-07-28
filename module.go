@@ -41,21 +41,21 @@ func NewModule(name string, builders ...ModuleOption) ModuleOption {
 }
 
 // AddSingleton creates a ModuleBuilder for adding a singleton service.
-func AddSingleton(constructor interface{}, opts ...ProvideOption) ModuleOption {
+func AddSingleton(constructor any, opts ...ProvideOption) ModuleOption {
 	return func(s ServiceProvider) error {
 		return s.AddSingleton(constructor, opts...)
 	}
 }
 
 // AddScoped creates a ModuleBuilder for adding a scoped service.
-func AddScoped(constructor interface{}, opts ...ProvideOption) ModuleOption {
+func AddScoped(constructor any, opts ...ProvideOption) ModuleOption {
 	return func(s ServiceProvider) error {
 		return s.AddScoped(constructor, opts...)
 	}
 }
 
 // AddDecorator creates a ModuleBuilder for adding a decorator.
-func AddDecorator(decorator interface{}, opts ...DecorateOption) ModuleOption {
+func AddDecorator(decorator any, opts ...DecorateOption) ModuleOption {
 	return func(s ServiceProvider) error {
 		return s.Decorate(decorator, opts...)
 	}

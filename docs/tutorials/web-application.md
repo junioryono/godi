@@ -255,7 +255,7 @@ func (s *AuthService) Login(username, password string) (string, *models.User, er
 }
 
 func (s *AuthService) ValidateToken(tokenString string) (string, error) {
-    token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+    token, err := jwt.Parse(tokenString, func(token *jwt.Token) (any, error) {
         return []byte(s.jwtSecret), nil
     })
 

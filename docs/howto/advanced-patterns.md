@@ -370,7 +370,7 @@ func NewCircuitBreaker(service ExternalService) *CircuitBreaker {
     }
 }
 
-func (cb *CircuitBreaker) Call(ctx context.Context, request interface{}) (interface{}, error) {
+func (cb *CircuitBreaker) Call(ctx context.Context, request any) (any, error) {
     cb.mu.Lock()
     defer cb.mu.Unlock()
 

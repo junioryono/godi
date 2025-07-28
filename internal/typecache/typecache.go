@@ -340,7 +340,7 @@ func canCheckNilCached(v reflect.Value) bool {
 
 // clearTypeCache clears the global type cache. Useful for testing.
 func clearTypeCache() {
-	tc.cache.Range(func(key, value interface{}) bool {
+	tc.cache.Range(func(key, value any) bool {
 		tc.cache.Delete(key)
 		return true
 	})

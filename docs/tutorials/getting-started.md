@@ -63,10 +63,10 @@ func NewDatabase(logger Logger) *Database {
     return &Database{logger: logger}
 }
 
-func (db *Database) Query(sql string) []map[string]interface{} {
+func (db *Database) Query(sql string) []map[string]any {
     db.logger.Info("Executing: " + sql)
     // Simulate database query
-    return []map[string]interface{}{
+    return []map[string]any{
         {"id": 1, "name": "Alice"},
         {"id": 2, "name": "Bob"},
     }
@@ -224,16 +224,16 @@ Want to add caching? Just update the module:
 ```go
 // services/cache.go
 type Cache interface {
-    Get(key string) (interface{}, bool)
-    Set(key string, value interface{})
+    Get(key string) (any, bool)
+    Set(key string, value any)
 }
 
 type MemoryCache struct {
-    data map[string]interface{}
+    data map[string]any
 }
 
 func NewCache() Cache {
-    return &MemoryCache{data: make(map[string]interface{})}
+    return &MemoryCache{data: make(map[string]any)}
 }
 
 // Update UserService constructor
@@ -267,8 +267,8 @@ import (
 // Mock implementations
 type MockDatabase struct{}
 
-func (m *MockDatabase) Query(sql string) []map[string]interface{} {
-    return []map[string]interface{}{
+func (m *MockDatabase) Query(sql string) []map[string]any {
+    return []map[string]any{
         {"id": 1, "name": "Test User"},
     }
 }

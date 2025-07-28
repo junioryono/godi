@@ -43,7 +43,7 @@ Callback after successful service resolution.
 
 ```go
 options := &ServiceProviderOptions{
-    OnServiceResolved: func(serviceType reflect.Type, instance interface{}, duration time.Duration) {
+    OnServiceResolved: func(serviceType reflect.Type, instance any, duration time.Duration) {
         // Logging
         log.Printf("[DI] Resolved %s in %v", serviceType, duration)
 
@@ -132,7 +132,7 @@ func GetProviderOptions() *godi.ServiceProviderOptions {
         ValidateOnBuild: true,
 
         // Monitor performance
-        OnServiceResolved: func(serviceType reflect.Type, instance interface{}, duration time.Duration) {
+        OnServiceResolved: func(serviceType reflect.Type, instance any, duration time.Duration) {
             monitoring.RecordServiceResolution(serviceType, duration)
 
             if duration > 500*time.Millisecond {
@@ -181,7 +181,7 @@ func GetProviderOptions() *godi.ServiceProviderOptions {
         ValidateOnBuild: true,
 
         // Verbose logging
-        OnServiceResolved: func(serviceType reflect.Type, instance interface{}, duration time.Duration) {
+        OnServiceResolved: func(serviceType reflect.Type, instance any, duration time.Duration) {
             log.Printf("[DEV] Resolved %s in %v", serviceType, duration)
         },
 
@@ -204,7 +204,7 @@ func GetProviderOptions() *godi.ServiceProviderOptions {
         ValidateOnBuild: true,
 
         // Send to monitoring service
-        OnServiceResolved: func(serviceType reflect.Type, instance interface{}, duration time.Duration) {
+        OnServiceResolved: func(serviceType reflect.Type, instance any, duration time.Duration) {
             metrics.ServiceResolutionDuration.
                 WithLabelValues(serviceType.String()).
                 Observe(duration.Seconds())
@@ -242,7 +242,7 @@ type ServiceProviderOptions struct {
     ValidateOnBuild bool
 
     // Called after successful resolution
-    OnServiceResolved func(serviceType reflect.Type, instance interface{}, duration time.Duration)
+    OnServiceResolved func(serviceType reflect.Type, instance any, duration time.Duration)
 
     // Called on resolution error
     OnServiceError func(serviceType reflect.Type, err error)
