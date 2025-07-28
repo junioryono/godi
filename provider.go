@@ -40,17 +40,17 @@ type ServiceProvider interface {
 
 	// AddSingleton registers a service with singleton lifetime.
 	// Only one instance is created and shared across all resolutions.
-	AddSingleton(constructor interface{}, opts ...ProvideOption) error
+	AddSingleton(constructor any, opts ...ProvideOption) error
 
 	// AddScoped registers a service with scoped lifetime.
 	// One instance is created per scope and shared within that scope.
-	AddScoped(constructor interface{}, opts ...ProvideOption) error
+	AddScoped(constructor any, opts ...ProvideOption) error
 
 	// AddService registers a service with the specified lifetime.
-	AddService(lifetime ServiceLifetime, constructor interface{}, opts ...ProvideOption) error
+	AddService(lifetime ServiceLifetime, constructor any, opts ...ProvideOption) error
 
 	// Replace replaces all registrations of the specified service type.
-	Replace(lifetime ServiceLifetime, constructor interface{}, opts ...ProvideOption) error
+	Replace(lifetime ServiceLifetime, constructor any, opts ...ProvideOption) error
 
 	// RemoveAll removes all registrations of the specified service type.
 	RemoveAll(serviceType reflect.Type) error
@@ -68,29 +68,29 @@ type ServiceProvider interface {
 	CreateScope(ctx context.Context) Scope
 
 	// Resolve gets the service object of the specified type.
-	Resolve(serviceType reflect.Type) (interface{}, error)
+	Resolve(serviceType reflect.Type) (any, error)
 
 	// ResolveKeyed gets the service object of the specified type with the specified key.
-	ResolveKeyed(serviceType reflect.Type, serviceKey interface{}) (interface{}, error)
+	ResolveKeyed(serviceType reflect.Type, serviceKey any) (any, error)
 
 	// ResolveGroup gets all services of the specified type registered in a group.
 	// This is useful for plugin systems or when you need multiple implementations.
-	ResolveGroup(serviceType reflect.Type, groupName string) ([]interface{}, error)
+	ResolveGroup(serviceType reflect.Type, groupName string) ([]any, error)
 
 	// IsService determines whether the specified service type is available.
 	// This is useful for optional dependencies.
 	IsService(serviceType reflect.Type) bool
 
 	// IsKeyedService determines whether the specified keyed service type is available.
-	IsKeyedService(serviceType reflect.Type, serviceKey interface{}) bool
+	IsKeyedService(serviceType reflect.Type, serviceKey any) bool
 
 	// Decorate provides a decorator for a type that has already been provided in the Scope.
-	Decorate(decorator interface{}, opts ...DecorateOption) error
+	Decorate(decorator any, opts ...DecorateOption) error
 
 	// Invoke executes a function with dependency injection.
 	// All parameters of the function are resolved from the container.
 	// The function can optionally return an error.
-	Invoke(function interface{}) error
+	Invoke(function any) error
 
 	// IsDisposed returns true if the provider has been disposed.
 	IsDisposed() bool
@@ -102,7 +102,7 @@ type ServiceProvider interface {
 type ServiceProviderOptions struct {
 	// OnServiceResolved is called after a service is successfully resolved.
 	// This can be used for logging, metrics, or debugging.
-	OnServiceResolved func(serviceType reflect.Type, instance interface{}, duration time.Duration)
+	OnServiceResolved func(serviceType reflect.Type, instance any, duration time.Duration)
 
 	// OnServiceError is called when a service resolution fails.
 	// This can be used for error tracking and debugging.
@@ -260,17 +260,17 @@ func (sp *serviceProvider) AddModules(modules ...ModuleOption) error {
 }
 
 // AddSingleton adds a singleton service to the provider.
-func (sp *serviceProvider) AddSingleton(constructor interface{}, opts ...ProvideOption) error {
+func (sp *serviceProvider) AddSingleton(constructor any, opts ...ProvideOption) error {
 	return sp.AddService(Singleton, constructor, opts...)
 }
 
 // AddScoped adds a scoped service to the provider.
-func (sp *serviceProvider) AddScoped(constructor interface{}, opts ...ProvideOption) error {
+func (sp *serviceProvider) AddScoped(constructor any, opts ...ProvideOption) error {
 	return sp.AddService(Scoped, constructor, opts...)
 }
 
 // AddService adds a service with the specified lifetime.
-func (sp *serviceProvider) AddService(lifetime ServiceLifetime, constructor interface{}, opts ...ProvideOption) error {
+func (sp *serviceProvider) AddService(lifetime ServiceLifetime, constructor any, opts ...ProvideOption) error {
 	if sp.IsDisposed() {
 		return ErrProviderDisposed
 	}
@@ -454,7 +454,7 @@ func (sp *serviceProvider) removeFromIndexes(descriptor *serviceDescriptor) {
 }
 
 // Replace replaces all registrations of the specified service type.
-func (sp *serviceProvider) Replace(lifetime ServiceLifetime, constructor interface{}, opts ...ProvideOption) error {
+func (sp *serviceProvider) Replace(lifetime ServiceLifetime, constructor any, opts ...ProvideOption) error {
 	if sp.IsDisposed() {
 		return ErrProviderDisposed
 	}
@@ -479,7 +479,7 @@ func (sp *serviceProvider) Replace(lifetime ServiceLifetime, constructor interfa
 	}
 
 	// Extract the service key if provided in options
-	var serviceKey interface{}
+	var serviceKey any
 	for _, opt := range opts {
 		if opt == nil {
 			continue
@@ -605,7 +605,7 @@ func (sp *serviceProvider) removeNonKeyedByTypeInternal(serviceType reflect.Type
 }
 
 // removeByTypeAndKeyInternal removes only descriptors with specific type and key.
-func (sp *serviceProvider) removeByTypeAndKeyInternal(serviceType reflect.Type, serviceKey interface{}) {
+func (sp *serviceProvider) removeByTypeAndKeyInternal(serviceType reflect.Type, serviceKey any) {
 	// Create new slice without the removed descriptors
 	newDescriptors := make([]*serviceDescriptor, 0, len(sp.descriptors))
 
@@ -677,7 +677,7 @@ func (sp *serviceProvider) registerSingletonService(desc *serviceDescriptor) err
 }
 
 // wrapSingletonConstructor wraps a singleton constructor to track disposable instances.
-func (sp *serviceProvider) wrapSingletonConstructor(constructor interface{}) interface{} {
+func (sp *serviceProvider) wrapSingletonConstructor(constructor any) any {
 	fnType := reflect.TypeOf(constructor)
 	fnInfo := typecache.GetTypeInfo(fnType)
 	fnValue := reflect.ValueOf(constructor)
@@ -745,7 +745,7 @@ func (sp *serviceProvider) CreateScope(ctx context.Context) Scope {
 }
 
 // Resolve gets the service object of the specified type.
-func (sp *serviceProvider) Resolve(serviceType reflect.Type) (interface{}, error) {
+func (sp *serviceProvider) Resolve(serviceType reflect.Type) (any, error) {
 	if sp.IsDisposed() {
 		return nil, ErrProviderDisposed
 	}
@@ -758,7 +758,7 @@ func (sp *serviceProvider) Resolve(serviceType reflect.Type) (interface{}, error
 }
 
 // ResolveKeyed gets the service object of the specified type with the specified key.
-func (sp *serviceProvider) ResolveKeyed(serviceType reflect.Type, serviceKey interface{}) (interface{}, error) {
+func (sp *serviceProvider) ResolveKeyed(serviceType reflect.Type, serviceKey any) (any, error) {
 	if sp.IsDisposed() {
 		return nil, ErrProviderDisposed
 	}
@@ -775,7 +775,7 @@ func (sp *serviceProvider) ResolveKeyed(serviceType reflect.Type, serviceKey int
 }
 
 // ResolveGroup gets all services of the specified type registered in a group.
-func (sp *serviceProvider) ResolveGroup(serviceType reflect.Type, groupName string) ([]interface{}, error) {
+func (sp *serviceProvider) ResolveGroup(serviceType reflect.Type, groupName string) ([]any, error) {
 	if sp.IsDisposed() {
 		return nil, ErrProviderDisposed
 	}
@@ -805,7 +805,7 @@ func (sp *serviceProvider) IsService(serviceType reflect.Type) bool {
 }
 
 // IsKeyedService determines whether the specified keyed service type is available.
-func (sp *serviceProvider) IsKeyedService(serviceType reflect.Type, serviceKey interface{}) bool {
+func (sp *serviceProvider) IsKeyedService(serviceType reflect.Type, serviceKey any) bool {
 	if sp.IsDisposed() {
 		return false
 	}
@@ -819,7 +819,7 @@ func (sp *serviceProvider) IsKeyedService(serviceType reflect.Type, serviceKey i
 }
 
 // Decorate provides a decorator for a type that has already been provided in the Scope.
-func (sp *serviceProvider) Decorate(decorator interface{}, opts ...DecorateOption) error {
+func (sp *serviceProvider) Decorate(decorator any, opts ...DecorateOption) error {
 	if sp.IsDisposed() {
 		return ErrProviderDisposed
 	}
@@ -870,7 +870,7 @@ func (sp *serviceProvider) Close() error {
 }
 
 // Invoke executes a function with automatic dependency injection.
-func (sp *serviceProvider) Invoke(function interface{}) error {
+func (sp *serviceProvider) Invoke(function any) error {
 	if sp.IsDisposed() {
 		return ErrProviderDisposed
 	}
@@ -913,7 +913,7 @@ func processProvideOptions(descriptor *serviceDescriptor, opts []ProvideOption) 
 // typeKeyPair represents a type-key combination for keyed services.
 type typeKeyPair struct {
 	serviceType reflect.Type
-	serviceKey  interface{}
+	serviceKey  any
 }
 
 // Resolve is a generic helper function that returns the service as type T.
@@ -937,7 +937,7 @@ func Resolve[T any](s Scope) (T, error) {
 }
 
 // ResolveKeyed is a generic helper function that returns the keyed service as type T.
-func ResolveKeyed[T any](s Scope, serviceKey interface{}) (T, error) {
+func ResolveKeyed[T any](s Scope, serviceKey any) (T, error) {
 	var zero T
 	if s == nil {
 		return zero, ErrNilScope
@@ -972,7 +972,7 @@ func ResolveGroup[T any](s Scope, groupName string) ([]T, error) {
 		return nil, fmt.Errorf("unable to resolve group %q of type %s: %w", groupName, formatType(serviceType), err)
 	}
 
-	// Convert []interface{} to []T
+	// Convert []any to []T
 	result := make([]T, 0, len(services))
 	for i, service := range services {
 		if service == nil {
@@ -1017,7 +1017,7 @@ func determineServiceType[T any]() (reflect.Type, error) {
 }
 
 // assertServiceType performs type assertion and returns the service as type T.
-func assertServiceType[T any](service interface{}, serviceType reflect.Type, serviceKey interface{}) (T, error) {
+func assertServiceType[T any](service any, serviceType reflect.Type, serviceKey any) (T, error) {
 	var zero T
 
 	if service == nil {

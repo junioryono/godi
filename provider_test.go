@@ -51,7 +51,7 @@ func TestServiceProvider_Creation(t *testing.T) {
 		var resolutionErrors []error
 
 		options := &godi.ServiceProviderOptions{
-			OnServiceResolved: func(serviceType reflect.Type, instance interface{}, duration time.Duration) {
+			OnServiceResolved: func(serviceType reflect.Type, instance any, duration time.Duration) {
 				resolved = append(resolved, serviceType)
 			},
 			OnServiceError: func(serviceType reflect.Type, err error) {
@@ -91,8 +91,8 @@ func TestServiceProvider_Resolution(t *testing.T) {
 	tests := []struct {
 		name     string
 		setup    func(t *testing.T) godi.ServiceProvider
-		resolve  func(provider godi.ServiceProvider) (interface{}, error)
-		validate func(t *testing.T, result interface{}, err error)
+		resolve  func(provider godi.ServiceProvider) (any, error)
+		validate func(t *testing.T, result any, err error)
 		wantErr  bool
 	}{
 		{
@@ -102,10 +102,10 @@ func TestServiceProvider_Resolution(t *testing.T) {
 				assert.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
 				return provider
 			},
-			resolve: func(provider godi.ServiceProvider) (interface{}, error) {
+			resolve: func(provider godi.ServiceProvider) (any, error) {
 				return godi.Resolve[testutil.TestLogger](provider.GetRootScope())
 			},
-			validate: func(t *testing.T, result interface{}, err error) {
+			validate: func(t *testing.T, result any, err error) {
 				assert.NotNil(t, result)
 				logger, ok := result.(testutil.TestLogger)
 				assert.True(t, ok)
@@ -119,10 +119,10 @@ func TestServiceProvider_Resolution(t *testing.T) {
 				assert.NoError(t, provider.AddScoped(testutil.NewTestService))
 				return provider
 			},
-			resolve: func(provider godi.ServiceProvider) (interface{}, error) {
+			resolve: func(provider godi.ServiceProvider) (any, error) {
 				return godi.Resolve[*testutil.TestService](provider.GetRootScope())
 			},
-			validate: func(t *testing.T, result interface{}, err error) {
+			validate: func(t *testing.T, result any, err error) {
 				assert.NotNil(t, result)
 				service, ok := result.(*testutil.TestService)
 				assert.True(t, ok)
@@ -139,10 +139,10 @@ func TestServiceProvider_Resolution(t *testing.T) {
 				assert.NoError(t, provider.AddScoped(testutil.NewTestServiceWithDeps))
 				return provider
 			},
-			resolve: func(provider godi.ServiceProvider) (interface{}, error) {
+			resolve: func(provider godi.ServiceProvider) (any, error) {
 				return godi.Resolve[*testutil.TestServiceWithDeps](provider.GetRootScope())
 			},
-			validate: func(t *testing.T, result interface{}, err error) {
+			validate: func(t *testing.T, result any, err error) {
 				assert.NotNil(t, result)
 				service, ok := result.(*testutil.TestServiceWithDeps)
 				assert.True(t, ok)
@@ -159,10 +159,10 @@ func TestServiceProvider_Resolution(t *testing.T) {
 				assert.NoError(t, provider.AddSingleton(testutil.NewTestLogger, godi.Name("secondary")))
 				return provider
 			},
-			resolve: func(provider godi.ServiceProvider) (interface{}, error) {
+			resolve: func(provider godi.ServiceProvider) (any, error) {
 				return godi.ResolveKeyed[testutil.TestLogger](provider.GetRootScope(), "primary")
 			},
-			validate: func(t *testing.T, result interface{}, err error) {
+			validate: func(t *testing.T, result any, err error) {
 				assert.NotNil(t, result)
 				assert.IsType(t, &testutil.TestLoggerImpl{}, result)
 			},
@@ -182,10 +182,10 @@ func TestServiceProvider_Resolution(t *testing.T) {
 				}, godi.Group("handlers")))
 				return provider
 			},
-			resolve: func(provider godi.ServiceProvider) (interface{}, error) {
+			resolve: func(provider godi.ServiceProvider) (any, error) {
 				return godi.ResolveGroup[testutil.TestHandler](provider.GetRootScope(), "handlers")
 			},
-			validate: func(t *testing.T, result interface{}, err error) {
+			validate: func(t *testing.T, result any, err error) {
 				handlers, ok := result.([]testutil.TestHandler)
 				assert.True(t, ok)
 				assert.Len(t, handlers, 3)
@@ -207,10 +207,10 @@ func TestServiceProvider_Resolution(t *testing.T) {
 				provider := godi.NewServiceProvider()
 				return provider
 			},
-			resolve: func(provider godi.ServiceProvider) (interface{}, error) {
+			resolve: func(provider godi.ServiceProvider) (any, error) {
 				return godi.Resolve[testutil.TestLogger](provider.GetRootScope())
 			},
-			validate: func(t *testing.T, result interface{}, err error) {
+			validate: func(t *testing.T, result any, err error) {
 				assert.Nil(t, result)
 				assert.Error(t, err)
 				assert.True(t, godi.IsNotFound(err))
@@ -224,10 +224,10 @@ func TestServiceProvider_Resolution(t *testing.T) {
 				assert.NoError(t, provider.AddSingleton(testutil.NewTestLogger, godi.Name("primary")))
 				return provider
 			},
-			resolve: func(provider godi.ServiceProvider) (interface{}, error) {
+			resolve: func(provider godi.ServiceProvider) (any, error) {
 				return godi.ResolveKeyed[testutil.TestLogger](provider.GetRootScope(), "secondary")
 			},
-			validate: func(t *testing.T, result interface{}, err error) {
+			validate: func(t *testing.T, result any, err error) {
 				assert.Nil(t, result)
 				assert.Error(t, err)
 				assert.True(t, godi.IsNotFound(err))
@@ -240,10 +240,10 @@ func TestServiceProvider_Resolution(t *testing.T) {
 				provider := godi.NewServiceProvider()
 				return provider
 			},
-			resolve: func(provider godi.ServiceProvider) (interface{}, error) {
+			resolve: func(provider godi.ServiceProvider) (any, error) {
 				return godi.ResolveGroup[testutil.TestHandler](provider.GetRootScope(), "handlers")
 			},
-			validate: func(t *testing.T, result interface{}, err error) {
+			validate: func(t *testing.T, result any, err error) {
 				handlers, ok := result.([]testutil.TestHandler)
 				assert.True(t, ok)
 				assert.Empty(t, handlers)
@@ -559,7 +559,7 @@ func TestServiceProvider_Concurrency(t *testing.T) {
 		wg.Add(goroutines)
 
 		errors := make([]error, goroutines)
-		services := make([]interface{}, goroutines)
+		services := make([]any, goroutines)
 
 		for i := 0; i < goroutines; i++ {
 			go func(idx int) {

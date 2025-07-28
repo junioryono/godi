@@ -129,7 +129,7 @@ func NewCacheService(provider godi.ServiceProvider) *CacheService {
     return &CacheService{provider: provider}
 }
 
-func (c *CacheService) GetUserData(scope godi.Scope) interface{} {
+func (c *CacheService) GetUserData(scope godi.Scope) any {
     ctx, _ := godi.Resolve[UserContext](scope)
     // Use ctx for this request only
 }
@@ -145,7 +145,7 @@ func (c *CacheService) GetUserData(scope godi.Scope) interface{} {
 
 ```go
 options := &godi.ServiceProviderOptions{
-    OnServiceResolved: func(serviceType reflect.Type, instance interface{}, duration time.Duration) {
+    OnServiceResolved: func(serviceType reflect.Type, instance any, duration time.Duration) {
         if duration > 100*time.Millisecond {
             log.Printf("SLOW: %s took %v", serviceType, duration)
         }

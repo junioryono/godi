@@ -267,8 +267,8 @@ var ConfigModule = godi.NewModule("config",
 
 ```go
 type Cache interface {
-    Get(key string) (interface{}, bool)
-    Set(key string, value interface{})
+    Get(key string) (any, bool)
+    Set(key string, value any)
 }
 
 // Easy to swap implementations

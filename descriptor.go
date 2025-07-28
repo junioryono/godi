@@ -19,14 +19,14 @@ type serviceDescriptor struct {
 
 	// ServiceKey is the key of the service for keyed services.
 	// This allows multiple implementations of the same type to be registered.
-	ServiceKey interface{}
+	ServiceKey any
 
 	// Lifetime is the lifetime of the service (Singleton, Scoped).
 	Lifetime ServiceLifetime
 
 	// Constructor is the original constructor function.
 	// This should be a function that dig can call directly.
-	Constructor interface{}
+	Constructor any
 
 	// ProvideOptions are the dig options to use when registering this service.
 	ProvideOptions []ProvideOption
@@ -41,7 +41,7 @@ type serviceDescriptor struct {
 // decorateDescriptor describes a decorator registration.
 type decorateDescriptor struct {
 	// Decorator is the decorator function
-	Decorator interface{}
+	Decorator any
 
 	// DecorateOptions are the dig options for decoration
 	DecorateOptions []DecorateOption
@@ -84,7 +84,7 @@ func (sd *serviceDescriptor) validate() error {
 
 // newServiceDescriptor creates a descriptor from a constructor function.
 // The service type is inferred from the constructor's return type.
-func newServiceDescriptor(constructor interface{}, lifetime ServiceLifetime) (*serviceDescriptor, error) {
+func newServiceDescriptor(constructor any, lifetime ServiceLifetime) (*serviceDescriptor, error) {
 	if err := validateConstructor(constructor); err != nil {
 		return nil, err
 	}
@@ -126,7 +126,7 @@ func (sd *serviceDescriptor) isDecorator() bool {
 }
 
 // validateConstructor validates a constructor using cached type information.
-func validateConstructor(constructor interface{}) error {
+func validateConstructor(constructor any) error {
 	if constructor == nil {
 		return ErrNilConstructor
 	}
@@ -191,7 +191,7 @@ func validateConstructor(constructor interface{}) error {
 }
 
 // validateDecorator validates that a decorator is compatible with dig.
-func validateDecorator(decorator interface{}) error {
+func validateDecorator(decorator any) error {
 	if decorator == nil {
 		return ErrDecoratorNil
 	}

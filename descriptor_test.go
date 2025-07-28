@@ -43,7 +43,7 @@ func TestServiceDescriptor_Validation(t *testing.T) {
 
 		tests := []struct {
 			name        string
-			constructor interface{}
+			constructor any
 			wantErr     bool
 			errContains string
 		}{
@@ -116,7 +116,7 @@ func TestServiceDescriptor_Validation(t *testing.T) {
 
 		tests := []struct {
 			name      string
-			decorator interface{}
+			decorator any
 			wantErr   bool
 		}{
 			{
@@ -263,7 +263,7 @@ func TestServiceDescriptor_ServiceTypes(t *testing.T) {
 
 		tests := []struct {
 			name        string
-			constructor interface{}
+			constructor any
 			lifetime    godi.ServiceLifetime
 			expectType  reflect.Type
 		}{

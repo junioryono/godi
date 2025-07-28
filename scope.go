@@ -168,7 +168,7 @@ func (scope *scope) AddModules(modules ...ModuleOption) error {
 	return scope.serviceProvider.AddModules(modules...)
 }
 
-func (scope *scope) AddSingleton(constructor interface{}, opts ...ProvideOption) error {
+func (scope *scope) AddSingleton(constructor any, opts ...ProvideOption) error {
 	if scope.IsDisposed() {
 		return ErrScopeDisposed
 	}
@@ -177,7 +177,7 @@ func (scope *scope) AddSingleton(constructor interface{}, opts ...ProvideOption)
 	return scope.serviceProvider.AddSingleton(constructor, opts...)
 }
 
-func (scope *scope) AddScoped(constructor interface{}, opts ...ProvideOption) error {
+func (scope *scope) AddScoped(constructor any, opts ...ProvideOption) error {
 	if scope.IsDisposed() {
 		return ErrScopeDisposed
 	}
@@ -186,7 +186,7 @@ func (scope *scope) AddScoped(constructor interface{}, opts ...ProvideOption) er
 	return scope.serviceProvider.AddScoped(constructor, opts...)
 }
 
-func (scope *scope) AddService(lifetime ServiceLifetime, constructor interface{}, opts ...ProvideOption) error {
+func (scope *scope) AddService(lifetime ServiceLifetime, constructor any, opts ...ProvideOption) error {
 	if scope.IsDisposed() {
 		return ErrScopeDisposed
 	}
@@ -194,7 +194,7 @@ func (scope *scope) AddService(lifetime ServiceLifetime, constructor interface{}
 	return scope.serviceProvider.AddService(lifetime, constructor, opts...)
 }
 
-func (scope *scope) Replace(lifetime ServiceLifetime, constructor interface{}, opts ...ProvideOption) error {
+func (scope *scope) Replace(lifetime ServiceLifetime, constructor any, opts ...ProvideOption) error {
 	if scope.IsDisposed() {
 		return ErrScopeDisposed
 	}
@@ -222,7 +222,7 @@ func (scope *scope) CreateScope(ctx context.Context) Scope {
 }
 
 // Resolve implements ServiceProvider.
-func (scope *scope) Resolve(serviceType reflect.Type) (interface{}, error) {
+func (scope *scope) Resolve(serviceType reflect.Type) (any, error) {
 	if scope.IsDisposed() {
 		return nil, ErrScopeDisposed
 	}
@@ -243,7 +243,7 @@ func (scope *scope) Resolve(serviceType reflect.Type) (interface{}, error) {
 
 	// Create a channel for the result
 	type resolveResult struct {
-		value interface{}
+		value any
 		err   error
 	}
 	resultChan := make(chan resolveResult, 1)
@@ -258,7 +258,7 @@ func (scope *scope) Resolve(serviceType reflect.Type) (interface{}, error) {
 	}()
 
 	// Wait for result or timeout
-	var result interface{}
+	var result any
 	var err error
 
 	select {
@@ -285,7 +285,7 @@ func (scope *scope) Resolve(serviceType reflect.Type) (interface{}, error) {
 	return result, err
 }
 
-func (scope *scope) ResolveKeyed(serviceType reflect.Type, serviceKey interface{}) (interface{}, error) {
+func (scope *scope) ResolveKeyed(serviceType reflect.Type, serviceKey any) (any, error) {
 	if scope.IsDisposed() {
 		return nil, ErrScopeDisposed
 	}
@@ -316,7 +316,7 @@ func (scope *scope) ResolveKeyed(serviceType reflect.Type, serviceKey interface{
 	return result, err
 }
 
-func (scope *scope) ResolveGroup(serviceType reflect.Type, groupName string) ([]interface{}, error) {
+func (scope *scope) ResolveGroup(serviceType reflect.Type, groupName string) ([]any, error) {
 	if scope.IsDisposed() {
 		return nil, ErrScopeDisposed
 	}
@@ -351,7 +351,7 @@ func (scope *scope) ResolveGroup(serviceType reflect.Type, groupName string) ([]
 }
 
 // Decorate provides a decorator for a type that has already been provided in the Scope.
-func (scope *scope) Decorate(decorator interface{}, opts ...DecorateOption) error {
+func (scope *scope) Decorate(decorator any, opts ...DecorateOption) error {
 	if scope.IsDisposed() {
 		return ErrScopeDisposed
 	}
@@ -372,7 +372,7 @@ func (scope *scope) IsService(serviceType reflect.Type) bool {
 }
 
 // IsKeyedService implements ServiceProvider.
-func (scope *scope) IsKeyedService(serviceType reflect.Type, serviceKey interface{}) bool {
+func (scope *scope) IsKeyedService(serviceType reflect.Type, serviceKey any) bool {
 	if scope.IsDisposed() {
 		return false
 	}
@@ -400,7 +400,7 @@ func (scope *scope) registerScopedService(desc *serviceDescriptor) {
 	}
 }
 
-func (scope *scope) wrapConstructorForTracking(constructor interface{}) interface{} {
+func (scope *scope) wrapConstructorForTracking(constructor any) any {
 	fnType := reflect.TypeOf(constructor)
 	fnValue := reflect.ValueOf(constructor)
 
@@ -419,7 +419,7 @@ func (scope *scope) wrapConstructorForTracking(constructor interface{}) interfac
 }
 
 // captureDisposable captures a service for disposal when the scope is disposed.
-func (scope *scope) captureDisposable(service interface{}) {
+func (scope *scope) captureDisposable(service any) {
 	if service == scope {
 		return
 	}
@@ -476,7 +476,7 @@ func (scope *scope) Close() error {
 }
 
 // Invoke implements ServiceProvider.
-func (scope *scope) Invoke(function interface{}) error {
+func (scope *scope) Invoke(function any) error {
 	if scope.IsDisposed() {
 		return ErrScopeDisposed
 	}
@@ -494,8 +494,8 @@ func (scope *scope) finalize() {
 	}
 }
 
-func (scope *scope) resolveService(serviceType reflect.Type) (interface{}, error) {
-	var result interface{}
+func (scope *scope) resolveService(serviceType reflect.Type) (any, error) {
+	var result any
 	var resolveErr error
 
 	// Build the extraction function dynamically
@@ -518,7 +518,7 @@ func (scope *scope) resolveService(serviceType reflect.Type) (interface{}, error
 	return result, resolveErr
 }
 
-func (scope *scope) resolveKeyedService(serviceType reflect.Type, serviceKey interface{}) (interface{}, error) {
+func (scope *scope) resolveKeyedService(serviceType reflect.Type, serviceKey any) (any, error) {
 	paramType := reflect.StructOf([]reflect.StructField{
 		{
 			Name:      "In",
@@ -533,7 +533,7 @@ func (scope *scope) resolveKeyedService(serviceType reflect.Type, serviceKey int
 	})
 
 	// Create extraction function
-	var result interface{}
+	var result any
 	fnType := reflect.FuncOf([]reflect.Type{paramType}, []reflect.Type{reflect.TypeOf((*error)(nil)).Elem()}, false)
 	fn := reflect.MakeFunc(fnType, func(args []reflect.Value) []reflect.Value {
 		if len(args) > 0 && args[0].IsValid() {
@@ -561,7 +561,7 @@ func (scope *scope) resolveKeyedService(serviceType reflect.Type, serviceKey int
 	return result, nil
 }
 
-func (scope *scope) resolveGroupService(serviceType reflect.Type, groupName string) ([]interface{}, error) {
+func (scope *scope) resolveGroupService(serviceType reflect.Type, groupName string) ([]any, error) {
 	sliceType := reflect.SliceOf(serviceType)
 	paramType := reflect.StructOf([]reflect.StructField{
 		{
@@ -577,13 +577,13 @@ func (scope *scope) resolveGroupService(serviceType reflect.Type, groupName stri
 	})
 
 	// Create extraction function
-	var results []interface{}
+	var results []any
 	fnType := reflect.FuncOf([]reflect.Type{paramType}, []reflect.Type{reflect.TypeOf((*error)(nil)).Elem()}, false)
 	fn := reflect.MakeFunc(fnType, func(args []reflect.Value) []reflect.Value {
 		if len(args) > 0 && args[0].IsValid() {
 			servicesField := args[0].FieldByName("Services")
 			if servicesField.IsValid() && servicesField.Len() > 0 {
-				results = make([]interface{}, servicesField.Len())
+				results = make([]any, servicesField.Len())
 				for i := 0; i < servicesField.Len(); i++ {
 					results[i] = servicesField.Index(i).Interface()
 				}
@@ -592,7 +592,7 @@ func (scope *scope) resolveGroupService(serviceType reflect.Type, groupName stri
 		}
 
 		// It's not an error if a group is empty, return an empty slice.
-		results = make([]interface{}, 0)
+		results = make([]any, 0)
 		return []reflect.Value{reflect.Zero(reflect.TypeOf((*error)(nil)).Elem())}
 	})
 

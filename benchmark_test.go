@@ -130,7 +130,7 @@ func BenchmarkProviderBuild(b *testing.B) {
 				// Add services
 				for j := 0; j < bm.serviceCount; j++ {
 					idx := j
-					_ = provider.AddSingleton(func() interface{} {
+					_ = provider.AddSingleton(func() any {
 						return fmt.Sprintf("service-%d", idx)
 					})
 				}
@@ -276,7 +276,7 @@ func BenchmarkModuleLoading(b *testing.B) {
 		builders := make([]godi.ModuleOption, serviceCount)
 		for i := 0; i < serviceCount; i++ {
 			idx := i
-			builders[i] = godi.AddSingleton(func() interface{} {
+			builders[i] = godi.AddSingleton(func() any {
 				return fmt.Sprintf("%s-service-%d", name, idx)
 			})
 		}

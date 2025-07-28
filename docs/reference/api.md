@@ -188,7 +188,7 @@ options := &godi.ServiceProviderOptions{
     // Resolution callbacks
     OnServiceResolved: func(
         serviceType reflect.Type,
-        instance interface{},
+        instance any,
         duration time.Duration,
     ) {
         log.Printf("Resolved %s in %v", serviceType, duration)

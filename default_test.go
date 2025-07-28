@@ -81,7 +81,7 @@ func TestDefaultServiceProvider(t *testing.T) {
 	// 	assert.True(t, defaultProvider.IsDisposed())
 
 	// 	// Operations should fail
-	// 	_, err := defaultProvider.Resolve(reflect.TypeOf((*interface{})(nil)).Elem())
+	// 	_, err := defaultProvider.Resolve(reflect.TypeOf((*any)(nil)).Elem())
 	// 	assert.ErrorIs(t, err, godi.ErrProviderDisposed)
 	// })
 

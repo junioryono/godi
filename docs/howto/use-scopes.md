@@ -342,7 +342,7 @@ func MyHandler(w http.ResponseWriter, r *http.Request) {
 type UnitOfWork struct {
     tx         *sql.Tx
     committed  bool
-    repositories map[string]interface{}
+    repositories map[string]any
 }
 
 func NewUnitOfWork(db *Database) (*UnitOfWork, error) {
@@ -353,7 +353,7 @@ func NewUnitOfWork(db *Database) (*UnitOfWork, error) {
 
     return &UnitOfWork{
         tx: tx,
-        repositories: make(map[string]interface{}),
+        repositories: make(map[string]any),
     }, nil
 }
 

@@ -10,7 +10,7 @@ import (
 // ServiceFixture represents a test fixture for services
 type ServiceFixture struct {
 	Name         string
-	Constructor  interface{}
+	Constructor  any
 	Lifetime     godi.ServiceLifetime
 	Options      []godi.ProvideOption
 	Dependencies []string

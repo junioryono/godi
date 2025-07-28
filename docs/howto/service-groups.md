@@ -7,12 +7,12 @@ Service groups let you collect multiple services of the same type and inject the
 ```go
 // Common interface
 type Validator interface {
-    Validate(data interface{}) error
+    Validate(data any) error
 }
 
 // Multiple validators
 type EmailValidator struct{}
-func (v *EmailValidator) Validate(data interface{}) error {
+func (v *EmailValidator) Validate(data any) error {
     email, ok := data.(string)
     if !ok || !strings.Contains(email, "@") {
         return errors.New("invalid email")
@@ -21,7 +21,7 @@ func (v *EmailValidator) Validate(data interface{}) error {
 }
 
 type PhoneValidator struct{}
-func (v *PhoneValidator) Validate(data interface{}) error {
+func (v *PhoneValidator) Validate(data any) error {
     phone, ok := data.(string)
     if !ok || len(phone) < 10 {
         return errors.New("invalid phone")
@@ -58,7 +58,7 @@ func NewValidationService(params struct {
     }
 }
 
-func (s *ValidationService) ValidateAll(data interface{}) error {
+func (s *ValidationService) ValidateAll(data any) error {
     for _, validator := range s.validators {
         if err := validator.Validate(data); err != nil {
             return err
