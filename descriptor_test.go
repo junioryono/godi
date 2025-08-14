@@ -390,47 +390,47 @@ func TestServiceDescriptor_Metadata(t *testing.T) {
 func TestServiceDescriptor_EdgeCases(t *testing.T) {
 	tests := []struct {
 		name    string
-		setup   func(t *testing.T) godi.Collection
-		action  func(collection godi.Collection) error
+		setup   func(t *testing.T) godi.ServiceCollection
+		action  func(collection godi.ServiceCollection) error
 		wantErr bool
-		check   func(t *testing.T, collection godi.Collection)
+		check   func(t *testing.T, collection godi.ServiceCollection)
 	}{
 		{
 			name: "empty struct as service",
-			setup: func(t *testing.T) godi.Collection {
+			setup: func(t *testing.T) godi.ServiceCollection {
 				return godi.NewServiceCollection()
 			},
-			action: func(collection godi.Collection) error {
+			action: func(collection godi.ServiceCollection) error {
 				return collection.AddSingleton(func() struct{} { return struct{}{} })
 			},
 			wantErr: false,
 		},
 		{
 			name: "nil interface return",
-			setup: func(t *testing.T) godi.Collection {
+			setup: func(t *testing.T) godi.ServiceCollection {
 				return godi.NewServiceCollection()
 			},
-			action: func(collection godi.Collection) error {
+			action: func(collection godi.ServiceCollection) error {
 				return collection.AddSingleton(func() testutil.TestLogger { return nil })
 			},
 			wantErr: false,
 		},
 		{
 			name: "error-only return",
-			setup: func(t *testing.T) godi.Collection {
+			setup: func(t *testing.T) godi.ServiceCollection {
 				return godi.NewServiceCollection()
 			},
-			action: func(collection godi.Collection) error {
+			action: func(collection godi.ServiceCollection) error {
 				return collection.AddSingleton(func() error { return nil })
 			},
 			wantErr: true,
 		},
 		{
 			name: "complex nested types",
-			setup: func(t *testing.T) godi.Collection {
+			setup: func(t *testing.T) godi.ServiceCollection {
 				return godi.NewServiceCollection()
 			},
-			action: func(collection godi.Collection) error {
+			action: func(collection godi.ServiceCollection) error {
 				type NestedService struct {
 					Data map[string][]chan<- func() error
 				}
