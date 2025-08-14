@@ -7,21 +7,22 @@ import (
 
 // ServiceLifetime specifies the lifetime of a service in a ServiceCollection.
 // The lifetime determines when instances are created and how they are cached.
-// This maps to dig's scoping model while maintaining Microsoft DI semantics.
 type ServiceLifetime int
 
 const (
 	// Singleton specifies that a single instance of the service will be created.
 	// The instance is created on first request and cached for the lifetime of the root provider.
 	// Singleton services must not depend on Scoped services.
-	// In dig terms, this is a service provided at the root container level.
 	Singleton ServiceLifetime = iota
 
 	// Scoped specifies that a new instance of the service will be created for each scope.
 	// In web applications, this typically means one instance per HTTP request.
 	// Scoped services are disposed when their scope is disposed.
-	// In dig terms, this is a service provided at the scope level.
 	Scoped
+
+	// Transient specifies that a new instance of the service will be created every time it is requested.
+	// Transient services are never cached and always create new instances.
+	Transient
 )
 
 // String returns the string representation of the ServiceLifetime.
@@ -31,6 +32,8 @@ func (sl ServiceLifetime) String() string {
 		return "Singleton"
 	case Scoped:
 		return "Scoped"
+	case Transient:
+		return "Transient"
 	default:
 		return fmt.Sprintf("Unknown(%d)", int(sl))
 	}
@@ -38,7 +41,7 @@ func (sl ServiceLifetime) String() string {
 
 // IsValid checks if the service lifetime is valid.
 func (sl ServiceLifetime) IsValid() bool {
-	return sl >= Singleton && sl <= Scoped
+	return sl >= Singleton && sl <= Transient
 }
 
 // MarshalText implements encoding.TextMarshaler.
@@ -53,6 +56,8 @@ func (sl *ServiceLifetime) UnmarshalText(text []byte) error {
 		*sl = Singleton
 	case "Scoped", "scoped":
 		*sl = Scoped
+	case "Transient", "transient":
+		*sl = Transient
 	default:
 		return &LifetimeError{Value: string(text)}
 	}

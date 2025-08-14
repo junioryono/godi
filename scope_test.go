@@ -103,8 +103,9 @@ func TestScope_ScopedServices(t *testing.T) {
 	t.Run("scoped services are unique per scope", func(t *testing.T) {
 		t.Parallel()
 
-		provider := godi.NewServiceProvider()
-		require.NoError(t, provider.AddScoped(testutil.NewTestService))
+		provider := testutil.NewServiceCollectionBuilder(t).
+			WithScoped(testutil.NewTestService).
+			BuildProvider()
 
 		scope1 := provider.CreateScope(context.Background())
 		scope2 := provider.CreateScope(context.Background())
@@ -115,8 +116,8 @@ func TestScope_ScopedServices(t *testing.T) {
 		})
 
 		// Resolve in different scopes
-		service1 := testutil.AssertServiceResolvable[*testutil.TestService](t, scope1)
-		service2 := testutil.AssertServiceResolvable[*testutil.TestService](t, scope2)
+		service1 := testutil.AssertServiceResolvableInScope[*testutil.TestService](t, scope1)
+		service2 := testutil.AssertServiceResolvableInScope[*testutil.TestService](t, scope2)
 
 		// Should be different instances
 		testutil.AssertDifferentInstances(t, service1, service2)
@@ -126,8 +127,9 @@ func TestScope_ScopedServices(t *testing.T) {
 	t.Run("scoped services are same within scope", func(t *testing.T) {
 		t.Parallel()
 
-		provider := godi.NewServiceProvider()
-		require.NoError(t, provider.AddScoped(testutil.NewTestService))
+		provider := testutil.NewServiceCollectionBuilder(t).
+			WithScoped(testutil.NewTestService).
+			BuildProvider()
 
 		scope := provider.CreateScope(context.Background())
 		t.Cleanup(func() {
@@ -135,8 +137,8 @@ func TestScope_ScopedServices(t *testing.T) {
 		})
 
 		// Multiple resolutions in same scope
-		service1 := testutil.AssertServiceResolvable[*testutil.TestService](t, scope)
-		service2 := testutil.AssertServiceResolvable[*testutil.TestService](t, scope)
+		service1 := testutil.AssertServiceResolvableInScope[*testutil.TestService](t, scope)
+		service2 := testutil.AssertServiceResolvableInScope[*testutil.TestService](t, scope)
 
 		// Should be same instance
 		testutil.AssertSameInstance(t, service1, service2)
@@ -145,17 +147,19 @@ func TestScope_ScopedServices(t *testing.T) {
 	t.Run("scoped service can depend on singleton", func(t *testing.T) {
 		t.Parallel()
 
-		provider := godi.NewServiceProvider()
-		require.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
-		require.NoError(t, provider.AddSingleton(testutil.NewTestDatabase))
-		require.NoError(t, provider.AddSingleton(testutil.NewTestCache))
-		require.NoError(t, provider.AddScoped(testutil.NewTestServiceWithDeps))
+		provider := testutil.NewServiceCollectionBuilder(t).
+			WithSingleton(testutil.NewTestLogger).
+			WithSingleton(testutil.NewTestDatabase).
+			WithSingleton(testutil.NewTestCache).
+			WithScoped(testutil.NewTestServiceWithDeps).
+			BuildProvider()
+
 		scope := provider.CreateScope(context.Background())
 		t.Cleanup(func() {
 			require.NoError(t, scope.Close())
 		})
 
-		service := testutil.AssertServiceResolvable[*testutil.TestServiceWithDeps](t, scope)
+		service := testutil.AssertServiceResolvableInScope[*testutil.TestServiceWithDeps](t, scope)
 		assert.NotNil(t, service.Logger)
 		assert.NotNil(t, service.Database)
 		assert.NotNil(t, service.Cache)
@@ -177,8 +181,9 @@ func TestScope_ScopedServices(t *testing.T) {
 			return &ContextAwareService{RequestID: requestID}
 		}
 
-		provider := godi.NewServiceProvider()
-		require.NoError(t, provider.AddScoped(constructor))
+		provider := testutil.NewServiceCollectionBuilder(t).
+			WithScoped(constructor).
+			BuildProvider()
 
 		ctx := context.WithValue(context.Background(), requestIDKey, "test-123")
 		scope := provider.CreateScope(ctx)
@@ -186,7 +191,7 @@ func TestScope_ScopedServices(t *testing.T) {
 			require.NoError(t, scope.Close())
 		})
 
-		service := testutil.AssertServiceResolvable[*ContextAwareService](t, scope)
+		service := testutil.AssertServiceResolvableInScope[*ContextAwareService](t, scope)
 		assert.Equal(t, "test-123", service.RequestID)
 	})
 }
@@ -197,14 +202,16 @@ func TestScope_Disposal(t *testing.T) {
 
 		disposable := testutil.NewTestDisposable()
 
-		provider := godi.NewServiceProvider()
-		require.NoError(t, provider.AddScoped(func() *testutil.TestDisposable {
-			return disposable
-		}))
+		provider := testutil.NewServiceCollectionBuilder(t).
+			WithScoped(func() *testutil.TestDisposable {
+				return disposable
+			}).
+			BuildProvider()
+
 		scope := provider.CreateScope(context.Background())
 
 		// Resolve to create instance
-		d := testutil.AssertServiceResolvable[*testutil.TestDisposable](t, scope)
+		d := testutil.AssertServiceResolvableInScope[*testutil.TestDisposable](t, scope)
 		assert.False(t, d.IsDisposed())
 
 		// Close scope
@@ -233,10 +240,12 @@ func TestScope_Disposal(t *testing.T) {
 			}
 		}
 
-		provider := godi.NewServiceProvider()
-		require.NoError(t, provider.AddScoped(createDisposable("first"), godi.Name("first")))
-		require.NoError(t, provider.AddScoped(createDisposable("second"), godi.Name("second")))
-		require.NoError(t, provider.AddScoped(createDisposable("third"), godi.Name("third")))
+		provider := testutil.NewServiceCollectionBuilder(t).
+			WithScoped(createDisposable("first"), godi.Name("first")).
+			WithScoped(createDisposable("second"), godi.Name("second")).
+			WithScoped(createDisposable("third"), godi.Name("third")).
+			BuildProvider()
+
 		scope := provider.CreateScope(context.Background())
 
 		testutil.AssertKeyedServiceResolvable[godi.Disposable](t, scope, "second")
@@ -259,18 +268,20 @@ func TestScope_Disposal(t *testing.T) {
 		type Disposable1 struct{ *testutil.TestDisposable }
 		type Disposable2 struct{ *testutil.TestDisposable }
 
-		provider := godi.NewServiceProvider()
-		require.NoError(t, provider.AddScoped(func() *Disposable1 {
-			return &Disposable1{testutil.NewTestDisposableWithError(expectedErr1)}
-		}))
-		require.NoError(t, provider.AddScoped(func() *Disposable2 {
-			return &Disposable2{testutil.NewTestDisposableWithError(expectedErr2)}
-		}))
+		provider := testutil.NewServiceCollectionBuilder(t).
+			WithScoped(func() *Disposable1 {
+				return &Disposable1{testutil.NewTestDisposableWithError(expectedErr1)}
+			}).
+			WithScoped(func() *Disposable2 {
+				return &Disposable2{testutil.NewTestDisposableWithError(expectedErr2)}
+			}).
+			BuildProvider()
+
 		scope := provider.CreateScope(context.Background())
 
 		// Resolve to create instances
-		testutil.AssertServiceResolvable[*Disposable1](t, scope)
-		testutil.AssertServiceResolvable[*Disposable2](t, scope)
+		testutil.AssertServiceResolvableInScope[*Disposable1](t, scope)
+		testutil.AssertServiceResolvableInScope[*Disposable2](t, scope)
 
 		// Close should return joined errors
 		err := scope.Close()
@@ -283,10 +294,11 @@ func TestScope_Disposal(t *testing.T) {
 		contextDisposable := testutil.NewTestContextDisposable()
 		contextDisposable.SetDisposeTime(50 * time.Millisecond)
 
-		provider := godi.NewServiceProvider()
-		require.NoError(t, provider.AddScoped(func() *testutil.TestContextDisposable {
-			return contextDisposable
-		}))
+		provider := testutil.NewServiceCollectionBuilder(t).
+			WithScoped(func() *testutil.TestContextDisposable {
+				return contextDisposable
+			}).
+			BuildProvider()
 
 		// Create scope with timeout context
 		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
@@ -295,7 +307,7 @@ func TestScope_Disposal(t *testing.T) {
 		scope := provider.CreateScope(ctx)
 
 		// Resolve to create instance
-		testutil.AssertServiceResolvable[*testutil.TestContextDisposable](t, scope)
+		testutil.AssertServiceResolvableInScope[*testutil.TestContextDisposable](t, scope)
 
 		// Close should respect context
 		err := scope.Close()
@@ -339,33 +351,35 @@ func TestScope_ServiceResolution(t *testing.T) {
 		})
 
 		// Test regular resolution
-		logger := testutil.AssertServiceResolvable[testutil.TestLogger](t, scope)
+		logger := testutil.AssertServiceResolvableInScope[testutil.TestLogger](t, scope)
 		assert.NotNil(t, logger)
 
 		// Test keyed resolution
-		keyedProvider := godi.NewServiceProvider()
-		require.NoError(t, keyedProvider.AddSingleton(testutil.NewTestLogger, godi.Name("primary")))
+		keyedProvider := testutil.NewServiceCollectionBuilder(t).
+			WithSingleton(testutil.NewTestLogger, godi.Name("primary")).
+			BuildProvider()
+
 		keyedScope := keyedProvider.CreateScope(context.Background())
 		t.Cleanup(func() {
 			require.NoError(t, keyedScope.Close())
-			require.NoError(t, keyedProvider.Close())
 		})
 
 		keyedLogger := testutil.AssertKeyedServiceResolvable[testutil.TestLogger](t, keyedScope, "primary")
 		assert.NotNil(t, keyedLogger)
 
 		// Test group resolution
-		groupProvider := godi.NewServiceProvider()
-		require.NoError(t, groupProvider.AddSingleton(func() testutil.TestHandler {
-			return testutil.NewTestHandler("h1")
-		}, godi.Group("handlers")))
-		require.NoError(t, groupProvider.AddSingleton(func() testutil.TestHandler {
-			return testutil.NewTestHandler("h2")
-		}, godi.Group("handlers")))
+		groupProvider := testutil.NewServiceCollectionBuilder(t).
+			WithSingleton(func() testutil.TestHandler {
+				return testutil.NewTestHandler("h1")
+			}, godi.Group("handlers")).
+			WithSingleton(func() testutil.TestHandler {
+				return testutil.NewTestHandler("h2")
+			}, godi.Group("handlers")).
+			BuildProvider()
+
 		groupScope := groupProvider.CreateScope(context.Background())
 		t.Cleanup(func() {
 			require.NoError(t, groupScope.Close())
-			require.NoError(t, groupProvider.Close())
 		})
 
 		handlers, err := godi.ResolveGroup[testutil.TestHandler](groupScope, "handlers")
@@ -376,13 +390,14 @@ func TestScope_ServiceResolution(t *testing.T) {
 	t.Run("scope inherits provider service checks", func(t *testing.T) {
 		t.Parallel()
 
-		provider := godi.NewServiceProvider()
-		require.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
-		require.NoError(t, provider.AddSingleton(testutil.NewTestDatabase, godi.Name("primary")))
+		provider := testutil.NewServiceCollectionBuilder(t).
+			WithSingleton(testutil.NewTestLogger).
+			WithSingleton(testutil.NewTestDatabase, godi.Name("primary")).
+			BuildProvider()
+
 		scope := provider.CreateScope(context.Background())
 		t.Cleanup(func() {
 			require.NoError(t, scope.Close())
-			require.NoError(t, provider.Close())
 		})
 
 		// Should have same service availability
@@ -402,7 +417,6 @@ func TestScope_ServiceResolution(t *testing.T) {
 		scope := provider.CreateScope(context.Background())
 		t.Cleanup(func() {
 			require.NoError(t, scope.Close())
-			require.NoError(t, provider.Close())
 		})
 
 		var invoked bool
@@ -421,12 +435,10 @@ func TestScope_Concurrency(t *testing.T) {
 	t.Run("concurrent resolution in scope", func(t *testing.T) {
 		t.Parallel()
 
-		provider := godi.NewServiceProvider()
-		require.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
-		require.NoError(t, provider.AddScoped(testutil.NewTestService))
-		t.Cleanup(func() {
-			require.NoError(t, provider.Close())
-		})
+		provider := testutil.NewServiceCollectionBuilder(t).
+			WithSingleton(testutil.NewTestLogger).
+			WithScoped(testutil.NewTestService).
+			BuildProvider()
 
 		scope := provider.CreateScope(context.Background())
 		t.Cleanup(func() {
@@ -466,11 +478,9 @@ func TestScope_Concurrency(t *testing.T) {
 	t.Run("concurrent scope creation and disposal", func(t *testing.T) {
 		t.Parallel()
 
-		provider := godi.NewServiceProvider()
-		require.NoError(t, provider.AddScoped(testutil.NewTestDisposable))
-		t.Cleanup(func() {
-			require.NoError(t, provider.Close())
-		})
+		provider := testutil.NewServiceCollectionBuilder(t).
+			WithScoped(testutil.NewTestDisposable).
+			BuildProvider()
 
 		const iterations = 20
 		var wg sync.WaitGroup
@@ -483,7 +493,7 @@ func TestScope_Concurrency(t *testing.T) {
 				scope := provider.CreateScope(context.Background())
 
 				// Resolve service
-				d := testutil.AssertServiceResolvable[*testutil.TestDisposable](t, scope)
+				d := testutil.AssertServiceResolvableInScope[*testutil.TestDisposable](t, scope)
 				assert.False(t, d.IsDisposed())
 
 				// Close scope
@@ -505,17 +515,15 @@ func TestScope_LifetimeValidation(t *testing.T) {
 			Scoped *testutil.TestService
 		}
 
-		provider := godi.NewServiceProvider()
-		require.NoError(t, provider.AddScoped(testutil.NewTestService))
-		require.NoError(t, provider.AddSingleton(func(scoped *testutil.TestService) *SingletonService {
-			return &SingletonService{Scoped: scoped}
-		}))
-		t.Cleanup(func() {
-			require.NoError(t, provider.Close())
-		})
+		provider := testutil.NewServiceCollectionBuilder(t).
+			WithScoped(testutil.NewTestService).
+			WithSingleton(func(scoped *testutil.TestService) *SingletonService {
+				return &SingletonService{Scoped: scoped}
+			}).
+			BuildProvider()
 
 		// Should fail when trying to resolve singleton that depends on scoped
-		_, err := godi.Resolve[*SingletonService](provider.GetRootScope())
+		_, err := godi.Resolve[*SingletonService](provider)
 		assert.Error(t, err)
 		// The error might be "not found" because scoped services aren't available at root
 		assert.True(t, godi.IsNotFound(err))
@@ -535,16 +543,14 @@ func TestScope_LifetimeValidation(t *testing.T) {
 			return svc
 		}
 
-		provider := godi.NewServiceProvider()
-		require.NoError(t, provider.AddScoped(constructor))
-		t.Cleanup(func() {
-			require.NoError(t, provider.Close())
-		})
+		provider := testutil.NewServiceCollectionBuilder(t).
+			WithScoped(constructor).
+			BuildProvider()
 
 		// Create multiple scopes
 		for i := 0; i < 3; i++ {
 			scope := provider.CreateScope(context.Background())
-			svc := testutil.AssertServiceResolvable[*testutil.TestService](t, scope)
+			svc := testutil.AssertServiceResolvableInScope[*testutil.TestService](t, scope)
 			assert.NotNil(t, svc)
 			require.NoError(t, scope.Close())
 		}
@@ -622,7 +628,7 @@ func TestScope_EdgeCases(t *testing.T) {
 
 		// Verify all work
 		for i, scope := range scopes {
-			logger := testutil.AssertServiceResolvable[testutil.TestLogger](t, scope)
+			logger := testutil.AssertServiceResolvableInScope[testutil.TestLogger](t, scope)
 			assert.NotNil(t, logger, "scope %d", i)
 		}
 
@@ -639,28 +645,27 @@ func TestScope_EdgeCases(t *testing.T) {
 		var disposed bool
 		mu := sync.Mutex{}
 
-		provider := godi.NewServiceProvider()
-		require.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
-		require.NoError(t, provider.AddScoped(func() godi.Disposable {
-			return testutil.CloserFunc(func() error {
-				mu.Lock()
-				disposed = true
-				mu.Unlock()
-				return nil
-			})
-		}))
-		t.Cleanup(func() {
-			require.NoError(t, provider.Close())
-		})
+		provider := testutil.NewServiceCollectionBuilder(t).
+			WithSingleton(testutil.NewTestLogger).
+			WithScoped(func() godi.Disposable {
+				return testutil.CloserFunc(func() error {
+					mu.Lock()
+					disposed = true
+					mu.Unlock()
+					return nil
+				})
+			}).
+			BuildProvider()
+
 		ctx, cancel := context.WithCancel(context.Background())
 		scope := provider.CreateScope(ctx)
 
 		// Resolve the disposable service to ensure it's created
-		disposable := testutil.AssertServiceResolvable[godi.Disposable](t, scope)
+		disposable := testutil.AssertServiceResolvableInScope[godi.Disposable](t, scope)
 		assert.NotNil(t, disposable)
 
 		// Also resolve logger to verify normal services work
-		logger := testutil.AssertServiceResolvable[testutil.TestLogger](t, scope)
+		logger := testutil.AssertServiceResolvableInScope[testutil.TestLogger](t, scope)
 		assert.NotNil(t, logger)
 
 		// Cancel context
@@ -690,13 +695,11 @@ func TestScope_EdgeCases(t *testing.T) {
 		slowDisposable := testutil.NewTestContextDisposable()
 		slowDisposable.SetDisposeTime(100 * time.Millisecond)
 
-		provider := godi.NewServiceProvider()
-		require.NoError(t, provider.AddScoped(func() *testutil.TestContextDisposable {
-			return slowDisposable
-		}))
-		t.Cleanup(func() {
-			require.NoError(t, provider.Close())
-		})
+		provider := testutil.NewServiceCollectionBuilder(t).
+			WithScoped(func() *testutil.TestContextDisposable {
+				return slowDisposable
+			}).
+			BuildProvider()
 
 		// Create scope with short timeout
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
@@ -705,7 +708,7 @@ func TestScope_EdgeCases(t *testing.T) {
 		scope := provider.CreateScope(ctx)
 
 		// Resolve to create instance
-		testutil.AssertServiceResolvable[*testutil.TestContextDisposable](t, scope)
+		testutil.AssertServiceResolvableInScope[*testutil.TestContextDisposable](t, scope)
 
 		// Wait for context to timeout
 		<-ctx.Done()
@@ -727,15 +730,16 @@ func TestScope_Scenarios(t *testing.T) {
 		{
 			Name: "web request simulation",
 			Setup: func(t *testing.T) godi.ServiceProvider {
-				provider := godi.NewServiceProvider()
-				require.NoError(t, provider.AddSingleton(testutil.NewTestLogger))
-				require.NoError(t, provider.AddScoped(func() *RequestScoped {
-					return &RequestScoped{
-						ID:        "req-" + time.Now().Format("150405"),
-						Timestamp: time.Now(),
-					}
-				}))
-				return provider
+
+				return testutil.NewServiceCollectionBuilder(t).
+					WithSingleton(testutil.NewTestLogger).
+					WithScoped(func() *RequestScoped {
+						return &RequestScoped{
+							ID:        "req-" + time.Now().Format("150405"),
+							Timestamp: time.Now(),
+						}
+					}).
+					BuildProvider()
 			},
 			Validate: func(t *testing.T, provider godi.ServiceProvider) {
 				// Simulate multiple concurrent requests
@@ -755,8 +759,8 @@ func TestScope_Scenarios(t *testing.T) {
 						defer scope.Close()
 
 						// Services in same request should be same
-						svc1 := testutil.AssertServiceResolvable[*RequestScoped](t, scope)
-						svc2 := testutil.AssertServiceResolvable[*RequestScoped](t, scope)
+						svc1 := testutil.AssertServiceResolvableInScope[*RequestScoped](t, scope)
+						svc2 := testutil.AssertServiceResolvableInScope[*RequestScoped](t, scope)
 
 						assert.Equal(t, svc1.ID, svc2.ID)
 					}(i)
@@ -778,7 +782,7 @@ func TestScope_Scenarios(t *testing.T) {
 				defer scope.Close()
 
 				// Use services
-				service := testutil.AssertServiceResolvable[*testutil.TestServiceWithDeps](t, scope)
+				service := testutil.AssertServiceResolvableInScope[*testutil.TestServiceWithDeps](t, scope)
 				assert.NotNil(t, service)
 
 				// Simulate work
@@ -794,22 +798,27 @@ func TestScope_Scenarios(t *testing.T) {
 
 func TestScope_BuiltInServices(t *testing.T) {
 	t.Run("user-registered context should not be allowed with scope context", func(t *testing.T) {
-		provider := godi.NewServiceProvider()
+		collection := godi.NewServiceCollection()
 
 		// User registers their own context
 		userContext := context.WithValue(context.Background(), ctxKeyRequestID{}, "user-value")
-		err := provider.AddSingleton(func() context.Context {
+		err := collection.AddSingleton(func() context.Context {
 			return userContext
 		})
+		require.NoError(t, err)
+
+		// Building the provider should fail because context.Context is a built-in type
+		// that gets registered automatically by the framework
+		_, err = collection.BuildServiceProvider()
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "context.Context")
-		assert.Contains(t, err.Error(), "already registered")
+		assert.Contains(t, err.Error(), "already provided")
 	})
 
 	t.Run("scope overrides built-in services", func(t *testing.T) {
 		t.Parallel()
 
-		provider := godi.NewServiceProvider()
+		provider := testutil.NewServiceCollectionBuilder(t).BuildProvider()
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
@@ -823,7 +832,7 @@ func TestScope_BuiltInServices(t *testing.T) {
 		})
 
 		// Resolve context in root provider
-		rootCtx, err := godi.Resolve[context.Context](provider.GetRootScope())
+		rootCtx, err := godi.Resolve[context.Context](provider)
 		require.NoError(t, err)
 
 		// Resolve context in scope
@@ -839,7 +848,7 @@ func TestScope_BuiltInServices(t *testing.T) {
 	t.Run("scope provides different ServiceProvider instance", func(t *testing.T) {
 		t.Parallel()
 
-		provider := godi.NewServiceProvider()
+		provider := testutil.NewServiceCollectionBuilder(t).BuildProvider()
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
@@ -850,7 +859,7 @@ func TestScope_BuiltInServices(t *testing.T) {
 		})
 
 		// Resolve ServiceProvider in root
-		rootProvider, err := godi.Resolve[godi.ServiceProvider](provider.GetRootScope())
+		rootProvider, err := godi.Resolve[godi.ServiceProvider](provider)
 		require.NoError(t, err)
 
 		// Resolve ServiceProvider in scope
@@ -865,7 +874,7 @@ func TestScope_BuiltInServices(t *testing.T) {
 	t.Run("scope provides different Scope instance", func(t *testing.T) {
 		t.Parallel()
 
-		provider := godi.NewServiceProvider()
+		provider := testutil.NewServiceCollectionBuilder(t).BuildProvider()
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
@@ -876,7 +885,7 @@ func TestScope_BuiltInServices(t *testing.T) {
 		})
 
 		// Resolve Scope in root
-		rootScope, err := godi.Resolve[godi.Scope](provider.GetRootScope())
+		rootScope, err := godi.Resolve[godi.Scope](provider)
 		require.NoError(t, err)
 
 		// Resolve Scope in scope
@@ -905,9 +914,9 @@ func TestScope_BuiltInServices(t *testing.T) {
 			}
 		}
 
-		provider := godi.NewServiceProvider()
-		require.NoError(t, provider.AddScoped(constructor))
-
+		provider := testutil.NewServiceCollectionBuilder(t).
+			WithScoped(constructor).
+			BuildProvider()
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
@@ -952,7 +961,7 @@ func TestScope_BuiltInServices(t *testing.T) {
 	t.Run("nested scopes have correct built-ins", func(t *testing.T) {
 		t.Parallel()
 
-		provider := godi.NewServiceProvider()
+		provider := testutil.NewServiceCollectionBuilder(t).BuildProvider()
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
@@ -1017,10 +1026,11 @@ func TestScope_BuiltInServices(t *testing.T) {
 			return &Controller{service: service, provider: provider}
 		}
 
-		provider := godi.NewServiceProvider()
-		require.NoError(t, provider.AddScoped(newRepository))
-		require.NoError(t, provider.AddScoped(newService))
-		require.NoError(t, provider.AddScoped(newController))
+		provider := testutil.NewServiceCollectionBuilder(t).
+			WithScoped(newRepository).
+			WithScoped(newService).
+			WithScoped(newController).
+			BuildProvider()
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
