@@ -5,7 +5,7 @@ var (
 	defaultProvider ServiceProvider
 )
 
-// SetDefault sets the default ServiceProvider used by the package-level functions.
+// SetDefaultServiceProvider sets the default ServiceProvider used by the package-level functions.
 // This is similar to slog.SetDefault.
 //
 // After this call, package-level functions like Resolve, Invoke, etc. will use
@@ -14,7 +14,7 @@ func SetDefaultServiceProvider(provider ServiceProvider) {
 	defaultProvider = provider
 }
 
-// Default returns the current default ServiceProvider.
+// DefaultServiceProvider returns the current default ServiceProvider.
 // Returns nil if no default provider has been set.
 func DefaultServiceProvider() ServiceProvider {
 	return defaultProvider

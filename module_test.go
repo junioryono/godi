@@ -20,12 +20,11 @@ func TestNewModule(t *testing.T) {
 			godi.AddScoped(testutil.NewTestService),
 		)
 
-		provider := godi.NewServiceProvider()
-		t.Cleanup(func() {
-			require.NoError(t, provider.Close())
-		})
-		err := provider.AddModules(module)
+		collection := godi.NewServiceCollection()
+		err := collection.AddModules(module)
+
 		require.NoError(t, err)
+		assert.Equal(t, 2, collection.Count())
 	})
 
 	t.Run("empty module", func(t *testing.T) {
@@ -33,12 +32,11 @@ func TestNewModule(t *testing.T) {
 
 		module := godi.NewModule("empty-module")
 
-		provider := godi.NewServiceProvider()
-		t.Cleanup(func() {
-			require.NoError(t, provider.Close())
-		})
-		err := provider.AddModules(module)
+		collection := godi.NewServiceCollection()
+		err := collection.AddModules(module)
+
 		require.NoError(t, err)
+		assert.Equal(t, 0, collection.Count())
 	})
 
 	t.Run("module with nil builders", func(t *testing.T) {
@@ -50,12 +48,11 @@ func TestNewModule(t *testing.T) {
 			godi.AddScoped(testutil.NewTestService),
 		)
 
-		provider := godi.NewServiceProvider()
-		t.Cleanup(func() {
-			require.NoError(t, provider.Close())
-		})
-		err := provider.AddModules(module)
+		collection := godi.NewServiceCollection()
+		err := collection.AddModules(module)
+
 		require.NoError(t, err)
+		assert.Equal(t, 2, collection.Count())
 	})
 }
 
@@ -85,12 +82,11 @@ func TestModule_Composition(t *testing.T) {
 			godi.AddSingleton(func() string { return "app-config" }),
 		)
 
-		provider := godi.NewServiceProvider()
-		t.Cleanup(func() {
-			require.NoError(t, provider.Close())
-		})
-		err := provider.AddModules(appModule)
+		collection := godi.NewServiceCollection()
+		err := collection.AddModules(appModule)
+
 		require.NoError(t, err)
+		assert.Equal(t, 5, collection.Count()) // 3 from sub-modules + 1 from app + 1 string
 	})
 
 	t.Run("multiple module registration", func(t *testing.T) {
@@ -108,12 +104,11 @@ func TestModule_Composition(t *testing.T) {
 			godi.AddSingleton(testutil.NewTestCache),
 		)
 
-		provider := godi.NewServiceProvider()
-		t.Cleanup(func() {
-			require.NoError(t, provider.Close())
-		})
-		err := provider.AddModules(module1, module2, module3)
+		collection := godi.NewServiceCollection()
+		err := collection.AddModules(module1, module2, module3)
+
 		require.NoError(t, err)
+		assert.Equal(t, 3, collection.Count())
 	})
 }
 
@@ -125,17 +120,14 @@ func TestModule_ErrorHandling(t *testing.T) {
 
 		module := godi.NewModule("error-module",
 			godi.AddSingleton(testutil.NewTestLogger),
-			func(s godi.ServiceProvider) error {
+			func(s godi.ServiceCollection) error {
 				return expectedErr
 			},
 			godi.AddSingleton(testutil.NewTestDatabase), // Should not be reached
 		)
 
-		provider := godi.NewServiceProvider()
-		t.Cleanup(func() {
-			require.NoError(t, provider.Close())
-		})
-		err := provider.AddModules(module)
+		collection := godi.NewServiceCollection()
+		err := collection.AddModules(module)
 
 		assert.Error(t, err)
 
@@ -143,13 +135,16 @@ func TestModule_ErrorHandling(t *testing.T) {
 		assert.ErrorAs(t, err, &moduleErr)
 		assert.Equal(t, "error-module", moduleErr.Module)
 		assert.ErrorIs(t, err, expectedErr)
+
+		// Only first service should be registered
+		assert.Equal(t, 1, collection.Count())
 	})
 
 	t.Run("error in nested module", func(t *testing.T) {
 		t.Parallel()
 
 		errorSubModule := godi.NewModule("sub-error",
-			func(s godi.ServiceProvider) error {
+			func(s godi.ServiceCollection) error {
 				return testutil.ErrIntentional
 			},
 		)
@@ -159,11 +154,8 @@ func TestModule_ErrorHandling(t *testing.T) {
 			errorSubModule,
 		)
 
-		provider := godi.NewServiceProvider()
-		t.Cleanup(func() {
-			require.NoError(t, provider.Close())
-		})
-		err := provider.AddModules(mainModule)
+		collection := godi.NewServiceCollection()
+		err := collection.AddModules(mainModule)
 
 		assert.Error(t, err)
 
@@ -199,18 +191,17 @@ func TestModule_WithDecorator(t *testing.T) {
 			}),
 		)
 
-		provider := godi.NewServiceProvider()
-		t.Cleanup(func() {
-			require.NoError(t, provider.Close())
-		})
-		err := provider.AddModules(module)
+		collection := godi.NewServiceCollection()
+		err := collection.AddModules(module)
 		require.NoError(t, err)
 
+		provider, err := collection.BuildServiceProvider()
+		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
 
-		logger := testutil.AssertServiceResolvable[testutil.TestLogger](t, provider.GetRootScope())
+		logger := testutil.AssertServiceResolvable[testutil.TestLogger](t, provider)
 		_, ok := logger.(*DecoratedLogger)
 		assert.True(t, ok, "logger should be decorated")
 	})
@@ -277,13 +268,12 @@ func TestModule_RealWorldScenarios(t *testing.T) {
 		)
 
 		// Build and test
-		provider := godi.NewServiceProvider()
-		t.Cleanup(func() {
-			require.NoError(t, provider.Close())
-		})
-		err := provider.AddModules(appModule)
+		collection := godi.NewServiceCollection()
+		err := collection.AddModules(appModule)
 		require.NoError(t, err)
 
+		provider, err := collection.BuildServiceProvider()
+		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
@@ -295,7 +285,7 @@ func TestModule_RealWorldScenarios(t *testing.T) {
 		})
 
 		// Resolve the handler (top of dependency chain)
-		handler := testutil.AssertServiceResolvable[*UserHandler](t, scope)
+		handler := testutil.AssertServiceResolvableInScope[*UserHandler](t, scope)
 		assert.NotNil(t, handler)
 		assert.NotNil(t, handler.service)
 		assert.NotNil(t, handler.service.repo)
@@ -348,19 +338,18 @@ func TestModule_RealWorldScenarios(t *testing.T) {
 			coreModule,
 		)
 
-		provider := godi.NewServiceProvider()
-		t.Cleanup(func() {
-			require.NoError(t, provider.Close())
-		})
-		err := provider.AddModules(appModule)
+		collection := godi.NewServiceCollection()
+		err := collection.AddModules(appModule)
 		require.NoError(t, err)
 
+		provider, err := collection.BuildServiceProvider()
+		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
 		})
 
 		// Resolve plugin manager
-		manager := testutil.AssertServiceResolvable[*PluginManager](t, provider.GetRootScope())
+		manager := testutil.AssertServiceResolvable[*PluginManager](t, provider)
 		assert.Len(t, manager.plugins, 3)
 
 		// Verify all plugins are loaded
@@ -397,11 +386,96 @@ func TestModule_BuilderFunctions(t *testing.T) {
 			}),
 		)
 
-		provider := godi.NewServiceProvider()
-		t.Cleanup(func() {
-			require.NoError(t, provider.Close())
-		})
-		err := provider.AddModules(module)
+		collection := godi.NewServiceCollection()
+		err := collection.AddModules(module)
 		require.NoError(t, err)
+
+		// Verify registration count (5 total)
+		assert.GreaterOrEqual(t, collection.Count(), 5)
 	})
+}
+
+// Table-driven test for module patterns
+func TestModule_Patterns(t *testing.T) {
+	tests := []struct {
+		name         string
+		createModule func() godi.ModuleOption
+		validate     func(t *testing.T, collection godi.ServiceCollection)
+		wantErr      bool
+	}{
+		{
+			name: "feature module pattern",
+			createModule: func() godi.ModuleOption {
+				return godi.NewModule("feature",
+					godi.AddSingleton(func() string { return "feature-config" }),
+					godi.AddScoped(func(config string) *struct{ Config string } {
+						return &struct{ Config string }{Config: config}
+					}),
+				)
+			},
+			validate: func(t *testing.T, collection godi.ServiceCollection) {
+				assert.Equal(t, 2, collection.Count())
+			},
+		},
+		{
+			name: "conditional registration",
+			createModule: func() godi.ModuleOption {
+				enableFeature := true
+
+				builders := []godi.ModuleOption{
+					godi.AddSingleton(testutil.NewTestLogger),
+				}
+
+				if enableFeature {
+					builders = append(builders, godi.AddSingleton(testutil.NewTestCache))
+				}
+
+				return godi.NewModule("conditional", builders...)
+			},
+			validate: func(t *testing.T, collection godi.ServiceCollection) {
+				assert.Equal(t, 2, collection.Count())
+			},
+		},
+		{
+			name: "cross-cutting concerns",
+			createModule: func() godi.ModuleOption {
+				// Logging decorator that can be applied to any service
+				loggingDecorator := func(logger testutil.TestLogger) godi.ModuleOption {
+					return godi.AddDecorator(func(db testutil.TestDatabase) testutil.TestDatabase {
+						// Wrap database with logging
+						return db
+					})
+				}
+
+				return godi.NewModule("cross-cutting",
+					godi.AddSingleton(testutil.NewTestLogger),
+					godi.AddSingleton(testutil.NewTestDatabase),
+					loggingDecorator(nil), // Logger will be injected by DI
+				)
+			},
+			validate: func(t *testing.T, collection godi.ServiceCollection) {
+				assert.GreaterOrEqual(t, collection.Count(), 2)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			collection := godi.NewServiceCollection()
+			module := tt.createModule()
+
+			err := collection.AddModules(module)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				if tt.validate != nil {
+					tt.validate(t, collection)
+				}
+			}
+		})
+	}
 }
