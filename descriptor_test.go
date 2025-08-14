@@ -374,7 +374,7 @@ func TestServiceDescriptor_Metadata(t *testing.T) {
 		require.NoError(t, err)
 
 		// Build provider to test group resolution
-		provider, err := collection.BuildServiceProvider()
+		provider, err := collection.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())

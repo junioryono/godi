@@ -647,7 +647,7 @@ func main() {
     }
 
     // Build provider
-    provider, err := services.BuildServiceProvider()
+    provider, err := services.Build()
     if err != nil {
         log.Fatal(err)
     }
@@ -735,7 +735,7 @@ func TestCreatePost(t *testing.T) {
 
     services := godi.NewServiceCollection()
     services.AddModules(testModule)
-    provider, _ := services.BuildServiceProvider()
+    provider, _ := services.Build()
     defer provider.Close()
 
     // Create test request

@@ -26,7 +26,7 @@ Use it:
 services := godi.NewServiceCollection()
 services.AddModules(email.Module)
 
-provider, _ := services.BuildServiceProvider()
+provider, _ := services.Build()
 ```
 
 ## Module Dependencies
@@ -161,7 +161,7 @@ func main() {
     // Build and run
     services := godi.NewServiceCollection()
     services.AddModules(appModule)
-    provider, _ := services.BuildServiceProvider()
+    provider, _ := services.Build()
 }
 ```
 
@@ -292,7 +292,7 @@ func TestUserService(t *testing.T) {
     services := godi.NewServiceCollection()
     services.AddModules(testModule)
 
-    provider, _ := services.BuildServiceProvider()
+    provider, _ := services.Build()
     // Test with mocked dependencies
 }
 ```

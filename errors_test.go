@@ -428,7 +428,7 @@ func TestIsCircularDependency(t *testing.T) {
 		collection.AddSingleton(func(b *B) *A { return &A{B: b} })
 		collection.AddSingleton(func(a *A) *B { return &B{A: a} })
 
-		_, err := collection.BuildServiceProvider()
+		_, err := collection.Build()
 		require.Error(t, err)
 		assert.True(t, godi.IsCircularDependency(err))
 	})

@@ -1,4 +1,4 @@
-package container
+package godi
 
 import (
 	"errors"
@@ -116,14 +116,14 @@ type ContainerBuilder struct {
 // NewBuilder creates a new container builder.
 func NewBuilder() *ContainerBuilder {
 	return &ContainerBuilder{
-		container: New(),
+		container: NewContainer(),
 	}
 }
 
 // NewBuilderWithOptions creates a new container builder with options.
 func NewBuilderWithOptions(options *ContainerOptions) *ContainerBuilder {
 	return &ContainerBuilder{
-		container: NewWithOptions(options),
+		container: NewContainerWithOptions(options),
 	}
 }
 

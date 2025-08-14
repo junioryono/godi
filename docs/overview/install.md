@@ -37,7 +37,7 @@ func main() {
     services := godi.NewServiceCollection()
     services.AddModules(appModule)
 
-    provider, _ := services.BuildServiceProvider()
+    provider, _ := services.Build()
     defer provider.Close()
 
     // Use it

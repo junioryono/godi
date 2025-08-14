@@ -195,7 +195,7 @@ func TestModule_WithDecorator(t *testing.T) {
 		err := collection.AddModules(module)
 		require.NoError(t, err)
 
-		provider, err := collection.BuildServiceProvider()
+		provider, err := collection.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
@@ -272,7 +272,7 @@ func TestModule_RealWorldScenarios(t *testing.T) {
 		err := collection.AddModules(appModule)
 		require.NoError(t, err)
 
-		provider, err := collection.BuildServiceProvider()
+		provider, err := collection.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
@@ -342,7 +342,7 @@ func TestModule_RealWorldScenarios(t *testing.T) {
 		err := collection.AddModules(appModule)
 		require.NoError(t, err)
 
-		provider, err := collection.BuildServiceProvider()
+		provider, err := collection.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())

@@ -15,7 +15,7 @@ Quick Start
    services.AddScoped(NewUserService)
 
    // 2. Build the container
-   provider, _ := services.BuildServiceProvider()
+   provider, _ := services.Build()
    defer provider.Close()
 
    // 3. Use your services

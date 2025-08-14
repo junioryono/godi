@@ -1,4 +1,4 @@
-package resolver_test
+package godi_test
 
 import (
 	"errors"
@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/junioryono/godi/v3"
 	"github.com/junioryono/godi/v3/internal/graph"
 	"github.com/junioryono/godi/v3/internal/reflection"
 	"github.com/junioryono/godi/v3/internal/registry"
-	"github.com/junioryono/godi/v3/internal/resolver"
 )
 
 // Test types
@@ -61,8 +61,8 @@ func NewServiceWithError(db *Database) (*Service, error) {
 func TestResolver_SimpleSingleton(t *testing.T) {
 	reg := registry.NewServiceCollection()
 	g := graph.New()
-	analyzer := reflection.New()
-	r := resolver.New(reg, g, analyzer, nil)
+	analyzer := reflection.NewAnalyzer()
+	r := godi.NewResolver(reg, g, analyzer, nil)
 
 	// Register Database as singleton
 	dbProvider := &registry.Descriptor{
@@ -102,8 +102,8 @@ func TestResolver_SimpleSingleton(t *testing.T) {
 func TestResolver_ScopedService(t *testing.T) {
 	reg := registry.NewServiceCollection()
 	g := graph.New()
-	analyzer := reflection.New()
-	r := resolver.New(reg, g, analyzer, nil)
+	analyzer := reflection.NewAnalyzer()
+	r := godi.NewResolver(reg, g, analyzer, nil)
 
 	// Register Logger as scoped
 	loggerProvider := &registry.Descriptor{
@@ -144,12 +144,12 @@ func TestResolver_ScopedService(t *testing.T) {
 func TestResolver_TransientService(t *testing.T) {
 	reg := registry.NewServiceCollection()
 	g := graph.New()
-	analyzer := reflection.New()
+	analyzer := reflection.NewAnalyzer()
 
-	options := &resolver.ResolverOptions{
+	options := &godi.ResolverOptions{
 		EnableCaching: true, // Even with caching, transient should not be cached
 	}
-	r := resolver.New(reg, g, analyzer, options)
+	r := godi.NewResolver(reg, g, analyzer, options)
 
 	// Register Logger as transient
 	loggerProvider := &registry.Descriptor{
@@ -179,8 +179,8 @@ func TestResolver_TransientService(t *testing.T) {
 func TestResolver_WithDependencies(t *testing.T) {
 	reg := registry.NewServiceCollection()
 	g := graph.New()
-	analyzer := reflection.New()
-	r := resolver.New(reg, g, analyzer, nil)
+	analyzer := reflection.NewAnalyzer()
+	r := godi.NewResolver(reg, g, analyzer, nil)
 
 	// Analyze constructors to get dependencies
 	dbDeps, _ := analyzer.GetDependencies(NewDatabase)
@@ -247,10 +247,10 @@ func TestResolver_WithDependencies(t *testing.T) {
 func TestResolver_KeyedServices(t *testing.T) {
 	reg := registry.NewServiceCollection()
 	g := graph.New()
-	analyzer := reflection.New()
+	analyzer := reflection.NewAnalyzer()
 
 	// Disable caching to ensure we're testing the resolution, not the cache
-	r := resolver.New(reg, g, analyzer, &resolver.ResolverOptions{
+	r := godi.NewResolver(reg, g, analyzer, &godi.ResolverOptions{
 		EnableCaching: false, // Disable caching for this test
 	})
 
@@ -306,8 +306,8 @@ func TestResolver_KeyedServices(t *testing.T) {
 func TestResolver_Groups(t *testing.T) {
 	reg := registry.NewServiceCollection()
 	g := graph.New()
-	analyzer := reflection.New()
-	r := resolver.New(reg, g, analyzer, nil)
+	analyzer := reflection.NewAnalyzer()
+	r := godi.NewResolver(reg, g, analyzer, nil)
 
 	handlerType := reflect.TypeOf(func() {})
 
@@ -343,11 +343,6 @@ func TestResolver_Groups(t *testing.T) {
 		}
 	}
 }
-
-// This would create a circular dependency if both were registered
-// A -> B -> A
-type A struct{ B *B }
-type B struct{ A *A }
 
 func TestResolver_CircularDependency(t *testing.T) {
 	reg := registry.NewServiceCollection()
@@ -393,8 +388,8 @@ func TestResolver_CircularDependency(t *testing.T) {
 func TestResolver_MissingDependency(t *testing.T) {
 	reg := registry.NewServiceCollection()
 	g := graph.New()
-	analyzer := reflection.New()
-	r := resolver.New(reg, g, analyzer, nil)
+	analyzer := reflection.NewAnalyzer()
+	r := godi.NewResolver(reg, g, analyzer, nil)
 
 	// Register Service but not its dependencies
 	serviceProvider := &registry.Descriptor{
@@ -417,7 +412,7 @@ func TestResolver_MissingDependency(t *testing.T) {
 }
 
 func TestInstanceCache(t *testing.T) {
-	cache := resolver.NewInstanceCache()
+	cache := godi.NewInstanceCache()
 
 	dbType := reflect.TypeOf((*Database)(nil))
 	db1 := &Database{ConnectionString: "db1"}
@@ -492,46 +487,46 @@ func TestInstanceCache(t *testing.T) {
 func TestResolver_Initialization(t *testing.T) {
 	tests := []struct {
 		name      string
-		setup     func() (*resolver.Resolver, error)
+		setup     func() (*godi.Resolver, error)
 		wantPanic bool
 	}{
 		{
 			name: "nil registry",
-			setup: func() (*resolver.Resolver, error) {
+			setup: func() (*godi.Resolver, error) {
 				g := graph.New()
-				analyzer := reflection.New()
-				r := resolver.New(nil, g, analyzer, nil) // Should handle nil registry
+				analyzer := reflection.NewAnalyzer()
+				r := godi.NewResolver(nil, g, analyzer, nil) // Should handle nil registry
 				return r, nil
 			},
 			wantPanic: true,
 		},
 		{
 			name: "nil graph",
-			setup: func() (*resolver.Resolver, error) {
+			setup: func() (*godi.Resolver, error) {
 				reg := registry.NewServiceCollection()
-				analyzer := reflection.New()
-				r := resolver.New(reg, nil, analyzer, nil) // Should handle nil graph
+				analyzer := reflection.NewAnalyzer()
+				r := godi.NewResolver(reg, nil, analyzer, nil) // Should handle nil graph
 				return r, nil
 			},
 			wantPanic: true,
 		},
 		{
 			name: "nil analyzer",
-			setup: func() (*resolver.Resolver, error) {
+			setup: func() (*godi.Resolver, error) {
 				reg := registry.NewServiceCollection()
 				g := graph.New()
-				r := resolver.New(reg, g, nil, nil) // Should handle nil analyzer
+				r := godi.NewResolver(reg, g, nil, nil) // Should handle nil analyzer
 				return r, nil
 			},
 			wantPanic: true,
 		},
 		{
 			name: "valid components",
-			setup: func() (*resolver.Resolver, error) {
+			setup: func() (*godi.Resolver, error) {
 				reg := registry.NewServiceCollection()
 				g := graph.New()
-				analyzer := reflection.New()
-				r := resolver.New(reg, g, analyzer, nil)
+				analyzer := reflection.NewAnalyzer()
+				r := godi.NewResolver(reg, g, analyzer, nil)
 				return r, nil
 			},
 			wantPanic: false,
@@ -560,8 +555,8 @@ func TestResolver_Initialization(t *testing.T) {
 func TestResolver_ConcurrentScopedResolution(t *testing.T) {
 	reg := registry.NewServiceCollection()
 	g := graph.New()
-	analyzer := reflection.New()
-	r := resolver.New(reg, g, analyzer, &resolver.ResolverOptions{
+	analyzer := reflection.NewAnalyzer()
+	r := godi.NewResolver(reg, g, analyzer, &godi.ResolverOptions{
 		EnableCaching:      true,
 		MaxResolutionDepth: 100,
 	})
@@ -652,9 +647,9 @@ func TestResolver_ConcurrentScopedResolution(t *testing.T) {
 func TestResolver_MaxDepthProtection(t *testing.T) {
 	reg := registry.NewServiceCollection()
 	g := graph.New()
-	analyzer := reflection.New()
+	analyzer := reflection.NewAnalyzer()
 
-	r := resolver.New(reg, g, analyzer, &resolver.ResolverOptions{
+	r := godi.NewResolver(reg, g, analyzer, &godi.ResolverOptions{
 		EnableCaching:      false, // Disable caching
 		EnableValidation:   false,
 		MaxResolutionDepth: 1, // Only allow depth of 1
@@ -707,7 +702,7 @@ func TestResolver_MaxDepthProtection(t *testing.T) {
 
 // Test cache statistics accuracy
 func TestInstanceCache_Statistics(t *testing.T) {
-	cache := resolver.NewInstanceCache()
+	cache := godi.NewInstanceCache()
 
 	dbType := reflect.TypeOf((*Database)(nil))
 
@@ -749,8 +744,8 @@ func TestInstanceCache_Statistics(t *testing.T) {
 // Test decorator processor with complex scenarios
 func TestDecoratorProcessor_ComplexScenarios(t *testing.T) {
 	reg := registry.NewServiceCollection()
-	analyzer := reflection.New()
-	processor := resolver.NewDecoratorProcessor(reg, analyzer)
+	analyzer := reflection.NewAnalyzer()
+	processor := godi.NewDecoratorProcessor(reg, analyzer)
 
 	loggerType := reflect.TypeOf((*Logger)(nil)).Elem()
 
@@ -832,14 +827,14 @@ func TestDecoratorProcessor_ComplexScenarios(t *testing.T) {
 
 // Test error handler functionality
 func TestErrorHandler_ErrorWrapping(t *testing.T) {
-	handler := resolver.NewErrorHandler(func(err error) {
+	handler := godi.NewErrorHandler(func(err error) {
 		// Log errors (in test, we just verify it's called)
 	})
 
 	serviceType := reflect.TypeOf((*Database)(nil))
 	cause := errors.New("original error")
 
-	stack := []resolver.ResolutionFrame{
+	stack := []godi.ResolutionFrame{
 		{
 			ServiceType: reflect.TypeOf((*Service)(nil)),
 			Lifetime:    "Singleton",
@@ -853,11 +848,11 @@ func TestErrorHandler_ErrorWrapping(t *testing.T) {
 
 	wrapped := handler.WrapResolutionError(serviceType, "primary", cause, stack)
 
-	if !resolver.IsResolutionError(wrapped) {
+	if !godi.IsResolutionError(wrapped) {
 		t.Error("Expected ResolutionError type")
 	}
 
-	resErr := wrapped.(*resolver.ResolutionError)
+	resErr := wrapped.(*godi.ResolutionError)
 
 	if resErr.ServiceType != serviceType {
 		t.Error("Service type mismatch")
@@ -871,7 +866,7 @@ func TestErrorHandler_ErrorWrapping(t *testing.T) {
 		t.Error("Should be able to unwrap to original cause")
 	}
 
-	extractedStack, ok := resolver.GetResolutionStack(wrapped)
+	extractedStack, ok := godi.GetResolutionStack(wrapped)
 	if !ok {
 		t.Error("Should be able to extract stack")
 	}
@@ -885,12 +880,12 @@ func TestErrorHandler_ErrorWrapping(t *testing.T) {
 func TestResolver_ResolveAll(t *testing.T) {
 	reg := registry.NewServiceCollection()
 	g := graph.New()
-	analyzer := reflection.New()
+	analyzer := reflection.NewAnalyzer()
 
 	resolveCount := int32(0)
 	errorCount := int32(0)
 
-	r := resolver.New(reg, g, analyzer, &resolver.ResolverOptions{
+	r := godi.NewResolver(reg, g, analyzer, &godi.ResolverOptions{
 		EnableCaching: true,
 		OnResolved: func(serviceType reflect.Type, instance any, duration time.Duration) {
 			atomic.AddInt32(&resolveCount, 1)
@@ -962,7 +957,7 @@ func TestResolver_ResolveAll(t *testing.T) {
 
 // Benchmark cache performance
 func BenchmarkInstanceCache_Get(b *testing.B) {
-	cache := resolver.NewInstanceCache()
+	cache := godi.NewInstanceCache()
 
 	dbType := reflect.TypeOf((*Database)(nil))
 	db := &Database{ConnectionString: "benchmark"}
@@ -981,8 +976,8 @@ func BenchmarkInstanceCache_Get(b *testing.B) {
 func BenchmarkResolver_Resolution(b *testing.B) {
 	reg := registry.NewServiceCollection()
 	g := graph.New()
-	analyzer := reflection.New()
-	r := resolver.New(reg, g, analyzer, nil)
+	analyzer := reflection.NewAnalyzer()
+	r := godi.NewResolver(reg, g, analyzer, nil)
 
 	// Setup a complex dependency graph
 	providers := []*registry.Descriptor{
@@ -1062,7 +1057,7 @@ func (m *mockResolutionContext) GetLifetime() registry.ServiceLifetime {
 }
 
 // GetResolver implements resolver.ResolutionContext.
-func (m *mockResolutionContext) GetResolver() *resolver.Resolver {
+func (m *mockResolutionContext) GetResolver() *godi.Resolver {
 	panic("unimplemented")
 }
 
@@ -1120,4 +1115,4 @@ func (m *mockResolutionContext) ResolveGroup(t reflect.Type, group string) ([]an
 	return []any{}, nil
 }
 
-var _ resolver.ResolutionContext = (*mockResolutionContext)(nil)
+var _ godi.ResolutionContext = (*mockResolutionContext)(nil)

@@ -35,7 +35,7 @@ func main() {
     services.AddSingleton(NewGreeter)
 
     // 3. Build the container
-    provider, _ := services.BuildServiceProvider()
+    provider, _ := services.Build()
     defer provider.Close()
 
     // 4. Use your service
@@ -121,7 +121,7 @@ func main() {
     services.AddSingleton(NewDatabase)
     services.AddScoped(NewUserRepository)
 
-    provider, _ := services.BuildServiceProvider()
+    provider, _ := services.Build()
     defer provider.Close()
 
     // Use with your web framework

@@ -1,13 +1,13 @@
-package graph_test
+package godi_test
 
 import (
-	"bytes"
 	"fmt"
 	"reflect"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/junioryono/godi/v3"
 	"github.com/junioryono/godi/v3/internal/graph"
 	"github.com/junioryono/godi/v3/internal/registry"
 )
@@ -397,94 +397,10 @@ func TestDependencyGraph_RemovalConsistency(t *testing.T) {
 	}
 }
 
-// Test visualizer with complex graphs
-func TestVisualizer_ComplexGraph(t *testing.T) {
-	g := graph.New()
-
-	// Create a complex graph with different lifetimes and groups
-	providers := []*registry.Descriptor{
-		{
-			Type:     reflect.TypeOf("Database"),
-			Lifetime: registry.Singleton,
-			Groups:   []string{"persistence"},
-		},
-		{
-			Type:     reflect.TypeOf("Cache"),
-			Key:      "primary",
-			Lifetime: registry.Scoped,
-			Groups:   []string{"persistence", "performance"},
-			Dependencies: []*registry.Dependency{
-				{Type: reflect.TypeOf("Database")},
-			},
-		},
-		{
-			Type:     reflect.TypeOf("Service"),
-			Lifetime: registry.Transient,
-			Dependencies: []*registry.Dependency{
-				{Type: reflect.TypeOf("Cache"), Key: "primary"},
-				{Type: reflect.TypeOf("Database")},
-			},
-		},
-	}
-
-	for _, p := range providers {
-		g.AddProvider(p)
-	}
-
-	v := graph.NewVisualizer(g)
-
-	// Test DOT output
-	var dotBuf bytes.Buffer
-	if err := v.WriteDOT(&dotBuf); err != nil {
-		t.Fatalf("Failed to write DOT: %v", err)
-	}
-
-	dot := dotBuf.String()
-
-	// Verify DOT contains expected elements
-	expectations := []string{
-		"digraph dependencies",
-		"rankdir=LR",
-		"fillcolor=",
-		"->",
-		"Database",
-		"Cache",
-		"Service",
-	}
-
-	for _, expected := range expectations {
-		if !strings.Contains(dot, expected) {
-			t.Errorf("DOT output should contain %q", expected)
-		}
-	}
-
-	// Test text output
-	var textBuf bytes.Buffer
-	if err := v.WriteText(&textBuf); err != nil {
-		t.Fatalf("Failed to write text: %v", err)
-	}
-
-	text := textBuf.String()
-
-	// Verify text contains expected sections
-	textExpectations := []string{
-		"Dependency Graph:",
-		"Level 0:",
-		"Statistics:",
-		"persistence", // Group name
-	}
-
-	for _, expected := range textExpectations {
-		if !strings.Contains(text, expected) {
-			t.Errorf("Text output should contain %q", expected)
-		}
-	}
-}
-
 // Benchmark topological sort performance
 func BenchmarkDependencyGraph_TopologicalSort(b *testing.B) {
 	// Create a large graph
-	g := graph.New()
+	g := godi.NewDependencyGraph()
 
 	numNodes := 100
 	types := make([]reflect.Type, numNodes)

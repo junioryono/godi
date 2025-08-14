@@ -9,7 +9,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/junioryono/godi/v3/internal/registry"
 	"github.com/junioryono/godi/v3/internal/typecache"
 	"go.uber.org/dig"
 )
@@ -22,7 +21,7 @@ import (
 //
 // Example:
 //
-//	provider, err := collection.BuildServiceProvider()
+//	provider, err := collection.Build()
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
@@ -60,45 +59,6 @@ type ServiceProvider interface {
 	// ResolveGroup gets all services of the specified type registered in a group.
 	// This is useful for plugin systems or when you need multiple implementations.
 	ResolveGroup(serviceType reflect.Type, groupName string) ([]interface{}, error)
-
-	// Decorate provides a decorator for a type that has already been provided in the Scope.
-	//
-	// Similar to Provide, Decorate takes in a function with zero or more dependencies and one
-	// or more results. Decorate can be used to modify a type that was already introduced to the
-	// Scope, or completely replace it with a new object.
-	//
-	// For example,
-	//
-	//	s.Decorate(func(log *zap.Logger) *zap.Logger {
-	//	  return log.Named("myapp")
-	//	})
-	//
-	// This takes in a value, augments it with a name, and returns a replacement for it. Functions
-	// in the Scope's dependency graph that use *zap.Logger will now use the *zap.Logger
-	// returned by this decorator.
-	//
-	// A decorator can also take in multiple parameters and replace one of them:
-	//
-	//	s.Decorate(func(log *zap.Logger, cfg *Config) *zap.Logger {
-	//	  return log.Named(cfg.Name)
-	//	})
-	//
-	// Or replace a subset of them:
-	//
-	//	s.Decorate(func(
-	//	  log *zap.Logger,
-	//	  cfg *Config,
-	//	  scope metrics.Scope
-	//	) (*zap.Logger, metrics.Scope) {
-	//	  log = log.Named(cfg.Name)
-	//	  scope = scope.With(metrics.Tag("service", cfg.Name))
-	//	  return log, scope
-	//	})
-	//
-	// Decorating a Scope affects all the child scopes of this Scope.
-	//
-	// Similar to a provider, the decorator function gets called *at most once*.
-	Decorate(decorator interface{}, opts ...DecorateOption) error
 
 	// Invoke executes a function with dependency injection.
 	// All parameters of the function are resolved from the container.
@@ -145,7 +105,7 @@ type serviceProvider struct {
 	digContainer *dig.Container
 
 	// Service descriptors
-	descriptors     []*registry.Descriptor
+	descriptors     []*Descriptor
 	descriptorIndex map[reflect.Type]struct{}
 	keyedIndex      map[typeKeyPair]struct{}
 

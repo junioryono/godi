@@ -1,4 +1,4 @@
-package graph
+package godi
 
 import (
 	"fmt"
@@ -45,8 +45,8 @@ type Node struct {
 	Dependents   []NodeKey // services that depend on this node
 }
 
-// New creates a new dependency graph
-func New() *DependencyGraph {
+// NewDependencyGraph creates a new dependency graph
+func NewDependencyGraph() *DependencyGraph {
 	return &DependencyGraph{
 		nodes:            make(map[NodeKey]*Node),
 		edges:            make(map[NodeKey][]NodeKey),

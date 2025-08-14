@@ -162,7 +162,7 @@ func main() {
     }
 
     // Build the provider
-    provider, err := collection.BuildServiceProvider()
+    provider, err := collection.Build()
     if err != nil {
         log.Fatal(err)
     }
@@ -289,7 +289,7 @@ func TestUserService(t *testing.T) {
     collection := godi.NewServiceCollection()
     collection.AddModules(testModule)
 
-    provider, _ := collection.BuildServiceProvider()
+    provider, _ := collection.Build()
     defer provider.Close()
 
     // Test your service
