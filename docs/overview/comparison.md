@@ -41,7 +41,7 @@ func main() {
     services := godi.NewServiceCollection()
     services.AddModules(AppModule)
 
-    provider, _ := services.BuildServiceProvider()
+    provider, _ := services.Build()
     defer provider.Close() // Automatic cleanup!
 
     handler, _ := godi.Resolve[*Handler](provider)
@@ -97,7 +97,7 @@ var AppModule = godi.NewModule("app",
 // Use immediately
 services := godi.NewServiceCollection()
 services.AddModules(AppModule)
-provider, _ := services.BuildServiceProvider()
+provider, _ := services.Build()
 app, _ := godi.Resolve[*App](provider)
 ```
 
@@ -158,7 +158,7 @@ func main() {
     services := godi.NewServiceCollection()
     services.AddModules(AppModule)
 
-    provider, _ := services.BuildServiceProvider()
+    provider, _ := services.Build()
     defer provider.Close()
 
     server, _ := godi.Resolve[*Server](provider)
@@ -229,7 +229,7 @@ If you're coming from .NET, godi will feel very familiar:
 ```csharp
 services.AddSingleton<ILogger, Logger>();
 services.AddScoped<IUserService, UserService>();
-var provider = services.BuildServiceProvider();
+var provider = services.Build();
 var service = provider.GetService<IUserService>();
 ```
 
@@ -238,7 +238,7 @@ var service = provider.GetService<IUserService>();
 ```go
 services.AddSingleton(NewLogger)
 services.AddScoped(NewUserService)
-provider, _ := services.BuildServiceProvider()
+provider, _ := services.Build()
 service, _ := godi.Resolve[UserService](provider)
 ```
 

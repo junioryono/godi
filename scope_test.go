@@ -809,7 +809,7 @@ func TestScope_BuiltInServices(t *testing.T) {
 
 		// Building the provider should fail because context.Context is a built-in type
 		// that gets registered automatically by the framework
-		_, err = collection.BuildServiceProvider()
+		_, err = collection.Build()
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "context.Context")
 		assert.Contains(t, err.Error(), "already provided")

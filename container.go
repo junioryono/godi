@@ -1,4 +1,4 @@
-package container
+package godi
 
 import (
 	"context"
@@ -9,21 +9,18 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/junioryono/godi/v3/internal/graph"
 	"github.com/junioryono/godi/v3/internal/lifetime"
 	"github.com/junioryono/godi/v3/internal/reflection"
-	"github.com/junioryono/godi/v3/internal/registry"
-	"github.com/junioryono/godi/v3/internal/resolver"
 )
 
 // Container is the main dependency injection container.
 // It integrates all components to provide a complete DI solution.
 type Container struct {
 	// Core components
-	registry        *registry.ServiceCollection
-	graph           *graph.DependencyGraph
+	registry        ServiceCollection
+	graph           *DependencyGraph
 	analyzer        *reflection.Analyzer
-	resolver        *resolver.Resolver
+	resolver        *Resolver
 	lifetimeManager *lifetime.Manager
 	scopeManager    *lifetime.ScopeManager
 
@@ -54,7 +51,7 @@ type ContainerOptions struct {
 	EnableLazyLoading bool
 
 	// OnServiceRegistered callback
-	OnServiceRegistered func(serviceType reflect.Type, lifetime registry.ServiceLifetime)
+	OnServiceRegistered func(serviceType reflect.Type, lifetime ServiceLifetime)
 
 	// OnServiceResolved callback
 	OnServiceResolved func(serviceType reflect.Type, instance any, duration time.Duration)
@@ -86,34 +83,34 @@ func DefaultContainerOptions() *ContainerOptions {
 	}
 }
 
-// New creates a new container with default options.
-func New() *Container {
-	return NewWithOptions(nil)
+// NewContainer creates a new container with default options.
+func NewContainer() *Container {
+	return NewContainerWithOptions(nil)
 }
 
-// NewWithOptions creates a new container with custom options.
-func NewWithOptions(options *ContainerOptions) *Container {
+// NewContainerWithOptions creates a new container with custom options.
+func NewContainerWithOptions(options *ContainerOptions) *Container {
 	if options == nil {
 		options = DefaultContainerOptions()
 	}
 
 	// Create core components
-	reg := registry.NewServiceCollection()
-	g := graph.New()
-	analyzer := reflection.New()
+	reg := NewServiceCollection()
+	g := NewDependencyGraph()
+	analyzer := reflection.NewAnalyzer()
 
 	// Create lifetime manager with disposal callback
-	lifetimeManager := lifetime.NewWithOptions(options.OnDispose)
+	lifetimeManager := lifetime.NewManagerWithOptions(options.OnDispose)
 
 	// Create resolver with options
-	resolverOptions := &resolver.ResolverOptions{
+	resolverOptions := &ResolverOptions{
 		EnableValidation: options.EnableValidation,
 		EnableCaching:    options.EnableCaching,
 		OnResolved:       options.OnServiceResolved,
 		OnError:          options.OnServiceError,
 	}
 
-	r := resolver.New(reg, g, analyzer, resolverOptions)
+	r := NewResolver(reg, g, analyzer, resolverOptions)
 
 	// Create scope manager
 	scopeManager := lifetime.NewScopeManager(lifetimeManager, r)
@@ -135,7 +132,7 @@ func NewWithOptions(options *ContainerOptions) *Container {
 }
 
 // Register registers a service with the container.
-func (c *Container) Register(lifetime registry.ServiceLifetime, constructor any, opts ...ProvideOption) error {
+func (c *Container) Register(lifetime ServiceLifetime, constructor any, opts ...ProvideOption) error {
 	if c.isDisposed() {
 		return ErrContainerDisposed
 	}
@@ -173,21 +170,38 @@ func (c *Container) Register(lifetime registry.ServiceLifetime, constructor any,
 		return fmt.Errorf("failed to get dependencies: %w", err)
 	}
 
-	// Build provider
-	builder := registry.NewProviderBuilder(constructor).
-		WithType(serviceType).
-		WithLifetime(lifetime).
-		WithDependencies(deps...)
+	val := reflect.ValueOf(constructor)
+	typ := reflect.TypeOf(constructor)
 
-	// Apply options
-	for _, opt := range opts {
-		builder = applyProvideOption(builder, opt)
+	// If it's not a function, wrap it in one
+	if typ.Kind() != reflect.Func {
+		// Create a function that returns this value
+		fnType := reflect.FuncOf([]reflect.Type{}, []reflect.Type{typ}, false)
+		fnValue := reflect.MakeFunc(fnType, func(args []reflect.Value) []reflect.Value {
+			return []reflect.Value{val}
+		})
+		val = fnValue
+		typ = fnType
 	}
 
-	provider, err := builder.Build()
-	if err != nil {
-		return fmt.Errorf("failed to build provider: %w", err)
+	provider := &Descriptor{
+		Type:            serviceType,
+		Constructor:     val,
+		ConstructorType: typ,
+		Lifetime:        lifetime,
+		Groups:          make([]string, 0),
+		Dependencies:    deps,
 	}
+
+	// // Apply options
+	// for _, opt := range opts {
+	// 	builder = applyProvideOption(builder, opt)
+	// }
+
+	// provider, err := builder.Build()
+	// if err != nil {
+	// 	return fmt.Errorf("failed to build provider: %w", err)
+	// }
 
 	// Register with registry
 	if err := c.registry.RegisterProvider(provider); err != nil {
@@ -214,17 +228,17 @@ func (c *Container) Register(lifetime registry.ServiceLifetime, constructor any,
 
 // RegisterSingleton registers a singleton service.
 func (c *Container) RegisterSingleton(constructor any, opts ...ProvideOption) error {
-	return c.Register(registry.Singleton, constructor, opts...)
+	return c.Register(Singleton, constructor, opts...)
 }
 
 // RegisterScoped registers a scoped service.
 func (c *Container) RegisterScoped(constructor any, opts ...ProvideOption) error {
-	return c.Register(registry.Scoped, constructor, opts...)
+	return c.Register(Scoped, constructor, opts...)
 }
 
 // RegisterTransient registers a transient service.
 func (c *Container) RegisterTransient(constructor any, opts ...ProvideOption) error {
-	return c.Register(registry.Transient, constructor, opts...)
+	return c.Register(Transient, constructor, opts...)
 }
 
 // RegisterDecorator registers a decorator for a type.

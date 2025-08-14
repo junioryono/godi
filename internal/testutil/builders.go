@@ -57,7 +57,7 @@ func (b *ServiceCollectionBuilder) BuildProvider(opts ...*godi.ServiceProviderOp
 		providerOpts = opts[0]
 	}
 
-	provider, err := b.collection.BuildServiceProviderWithOptions(providerOpts)
+	provider, err := b.collection.BuildWithOptions(providerOpts)
 	require.NoError(b.t, err, "failed to build service provider")
 
 	b.t.Cleanup(func() {

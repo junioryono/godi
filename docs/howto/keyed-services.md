@@ -46,7 +46,7 @@ func main() {
     services := godi.NewServiceCollection()
     services.AddModules(LoggingModule)
 
-    provider, _ := services.BuildServiceProvider()
+    provider, _ := services.Build()
     defer provider.Close()
 
     // Get specific logger
@@ -252,7 +252,7 @@ func TestPaymentFlow(t *testing.T) {
     services := godi.NewServiceCollection()
     services.AddModules(TestPaymentModule)
 
-    provider, _ := services.BuildServiceProvider()
+    provider, _ := services.Build()
 
     // Test success case
     successProcessor, _ := godi.ResolveKeyed[PaymentProcessor](provider, "stripe")

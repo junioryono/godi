@@ -20,7 +20,7 @@ collection.AddScoped(constructor, options...)
 err := collection.AddModules(module1, module2)
 
 // Build provider
-provider, err := collection.BuildServiceProvider()
+provider, err := collection.Build()
 provider, err := collection.BuildServiceProviderWithOptions(options)
 
 // Other methods
@@ -278,7 +278,7 @@ func main() {
     services := godi.NewServiceCollection()
     services.AddModules(AppModule)
 
-    provider, err := services.BuildServiceProvider()
+    provider, err := services.Build()
     if err != nil {
         log.Fatal(err)
     }

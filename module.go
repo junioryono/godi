@@ -62,7 +62,7 @@ func AddTransient(constructor interface{}, opts ...ProvideOption) ModuleOption {
 }
 
 // AddDecorator creates a ModuleBuilder for adding a decorator to a service.
-func AddDecorator(decorator interface{}, opts ...ProvideOption) ModuleOption {
+func AddDecorator(decorator interface{}, opts ...DecorateOption) ModuleOption {
 	return func(s ServiceCollection) error {
 		return s.Decorate(decorator, opts...)
 	}

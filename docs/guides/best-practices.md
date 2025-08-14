@@ -144,7 +144,7 @@ Always check errors from DI operations:
 
 ```go
 // ✅ Good: Check all errors
-provider, err := services.BuildServiceProvider()
+provider, err := services.Build()
 if err != nil {
     log.Fatal("Failed to build provider:", err)
 }
@@ -156,7 +156,7 @@ if err != nil {
 }
 
 // ❌ Bad: Ignoring errors
-provider, _ := services.BuildServiceProvider()
+provider, _ := services.Build()
 service, _ := godi.Resolve[UserService](provider)
 ```
 
@@ -230,7 +230,7 @@ func BuildTestProvider(t *testing.T, modules ...godi.ModuleOption) godi.ServiceP
     err := services.AddModules(modules...)
     require.NoError(t, err)
 
-    provider, err := services.BuildServiceProvider()
+    provider, err := services.Build()
     require.NoError(t, err)
 
     t.Cleanup(func() {

@@ -18,7 +18,7 @@ func main() {
     services.AddSingleton(NewDatabase)
     services.AddScoped(NewUserService)
 
-    provider, _ := services.BuildServiceProvider()
+    provider, _ := services.Build()
     // ...
 }
 ```
@@ -50,7 +50,7 @@ func main() {
     // What depends on what?
     // How do I test parts of this?
 
-    provider, _ := services.BuildServiceProvider()
+    provider, _ := services.Build()
 }
 ```
 
@@ -97,7 +97,7 @@ func main() {
     services := godi.NewServiceCollection()
     services.AddModules(BusinessModule) // Includes everything!
 
-    provider, _ := services.BuildServiceProvider()
+    provider, _ := services.Build()
 }
 ```
 

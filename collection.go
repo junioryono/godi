@@ -52,7 +52,7 @@ type ServiceCollection interface {
 
 	// Decorate registers a decorator for a service type.
 	// Decorators wrap existing services to modify their behavior.
-	Decorate(decorator any, opts ...ProvideOption) error
+	Decorate(decorator any, opts ...DecorateOption) error
 
 	// Contains checks if a service type is registered.
 	Contains(serviceType reflect.Type) bool
@@ -171,7 +171,7 @@ func (sc *serviceCollection) AddTransient(constructor interface{}, opts ...Provi
 }
 
 // Decorate registers a decorator for a service type.
-func (sc *serviceCollection) Decorate(decorator interface{}, opts ...ProvideOption) error {
+func (sc *serviceCollection) Decorate(decorator interface{}, opts ...DecorateOption) error {
 	return nil
 }
 

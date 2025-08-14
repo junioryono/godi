@@ -58,7 +58,7 @@ func TestUserService_GetUser(t *testing.T) {
     // Build provider
     services := godi.NewServiceCollection()
     services.AddModules(testModule)
-    provider, _ := services.BuildServiceProvider()
+    provider, _ := services.Build()
     defer provider.Close()
 
     // Test!
@@ -231,7 +231,7 @@ func TestUserService_CreateUser(t *testing.T) {
 
     services := godi.NewServiceCollection()
     services.AddModules(testModule)
-    provider, _ := services.BuildServiceProvider()
+    provider, _ := services.Build()
     defer provider.Close()
 
     // Act
@@ -256,7 +256,7 @@ func TestUserService_CreateUser_DatabaseError(t *testing.T) {
 
     services := godi.NewServiceCollection()
     services.AddModules(testModule)
-    provider, _ := services.BuildServiceProvider()
+    provider, _ := services.Build()
     defer provider.Close()
 
     service, _ := godi.Resolve[*UserService](provider)
@@ -309,7 +309,7 @@ func TestUserService_Validation(t *testing.T) {
 
             services := godi.NewServiceCollection()
             services.AddModules(testModule)
-            provider, _ := services.BuildServiceProvider()
+            provider, _ := services.Build()
             defer provider.Close()
 
             service, _ := godi.Resolve[*UserService](provider)
@@ -341,7 +341,7 @@ func TestConcurrentRequests(t *testing.T) {
 
     services := godi.NewServiceCollection()
     services.AddModules(appModule)
-    provider, _ := services.BuildServiceProvider()
+    provider, _ := services.Build()
     defer provider.Close()
 
     // Simulate concurrent requests
@@ -417,7 +417,7 @@ func BuildTestProvider(t *testing.T, modules ...godi.ModuleOption) godi.ServiceP
     err := services.AddModules(allModules...)
     require.NoError(t, err)
 
-    provider, err := services.BuildServiceProvider()
+    provider, err := services.Build()
     require.NoError(t, err)
 
     t.Cleanup(func() {

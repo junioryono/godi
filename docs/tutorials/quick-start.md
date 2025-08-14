@@ -43,7 +43,7 @@ func main() {
     services := godi.NewServiceCollection()
     services.AddModules(AppModule)
 
-    provider, _ := services.BuildServiceProvider()
+    provider, _ := services.Build()
     defer provider.Close()
 
     // Use
@@ -90,7 +90,7 @@ func main() {
     services := godi.NewServiceCollection()
     services.AddModules(AppModule)
 
-    provider, _ := services.BuildServiceProvider()
+    provider, _ := services.Build()
     defer provider.Close()
 
     // godi automatically injects Logger into Database!
@@ -193,7 +193,7 @@ func TestUserService(t *testing.T) {
     services := godi.NewServiceCollection()
     services.AddModules(TestModule) // Use test module!
 
-    provider, _ := services.BuildServiceProvider()
+    provider, _ := services.Build()
     defer provider.Close()
 
     userService, _ := godi.Resolve[*UserService](provider)
@@ -322,7 +322,7 @@ var AppModule = godi.NewModule("app",
 // 3. Setup container
 services := godi.NewServiceCollection()
 services.AddModules(AppModule)
-provider, _ := services.BuildServiceProvider()
+provider, _ := services.Build()
 defer provider.Close()
 
 // 4. Use services

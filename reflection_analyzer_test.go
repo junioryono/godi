@@ -1,4 +1,4 @@
-package reflection_test
+package godi_test
 
 import (
 	"errors"
@@ -7,30 +7,14 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/junioryono/godi/v3/internal/reflection"
+	"github.com/junioryono/godi/v3"
 )
-
-// Test types
-type Database struct {
-	ConnectionString string
-}
-
-type Logger interface {
-	Log(msg string)
-}
-
-type ConsoleLogger struct{}
 
 func (c *ConsoleLogger) Log(msg string) {}
 
 type UserService struct {
 	DB     *Database
 	Logger Logger
-}
-
-// Test constructors
-func NewDatabase(connStr string) *Database {
-	return &Database{ConnectionString: connStr}
 }
 
 func NewUserService(db *Database, logger Logger) *UserService {
@@ -46,7 +30,7 @@ func NewUserServiceWithError(db *Database) (*UserService, error) {
 
 // In parameter object
 type ServiceParams struct {
-	reflection.In
+	godi.In
 
 	Database *Database
 	Logger   Logger    `optional:"true"`
@@ -63,7 +47,7 @@ func NewServiceWithParams(params ServiceParams) *UserService {
 
 // Out result object
 type ServiceResults struct {
-	reflection.Out
+	godi.Out
 
 	UserSvc  *UserService
 	AdminSvc *UserService `name:"admin"`
@@ -86,7 +70,7 @@ func NewServicesWithError(db *Database) (ServiceResults, error) {
 }
 
 func TestAnalyzer_SimpleConstructor(t *testing.T) {
-	analyzer := reflection.New()
+	analyzer := godi.NewAnalyzer()
 
 	info, err := analyzer.Analyze(NewDatabase)
 	if err != nil {
@@ -125,7 +109,7 @@ func TestAnalyzer_SimpleConstructor(t *testing.T) {
 }
 
 func TestAnalyzer_ConstructorWithMultipleParams(t *testing.T) {
-	analyzer := reflection.New()
+	analyzer := godi.NewAnalyzer()
 
 	info, err := analyzer.Analyze(NewUserService)
 	if err != nil {
@@ -157,7 +141,7 @@ func TestAnalyzer_ConstructorWithMultipleParams(t *testing.T) {
 }
 
 func TestAnalyzer_ConstructorWithError(t *testing.T) {
-	analyzer := reflection.New()
+	analyzer := godi.NewAnalyzer()
 
 	info, err := analyzer.Analyze(NewUserServiceWithError)
 	if err != nil {
@@ -179,7 +163,7 @@ func TestAnalyzer_ConstructorWithError(t *testing.T) {
 }
 
 func TestAnalyzer_ParamObject(t *testing.T) {
-	analyzer := reflection.New()
+	analyzer := godi.NewAnalyzer()
 
 	info, err := analyzer.Analyze(NewServiceWithParams)
 	if err != nil {
@@ -196,7 +180,7 @@ func TestAnalyzer_ParamObject(t *testing.T) {
 	}
 
 	// Find and check each field
-	var dbParam, loggerParam, cacheParam, handlersParam *reflection.ParameterInfo
+	var dbParam, loggerParam, cacheParam, handlersParam *godi.ParameterInfo
 
 	for i := range info.Parameters {
 		param := &info.Parameters[i]
@@ -249,7 +233,7 @@ func TestAnalyzer_ParamObject(t *testing.T) {
 }
 
 func TestAnalyzer_ResultObject(t *testing.T) {
-	analyzer := reflection.New()
+	analyzer := godi.NewAnalyzer()
 
 	info, err := analyzer.Analyze(NewServices)
 	if err != nil {
@@ -266,7 +250,7 @@ func TestAnalyzer_ResultObject(t *testing.T) {
 	}
 
 	// Find and check each field
-	var userSvc, adminSvc, handler *reflection.ReturnInfo
+	var userSvc, adminSvc, handler *godi.ReturnInfo
 
 	for i := range info.Returns {
 		ret := &info.Returns[i]
@@ -306,7 +290,7 @@ func TestAnalyzer_ResultObject(t *testing.T) {
 }
 
 func TestAnalyzer_ResultObjectWithError(t *testing.T) {
-	analyzer := reflection.New()
+	analyzer := godi.NewAnalyzer()
 
 	info, err := analyzer.Analyze(NewServicesWithError)
 	if err != nil {
@@ -323,7 +307,7 @@ func TestAnalyzer_ResultObjectWithError(t *testing.T) {
 }
 
 func TestAnalyzer_NonFunction(t *testing.T) {
-	analyzer := reflection.New()
+	analyzer := godi.NewAnalyzer()
 
 	// Analyze a non-function value
 	db := &Database{ConnectionString: "test"}
@@ -347,7 +331,7 @@ func TestAnalyzer_NonFunction(t *testing.T) {
 }
 
 func TestAnalyzer_GetServiceType(t *testing.T) {
-	analyzer := reflection.New()
+	analyzer := godi.NewAnalyzer()
 
 	tests := []struct {
 		name        string
@@ -392,7 +376,7 @@ func TestAnalyzer_GetServiceType(t *testing.T) {
 }
 
 func TestAnalyzer_GetResultTypes(t *testing.T) {
-	analyzer := reflection.New()
+	analyzer := godi.NewAnalyzer()
 
 	// Test result object with multiple types
 	types, err := analyzer.GetResultTypes(NewServices)
@@ -426,7 +410,7 @@ func TestAnalyzer_GetResultTypes(t *testing.T) {
 }
 
 func TestAnalyzer_Caching(t *testing.T) {
-	analyzer := reflection.New()
+	analyzer := godi.NewAnalyzer()
 
 	// Analyze the same constructor twice
 	info1, err := analyzer.Analyze(NewDatabase)
@@ -467,8 +451,8 @@ func TestAnalyzer_Caching(t *testing.T) {
 }
 
 func TestValidator(t *testing.T) {
-	analyzer := reflection.New()
-	validator := reflection.NewValidator(analyzer)
+	analyzer := godi.NewAnalyzer()
+	validator := godi.NewValidator(analyzer)
 
 	tests := []struct {
 		name        string
@@ -544,7 +528,7 @@ func TestValidator(t *testing.T) {
 }
 
 func TestTypeFormatter(t *testing.T) {
-	formatter := &reflection.TypeFormatter{}
+	formatter := &godi.TypeFormatter{}
 
 	tests := []struct {
 		name     string
@@ -611,7 +595,7 @@ type CircularB struct {
 
 // Test parameter object with all tag types
 type FullParamObject struct {
-	reflection.In
+	godi.In
 
 	Required    *Database
 	Optional    Logger    `optional:"true"`
@@ -624,13 +608,13 @@ type FullParamObject struct {
 
 // Test edge cases in analyzer
 func TestAnalyzer_EdgeCases(t *testing.T) {
-	analyzer := reflection.New()
+	analyzer := godi.NewAnalyzer()
 
 	tests := []struct {
 		name        string
 		constructor any
 		wantErr     bool
-		validate    func(*testing.T, *reflection.ConstructorInfo)
+		validate    func(*testing.T, *godi.ConstructorInfo)
 	}{
 		{
 			name:        "nil constructor",
@@ -641,7 +625,7 @@ func TestAnalyzer_EdgeCases(t *testing.T) {
 			name:        "non-function value",
 			constructor: &Database{ConnectionString: "test"},
 			wantErr:     false,
-			validate: func(t *testing.T, info *reflection.ConstructorInfo) {
+			validate: func(t *testing.T, info *godi.ConstructorInfo) {
 				if info.IsFunc {
 					t.Error("Expected IsFunc to be false for non-function")
 				}
@@ -651,7 +635,7 @@ func TestAnalyzer_EdgeCases(t *testing.T) {
 			name:        "function with no parameters",
 			constructor: func() *Database { return nil },
 			wantErr:     false,
-			validate: func(t *testing.T, info *reflection.ConstructorInfo) {
+			validate: func(t *testing.T, info *godi.ConstructorInfo) {
 				if len(info.Parameters) != 0 {
 					t.Errorf("Expected 0 parameters, got %d", len(info.Parameters))
 				}
@@ -661,7 +645,7 @@ func TestAnalyzer_EdgeCases(t *testing.T) {
 			name:        "function with no returns",
 			constructor: func(db *Database) {},
 			wantErr:     false,
-			validate: func(t *testing.T, info *reflection.ConstructorInfo) {
+			validate: func(t *testing.T, info *godi.ConstructorInfo) {
 				if len(info.Returns) != 0 {
 					t.Errorf("Expected 0 returns, got %d", len(info.Returns))
 				}
@@ -671,7 +655,7 @@ func TestAnalyzer_EdgeCases(t *testing.T) {
 			name:        "variadic function",
 			constructor: func(dbs ...*Database) *UserService { return nil },
 			wantErr:     false,
-			validate: func(t *testing.T, info *reflection.ConstructorInfo) {
+			validate: func(t *testing.T, info *godi.ConstructorInfo) {
 				if len(info.Parameters) != 1 {
 					t.Errorf("Expected 1 parameter for variadic, got %d", len(info.Parameters))
 				}
@@ -699,7 +683,7 @@ func TestAnalyzer_EdgeCases(t *testing.T) {
 
 // Test concurrent analysis and caching
 func TestAnalyzer_ConcurrentAnalysis(t *testing.T) {
-	analyzer := reflection.New()
+	analyzer := godi.NewAnalyzer()
 
 	var wg sync.WaitGroup
 	ers := make(chan error, 100)
@@ -784,7 +768,7 @@ func TestAnalyzer_ConcurrentAnalysis(t *testing.T) {
 
 // Test complex parameter object with all features
 func TestAnalyzer_ComplexParamObject(t *testing.T) {
-	analyzer := reflection.New()
+	analyzer := godi.NewAnalyzer()
 
 	constructor := func(params FullParamObject) *UserService {
 		return &UserService{}
@@ -806,7 +790,7 @@ func TestAnalyzer_ComplexParamObject(t *testing.T) {
 	}
 
 	// Verify each field's properties
-	fieldMap := make(map[string]reflection.ParameterInfo)
+	fieldMap := make(map[string]godi.ParameterInfo)
 	for _, param := range info.Parameters {
 		fieldMap[param.Name] = param
 	}
@@ -878,8 +862,8 @@ func TestAnalyzer_ComplexParamObject(t *testing.T) {
 
 // Test error handling in builders
 func TestParamObjectBuilder_ErrorCases(t *testing.T) {
-	analyzer := reflection.New()
-	builder := reflection.NewParamObjectBuilder(analyzer)
+	analyzer := godi.NewAnalyzer()
+	builder := godi.NewParamObjectBuilder(analyzer)
 
 	// Mock resolver that always fails
 	failingResolver := &mockResolver{
@@ -898,7 +882,7 @@ func TestParamObjectBuilder_ErrorCases(t *testing.T) {
 
 	// Test with struct containing required field that fails to resolve
 	paramType := reflect.TypeOf(struct {
-		reflection.In
+		godi.In
 		Required *Database
 	}{})
 
@@ -909,7 +893,7 @@ func TestParamObjectBuilder_ErrorCases(t *testing.T) {
 
 	// Test with optional field that fails to resolve (should succeed)
 	optionalType := reflect.TypeOf(struct {
-		reflection.In
+		godi.In
 		Optional *Database `optional:"true"`
 	}{})
 
@@ -921,7 +905,7 @@ func TestParamObjectBuilder_ErrorCases(t *testing.T) {
 
 // Test TypeFormatter with complex types
 func TestTypeFormatter_ComplexTypes(t *testing.T) {
-	formatter := &reflection.TypeFormatter{}
+	formatter := &godi.TypeFormatter{}
 
 	tests := []struct {
 		name     string
@@ -982,7 +966,7 @@ func TestTypeFormatter_ComplexTypes(t *testing.T) {
 
 // Test that different functions with the same signature are cached separately
 func TestAnalyzer_DifferentFunctionsWithSameSignature(t *testing.T) {
-	analyzer := reflection.New()
+	analyzer := godi.NewAnalyzer()
 
 	// Create two different functions with identical signatures
 	constructor1 := func() *Database {
@@ -1037,7 +1021,7 @@ func TestAnalyzer_DifferentFunctionsWithSameSignature(t *testing.T) {
 
 // Test that the same function analyzed multiple times returns cached result
 func TestAnalyzer_SameFunctionCached(t *testing.T) {
-	analyzer := reflection.New()
+	analyzer := godi.NewAnalyzer()
 
 	constructor := func() *Database {
 		return &Database{ConnectionString: "test"}
@@ -1067,7 +1051,7 @@ func TestAnalyzer_SameFunctionCached(t *testing.T) {
 
 // Test with multiple functions having different signatures
 func TestAnalyzer_DifferentSignatures(t *testing.T) {
-	analyzer := reflection.New()
+	analyzer := godi.NewAnalyzer()
 
 	// Different signatures
 	constructor1 := func() *Database {
@@ -1133,7 +1117,7 @@ func TestAnalyzer_DifferentSignatures(t *testing.T) {
 
 // Test that cache size reflects unique functions
 func TestAnalyzer_CacheSizeWithDuplicateFunctions(t *testing.T) {
-	analyzer := reflection.New()
+	analyzer := godi.NewAnalyzer()
 
 	// Clear cache first
 	analyzer.Clear()
@@ -1176,7 +1160,7 @@ func TestAnalyzer_CacheSizeWithDuplicateFunctions(t *testing.T) {
 
 // Test with methods (bound to receivers)
 func TestAnalyzer_Methods(t *testing.T) {
-	analyzer := reflection.New()
+	analyzer := godi.NewAnalyzer()
 
 	// Create separate logger instances
 	logger1 := &ConsoleLogger{}
@@ -1211,7 +1195,7 @@ func TestAnalyzer_Methods(t *testing.T) {
 
 // Benchmark to ensure caching performance isn't degraded
 func BenchmarkAnalyzer_SameSignatureDifferentFunctions(b *testing.B) {
-	analyzer := reflection.New()
+	analyzer := godi.NewAnalyzer()
 
 	// Create many functions with the same signature
 	constructors := make([]func() *Database, 100)
@@ -1233,7 +1217,7 @@ func BenchmarkAnalyzer_SameSignatureDifferentFunctions(b *testing.B) {
 
 // Test edge case: nil function
 func TestAnalyzer_NilFunction(t *testing.T) {
-	analyzer := reflection.New()
+	analyzer := godi.NewAnalyzer()
 
 	var nilFunc func() *Database
 
@@ -1245,7 +1229,7 @@ func TestAnalyzer_NilFunction(t *testing.T) {
 
 // Test that Clear actually clears the cache properly
 func TestAnalyzer_ClearWithSameSignature(t *testing.T) {
-	analyzer := reflection.New()
+	analyzer := godi.NewAnalyzer()
 
 	constructor1 := func() *Database {
 		return &Database{ConnectionString: "db1"}
@@ -1287,7 +1271,7 @@ func TestAnalyzer_ClearWithSameSignature(t *testing.T) {
 
 // Benchmark cache performance
 func BenchmarkAnalyzer_CacheHit(b *testing.B) {
-	analyzer := reflection.New()
+	analyzer := godi.NewAnalyzer()
 
 	// Pre-cache
 	analyzer.Analyze(NewDatabase)
@@ -1300,7 +1284,7 @@ func BenchmarkAnalyzer_CacheHit(b *testing.B) {
 }
 
 func BenchmarkAnalyzer_CacheMiss(b *testing.B) {
-	analyzer := reflection.New()
+	analyzer := godi.NewAnalyzer()
 
 	b.ResetTimer()
 
@@ -1343,7 +1327,7 @@ func (m *mockResolver) ResolveGroup(t reflect.Type, group string) ([]any, error)
 
 // Test caching with closures that capture variables
 func TestAnalyzer_Closures(t *testing.T) {
-	analyzer := reflection.New()
+	analyzer := godi.NewAnalyzer()
 
 	// Create closures that capture different values
 	makeConstructor := func(connStr string) func() *Database {

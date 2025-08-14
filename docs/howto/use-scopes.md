@@ -287,7 +287,7 @@ func TestScopeIsolation(t *testing.T) {
 
     services := godi.NewServiceCollection()
     services.AddModules(module)
-    provider, _ := services.BuildServiceProvider()
+    provider, _ := services.Build()
 
     // Request 1
     scope1 := provider.CreateScope(context.Background())

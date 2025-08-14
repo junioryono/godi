@@ -22,7 +22,7 @@ func TestServiceProvider_Creation(t *testing.T) {
 		t.Parallel()
 
 		collection := godi.NewServiceCollection()
-		provider, err := collection.BuildServiceProvider()
+		provider, err := collection.Build()
 
 		require.NoError(t, err)
 		assert.NotNil(t, provider)
@@ -520,7 +520,7 @@ func TestServiceProvider_CircularDependency(t *testing.T) {
 		require.NoError(t, collection.AddSingleton(testutil.NewCircularServiceA))
 		require.NoError(t, collection.AddSingleton(testutil.NewCircularServiceB))
 
-		provider, err := collection.BuildServiceProvider()
+		provider, err := collection.Build()
 
 		// Circular dependency might be caught at build time or resolution time
 		if err != nil {
@@ -706,7 +706,7 @@ func TestServiceProvider_ProviderCallback(t *testing.T) {
 			}),
 		))
 
-		provider, err := collection.BuildServiceProvider()
+		provider, err := collection.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
@@ -731,7 +731,7 @@ func TestServiceProvider_ProviderCallback(t *testing.T) {
 			}),
 		))
 
-		provider, err := collection.BuildServiceProvider()
+		provider, err := collection.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
@@ -1033,7 +1033,7 @@ func TestGroupOption(t *testing.T) {
 			godi.Group("handlers"),
 		))
 
-		provider, err := collection.BuildServiceProvider()
+		provider, err := collection.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
@@ -1058,7 +1058,7 @@ func TestGroupOption(t *testing.T) {
 		t.Parallel()
 
 		collection := godi.NewServiceCollection()
-		provider, err := collection.BuildServiceProvider()
+		provider, err := collection.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
@@ -1084,7 +1084,7 @@ func TestAsOption(t *testing.T) {
 			godi.As((*TestRepository)(nil)),
 		))
 
-		provider, err := collection.BuildServiceProvider()
+		provider, err := collection.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
@@ -1112,7 +1112,7 @@ func TestAsOption(t *testing.T) {
 			godi.As((*TestReader)(nil), (*TestWriter)(nil)),
 		))
 
-		provider, err := collection.BuildServiceProvider()
+		provider, err := collection.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
@@ -1152,7 +1152,7 @@ func TestGroupWithAsOption(t *testing.T) {
 			godi.Group("test-group"),
 		))
 
-		provider, err := collection.BuildServiceProvider()
+		provider, err := collection.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
@@ -1205,7 +1205,7 @@ func TestGroupWithAsOption(t *testing.T) {
 			godi.Group("routes"),
 		))
 
-		provider, err := collection.BuildServiceProvider()
+		provider, err := collection.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
@@ -1258,7 +1258,7 @@ func TestGroupWithoutAsOption(t *testing.T) {
 		godi.Group("handlers"),
 	))
 
-	provider, err := collection.BuildServiceProvider()
+	provider, err := collection.Build()
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, provider.Close())
@@ -1419,7 +1419,7 @@ func TestServiceProvider_Decorate(t *testing.T) {
 		// Add original logger
 		require.NoError(t, collection.AddSingleton(testutil.NewTestLogger))
 
-		provider, err := collection.BuildServiceProvider()
+		provider, err := collection.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
@@ -1459,7 +1459,7 @@ func TestServiceProvider_Decorate(t *testing.T) {
 			return &Config{AppName: "TestApp"}
 		}))
 
-		provider, err := collection.BuildServiceProvider()
+		provider, err := collection.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
@@ -1492,7 +1492,7 @@ func TestServiceProvider_Decorate(t *testing.T) {
 		require.NoError(t, collection.AddSingleton(testutil.NewTestLogger))
 		require.NoError(t, collection.AddSingleton(testutil.NewTestDatabase))
 
-		provider, err := collection.BuildServiceProvider()
+		provider, err := collection.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
@@ -1554,7 +1554,7 @@ func TestServiceProvider_Decorate(t *testing.T) {
 			}
 		}))
 
-		provider, err := collection.BuildServiceProvider()
+		provider, err := collection.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
@@ -1590,7 +1590,7 @@ func TestServiceProvider_Decorate(t *testing.T) {
 		collection := godi.NewServiceCollection()
 		require.NoError(t, collection.AddSingleton(testutil.NewTestLogger))
 
-		provider, err := collection.BuildServiceProvider()
+		provider, err := collection.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
@@ -1630,7 +1630,7 @@ func TestServiceProvider_Decorate(t *testing.T) {
 			return &LoggerWrapper{Logger: logger}
 		}))
 
-		provider, err := collection.BuildServiceProvider()
+		provider, err := collection.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
@@ -1681,7 +1681,7 @@ func TestServiceProvider_Decorate(t *testing.T) {
 			godi.Name("primary"),
 		))
 
-		provider, err := collection.BuildServiceProvider()
+		provider, err := collection.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
@@ -1732,7 +1732,7 @@ func TestServiceProvider_Decorate(t *testing.T) {
 			godi.Group("handlers"),
 		))
 
-		provider, err := collection.BuildServiceProvider()
+		provider, err := collection.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
@@ -1781,7 +1781,7 @@ func TestServiceProvider_Decorate(t *testing.T) {
 		collection := godi.NewServiceCollection()
 		require.NoError(t, collection.AddSingleton(testutil.NewTestDatabase))
 
-		provider, err := collection.BuildServiceProvider()
+		provider, err := collection.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
@@ -1814,7 +1814,7 @@ func TestServiceProvider_Decorate(t *testing.T) {
 		t.Parallel()
 
 		collection := godi.NewServiceCollection()
-		provider, err := collection.BuildServiceProvider()
+		provider, err := collection.Build()
 		require.NoError(t, err)
 
 		// Close provider
@@ -1841,7 +1841,7 @@ func TestServiceProvider_Decorate(t *testing.T) {
 		require.NoError(t, collection.AddSingleton(testutil.NewTestLogger))
 		// Note: Not adding cache
 
-		provider, err := collection.BuildServiceProvider()
+		provider, err := collection.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())
@@ -1880,7 +1880,7 @@ func TestServiceProvider_Decorate(t *testing.T) {
 		require.NoError(t, collection.AddSingleton(testutil.NewTestLogger))
 		require.NoError(t, collection.AddScoped(testutil.NewTestService))
 
-		provider, err := collection.BuildServiceProvider()
+		provider, err := collection.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, provider.Close())

@@ -11,27 +11,36 @@ import (
 )
 
 // AssertServiceResolvable checks if a service can be resolved
-func AssertServiceResolvable[T any](t *testing.T, scope godi.Scope) T {
+func AssertServiceResolvable[T any](t *testing.T, provider godi.ServiceProvider) T {
 	t.Helper()
-	service, err := godi.Resolve[T](scope)
+	service, err := godi.Resolve[T](provider)
 	require.NoError(t, err, "failed to resolve service of type %T", *new(T))
 	require.NotNil(t, service, "resolved service is nil")
 	return service
 }
 
-// AssertKeyedServiceResolvable checks if a keyed service can be resolved
-func AssertKeyedServiceResolvable[T any](t *testing.T, scope godi.Scope, key any) T {
+// AssertServiceResolvableInScope checks if a service can be resolved in a scope
+func AssertServiceResolvableInScope[T any](t *testing.T, scope godi.Scope) T {
 	t.Helper()
-	service, err := godi.ResolveKeyed[T](scope, key)
+	service, err := godi.Resolve[T](scope)
+	require.NoError(t, err, "failed to resolve service of type %T in scope", *new(T))
+	require.NotNil(t, service, "resolved service is nil")
+	return service
+}
+
+// AssertKeyedServiceResolvable checks if a keyed service can be resolved
+func AssertKeyedServiceResolvable[T any](t *testing.T, provider godi.ServiceProvider, key interface{}) T {
+	t.Helper()
+	service, err := godi.ResolveKeyed[T](provider, key)
 	require.NoError(t, err, "failed to resolve keyed service of type %T with key %v", *new(T), key)
 	require.NotNil(t, service, "resolved keyed service is nil")
 	return service
 }
 
 // AssertGroupServiceResolvable checks if a group service can be resolved
-func AssertGroupServiceResolvable[T any](t *testing.T, scope godi.Scope, group string) []T {
+func AssertGroupServiceResolvable[T any](t *testing.T, provider godi.ServiceProvider, group string) []T {
 	t.Helper()
-	service, err := godi.ResolveGroup[T](scope, group)
+	service, err := godi.ResolveGroup[T](provider, group)
 	require.NoError(t, err, "failed to resolve group service of type %T with group %s", *new(T), group)
 	require.NotNil(t, service, "resolved group service is nil")
 	require.NotEmpty(t, service, "resolved group service is empty")
@@ -39,23 +48,23 @@ func AssertGroupServiceResolvable[T any](t *testing.T, scope godi.Scope, group s
 }
 
 // AssertServiceNotFound checks if a service resolution fails with not found error
-func AssertServiceNotFound[T any](t *testing.T, scope godi.Scope) {
+func AssertServiceNotFound[T any](t *testing.T, provider godi.ServiceProvider) {
 	t.Helper()
-	_, err := godi.Resolve[T](scope)
+	_, err := godi.Resolve[T](provider)
 	assert.Error(t, err)
 	assert.True(t, godi.IsNotFound(err), "expected service not found error, got: %v", err)
 }
 
 // AssertKeyedServiceNotFound checks if a keyed service resolution fails with not found error
-func AssertKeyedServiceNotFound[T any](t *testing.T, scope godi.Scope, key any) {
+func AssertKeyedServiceNotFound[T any](t *testing.T, provider godi.ServiceProvider, key interface{}) {
 	t.Helper()
-	_, err := godi.ResolveKeyed[T](scope, key)
+	_, err := godi.ResolveKeyed[T](provider, key)
 	assert.Error(t, err)
 	assert.True(t, godi.IsNotFound(err), "expected keyed service not found error, got: %v", err)
 }
 
 // AssertPanicsWithError checks if a function panics with specific error
-func AssertPanicsWithError(t *testing.T, expectedError error, f func(), msgAndArgs ...any) {
+func AssertPanicsWithError(t *testing.T, expectedError error, f func(), msgAndArgs ...interface{}) {
 	t.Helper()
 	defer func() {
 		r := recover()
@@ -76,25 +85,25 @@ func AssertPanicsWithError(t *testing.T, expectedError error, f func(), msgAndAr
 }
 
 // AssertPanics checks if a function panics
-func AssertPanics(t *testing.T, f func(), msgAndArgs ...any) {
+func AssertPanics(t *testing.T, f func(), msgAndArgs ...interface{}) {
 	t.Helper()
 	assert.Panics(t, f, msgAndArgs...)
 }
 
 // AssertSameInstance verifies two services are the same instance
-func AssertSameInstance(t *testing.T, expected, actual any, msgAndArgs ...any) {
+func AssertSameInstance(t *testing.T, expected, actual interface{}, msgAndArgs ...interface{}) {
 	t.Helper()
 	assert.Same(t, expected, actual, msgAndArgs...)
 }
 
 // AssertDifferentInstances verifies two services are different instances
-func AssertDifferentInstances(t *testing.T, first, second any, msgAndArgs ...any) {
+func AssertDifferentInstances(t *testing.T, first, second interface{}, msgAndArgs ...interface{}) {
 	t.Helper()
 	assert.NotSame(t, first, second, msgAndArgs...)
 }
 
 // AssertImplements checks if a type implements an interface
-func AssertImplements(t *testing.T, interfaceType, implementation any) {
+func AssertImplements(t *testing.T, interfaceType, implementation interface{}) {
 	t.Helper()
 	interfaceTypeReflect := reflect.TypeOf(interfaceType).Elem()
 	assert.Implements(t, interfaceType, implementation,
@@ -107,10 +116,10 @@ func AssertProviderDisposed(t *testing.T, provider godi.ServiceProvider) {
 	assert.True(t, provider.IsDisposed(), "provider should be disposed")
 
 	// Test that operations fail
-	_, err := provider.Resolve(reflect.TypeOf((*any)(nil)).Elem())
+	_, err := provider.Resolve(reflect.TypeOf((*interface{})(nil)).Elem())
 	assert.ErrorIs(t, err, godi.ErrProviderDisposed)
 
-	_, err = provider.ResolveKeyed(reflect.TypeOf((*any)(nil)).Elem(), "key")
+	_, err = provider.ResolveKeyed(reflect.TypeOf((*interface{})(nil)).Elem(), "key")
 	assert.ErrorIs(t, err, godi.ErrProviderDisposed)
 
 	assert.Panics(t, func() {
@@ -141,7 +150,7 @@ func AssertScopeDisposed(t *testing.T, scope godi.Scope) {
 }
 
 // AssertErrorType checks if an error is of a specific type
-func AssertErrorType[T error](t *testing.T, err error, msgAndArgs ...any) T {
+func AssertErrorType[T error](t *testing.T, err error, msgAndArgs ...interface{}) T {
 	t.Helper()
 	var target T
 	assert.ErrorAs(t, err, &target, msgAndArgs...)
@@ -170,13 +179,13 @@ func AssertDisposed(t *testing.T, err error) {
 }
 
 // RequireNoError is a helper that uses require.NoError
-func RequireNoError(t *testing.T, err error, msgAndArgs ...any) {
+func RequireNoError(t *testing.T, err error, msgAndArgs ...interface{}) {
 	t.Helper()
 	require.NoError(t, err, msgAndArgs...)
 }
 
 // RequireError is a helper that uses require.Error
-func RequireError(t *testing.T, err error, msgAndArgs ...any) {
+func RequireError(t *testing.T, err error, msgAndArgs ...interface{}) {
 	t.Helper()
 	require.Error(t, err, msgAndArgs...)
 }
