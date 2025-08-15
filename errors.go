@@ -75,7 +75,7 @@ var (
 
 // LifetimeError indicates an invalid service lifetime value.
 type LifetimeError struct {
-	Value interface{}
+	Value any
 }
 
 func (e LifetimeError) Error() string {
@@ -108,7 +108,7 @@ type CircularDependencyError = graph.CircularDependencyError
 // ResolutionError wraps errors that occur during service resolution.
 type ResolutionError struct {
 	ServiceType reflect.Type
-	ServiceKey  interface{} // nil for non-keyed services
+	ServiceKey  any // nil for non-keyed services
 	Cause       error
 }
 
