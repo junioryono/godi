@@ -432,19 +432,17 @@ func (r *collection) registerDescriptor(descriptor *Descriptor) error {
 		return nil
 	}
 
-	// Validate lifetime consistency for non-keyed services
-	// Note: grouped services still need lifetime validation but they're not stored in lifetimes map
-	if descriptor.Key == nil {
+	// Validate lifetime consistency for non-keyed, non-grouped services
+	// Note: grouped and keyed services can have different lifetimes from the base service
+	if descriptor.Key == nil && len(descriptor.Groups) == 0 {
 		if existing, ok := r.lifetimes[descriptor.Type]; ok {
 			if existing != descriptor.Lifetime {
 				return fmt.Errorf("type %v already registered with lifetime %v, cannot register with %v",
 					descriptor.Type, existing, descriptor.Lifetime)
 			}
 		}
-		// Only store lifetime for non-keyed services
-		if len(descriptor.Groups) == 0 {
-			r.lifetimes[descriptor.Type] = descriptor.Lifetime
-		}
+		// Store lifetime for regular services only
+		r.lifetimes[descriptor.Type] = descriptor.Lifetime
 	}
 
 	// Register based on type of service
