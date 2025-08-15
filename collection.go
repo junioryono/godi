@@ -1,9 +1,13 @@
 package godi
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"sync"
+
+	"github.com/junioryono/godi/v3/internal/graph"
+	"github.com/junioryono/godi/v3/internal/reflection"
 )
 
 // Collection represents a collection of service descriptors that define
@@ -138,14 +142,65 @@ func (sc *collection) Build() (Provider, error) {
 
 // BuildWithOptions creates a Provider with custom options for validation and behavior configuration.
 func (sc *collection) BuildWithOptions(options *ProviderOptions) (Provider, error) {
-	// For now, return a placeholder provider
-	// This will be fully implemented when the provider implementation is complete
-	return &provider{
+	// Get all descriptors before locking to avoid deadlock
+	allDescriptors := sc.ToSlice()
+
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+
+	// Validate the dependency graph
+	if err := validateDependencyGraph(sc); err != nil {
+		return nil, fmt.Errorf("dependency validation failed: %w", err)
+	}
+
+	// Validate lifetime consistency
+	if err := validateLifetimes(sc); err != nil {
+		return nil, fmt.Errorf("lifetime validation failed: %w", err)
+	}
+
+	// Build the dependency graph
+	g := graph.NewDependencyGraph()
+
+	// Add all providers to the graph
+	for _, descriptor := range allDescriptors {
+		if !descriptor.IsDecorator {
+			if err := g.AddProvider(descriptor); err != nil {
+				return nil, fmt.Errorf("failed to build dependency graph: %w", err)
+			}
+		}
+	}
+
+	// Create the provider
+	p := &provider{
 		services:      sc.services,
 		keyedServices: sc.keyedServices,
 		groups:        sc.groups,
 		decorators:    sc.decorators,
-	}, nil
+		graph:         g,
+		analyzer:      reflection.New(),
+		singletons:    make(map[instanceKey]any),
+		disposables:   make([]Disposable, 0),
+		scopes:        make(map[*scope]struct{}),
+		built:         true,
+	}
+
+	// Create root scope
+	rootCtx := context.Background()
+	p.rootScope = &scope{
+		provider:    p,
+		context:     rootCtx,
+		instances:   make(map[instanceKey]any),
+		disposables: make([]Disposable, 0),
+		resolving:   make(map[instanceKey]struct{}),
+		children:    make(map[*scope]struct{}),
+	}
+
+	// Eagerly create all singletons
+	if err := p.createAllSingletons(); err != nil {
+		return nil, fmt.Errorf("failed to initialize singletons: %w", err)
+	}
+
+	return p, nil
 }
 
 // AddModules applies one or more module configurations to the service collection.
@@ -270,11 +325,11 @@ func (r *collection) RemoveKeyed(t reflect.Type, key any) {
 func (r *collection) ToSlice() []*Descriptor {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	
+
 	// Use a map to track unique descriptors and avoid duplicates
 	seen := make(map[*Descriptor]bool)
 	descriptors := make([]*Descriptor, 0)
-	
+
 	// Add regular services
 	for _, services := range r.services {
 		for _, service := range services {
@@ -284,7 +339,7 @@ func (r *collection) ToSlice() []*Descriptor {
 			}
 		}
 	}
-	
+
 	// Add keyed services
 	for _, keyedServices := range r.keyedServices {
 		for _, service := range keyedServices {
@@ -294,7 +349,7 @@ func (r *collection) ToSlice() []*Descriptor {
 			}
 		}
 	}
-	
+
 	// Add grouped services
 	for _, groupServices := range r.groups {
 		for _, service := range groupServices {
@@ -304,7 +359,7 @@ func (r *collection) ToSlice() []*Descriptor {
 			}
 		}
 	}
-	
+
 	// Add decorators
 	for _, decoratorList := range r.decorators {
 		for _, decorator := range decoratorList {
@@ -314,7 +369,7 @@ func (r *collection) ToSlice() []*Descriptor {
 			}
 		}
 	}
-	
+
 	return descriptors
 }
 
@@ -322,38 +377,38 @@ func (r *collection) ToSlice() []*Descriptor {
 func (r *collection) Count() int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	
+
 	// Use a map to track unique descriptors and avoid duplicates
 	seen := make(map[*Descriptor]bool)
-	
+
 	// Count regular services
 	for _, services := range r.services {
 		for _, service := range services {
 			seen[service] = true
 		}
 	}
-	
+
 	// Count keyed services
 	for _, keyedServices := range r.keyedServices {
 		for _, service := range keyedServices {
 			seen[service] = true
 		}
 	}
-	
+
 	// Count grouped services
 	for _, groupServices := range r.groups {
 		for _, service := range groupServices {
 			seen[service] = true
 		}
 	}
-	
+
 	// Count decorators
 	for _, decoratorList := range r.decorators {
 		for _, decorator := range decoratorList {
 			seen[decorator] = true
 		}
 	}
-	
+
 	return len(seen)
 }
 

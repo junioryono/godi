@@ -31,13 +31,13 @@ func NewModuleComplexService(dep *ModuleDependency) *ModuleComplexService {
 
 // Mock collection for testing
 type mockCollection struct {
-	addSingletonCalls  int
-	addScopedCalls     int
-	addTransientCalls  int
-	decorateCalls      int
-	lastConstructor    any
-	lastOpts           []AddOption
-	returnError        error
+	addSingletonCalls int
+	addScopedCalls    int
+	addTransientCalls int
+	decorateCalls     int
+	lastConstructor   any
+	lastOpts          []AddOption
+	returnError       error
 }
 
 func (m *mockCollection) AddSingleton(constructor any, opts ...AddOption) error {
@@ -106,17 +106,17 @@ func (m *mockCollection) Count() int {
 func TestNewModule(t *testing.T) {
 	t.Run("simple module", func(t *testing.T) {
 		collection := &mockCollection{}
-		
+
 		module := NewModule("test",
 			AddSingleton(NewModuleTestService),
 			AddScoped(NewModuleDependency),
 		)
-		
+
 		err := module(collection)
 		if err != nil {
 			t.Errorf("Unexpected error: %v", err)
 		}
-		
+
 		if collection.addSingletonCalls != 1 {
 			t.Errorf("Expected 1 AddSingleton call, got %d", collection.addSingletonCalls)
 		}
@@ -124,21 +124,21 @@ func TestNewModule(t *testing.T) {
 			t.Errorf("Expected 1 AddScoped call, got %d", collection.addScopedCalls)
 		}
 	})
-	
+
 	t.Run("module with nil builder", func(t *testing.T) {
 		collection := &mockCollection{}
-		
+
 		module := NewModule("test",
 			AddSingleton(NewModuleTestService),
 			nil, // nil builder should be skipped
 			AddScoped(NewModuleDependency),
 		)
-		
+
 		err := module(collection)
 		if err != nil {
 			t.Errorf("Unexpected error: %v", err)
 		}
-		
+
 		if collection.addSingletonCalls != 1 {
 			t.Errorf("Expected 1 AddSingleton call, got %d", collection.addSingletonCalls)
 		}
@@ -146,20 +146,20 @@ func TestNewModule(t *testing.T) {
 			t.Errorf("Expected 1 AddScoped call, got %d", collection.addScopedCalls)
 		}
 	})
-	
+
 	t.Run("module with error", func(t *testing.T) {
 		expectedError := errors.New("registration failed")
 		collection := &mockCollection{returnError: expectedError}
-		
+
 		module := NewModule("test",
 			AddSingleton(NewModuleTestService),
 		)
-		
+
 		err := module(collection)
 		if err == nil {
 			t.Error("Expected error, got nil")
 		}
-		
+
 		// Check that it's wrapped in ModuleError
 		var moduleErr ModuleError
 		if !errors.As(err, &moduleErr) {
@@ -172,24 +172,24 @@ func TestNewModule(t *testing.T) {
 			t.Error("Error should wrap the original error")
 		}
 	})
-	
+
 	t.Run("nested modules", func(t *testing.T) {
 		collection := &mockCollection{}
-		
+
 		innerModule := NewModule("inner",
 			AddSingleton(NewModuleDependency),
 		)
-		
+
 		outerModule := NewModule("outer",
 			innerModule,
 			AddScoped(NewModuleTestService),
 		)
-		
+
 		err := outerModule(collection)
 		if err != nil {
 			t.Errorf("Unexpected error: %v", err)
 		}
-		
+
 		if collection.addSingletonCalls != 1 {
 			t.Errorf("Expected 1 AddSingleton call, got %d", collection.addSingletonCalls)
 		}
@@ -204,26 +204,26 @@ func TestAddTransient(t *testing.T) {
 	t.Run("without options", func(t *testing.T) {
 		collection := &mockCollection{}
 		option := AddTransient(NewModuleTestService)
-		
+
 		err := option(collection)
 		if err != nil {
 			t.Errorf("Unexpected error: %v", err)
 		}
-		
+
 		if collection.addTransientCalls != 1 {
 			t.Errorf("Expected 1 AddTransient call, got %d", collection.addTransientCalls)
 		}
 	})
-	
+
 	t.Run("with options", func(t *testing.T) {
 		collection := &mockCollection{}
 		option := AddTransient(NewModuleTestService, Name("test"), Group("group"))
-		
+
 		err := option(collection)
 		if err != nil {
 			t.Errorf("Unexpected error: %v", err)
 		}
-		
+
 		if collection.addTransientCalls != 1 {
 			t.Errorf("Expected 1 AddTransient call, got %d", collection.addTransientCalls)
 		}
@@ -231,12 +231,12 @@ func TestAddTransient(t *testing.T) {
 			t.Errorf("Expected 2 options, got %d", len(collection.lastOpts))
 		}
 	})
-	
+
 	t.Run("with error", func(t *testing.T) {
 		expectedError := errors.New("transient registration failed")
 		collection := &mockCollection{returnError: expectedError}
 		option := AddTransient(NewModuleTestService)
-		
+
 		err := option(collection)
 		if !errors.Is(err, expectedError) {
 			t.Errorf("Expected error %v, got %v", expectedError, err)
@@ -249,30 +249,30 @@ func TestAddDecorator(t *testing.T) {
 	decorator := func(svc *ModuleTestService) *ModuleTestService {
 		return svc
 	}
-	
+
 	t.Run("without options", func(t *testing.T) {
 		collection := &mockCollection{}
 		option := AddDecorator(decorator)
-		
+
 		err := option(collection)
 		if err != nil {
 			t.Errorf("Unexpected error: %v", err)
 		}
-		
+
 		if collection.decorateCalls != 1 {
 			t.Errorf("Expected 1 Decorate call, got %d", collection.decorateCalls)
 		}
 	})
-	
+
 	t.Run("with options", func(t *testing.T) {
 		collection := &mockCollection{}
 		option := AddDecorator(decorator, Name("decorated"))
-		
+
 		err := option(collection)
 		if err != nil {
 			t.Errorf("Unexpected error: %v", err)
 		}
-		
+
 		if collection.decorateCalls != 1 {
 			t.Errorf("Expected 1 Decorate call, got %d", collection.decorateCalls)
 		}
@@ -280,12 +280,12 @@ func TestAddDecorator(t *testing.T) {
 			t.Errorf("Expected 1 option, got %d", len(collection.lastOpts))
 		}
 	})
-	
+
 	t.Run("with error", func(t *testing.T) {
 		expectedError := errors.New("decorator registration failed")
 		collection := &mockCollection{returnError: expectedError}
 		option := AddDecorator(decorator)
-		
+
 		err := option(collection)
 		if !errors.Is(err, expectedError) {
 			t.Errorf("Expected error %v, got %v", expectedError, err)
@@ -316,7 +316,7 @@ func TestAddNameOption_String(t *testing.T) {
 			expected: `Name("test-name_123")`,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Type assert to get the String method
@@ -354,7 +354,7 @@ func TestAddGroupOption_String(t *testing.T) {
 			expected: `Group("test-group_123")`,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Type assert to get the String method
@@ -392,7 +392,7 @@ func TestAddAsOption_String(t *testing.T) {
 			contains: []string{"As(", "io.Reader", "io.Writer", "io.Closer", ")"},
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Type assert to get the String method
@@ -480,7 +480,7 @@ func TestAddOptions_Validate(t *testing.T) {
 			wantErr: false,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := tt.options.Validate()
@@ -499,36 +499,36 @@ func TestAddOptions_Validate(t *testing.T) {
 func TestModuleOptions_Integration(t *testing.T) {
 	// Use real collection to test integration
 	c := NewCollection()
-	
+
 	// Create a module with various options
 	testModule := NewModule("integration",
 		AddSingleton(NewModuleDependency),
 		AddScoped(NewModuleTestService, Name("test")),
 		AddTransient(NewModuleComplexService, Group("complex")),
 	)
-	
+
 	// Apply the module
 	err := c.AddModules(testModule)
 	if err != nil {
 		t.Fatalf("Failed to add module: %v", err)
 	}
-	
+
 	// Verify registrations
 	coll, ok := c.(*collection)
 	if !ok {
 		t.Fatal("Failed to type assert collection")
 	}
-	
+
 	// Check singleton
 	if !coll.Contains(reflect.TypeOf(&ModuleDependency{})) {
 		t.Error("ModuleDependency should be registered")
 	}
-	
+
 	// Check scoped with name
 	if !coll.ContainsKeyed(reflect.TypeOf(&ModuleTestService{}), "test") {
 		t.Error("ModuleTestService should be registered with name 'test'")
 	}
-	
+
 	// Check transient with group
 	if !coll.HasGroup(reflect.TypeOf(&ModuleComplexService{}), "complex") {
 		t.Error("ModuleComplexService should be registered in group 'complex'")
