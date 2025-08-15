@@ -265,9 +265,9 @@ func TestTypeFormatter_EdgeCases(t *testing.T) {
 			expected: "[3]string",
 		},
 		{
-			name:     "interface{} type",
-			typ:      reflect.TypeOf((*interface{})(nil)).Elem(),
-			expected: "interface{}",
+			name:     "any type",
+			typ:      reflect.TypeOf((*any)(nil)).Elem(),
+			expected: "any",
 		},
 		{
 			name:     "complex function",

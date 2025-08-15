@@ -38,7 +38,7 @@ func (tf *TypeFormatter) FormatType(t reflect.Type) string {
 		if t.Name() != "" {
 			return t.Name()
 		}
-		return "interface{}"
+		return "any"
 	case reflect.Struct:
 		if t.Name() != "" {
 			return t.Name()
