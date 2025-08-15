@@ -1,6 +1,7 @@
 package godi
 
 import (
+	"fmt"
 	"reflect"
 	"sync"
 )
@@ -132,12 +133,19 @@ func NewCollection() Collection {
 
 // Build creates a Provider from the registered services using default options.
 func (sc *collection) Build() (Provider, error) {
-	return nil, nil
+	return sc.BuildWithOptions(nil)
 }
 
 // BuildWithOptions creates a Provider with custom options for validation and behavior configuration.
 func (sc *collection) BuildWithOptions(options *ProviderOptions) (Provider, error) {
-	return nil, nil
+	// For now, return a placeholder provider
+	// This will be fully implemented when the provider implementation is complete
+	return &provider{
+		services:      sc.services,
+		keyedServices: sc.keyedServices,
+		groups:        sc.groups,
+		decorators:    sc.decorators,
+	}, nil
 }
 
 // AddModules applies one or more module configurations to the service collection.
@@ -262,27 +270,51 @@ func (r *collection) RemoveKeyed(t reflect.Type, key any) {
 func (r *collection) ToSlice() []*Descriptor {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+	
+	// Use a map to track unique descriptors and avoid duplicates
+	seen := make(map[*Descriptor]bool)
 	descriptors := make([]*Descriptor, 0)
+	
+	// Add regular services
 	for _, services := range r.services {
 		for _, service := range services {
-			descriptors = append(descriptors, service)
+			if !seen[service] {
+				descriptors = append(descriptors, service)
+				seen[service] = true
+			}
 		}
 	}
+	
+	// Add keyed services
 	for _, keyedServices := range r.keyedServices {
 		for _, service := range keyedServices {
-			descriptors = append(descriptors, service)
+			if !seen[service] {
+				descriptors = append(descriptors, service)
+				seen[service] = true
+			}
 		}
 	}
+	
+	// Add grouped services
 	for _, groupServices := range r.groups {
 		for _, service := range groupServices {
-			descriptors = append(descriptors, service)
+			if !seen[service] {
+				descriptors = append(descriptors, service)
+				seen[service] = true
+			}
 		}
 	}
-	for _, decorators := range r.decorators {
-		for _, decorator := range decorators {
-			descriptors = append(descriptors, decorator)
+	
+	// Add decorators
+	for _, decoratorList := range r.decorators {
+		for _, decorator := range decoratorList {
+			if !seen[decorator] {
+				descriptors = append(descriptors, decorator)
+				seen[decorator] = true
+			}
 		}
 	}
+	
 	return descriptors
 }
 
@@ -290,67 +322,149 @@ func (r *collection) ToSlice() []*Descriptor {
 func (r *collection) Count() int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	count := 0
+	
+	// Use a map to track unique descriptors and avoid duplicates
+	seen := make(map[*Descriptor]bool)
+	
+	// Count regular services
 	for _, services := range r.services {
-		count += len(services)
+		for _, service := range services {
+			seen[service] = true
+		}
 	}
+	
+	// Count keyed services
 	for _, keyedServices := range r.keyedServices {
-		count += len(keyedServices)
+		for _, service := range keyedServices {
+			seen[service] = true
+		}
 	}
+	
+	// Count grouped services
 	for _, groupServices := range r.groups {
-		count += len(groupServices)
+		for _, service := range groupServices {
+			seen[service] = true
+		}
 	}
-	for _, decorators := range r.decorators {
-		count += len(decorators)
+	
+	// Count decorators
+	for _, decoratorList := range r.decorators {
+		for _, decorator := range decoratorList {
+			seen[decorator] = true
+		}
 	}
-	return count
+	
+	return len(seen)
 }
 
 // addService registers a new service
 func (r *collection) addService(constructor any, lifetime Lifetime, opts ...AddOption) error {
+	// Create descriptor from constructor
+	descriptor, err := NewDescriptor(constructor, lifetime, opts...)
+	if err != nil {
+		return err
+	}
+
+	// Validate the descriptor
+	if err := ValidateDescriptor(descriptor); err != nil {
+		return err
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// if service == nil {
-	// 	return fmt.Errorf("service cannot be nil")
-	// }
+	// Parse options to handle special registration cases
+	options := &addOptions{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt.applyAddOption(options)
+		}
+	}
 
-	// if service.Type == nil {
-	// 	return fmt.Errorf("service type cannot be nil")
-	// }
+	// Handle As option - register under interface types
+	if len(options.As) > 0 {
+		// When As is specified, register the service under each interface type
+		for _, iface := range options.As {
+			interfaceType := reflect.TypeOf(iface).Elem()
 
-	// // If it's a decorator, register it as such
-	// if service.IsDecorator {
-	// 	r.decorators[service.Type] = append(r.decorators[service.Type], service)
-	// 	return nil
-	// }
+			// Validate that the service type implements the interface
+			if !descriptor.Type.Implements(interfaceType) {
+				return fmt.Errorf("type %v does not implement interface %v", descriptor.Type, interfaceType)
+			}
 
-	// // Validate lifetime consistency for non-keyed, non-group services
-	// if service.Key == nil && len(service.Groups) == 0 {
-	// 	if existing, ok := r.lifetimes[service.Type]; ok {
-	// 		if existing != service.Lifetime {
-	// 			return fmt.Errorf("type %v already registered with lifetime %v, cannot register with %v",
-	// 				service.Type, existing, service.Lifetime)
-	// 		}
-	// 	}
-	// 	r.lifetimes[service.Type] = service.Lifetime
-	// }
+			// Create a new descriptor for the interface type
+			interfaceDescriptor := &Descriptor{
+				Type:            interfaceType,
+				Key:             descriptor.Key,
+				Lifetime:        descriptor.Lifetime,
+				Constructor:     descriptor.Constructor,
+				ConstructorType: descriptor.ConstructorType,
+				Dependencies:    descriptor.Dependencies,
+				Groups:          descriptor.Groups,
+				As:              options.As,
+				IsDecorator:     false,
+				isFunc:          descriptor.isFunc,
+				isResultObject:  descriptor.isResultObject,
+				resultFields:    descriptor.resultFields,
+				isParamObject:   descriptor.isParamObject,
+				paramFields:     descriptor.paramFields,
+			}
 
-	// // Register based on type of service
-	// if service.Key != nil {
-	// 	// Keyed service
-	// 	key := TypeKey{Type: service.Type, Key: service.Key}
-	// 	r.keyedServices[key] = append(r.keyedServices[key], service)
-	// } else {
-	// 	// Regular service
-	// 	r.services[service.Type] = append(r.services[service.Type], service)
-	// }
+			// Register the interface descriptor
+			if err := r.registerDescriptor(interfaceDescriptor); err != nil {
+				return err
+			}
+		}
 
-	// // Register in groups
-	// for _, group := range service.Groups {
-	// 	groupKey := GroupKey{Type: service.Type, Group: group}
-	// 	r.groups[groupKey] = append(r.groups[groupKey], service)
-	// }
+		// If As is specified, we only register under interface types, not the concrete type
+		return nil
+	}
+
+	// Register the descriptor normally
+	return r.registerDescriptor(descriptor)
+}
+
+// registerDescriptor registers a descriptor in the appropriate collections
+func (r *collection) registerDescriptor(descriptor *Descriptor) error {
+	// If it's a decorator, register it as such
+	if descriptor.IsDecorator {
+		r.decorators[descriptor.Type] = append(r.decorators[descriptor.Type], descriptor)
+		return nil
+	}
+
+	// Validate lifetime consistency for non-keyed services
+	// Note: grouped services still need lifetime validation but they're not stored in lifetimes map
+	if descriptor.Key == nil {
+		if existing, ok := r.lifetimes[descriptor.Type]; ok {
+			if existing != descriptor.Lifetime {
+				return fmt.Errorf("type %v already registered with lifetime %v, cannot register with %v",
+					descriptor.Type, existing, descriptor.Lifetime)
+			}
+		}
+		// Only store lifetime for non-keyed services
+		if len(descriptor.Groups) == 0 {
+			r.lifetimes[descriptor.Type] = descriptor.Lifetime
+		}
+	}
+
+	// Register based on type of service
+	if descriptor.Key != nil {
+		// Keyed service - only in keyedServices
+		key := TypeKey{Type: descriptor.Type, Key: descriptor.Key}
+		r.keyedServices[key] = append(r.keyedServices[key], descriptor)
+	} else if len(descriptor.Groups) > 0 {
+		// Grouped service - only in groups (not in regular services)
+		// Register in groups only, handled below
+	} else {
+		// Regular service - only in services
+		r.services[descriptor.Type] = append(r.services[descriptor.Type], descriptor)
+	}
+
+	// Register in groups
+	for _, group := range descriptor.Groups {
+		groupKey := GroupKey{Type: descriptor.Type, Group: group}
+		r.groups[groupKey] = append(r.groups[groupKey], descriptor)
+	}
 
 	return nil
 }

@@ -1,6 +1,7 @@
 package godi
 
 import (
+	"fmt"
 	"reflect"
 
 	"github.com/junioryono/godi/v3/internal/reflection"
@@ -29,6 +30,10 @@ type Descriptor struct {
 	// Groups this provider belongs to (not used for decorators)
 	Groups []string
 
+	// As is an optional list of interface types this service can be registered as
+	// This is typically used for interface-based services
+	As []any
+
 	// IsDecorator indicates if this descriptor is a decorator
 	IsDecorator bool
 
@@ -37,7 +42,7 @@ type Descriptor struct {
 	DecoratedType reflect.Type
 
 	// Analysis results cached for performance
-	isAnalyzed     bool
+	isFunc         bool
 	isResultObject bool
 	resultFields   []reflection.ResultField
 	isParamObject  bool
@@ -76,4 +81,158 @@ func (d *Descriptor) GetKey() any {
 // Implements the Provider interface from the graph package
 func (d *Descriptor) GetDependencies() []*reflection.Dependency {
 	return d.Dependencies
+}
+
+// NewDescriptor creates a new descriptor from a constructor with the given lifetime and options
+func NewDescriptor(constructor any, lifetime Lifetime, opts ...AddOption) (*Descriptor, error) {
+	if constructor == nil {
+		return nil, ErrNilConstructor
+	}
+
+	// Parse options
+	options := &addOptions{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt.applyAddOption(options)
+		}
+	}
+
+	// Validate options
+	if err := options.Validate(); err != nil {
+		return nil, err
+	}
+
+	// Get constructor value and type
+	constructorValue := reflect.ValueOf(constructor)
+	constructorType := constructorValue.Type()
+
+	// Validate it's a function
+	if constructorType.Kind() != reflect.Func {
+		return nil, ErrConstructorNotFunction
+	}
+
+	// Validate return values
+	numReturns := constructorType.NumOut()
+	if numReturns == 0 {
+		return nil, ErrConstructorNoReturn
+	}
+	if numReturns > 2 {
+		return nil, ErrConstructorTooManyReturns
+	}
+
+	// If there are 2 return values, the second must be error
+	if numReturns == 2 {
+		errorType := reflect.TypeOf((*error)(nil)).Elem()
+		if !constructorType.Out(1).Implements(errorType) {
+			return nil, ErrConstructorInvalidSecondReturn
+		}
+	}
+
+	// Create analyzer to analyze the constructor
+	analyzer := reflection.New()
+	info, err := analyzer.Analyze(constructor)
+	if err != nil {
+		return nil, fmt.Errorf("failed to analyze constructor: %w", err)
+	}
+
+	// Get dependencies from analyzer
+	dependencies, err := analyzer.GetDependencies(constructor)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get dependencies: %w", err)
+	}
+
+	// Get the service type (first return value)
+	serviceType := constructorType.Out(0)
+
+	// Create descriptor
+	descriptor := &Descriptor{
+		Type:            serviceType,
+		Lifetime:        lifetime,
+		Constructor:     constructorValue,
+		ConstructorType: constructorType,
+		Dependencies:    dependencies,
+		IsDecorator:     false,
+	}
+
+	// Apply options
+	if options.Name != "" {
+		descriptor.Key = options.Name
+	}
+
+	if options.Group != "" {
+		descriptor.Groups = []string{options.Group}
+	}
+
+	// Handle As option - this allows the service to be registered under interface types
+	if len(options.As) > 0 {
+		// For As option, we'll need to handle this at the collection level
+		// since it affects how the service is registered
+	}
+
+	// Cache analysis results for performance
+	descriptor.isFunc = info.IsFunc
+	descriptor.isResultObject = info.IsResultObject
+	descriptor.isParamObject = info.IsParamObject
+
+	// Store param fields if it's a param object
+	if info.IsParamObject && len(info.Parameters) > 0 {
+		descriptor.paramFields = make([]reflection.ParamField, 0, len(info.Parameters))
+		for _, param := range info.Parameters {
+			descriptor.paramFields = append(descriptor.paramFields, reflection.ParamField{
+				Name:     param.Name,
+				Type:     param.Type,
+				Key:      param.Key,
+				Group:    param.Group,
+				Optional: param.Optional,
+				Index:    param.Index,
+			})
+		}
+	}
+
+	// Store result fields if it's a result object
+	if info.IsResultObject && len(info.Returns) > 0 {
+		descriptor.resultFields = make([]reflection.ResultField, 0, len(info.Returns))
+		for _, ret := range info.Returns {
+			if !ret.IsError {
+				descriptor.resultFields = append(descriptor.resultFields, reflection.ResultField{
+					Name:  ret.Name,
+					Type:  ret.Type,
+					Key:   ret.Key,
+					Group: ret.Group,
+					Index: ret.Index,
+				})
+			}
+		}
+	}
+
+	return descriptor, nil
+}
+
+// ValidateDescriptor validates a descriptor
+func ValidateDescriptor(d *Descriptor) error {
+	if d == nil {
+		return ErrDescriptorNil
+	}
+
+	if d.Type == nil {
+		return fmt.Errorf("descriptor type cannot be nil")
+	}
+
+	if !d.Constructor.IsValid() {
+		return fmt.Errorf("descriptor constructor is invalid")
+	}
+
+	if d.ConstructorType == nil {
+		return fmt.Errorf("descriptor constructor type cannot be nil")
+	}
+
+	// Validate lifetime
+	switch d.Lifetime {
+	case Singleton, Scoped, Transient:
+		// Valid lifetimes
+	default:
+		return LifetimeError{Value: d.Lifetime}
+	}
+
+	return nil
 }
