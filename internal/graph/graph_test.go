@@ -960,3 +960,311 @@ func TestDependencyGraph_ComplexScenarios(t *testing.T) {
 		}
 	})
 }
+
+func TestTopologicalSort_DependencyOrder(t *testing.T) {
+	type ServiceNoDeps struct{}
+	type ServiceWithOneDep struct{}
+	type ServiceWithTwoDeps struct{}
+
+	tests := []struct {
+		name          string
+		setupGraph    func() (*graph.DependencyGraph, error)
+		expectedOrder []string // Expected type names in order
+	}{
+		{
+			name: "simple_chain",
+			setupGraph: func() (*graph.DependencyGraph, error) {
+				g := graph.NewDependencyGraph()
+
+				typeNoDeps := reflect.TypeOf(ServiceNoDeps{})
+				typeWithOneDep := reflect.TypeOf(ServiceWithOneDep{})
+
+				// ServiceNoDeps has no dependencies
+				err := g.AddProvider(&godi.Descriptor{
+					Type:         typeNoDeps,
+					Dependencies: nil,
+				})
+				if err != nil {
+					return nil, err
+				}
+
+				// ServiceWithOneDep depends on ServiceNoDeps
+				err = g.AddProvider(&godi.Descriptor{
+					Type: typeWithOneDep,
+					Dependencies: []*reflection.Dependency{
+						{Type: typeNoDeps},
+					},
+				})
+				if err != nil {
+					return nil, err
+				}
+
+				return g, nil
+			},
+			expectedOrder: []string{"ServiceNoDeps", "ServiceWithOneDep"},
+		},
+		{
+			name: "complex_dependencies",
+			setupGraph: func() (*graph.DependencyGraph, error) {
+				g := graph.NewDependencyGraph()
+
+				typeNoDeps := reflect.TypeOf(ServiceNoDeps{})
+				typeWithOneDep := reflect.TypeOf(ServiceWithOneDep{})
+				typeWithTwoDeps := reflect.TypeOf(ServiceWithTwoDeps{})
+
+				// ServiceNoDeps has no dependencies
+				err := g.AddProvider(&godi.Descriptor{
+					Type:         typeNoDeps,
+					Dependencies: nil,
+				})
+				if err != nil {
+					return nil, err
+				}
+
+				// ServiceWithOneDep depends on ServiceNoDeps
+				err = g.AddProvider(&godi.Descriptor{
+					Type: typeWithOneDep,
+					Dependencies: []*reflection.Dependency{
+						{Type: typeNoDeps},
+					},
+				})
+				if err != nil {
+					return nil, err
+				}
+
+				// ServiceWithTwoDeps depends on both ServiceNoDeps and ServiceWithOneDep
+				err = g.AddProvider(&godi.Descriptor{
+					Type: typeWithTwoDeps,
+					Dependencies: []*reflection.Dependency{
+						{Type: typeNoDeps},
+						{Type: typeWithOneDep},
+					},
+				})
+				if err != nil {
+					return nil, err
+				}
+
+				return g, nil
+			},
+			expectedOrder: []string{"ServiceNoDeps", "ServiceWithOneDep", "ServiceWithTwoDeps"},
+		},
+		{
+			name: "diamond_dependency",
+			setupGraph: func() (*graph.DependencyGraph, error) {
+				g := graph.NewDependencyGraph()
+
+				// Create diamond: D depends on B and C, both B and C depend on A
+				//     A
+				//    / \
+				//   B   C
+				//    \ /
+				//     D
+
+				type A struct{}
+				type B struct{}
+				type C struct{}
+				type D struct{}
+
+				typeA := reflect.TypeOf(A{})
+				typeB := reflect.TypeOf(B{})
+				typeC := reflect.TypeOf(C{})
+				typeD := reflect.TypeOf(D{})
+
+				// A has no dependencies
+				g.AddProvider(&godi.Descriptor{
+					Type:         typeA,
+					Dependencies: nil,
+				})
+
+				// B depends on A
+				g.AddProvider(&godi.Descriptor{
+					Type: typeB,
+					Dependencies: []*reflection.Dependency{
+						{Type: typeA},
+					},
+				})
+
+				// C depends on A
+				g.AddProvider(&godi.Descriptor{
+					Type: typeC,
+					Dependencies: []*reflection.Dependency{
+						{Type: typeA},
+					},
+				})
+
+				// D depends on B and C
+				g.AddProvider(&godi.Descriptor{
+					Type: typeD,
+					Dependencies: []*reflection.Dependency{
+						{Type: typeB},
+						{Type: typeC},
+					},
+				})
+
+				return g, nil
+			},
+			// A must come first, then B and C (in any order), then D
+			expectedOrder: []string{"A", "B|C", "B|C", "D"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g, err := tt.setupGraph()
+			if err != nil {
+				t.Fatalf("Failed to setup graph: %v", err)
+			}
+
+			sorted, err := g.TopologicalSort()
+			if err != nil {
+				t.Fatalf("TopologicalSort failed: %v", err)
+			}
+
+			// Extract type names from sorted nodes
+			actualOrder := make([]string, len(sorted))
+			for i, node := range sorted {
+				typeName := node.Key.Type.String()
+				// Extract just the type name (remove package prefix)
+				if idx := len(typeName) - 1; idx >= 0 {
+					for j := idx; j >= 0; j-- {
+						if typeName[j] == '.' {
+							typeName = typeName[j+1:]
+							break
+						}
+					}
+				}
+				actualOrder[i] = typeName
+			}
+
+			// Verify order
+			t.Logf("Expected order: %v", tt.expectedOrder)
+			t.Logf("Actual order:   %v", actualOrder)
+
+			// For simple validation, check specific constraints
+			if tt.name == "simple_chain" {
+				// ServiceNoDeps must come before ServiceWithOneDep
+				noDepsIdx := indexOf(actualOrder, "ServiceNoDeps")
+				oneDepIdx := indexOf(actualOrder, "ServiceWithOneDep")
+
+				if noDepsIdx == -1 || oneDepIdx == -1 {
+					t.Errorf("Missing expected types in result")
+				} else if noDepsIdx >= oneDepIdx {
+					t.Errorf("ServiceNoDeps (index %d) should come before ServiceWithOneDep (index %d)",
+						noDepsIdx, oneDepIdx)
+				}
+			}
+
+			if tt.name == "complex_dependencies" {
+				// Check ordering: NoDeps < WithOneDep < WithTwoDeps
+				noDepsIdx := indexOf(actualOrder, "ServiceNoDeps")
+				oneDepIdx := indexOf(actualOrder, "ServiceWithOneDep")
+				twoDepsIdx := indexOf(actualOrder, "ServiceWithTwoDeps")
+
+				if noDepsIdx == -1 || oneDepIdx == -1 || twoDepsIdx == -1 {
+					t.Errorf("Missing expected types in result")
+				} else {
+					if noDepsIdx >= oneDepIdx {
+						t.Errorf("ServiceNoDeps (index %d) should come before ServiceWithOneDep (index %d)",
+							noDepsIdx, oneDepIdx)
+					}
+					if noDepsIdx >= twoDepsIdx {
+						t.Errorf("ServiceNoDeps (index %d) should come before ServiceWithTwoDeps (index %d)",
+							noDepsIdx, twoDepsIdx)
+					}
+					if oneDepIdx >= twoDepsIdx {
+						t.Errorf("ServiceWithOneDep (index %d) should come before ServiceWithTwoDeps (index %d)",
+							oneDepIdx, twoDepsIdx)
+					}
+				}
+			}
+
+			if tt.name == "diamond_dependency" {
+				// A must come first, D must come last
+				if len(actualOrder) >= 4 {
+					if actualOrder[0] != "A" {
+						t.Errorf("A should be first, but got %s", actualOrder[0])
+					}
+					if actualOrder[3] != "D" {
+						t.Errorf("D should be last, but got %s", actualOrder[3])
+					}
+
+					// B and C should be in positions 1 and 2 (any order)
+					hasB := actualOrder[1] == "B" || actualOrder[2] == "B"
+					hasC := actualOrder[1] == "C" || actualOrder[2] == "C"
+					if !hasB || !hasC {
+						t.Errorf("B and C should be in middle positions, got %v", actualOrder)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestTopologicalSort_ForDependencyInjection(t *testing.T) {
+	g := graph.NewDependencyGraph()
+
+	// Types from the failing test
+	type ResolutionTestService struct{}
+	type ResolutionServiceWithDep struct{}
+
+	typeTestService := reflect.TypeOf(&ResolutionTestService{})
+	typeServiceWithDep := reflect.TypeOf(&ResolutionServiceWithDep{})
+
+	// Add ResolutionTestService (no dependencies)
+	err := g.AddProvider(&godi.Descriptor{
+		Type:         typeTestService,
+		Dependencies: nil,
+		Lifetime:     godi.Singleton,
+	})
+	if err != nil {
+		t.Fatalf("Failed to add ResolutionTestService: %v", err)
+	}
+
+	// Add ResolutionServiceWithDep (depends on ResolutionTestService)
+	err = g.AddProvider(&godi.Descriptor{
+		Type: typeServiceWithDep,
+		Dependencies: []*reflection.Dependency{
+			{Type: typeTestService},
+		},
+		Lifetime: godi.Singleton,
+	})
+	if err != nil {
+		t.Fatalf("Failed to add ResolutionServiceWithDep: %v", err)
+	}
+
+	// Get topological sort
+	sorted, err := g.TopologicalSort()
+	if err != nil {
+		t.Fatalf("TopologicalSort failed: %v", err)
+	}
+
+	// Log the order
+	t.Logf("Topological sort order:")
+	for i, node := range sorted {
+		t.Logf("  %d: Type=%v, Key=%v", i, node.Key.Type, node.Key.Key)
+	}
+
+	// Verify order: ResolutionTestService MUST come before ResolutionServiceWithDep
+	if len(sorted) != 2 {
+		t.Fatalf("Expected 2 nodes, got %d", len(sorted))
+	}
+
+	// The first node should be ResolutionTestService (no dependencies)
+	if sorted[0].Key.Type != typeTestService {
+		t.Errorf("First node should be ResolutionTestService (no deps), got %v", sorted[0].Key.Type)
+	}
+
+	// The second node should be ResolutionServiceWithDep (depends on first)
+	if sorted[1].Key.Type != typeServiceWithDep {
+		t.Errorf("Second node should be ResolutionServiceWithDep (has deps), got %v", sorted[1].Key.Type)
+	}
+}
+
+func indexOf(slice []string, str string) int {
+	for i, s := range slice {
+		if s == str {
+			return i
+		}
+	}
+	return -1
+}
