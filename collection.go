@@ -275,7 +275,10 @@ func (sc *collection) AddTransient(service any, opts ...AddOption) error {
 // Decorate registers a decorator for a service type.
 func (sc *collection) Decorate(decorator any, opts ...AddOption) error {
 	if decorator == nil {
-		return ErrDecoratorNil
+		return &ValidationError{
+			ServiceType: nil,
+			Message:     "decorator cannot be nil",
+		}
 	}
 
 	// TODO: Implement decorator registration
