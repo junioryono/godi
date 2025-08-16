@@ -24,7 +24,7 @@ What actually happened, including any error messages or stack traces.
 
 **Environment:**
 
-- Go version: [e.g. 1.24.3]
+- Go version: [e.g. 1.25.0]
 - godi version: [e.g. v1.0.0]
 - OS: [e.g. Ubuntu 22.04, Windows 11, macOS 14]
 
