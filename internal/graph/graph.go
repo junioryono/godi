@@ -256,16 +256,17 @@ func (g *DependencyGraph) TopologicalSort() ([]*Node, error) {
 	// Perform Kahn's algorithm for topological sort
 	result := make([]*Node, 0, len(g.nodes))
 
-	// Create working copies of in-degrees
-	inDegrees := make(map[NodeKey]int)
+	// Create working copies of dependency counts
+	// We need to count how many dependencies each node has
+	depCounts := make(map[NodeKey]int)
 	for key, node := range g.nodes {
-		inDegrees[key] = node.InDegree
+		depCounts[key] = len(node.Dependencies)
 	}
 
 	// Find all nodes with no dependencies
 	queue := make([]NodeKey, 0)
-	for key, degree := range inDegrees {
-		if degree == 0 {
+	for key, count := range depCounts {
+		if count == 0 {
 			queue = append(queue, key)
 		}
 	}
@@ -280,13 +281,12 @@ func (g *DependencyGraph) TopologicalSort() ([]*Node, error) {
 		if node != nil {
 			result = append(result, node)
 
-			// Reduce in-degree of dependent nodes
-			if edges, exists := g.edges[current]; exists {
-				for _, dependent := range edges {
-					inDegrees[dependent]--
-					if inDegrees[dependent] == 0 {
-						queue = append(queue, dependent)
-					}
+			// For each node that depends on the current node,
+			// reduce its dependency count
+			for _, dependent := range node.Dependents {
+				depCounts[dependent]--
+				if depCounts[dependent] == 0 {
+					queue = append(queue, dependent)
 				}
 			}
 		}
