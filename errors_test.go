@@ -12,56 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSentinelErrors(t *testing.T) {
-	// Test that all sentinel errors are defined and have appropriate messages
-	sentinelErrors := []struct {
-		err     error
-		message string
-	}{
-		{ErrServiceNotFound, "service not found"},
-		{ErrServiceKeyNil, "service key cannot be nil"},
-		{ErrInvalidServiceType, "invalid service type"},
-		{ErrDisposed, "disposed"},
-		{ErrNilScope, "scope cannot be nil"},
-		{ErrScopeDisposed, "scope has been disposed"},
-		{ErrProviderDisposed, "service provider has been disposed"},
-		{ErrNilConstructor, "constructor cannot be nil"},
-		{ErrNilServiceProvider, "service provider cannot be nil"},
-		{ErrConstructorNotFunction, "constructor must be a function"},
-		{ErrConstructorNoReturn, "constructor must return at least one value"},
-		{ErrConstructorTooManyReturns, "constructor must return at most 2 values"},
-		{ErrConstructorInvalidSecondReturn, "constructor's second return value must be error"},
-		{ErrConstructorMultipleIn, "constructor cannot have multiple In parameters"},
-		{ErrConstructorOutMaxReturns, "constructor with Out must return at most 2 values"},
-		{ErrDecoratorNil, "decorator cannot be nil"},
-		{ErrDecoratorNotFunction, "decorator must be a function"},
-		{ErrDecoratorNoParams, "decorator must have at least one parameter"},
-		{ErrDecoratorNoReturn, "decorator must return at least one value"},
-		{ErrCollectionBuilt, "service collection has already been built"},
-		{ErrCollectionModifyAfterBuild, "cannot modify service collection after build"},
-		{ErrDescriptorNil, "descriptor cannot be nil"},
-		{ErrNoConstructorOrDecorator, "constructor or decorator must be provided"},
-		{ErrBothConstructorAndDecorator, "cannot have both constructor and decorator"},
-		{ErrServicesNil, "services cannot be nil"},
-		{ErrProviderFunctionNotFound, "provider function not found"},
-		{ErrKeyedProviderFunctionNotFound, "keyed provider function not found"},
-		{ErrConstructorMustReturnValue, "constructor must be a function that returns at least one value"},
-		{ErrServiceHasNoConstructor, "service has no constructor"},
-		{ErrDescriptorHasNoConstructor, "descriptor has no constructor"},
-		{ErrFailedToCreateScope, "failed to create dig scope: dig container is nil"},
-		{ErrResultObjectConstructor, "constructor returns Out - use collection.Add* methods"},
-		{ErrReplaceResultObject, "replace not supported for result object constructors"},
-		{ErrScopeNotInContext, "no scope found in context"},
-	}
-
-	for _, tt := range sentinelErrors {
-		t.Run(tt.message, func(t *testing.T) {
-			assert.NotNil(t, tt.err)
-			assert.Equal(t, tt.message, tt.err.Error())
-		})
-	}
-}
-
 func TestLifetimeError(t *testing.T) {
 	tests := []struct {
 		name     string

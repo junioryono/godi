@@ -136,12 +136,18 @@ func (sc *collection) BuildWithOptions(options *ProviderOptions) (Provider, erro
 
 	// Validate the dependency graph
 	if err := sc.validateDependencyGraph(); err != nil {
-		return nil, fmt.Errorf("dependency validation failed: %w", err)
+		return nil, &ValidationError{
+			ServiceType: nil,
+			Message:     fmt.Sprintf("dependency validation failed: %v", err),
+		}
 	}
 
 	// Validate lifetime consistency
 	if err := sc.validateLifetimes(); err != nil {
-		return nil, fmt.Errorf("lifetime validation failed: %w", err)
+		return nil, &ValidationError{
+			ServiceType: nil,
+			Message:     fmt.Sprintf("lifetime validation failed: %v", err),
+		}
 	}
 
 	// Build the dependency graph
@@ -151,7 +157,12 @@ func (sc *collection) BuildWithOptions(options *ProviderOptions) (Provider, erro
 	for _, descriptor := range allDescriptors {
 		if !descriptor.IsDecorator {
 			if err := g.AddProvider(descriptor); err != nil {
-				return nil, fmt.Errorf("failed to build dependency graph: %w", err)
+				return nil, &GraphOperationError{
+					Operation: "add",
+					NodeType:  descriptor.Type,
+					NodeKey:   descriptor.Key,
+					Cause:     err,
+				}
 			}
 		}
 	}
@@ -183,7 +194,10 @@ func (sc *collection) BuildWithOptions(options *ProviderOptions) (Provider, erro
 
 	// Eagerly create all singletons
 	if err := p.createAllSingletons(); err != nil {
-		return nil, fmt.Errorf("failed to initialize singletons: %w", err)
+		return nil, &ValidationError{
+			ServiceType: nil,
+			Message:     fmt.Sprintf("failed to initialize singletons: %v", err),
+		}
 	}
 
 	return p, nil
@@ -374,7 +388,11 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 	analyzer := reflection.New()
 	info, err := analyzer.Analyze(service)
 	if err != nil {
-		return fmt.Errorf("failed to analyze constructor: %w", err)
+		return &ReflectionAnalysisError{
+			Constructor: service,
+			Operation:   "analyze",
+			Cause:       err,
+		}
 	}
 
 	// Handle multiple return types (not Out structs)

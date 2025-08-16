@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/junioryono/godi/v3/internal/graph"
@@ -68,6 +69,21 @@ var (
 
 	// Context errors
 	ErrScopeNotInContext = errors.New("no scope found in context")
+
+	// Reflection/Analysis errors
+	ErrConstructorNil         = errors.New("constructor cannot be nil")
+	ErrInvalidConstructorKind = errors.New("constructor must be a function")
+	ErrInvalidParamType       = errors.New("In parameter must be a struct")
+	ErrInvalidResultType      = errors.New("Out result must be a struct")
+	ErrGroupFieldNotSlice     = errors.New("group field must be slice")
+	ErrDuplicateFieldName     = errors.New("duplicate field name in struct")
+	ErrResolverNil            = errors.New("resolver cannot be nil")
+	ErrParamTypeNil           = errors.New("param type cannot be nil")
+	ErrResultObjectNil        = errors.New("result object is nil")
+
+	// Graph errors
+	ErrProviderNil  = errors.New("provider cannot be nil")
+	ErrNodeNotFound = errors.New("node not found in graph")
 )
 
 // ========================================
@@ -204,6 +220,71 @@ type TypeMismatchError struct {
 
 func (e TypeMismatchError) Error() string {
 	return fmt.Sprintf("%s: expected %s, got %s", e.Context, formatType(e.Expected), formatType(e.Actual))
+}
+
+// ReflectionAnalysisError for reflection/analysis failures
+type ReflectionAnalysisError struct {
+	Constructor any
+	Operation   string // "analyze", "validate", "invoke"
+	Cause       error
+}
+
+func (e ReflectionAnalysisError) Error() string {
+	return fmt.Sprintf("reflection %s failed for constructor %T: %v", e.Operation, e.Constructor, e.Cause)
+}
+
+func (e ReflectionAnalysisError) Unwrap() error {
+	return e.Cause
+}
+
+// InvalidFieldError for struct field validation failures
+type InvalidFieldError struct {
+	StructType reflect.Type
+	FieldName  string
+	Message    string
+}
+
+func (e InvalidFieldError) Error() string {
+	return fmt.Sprintf("invalid field %s in %s: %s", e.FieldName, formatType(e.StructType), e.Message)
+}
+
+// GraphOperationError for dependency graph operations
+type GraphOperationError struct {
+	Operation string // "add", "remove", "sort"
+	NodeType  reflect.Type
+	NodeKey   any
+	Cause     error
+}
+
+func (e GraphOperationError) Error() string {
+	if e.NodeKey != nil {
+		return fmt.Sprintf("graph %s failed for %s[%v]: %v", e.Operation, formatType(e.NodeType), e.NodeKey, e.Cause)
+	}
+	return fmt.Sprintf("graph %s failed for %s: %v", e.Operation, formatType(e.NodeType), e.Cause)
+}
+
+func (e GraphOperationError) Unwrap() error {
+	return e.Cause
+}
+
+// ConstructorInvocationError for constructor call failures
+type ConstructorInvocationError struct {
+	Constructor reflect.Type
+	Parameters  []reflect.Type
+	Cause       error
+}
+
+func (e ConstructorInvocationError) Error() string {
+	paramStrs := make([]string, len(e.Parameters))
+	for i, p := range e.Parameters {
+		paramStrs[i] = formatType(p)
+	}
+	return fmt.Sprintf("failed to invoke %s with parameters [%s]: %v", 
+		formatType(e.Constructor), strings.Join(paramStrs, ", "), e.Cause)
+}
+
+func (e ConstructorInvocationError) Unwrap() error {
+	return e.Cause
 }
 
 // formatType formats a reflect.Type for error messages.
