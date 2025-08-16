@@ -45,15 +45,15 @@ type Collection interface {
 
 	// AddSingleton registers a service with singleton lifetime.
 	// Only one instance is created and shared across all resolutions.
-	AddSingleton(constructor any, opts ...AddOption) error
+	AddSingleton(service any, opts ...AddOption) error
 
 	// AddScoped registers a service with scoped lifetime.
 	// One instance is created per scope and shared within that scope.
-	AddScoped(constructor any, opts ...AddOption) error
+	AddScoped(service any, opts ...AddOption) error
 
 	// AddTransient registers a service with transient lifetime.
 	// A new instance is created every time the service is resolved.
-	AddTransient(constructor any, opts ...AddOption) error
+	AddTransient(service any, opts ...AddOption) error
 
 	// Decorate registers a decorator for a service type.
 	// Decorators wrap existing services to modify their behavior.
@@ -135,12 +135,12 @@ func (sc *collection) BuildWithOptions(options *ProviderOptions) (Provider, erro
 	defer sc.mu.Unlock()
 
 	// Validate the dependency graph
-	if err := validateDependencyGraph(sc); err != nil {
+	if err := sc.validateDependencyGraph(); err != nil {
 		return nil, fmt.Errorf("dependency validation failed: %w", err)
 	}
 
 	// Validate lifetime consistency
-	if err := validateLifetimes(sc); err != nil {
+	if err := sc.validateLifetimes(); err != nil {
 		return nil, fmt.Errorf("lifetime validation failed: %w", err)
 	}
 
@@ -204,18 +204,18 @@ func (sc *collection) AddModules(modules ...ModuleOption) error {
 }
 
 // AddSingleton adds a singleton service to the collection.
-func (sc *collection) AddSingleton(constructor any, opts ...AddOption) error {
-	return sc.addService(constructor, Singleton, opts...)
+func (sc *collection) AddSingleton(service any, opts ...AddOption) error {
+	return sc.addService(service, Singleton, opts...)
 }
 
 // AddScoped adds a scoped service to the collection.
-func (sc *collection) AddScoped(constructor any, opts ...AddOption) error {
-	return sc.addService(constructor, Scoped, opts...)
+func (sc *collection) AddScoped(service any, opts ...AddOption) error {
+	return sc.addService(service, Scoped, opts...)
 }
 
 // AddTransient adds a transient service to the collection.
-func (sc *collection) AddTransient(constructor any, opts ...AddOption) error {
-	return sc.addService(constructor, Transient, opts...)
+func (sc *collection) AddTransient(service any, opts ...AddOption) error {
+	return sc.addService(service, Transient, opts...)
 }
 
 // Decorate registers a decorator for a service type.
@@ -342,9 +342,29 @@ func (r *collection) Count() int {
 }
 
 // addService registers a new service
-func (r *collection) addService(constructor any, lifetime Lifetime, opts ...AddOption) error {
+func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOption) error {
+	if service == nil {
+		return ErrNilConstructor
+	}
+
+	serviceType := reflect.TypeOf(service)
+
+	if serviceType.Kind() != reflect.Func {
+		instance := service
+		instanceType := reflect.TypeOf(instance)
+
+		// Create a properly typed constructor function
+		fnType := reflect.FuncOf([]reflect.Type{}, []reflect.Type{instanceType}, false)
+		fnValue := reflect.MakeFunc(fnType, func(args []reflect.Value) []reflect.Value {
+			return []reflect.Value{reflect.ValueOf(instance)}
+		})
+
+		service = fnValue.Interface()
+		fmt.Printf("Warning: %v is not a function, wrapping it in a constructor function\n", serviceType)
+	}
+
 	// Create descriptor from constructor
-	descriptor, err := newDescriptor(constructor, lifetime, opts...)
+	descriptor, err := newDescriptor(service, lifetime, opts...)
 	if err != nil {
 		return err
 	}
@@ -433,6 +453,93 @@ func (r *collection) registerDescriptor(descriptor *Descriptor) error {
 		r.groups[groupKey] = append(r.groups[groupKey], descriptor)
 
 		descriptor.Key = len(r.groups[groupKey])
+	}
+
+	return nil
+}
+
+// validateDependencyGraph validates the entire dependency graph for cycles
+func (r *collection) validateDependencyGraph() error {
+	// Build the dependency graph
+	g := graph.NewDependencyGraph()
+
+	// Add all providers to the graph
+	for _, descriptor := range r.services {
+		if err := g.AddProvider(descriptor); err != nil {
+			return fmt.Errorf("failed to add provider %v to graph: %w", descriptor.Type, err)
+		}
+	}
+
+	for _, descriptors := range r.groups {
+		for _, descriptor := range descriptors {
+			if err := g.AddProvider(descriptor); err != nil {
+				return fmt.Errorf("failed to add group provider %v to graph: %w", descriptor.Type, err)
+			}
+		}
+	}
+
+	// Check for cycles
+	if err := g.DetectCycles(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateLifetimes ensures singleton services don't depend on scoped services
+func (c *collection) validateLifetimes() error {
+	// Create a map of service lifetimes
+	lifetimes := make(map[instanceKey]Lifetime)
+
+	// Populate lifetimes from all services
+	for serviceType, descriptor := range c.services {
+		key := instanceKey{Type: serviceType.Type, Key: descriptor.Key}
+		lifetimes[key] = descriptor.Lifetime
+	}
+
+	for groupKey, descriptors := range c.groups {
+		for _, descriptor := range descriptors {
+			key := instanceKey{Type: groupKey.Type, Key: descriptor.Key, Group: groupKey.Group}
+			lifetimes[key] = descriptor.Lifetime
+		}
+	}
+
+	checkDescriptor := func(descriptor *Descriptor) error {
+		if descriptor.Lifetime != Singleton {
+			return nil // Only validate singleton dependencies
+		}
+
+		// Get dependencies
+		for _, dep := range descriptor.Dependencies {
+			depKey := instanceKey{Type: dep.Type, Key: dep.Key, Group: dep.Group}
+
+			// Find the lifetime of the dependency
+			if depLifetime, ok := lifetimes[depKey]; ok {
+				if depLifetime == Scoped {
+					return fmt.Errorf(
+						"singleton service %v cannot depend on scoped service %v",
+						descriptor.Type, dep.Type,
+					)
+				}
+			}
+		}
+
+		return nil
+	}
+
+	// Check all services
+	for _, descriptor := range c.services {
+		if err := checkDescriptor(descriptor); err != nil {
+			return err
+		}
+	}
+
+	for _, descriptors := range c.groups {
+		for _, descriptor := range descriptors {
+			if err := checkDescriptor(descriptor); err != nil {
+				return err
+			}
+		}
 	}
 
 	return nil

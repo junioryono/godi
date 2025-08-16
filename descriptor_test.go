@@ -485,6 +485,66 @@ func TestDescriptorComplexConstructors(t *testing.T) {
 	})
 }
 
+// Test validateDescriptor
+func TestValidateDescriptor(t *testing.T) {
+	t.Run("valid descriptor", func(t *testing.T) {
+		descriptor, err := newDescriptor(NewValidationServiceD, Singleton)
+		require.NoError(t, err)
+
+		err = descriptor.Validate()
+		assert.NoError(t, err)
+	})
+
+	t.Run("descriptor with nil type", func(t *testing.T) {
+		descriptor := &Descriptor{
+			Type:            nil,
+			Constructor:     reflect.ValueOf(NewValidationServiceD),
+			ConstructorType: reflect.TypeOf(NewValidationServiceD),
+			Lifetime:        Singleton,
+		}
+
+		err := descriptor.Validate()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "type cannot be nil")
+	})
+
+	t.Run("descriptor with invalid constructor", func(t *testing.T) {
+		descriptor := &Descriptor{
+			Type:            reflect.TypeOf((*ValidationServiceD)(nil)),
+			Constructor:     reflect.Value{},
+			ConstructorType: reflect.TypeOf(NewValidationServiceD),
+			Lifetime:        Singleton,
+		}
+
+		err := descriptor.Validate()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "constructor is invalid")
+	})
+
+	t.Run("descriptor with invalid service lifetime", func(t *testing.T) {
+		descriptor, err := newDescriptor(NewValidationServiceD, Singleton)
+		require.NoError(t, err)
+
+		descriptor.Lifetime = Lifetime(999)
+
+		err = descriptor.Validate()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid service lifetime")
+	})
+
+	t.Run("all valid lifetimes", func(t *testing.T) {
+		lifetimes := []Lifetime{Singleton, Scoped, Transient}
+
+		for _, lt := range lifetimes {
+			descriptor, err := newDescriptor(NewValidationServiceD, lt)
+			require.NoError(t, err)
+
+			err = descriptor.Validate()
+			assert.NoError(t, err, "Lifetime %v should be valid", lt)
+		}
+	})
+}
+
 // Benchmark tests
 func BenchmarkNewDescriptor(b *testing.B) {
 	b.Run("simple constructor", func(b *testing.B) {
