@@ -28,7 +28,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: 1.24.x
+          go-version: 1.25.x
 
       # Configure git to use GitHub Actions bot
       - name: Configure Git
