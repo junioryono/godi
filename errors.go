@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/junioryono/godi/v3/internal/graph"
+	"github.com/junioryono/godi/v4/internal/graph"
 )
 
 // ========================================

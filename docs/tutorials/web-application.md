@@ -19,7 +19,7 @@ Create a new project:
 ```bash
 mkdir blog-api && cd blog-api
 go mod init blog-api
-go get github.com/junioryono/godi/v3
+go get github.com/junioryono/godi/v4
 go get github.com/gorilla/mux
 go get github.com/golang-jwt/jwt/v5
 ```
@@ -338,7 +338,7 @@ import (
     "strings"
 
     "blog-api/services"
-    "github.com/junioryono/godi/v3"
+    "github.com/junioryono/godi/v4"
 )
 
 type contextKey string
@@ -399,7 +399,7 @@ import (
 
     "blog-api/models"
     "blog-api/services"
-    "github.com/junioryono/godi/v3"
+    "github.com/junioryono/godi/v4"
 )
 
 type AuthHandler struct {
@@ -484,7 +484,7 @@ import (
 
     "blog-api/models"
     "blog-api/services"
-    "github.com/junioryono/godi/v3"
+    "github.com/junioryono/godi/v4"
 )
 
 type PostHandler struct {
@@ -557,7 +557,7 @@ package modules
 
 import (
     "blog-api/services"
-    "github.com/junioryono/godi/v3"
+    "github.com/junioryono/godi/v4"
 )
 
 // CoreModule contains shared infrastructure
@@ -573,7 +573,7 @@ package modules
 
 import (
     "blog-api/services"
-    "github.com/junioryono/godi/v3"
+    "github.com/junioryono/godi/v4"
 )
 
 // AuthModule contains authentication services
@@ -590,7 +590,7 @@ package modules
 
 import (
     "blog-api/services"
-    "github.com/junioryono/godi/v3"
+    "github.com/junioryono/godi/v4"
 )
 
 // BlogModule contains blog services
@@ -608,7 +608,7 @@ package modules
 
 import (
     "blog-api/handlers"
-    "github.com/junioryono/godi/v3"
+    "github.com/junioryono/godi/v4"
 )
 
 // WebModule contains HTTP handlers
@@ -634,7 +634,7 @@ import (
     "blog-api/handlers"
     "blog-api/modules"
     "github.com/gorilla/mux"
-    "github.com/junioryono/godi/v3"
+    "github.com/junioryono/godi/v4"
 )
 
 func main() {

@@ -8,9 +8,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/junioryono/godi/v3"
-	"github.com/junioryono/godi/v3/internal/graph"
-	"github.com/junioryono/godi/v3/internal/reflection"
+	"github.com/junioryono/godi/v4"
+	"github.com/junioryono/godi/v4/internal/graph"
+	"github.com/junioryono/godi/v4/internal/reflection"
 )
 
 // Test concurrent graph operations

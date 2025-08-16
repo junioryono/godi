@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/junioryono/godi/v3/internal/reflection"
+	"github.com/junioryono/godi/v4/internal/reflection"
 )
 
 // Descriptor represents both service providers and decorators
