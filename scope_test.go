@@ -428,7 +428,7 @@ func TestScopeProviderAndContext(t *testing.T) {
 
 		scopeCtx := scope.Context()
 		assert.NotNil(t, scopeCtx)
-		assert.Equal(t, "value", scopeCtx.Value("test"))
+		assert.Equal(t, "value", scopeCtx.Value(testKey))
 	})
 }
 
@@ -757,9 +757,9 @@ func TestProviderGet(t *testing.T) {
 		assert.Error(t, err)
 		assert.Nil(t, service)
 
-		var resErr ResolutionError
+		var resErr *ResolutionError
 		assert.ErrorAs(t, err, &resErr)
-		assert.ErrorIs(t, resErr.Cause, ErrServiceNotFound)
+		assert.ErrorIs(t, err, ErrServiceNotFound)
 	})
 
 	t.Run("get with nil type", func(t *testing.T) {
@@ -1022,7 +1022,7 @@ func TestPrimitiveTypes(t *testing.T) {
 		// Retrieve the channel
 		value, err := provider.GetKeyed(reflect.TypeOf(make(chan int)), "events")
 		assert.NoError(t, err)
-		assert.Same(t, ch, value) // Should be the same channel
+		assert.Equal(t, ch, value) // Should be the same channel
 	})
 
 	t.Run("register complex numbers", func(t *testing.T) {
