@@ -154,11 +154,11 @@ func TestAddSingleton(t *testing.T) {
 		assert.Equal(t, ErrNilConstructor, err)
 	})
 
-	t.Run("non-function constructor should fail", func(t *testing.T) {
+	t.Run("non-function constructor should work as instance", func(t *testing.T) {
 		collection := NewCollection()
-		err := collection.AddSingleton("not a function")
-		assert.Error(t, err)
-		assert.Equal(t, ErrConstructorNotFunction, err)
+		err := collection.AddSingleton("not a function", Name("str"))
+		assert.NoError(t, err) // Instance registration is valid
+		assert.True(t, collection.HasKeyedService(reflect.TypeOf(""), "str"))
 	})
 
 	t.Run("constructor with no return should fail", func(t *testing.T) {

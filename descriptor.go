@@ -76,6 +76,12 @@ func newDescriptor(constructor any, lifetime Lifetime, opts ...AddOption) (*Desc
 
 	// Get constructor value and type
 	constructorValue := reflect.ValueOf(constructor)
+	
+	// Check for nil pointers
+	if !constructorValue.IsValid() || (constructorValue.Kind() == reflect.Ptr && constructorValue.IsNil()) {
+		return nil, ErrNilConstructor
+	}
+	
 	constructorType := constructorValue.Type()
 
 	// Check if it's an instance (not a function)
