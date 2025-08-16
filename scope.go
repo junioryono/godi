@@ -109,7 +109,7 @@ func (s *scope) GetGroup(serviceType reflect.Type, group string) ([]any, error) 
 
 	instances := make([]any, 0, len(descriptors))
 	for _, descriptor := range descriptors {
-		key := instanceKey{Type: descriptor.Type, Key: descriptor.Key}
+		key := instanceKey{Type: descriptor.Type, Key: descriptor.Key, Group: descriptor.Group}
 		instance, err := s.resolve(key, descriptor)
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve group member %v: %w", descriptor.Type, err)

@@ -489,16 +489,12 @@ func BenchmarkDependencyGraph_TopologicalSort(b *testing.B) {
 
 // Test Clear function
 func TestDependencyGraph_Clear(t *testing.T) {
-	// Test types for cache invalidation test
-	type CacheService1 struct{}
-	type CacheService2 struct{}
-
-	g := graph.NewDependencyGraph()
-
 	// Add some providers
 	type ClearTest1 struct{}
 	type ClearTest2 struct{}
 	type ClearTest3 struct{}
+
+	g := graph.NewDependencyGraph()
 
 	g.AddProvider(&godi.Descriptor{
 		Type:         reflect.TypeOf(ClearTest1{}),

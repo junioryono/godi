@@ -15,6 +15,9 @@ type Descriptor struct {
 	// Key is optional - for named/keyed services or decorators
 	Key any
 
+	// Group this provider belongs to
+	Group string
+
 	// Lifetime determines instance caching behavior (ignored for decorators)
 	Lifetime Lifetime
 
@@ -26,9 +29,6 @@ type Descriptor struct {
 
 	// Dependencies are the analyzed dependencies
 	Dependencies []*reflection.Dependency
-
-	// Groups this provider belongs to (not used for decorators)
-	Group string
 
 	// As is an optional list of interface types this service can be registered as
 	// This is typically used for interface-based services
