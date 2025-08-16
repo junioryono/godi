@@ -58,10 +58,9 @@ jobs:
           cache: true
 
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v8
+        uses: golangci/golangci-lint-action@v6
         with:
           version: latest
-          args: --config .golangci.yml
 
   build:
     name: Build
