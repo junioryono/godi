@@ -218,14 +218,13 @@ func (sc *collection) doBuild(options *ProviderOptions) (Provider, error) {
 	// Phase 5: Create root scope
 	rootCtx := context.Background()
 	p.rootScope = &scope{
-		id:               uuid.NewString(),
-		provider:         p,
-		context:          rootCtx,
-		instances:        make(map[instanceKey]any),
-		disposables:      make([]Disposable, 0),
-		resolving:        make(map[instanceKey]struct{}),
-		children:         make(map[*scope]struct{}),
-		multiReturnCache: make(map[uintptr][]reflect.Value),
+		id:          uuid.NewString(),
+		provider:    p,
+		context:     rootCtx,
+		instances:   make(map[instanceKey]any),
+		disposables: make([]Disposable, 0),
+		resolving:   make(map[instanceKey]struct{}),
+		children:    make(map[*scope]struct{}),
 	}
 
 	// Phase 6: Create singletons
