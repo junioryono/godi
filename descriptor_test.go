@@ -39,12 +39,23 @@ func NewDescriptorNoReturn() {
 	// No return values
 }
 
-func NewDescriptorTooManyReturns() (*DescriptorTestService, error, string) {
-	return nil, nil, ""
+// Multiple return constructors for testing
+func NewMultipleReturns() (*DescriptorTestService, *DescriptorTestInterface) {
+	svc := &DescriptorTestService{Value: "multi"}
+	var iface DescriptorTestInterface = svc
+	return svc, &iface
 }
 
-func NewDescriptorInvalidSecondReturn() (*DescriptorTestService, string) {
-	return nil, "not an error"
+func NewTripleReturns() (*DescriptorTestService, *DescriptorTestInterface, string) {
+	svc := &DescriptorTestService{Value: "triple"}
+	var iface DescriptorTestInterface = svc
+	return svc, &iface, "config"
+}
+
+func NewMultipleReturnsWithError() (*DescriptorTestService, *DescriptorTestInterface, string, error) {
+	svc := &DescriptorTestService{Value: "multi-error"}
+	var iface DescriptorTestInterface = svc
+	return svc, &iface, "config", nil
 }
 
 // Parameter object constructor
@@ -136,18 +147,28 @@ func TestNewDescriptor(t *testing.T) {
 		assert.Nil(t, descriptor)
 	})
 
-	t.Run("constructor with too many returns", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewDescriptorTooManyReturns, Singleton)
-		assert.Error(t, err)
-		assert.Equal(t, ErrConstructorTooManyReturns, err)
-		assert.Nil(t, descriptor)
+	t.Run("constructor with multiple returns", func(t *testing.T) {
+		descriptor, err := newDescriptor(NewMultipleReturns, Singleton)
+		assert.NoError(t, err)
+		assert.NotNil(t, descriptor)
+		// Should default to first return type
+		assert.Equal(t, reflect.TypeOf((*DescriptorTestService)(nil)), descriptor.Type)
 	})
 
-	t.Run("constructor with invalid second return", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewDescriptorInvalidSecondReturn, Singleton)
-		assert.Error(t, err)
-		assert.Equal(t, ErrConstructorInvalidSecondReturn, err)
-		assert.Nil(t, descriptor)
+	t.Run("constructor with triple returns", func(t *testing.T) {
+		descriptor, err := newDescriptor(NewTripleReturns, Singleton)
+		assert.NoError(t, err)
+		assert.NotNil(t, descriptor)
+		// Should default to first return type
+		assert.Equal(t, reflect.TypeOf((*DescriptorTestService)(nil)), descriptor.Type)
+	})
+
+	t.Run("constructor with multiple returns and error", func(t *testing.T) {
+		descriptor, err := newDescriptor(NewMultipleReturnsWithError, Singleton)
+		assert.NoError(t, err)
+		assert.NotNil(t, descriptor)
+		// Should default to first return type
+		assert.Equal(t, reflect.TypeOf((*DescriptorTestService)(nil)), descriptor.Type)
 	})
 
 	t.Run("constructor with param object", func(t *testing.T) {

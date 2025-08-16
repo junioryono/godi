@@ -113,14 +113,15 @@ func (p *provider) CreateScope(ctx context.Context) (Scope, error) {
 	scopeCtx, cancel := context.WithCancel(ctx)
 
 	s := &scope{
-		provider:    p,
-		parent:      nil,
-		context:     scopeCtx,
-		cancel:      cancel,
-		instances:   make(map[instanceKey]any),
-		disposables: make([]Disposable, 0),
-		resolving:   make(map[instanceKey]struct{}),
-		children:    make(map[*scope]struct{}),
+		provider:         p,
+		parent:           nil,
+		context:          scopeCtx,
+		cancel:           cancel,
+		instances:        make(map[instanceKey]any),
+		disposables:      make([]Disposable, 0),
+		resolving:        make(map[instanceKey]struct{}),
+		children:         make(map[*scope]struct{}),
+		multiReturnCache: make(map[uintptr][]reflect.Value),
 	}
 
 	// Track scope
@@ -234,6 +235,9 @@ func (p *provider) createAllSingletons() error {
 		return fmt.Errorf("failed to sort dependencies: %w", err)
 	}
 
+	// Track which constructors have been invoked for multi-return
+	invokedConstructors := make(map[uintptr][]reflect.Value)
+
 	// Create instances in dependency order
 	for _, node := range sorted {
 		descriptor := node.Provider.(*Descriptor)
@@ -258,6 +262,40 @@ func (p *provider) createAllSingletons() error {
 		if descriptor.IsInstance {
 			// For instances, use the stored value directly
 			instance = descriptor.Instance
+		} else if descriptor.IsMultiReturn {
+			// For multi-return constructors, check if we've already invoked this constructor
+			constructorPtr := descriptor.Constructor.Pointer()
+			
+			if results, invoked := invokedConstructors[constructorPtr]; invoked {
+				// Use cached results
+				if descriptor.ReturnIndex < len(results) {
+					instance = results[descriptor.ReturnIndex].Interface()
+				} else {
+					return fmt.Errorf("invalid return index %d for cached multi-return constructor", descriptor.ReturnIndex)
+				}
+			} else {
+				// Invoke the constructor and cache all results
+				info, err := p.analyzer.Analyze(descriptor.Constructor.Interface())
+				if err != nil {
+					return fmt.Errorf("failed to analyze constructor: %w", err)
+				}
+				
+				invoker := reflection.NewConstructorInvoker(p.analyzer)
+				results, err := invoker.Invoke(info, p.rootScope)
+				if err != nil {
+					return fmt.Errorf("failed to invoke multi-return constructor: %w", err)
+				}
+				
+				// Cache the results
+				invokedConstructors[constructorPtr] = results
+				
+				// Get the specific instance for this descriptor
+				if descriptor.ReturnIndex < len(results) {
+					instance = results[descriptor.ReturnIndex].Interface()
+				} else {
+					return fmt.Errorf("invalid return index %d for multi-return constructor", descriptor.ReturnIndex)
+				}
+			}
 		} else {
 			// Create the instance through constructor
 			instance, err = p.rootScope.createInstance(descriptor)

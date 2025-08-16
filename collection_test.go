@@ -49,6 +49,40 @@ func NewTestServiceWithName(name string) *TestService {
 	return &TestService{Name: name}
 }
 
+// Multiple return constructors for testing
+func NewMultipleServices() (*TestService, *TestServiceWithDep) {
+	svc := &TestService{Name: "multi"}
+	dep := &TestServiceWithDep{Service: svc}
+	return svc, dep
+}
+
+func NewTripleServices() (*TestService, *TestServiceWithDep, *TestDisposable) {
+	svc := &TestService{Name: "triple"}
+	dep := &TestServiceWithDep{Service: svc}
+	disp := &TestDisposable{}
+	return svc, dep, disp
+}
+
+func NewMultipleServicesWithError() (*TestService, *TestServiceWithDep, error) {
+	svc := &TestService{Name: "multi-error"}
+	dep := &TestServiceWithDep{Service: svc}
+	return svc, dep, nil
+}
+
+func NewQuadServices() (*TestService, *TestServiceWithDep, *TestDisposable, string) {
+	svc := &TestService{Name: "quad"}
+	dep := &TestServiceWithDep{Service: svc}
+	disp := &TestDisposable{}
+	return svc, dep, disp, "config"
+}
+
+func NewQuadServicesWithError() (*TestService, *TestServiceWithDep, *TestDisposable, string, error) {
+	svc := &TestService{Name: "quad-error"}
+	dep := &TestServiceWithDep{Service: svc}
+	disp := &TestDisposable{}
+	return svc, dep, disp, "config", nil
+}
+
 func NewTestServiceWithDep(service *TestService) *TestServiceWithDep {
 	return &TestServiceWithDep{Service: service}
 }
@@ -61,25 +95,20 @@ func NewTestDisposable() *TestDisposable {
 	return &TestDisposable{}
 }
 
-// Constructor with multiple return values
-func NewMultipleServices() (*TestService, *TestServiceWithDep) {
-	service := &TestService{Name: "multi"}
-	return service, &TestServiceWithDep{Service: service}
-}
 
 // Constructor that returns nothing (should fail)
 func NewNothing() {
 	// This should fail validation
 }
 
-// Constructor that returns too many values (should fail)
+// Constructor that returns multiple values (now valid with multi-return support)
 func NewTooMany() (*TestService, *TestServiceWithDep, error) {
-	return nil, nil, nil
+	return &TestService{Name: "many"}, &TestServiceWithDep{}, nil
 }
 
-// Constructor with invalid second return (should fail)
+// Constructor with multiple non-error returns (now valid with multi-return support)
 func NewInvalidSecondReturn() (*TestService, string) {
-	return nil, ""
+	return &TestService{Name: "multi"}, "config"
 }
 
 // Test NewCollection
@@ -168,18 +197,24 @@ func TestAddSingleton(t *testing.T) {
 		assert.Equal(t, ErrConstructorNoReturn, err)
 	})
 
-	t.Run("constructor with too many returns should fail", func(t *testing.T) {
+	t.Run("constructor with multiple returns now valid", func(t *testing.T) {
 		collection := NewCollection()
 		err := collection.AddSingleton(NewTooMany)
-		assert.Error(t, err)
-		assert.Equal(t, ErrConstructorTooManyReturns, err)
+		assert.NoError(t, err) // Now valid with multi-return support
+		
+		// Both types should be registered
+		assert.True(t, collection.HasService(reflect.TypeOf((*TestService)(nil))))
+		assert.True(t, collection.HasService(reflect.TypeOf((*TestServiceWithDep)(nil))))
 	})
 
-	t.Run("constructor with invalid second return should fail", func(t *testing.T) {
+	t.Run("constructor with multiple non-error returns now valid", func(t *testing.T) {
 		collection := NewCollection()
 		err := collection.AddSingleton(NewInvalidSecondReturn)
-		assert.Error(t, err)
-		assert.Equal(t, ErrConstructorInvalidSecondReturn, err)
+		assert.NoError(t, err) // Now valid with multi-return support
+		
+		// Both types should be registered
+		assert.True(t, collection.HasService(reflect.TypeOf((*TestService)(nil))))
+		assert.True(t, collection.HasService(reflect.TypeOf(""))) // string type
 	})
 }
 
@@ -1293,4 +1328,149 @@ func BenchmarkValidateLifetimes(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_ = c.validateLifetimes()
 	}
+}
+
+// Test multiple return constructor registration
+func TestCollectionMultipleReturns(t *testing.T) {
+	t.Run("register constructor with two returns", func(t *testing.T) {
+		collection := NewCollection()
+		
+		err := collection.AddSingleton(NewMultipleServices)
+		assert.NoError(t, err)
+		
+		// Both types should be registered
+		assert.True(t, collection.HasService(reflect.TypeOf((*TestService)(nil))))
+		assert.True(t, collection.HasService(reflect.TypeOf((*TestServiceWithDep)(nil))))
+		
+		// Build and resolve
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+		
+		svc1, err := provider.Get(reflect.TypeOf((*TestService)(nil)))
+		assert.NoError(t, err)
+		assert.NotNil(t, svc1)
+		assert.Equal(t, "multi", svc1.(*TestService).Name)
+		
+		svc2, err := provider.Get(reflect.TypeOf((*TestServiceWithDep)(nil)))
+		assert.NoError(t, err)
+		assert.NotNil(t, svc2)
+		assert.Same(t, svc1, svc2.(*TestServiceWithDep).Service)
+	})
+	
+	t.Run("register constructor with three returns", func(t *testing.T) {
+		collection := NewCollection()
+		
+		err := collection.AddScoped(NewTripleServices)
+		assert.NoError(t, err)
+		
+		// All three types should be registered
+		assert.True(t, collection.HasService(reflect.TypeOf((*TestService)(nil))))
+		assert.True(t, collection.HasService(reflect.TypeOf((*TestServiceWithDep)(nil))))
+		assert.True(t, collection.HasService(reflect.TypeOf((*TestDisposable)(nil))))
+		
+		// Build and resolve
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+		
+		scope, err := provider.CreateScope(nil)
+		require.NoError(t, err)
+		defer scope.Close()
+		
+		svc1, err := scope.Get(reflect.TypeOf((*TestService)(nil)))
+		assert.NoError(t, err)
+		assert.NotNil(t, svc1)
+		
+		svc2, err := scope.Get(reflect.TypeOf((*TestServiceWithDep)(nil)))
+		assert.NoError(t, err)
+		assert.NotNil(t, svc2)
+		
+		svc3, err := scope.Get(reflect.TypeOf((*TestDisposable)(nil)))
+		assert.NoError(t, err)
+		assert.NotNil(t, svc3)
+	})
+	
+	t.Run("register constructor with multiple returns and error", func(t *testing.T) {
+		collection := NewCollection()
+		
+		err := collection.AddTransient(NewMultipleServicesWithError)
+		assert.NoError(t, err)
+		
+		// Both non-error types should be registered
+		assert.True(t, collection.HasService(reflect.TypeOf((*TestService)(nil))))
+		assert.True(t, collection.HasService(reflect.TypeOf((*TestServiceWithDep)(nil))))
+		
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+		
+		svc1, err := provider.Get(reflect.TypeOf((*TestService)(nil)))
+		assert.NoError(t, err)
+		assert.NotNil(t, svc1)
+		
+		svc2, err := provider.Get(reflect.TypeOf((*TestServiceWithDep)(nil)))
+		assert.NoError(t, err)
+		assert.NotNil(t, svc2)
+	})
+	
+	t.Run("register constructor with four returns", func(t *testing.T) {
+		collection := NewCollection()
+		
+		err := collection.AddSingleton(NewQuadServices)
+		assert.NoError(t, err)
+		
+		// All four types should be registered
+		assert.True(t, collection.HasService(reflect.TypeOf((*TestService)(nil))))
+		assert.True(t, collection.HasService(reflect.TypeOf((*TestServiceWithDep)(nil))))
+		assert.True(t, collection.HasService(reflect.TypeOf((*TestDisposable)(nil))))
+		assert.True(t, collection.HasService(reflect.TypeOf(""))) // string type
+	})
+	
+	t.Run("register constructor with named option applies to first return", func(t *testing.T) {
+		collection := NewCollection()
+		
+		err := collection.AddSingleton(NewMultipleServices, Name("primary"))
+		assert.NoError(t, err)
+		
+		// First type should be keyed
+		assert.True(t, collection.HasKeyedService(reflect.TypeOf((*TestService)(nil)), "primary"))
+		// Second type should not be keyed
+		assert.False(t, collection.HasKeyedService(reflect.TypeOf((*TestServiceWithDep)(nil)), "primary"))
+		assert.True(t, collection.HasService(reflect.TypeOf((*TestServiceWithDep)(nil))))
+	})
+	
+	t.Run("multiple returns maintain single constructor invocation", func(t *testing.T) {
+		// Track invocations
+		invocations := 0
+		trackingConstructor := func() (*TestService, *TestServiceWithDep) {
+			invocations++
+			svc := &TestService{Name: "tracked"}
+			dep := &TestServiceWithDep{Service: svc}
+			return svc, dep
+		}
+		
+		collection := NewCollection()
+		err := collection.AddSingleton(trackingConstructor)
+		assert.NoError(t, err)
+		
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+		
+		// Get both services
+		svc1, err := provider.Get(reflect.TypeOf((*TestService)(nil)))
+		assert.NoError(t, err)
+		assert.NotNil(t, svc1)
+		
+		svc2, err := provider.Get(reflect.TypeOf((*TestServiceWithDep)(nil)))
+		assert.NoError(t, err)
+		assert.NotNil(t, svc2)
+		
+		// Constructor should only be invoked once for singletons
+		assert.Equal(t, 1, invocations)
+		
+		// Services should be related (same instance)
+		assert.Same(t, svc1, svc2.(*TestServiceWithDep).Service)
+	})
 }
