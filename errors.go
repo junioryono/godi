@@ -133,15 +133,18 @@ func (e RegistrationError) Unwrap() error {
 // ValidationError indicates a validation failure.
 type ValidationError struct {
 	ServiceType reflect.Type
-	Message     string
+	Cause       error
 }
 
 func (e ValidationError) Error() string {
 	if e.ServiceType != nil {
-		return fmt.Sprintf("%s: %s", formatType(e.ServiceType), e.Message)
+		return fmt.Sprintf("%s: %v", formatType(e.ServiceType), e.Cause)
 	}
+	return e.Cause.Error()
+}
 
-	return e.Message
+func (e ValidationError) Unwrap() error {
+	return e.Cause
 }
 
 // ModuleError wraps errors from module registration.
@@ -182,17 +185,6 @@ func (e ReflectionAnalysisError) Error() string {
 
 func (e ReflectionAnalysisError) Unwrap() error {
 	return e.Cause
-}
-
-// InvalidFieldError for struct field validation failures
-type InvalidFieldError struct {
-	StructType reflect.Type
-	FieldName  string
-	Message    string
-}
-
-func (e InvalidFieldError) Error() string {
-	return fmt.Sprintf("invalid field %s in %s: %s", e.FieldName, formatType(e.StructType), e.Message)
 }
 
 // GraphOperationError for dependency graph operations

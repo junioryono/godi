@@ -134,7 +134,7 @@ func (p *provider) GetGroup(serviceType reflect.Type, group string) ([]any, erro
 	if group == "" {
 		return nil, &ValidationError{
 			ServiceType: serviceType,
-			Message:     "group name cannot be empty",
+			Cause:       ErrGroupNameEmpty,
 		}
 	}
 
@@ -326,7 +326,7 @@ func (p *provider) createAllSingletons() error {
 		if !ok {
 			return &ValidationError{
 				ServiceType: nil,
-				Message:     fmt.Sprintf("invalid provider type: %T", node.Provider),
+				Cause:       fmt.Errorf("invalid provider type: %T", node.Provider),
 			}
 		}
 
@@ -560,7 +560,7 @@ func ResolveGroup[T any](provider Provider, group string) ([]T, error) {
 	if group == "" {
 		return nil, &ValidationError{
 			ServiceType: nil,
-			Message:     "group name cannot be empty",
+			Cause:       ErrGroupNameEmpty,
 		}
 	}
 

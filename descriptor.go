@@ -1,6 +1,7 @@
 package godi
 
 import (
+	"fmt"
 	"reflect"
 
 	"github.com/junioryono/godi/v3/internal/reflection"
@@ -66,7 +67,7 @@ func newDescriptor(constructor any, lifetime Lifetime, opts ...AddOption) (*Desc
 	if constructor == nil {
 		return nil, &ValidationError{
 			ServiceType: nil,
-			Message:     "constructor cannot be nil",
+			Cause:       ErrConstructorNil,
 		}
 	}
 
@@ -90,7 +91,7 @@ func newDescriptor(constructor any, lifetime Lifetime, opts ...AddOption) (*Desc
 	if !constructorValue.IsValid() || (constructorValue.Kind() == reflect.Ptr && constructorValue.IsNil()) {
 		return nil, &ValidationError{
 			ServiceType: nil,
-			Message:     "constructor cannot be nil",
+			Cause:       ErrConstructorNil,
 		}
 	}
 
@@ -106,7 +107,7 @@ func newDescriptor(constructor any, lifetime Lifetime, opts ...AddOption) (*Desc
 		if numReturns == 0 {
 			return nil, &ValidationError{
 				ServiceType: nil,
-				Message:     "constructor must return at least one value",
+				Cause:       ErrConstructorNoReturn,
 			}
 		}
 
@@ -271,28 +272,28 @@ func (d *Descriptor) Validate() error {
 	if d.Type == nil {
 		return &ValidationError{
 			ServiceType: nil,
-			Message:     "descriptor type cannot be nil",
+			Cause:       ErrDescriptorNil,
 		}
 	}
 
 	if !d.Constructor.IsValid() {
 		return &ValidationError{
 			ServiceType: d.Type,
-			Message:     "descriptor constructor is invalid",
+			Cause:       ErrConstructorNil,
 		}
 	}
 
 	if d.ConstructorType == nil {
 		return &ValidationError{
 			ServiceType: d.Type,
-			Message:     "descriptor constructor type cannot be nil",
+			Cause:       ErrConstructorNil,
 		}
 	}
 
 	if d.Key != nil && d.Group != "" {
 		return &ValidationError{
 			ServiceType: d.Type,
-			Message:     "descriptor cannot have both key and group set",
+			Cause:       fmt.Errorf("descriptor cannot have both key and group set"),
 		}
 	}
 

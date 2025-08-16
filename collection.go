@@ -277,7 +277,7 @@ func (sc *collection) Decorate(decorator any, opts ...AddOption) error {
 	if decorator == nil {
 		return &ValidationError{
 			ServiceType: nil,
-			Message:     "decorator cannot be nil",
+			Cause:       ErrDecoratorNil,
 		}
 	}
 
@@ -435,7 +435,7 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 	if service == nil {
 		return &ValidationError{
 			ServiceType: nil,
-			Message:     "service cannot be nil",
+			Cause:       ErrConstructorNil,
 		}
 	}
 
