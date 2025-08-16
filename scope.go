@@ -136,19 +136,19 @@ func (s *scope) CreateScope(ctx context.Context) (Scope, error) {
 		ctx = s.context
 	}
 
-	// Create child scope with cancellable context
-	scopeCtx, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithCancel(ctx)
 
 	child := &scope{
 		provider:    s.provider,
 		parent:      s,
-		context:     scopeCtx,
+		context:     ctx,
 		cancel:      cancel,
 		instances:   make(map[instanceKey]any),
 		disposables: make([]Disposable, 0),
 		resolving:   make(map[instanceKey]struct{}),
 		children:    make(map[*scope]struct{}),
 	}
+	ctx = context.WithValue(ctx, scopeContextKey{}, child)
 
 	// Track child
 	s.childrenMu.Lock()
@@ -162,7 +162,7 @@ func (s *scope) CreateScope(ctx context.Context) (Scope, error) {
 
 	// Auto-close on context cancellation
 	go func() {
-		<-scopeCtx.Done()
+		<-ctx.Done()
 		child.Close()
 	}()
 
@@ -291,15 +291,6 @@ func (s *scope) stopResolving(key instanceKey) {
 
 // resolve performs the actual service resolution
 func (s *scope) resolve(key instanceKey, descriptor *Descriptor) (any, error) {
-	// Check for circular dependency
-	if err := s.checkCircular(key); err != nil {
-		return nil, err
-	}
-
-	// Mark as resolving
-	s.startResolving(key)
-	defer s.stopResolving(key)
-
 	// Find descriptor if not provided
 	if descriptor == nil {
 		descriptor = s.provider.findDescriptor(key.Type, key.Key)
@@ -315,6 +306,7 @@ func (s *scope) resolve(key instanceKey, descriptor *Descriptor) (any, error) {
 	// Check cache based on lifetime
 	switch descriptor.Lifetime {
 	case Singleton:
+		// Singletons are created at build time, no circular check needed
 		if instance, ok := s.provider.getSingleton(key); ok {
 			return instance, nil
 		}
@@ -323,9 +315,19 @@ func (s *scope) resolve(key instanceKey, descriptor *Descriptor) (any, error) {
 		return nil, fmt.Errorf("singleton %v not initialized at build time", key.Type)
 
 	case Scoped:
+		// Check for circular dependency only when creating new instance
 		if instance, ok := s.getInstance(key); ok {
 			return instance, nil
 		}
+
+		// Check for circular dependency before creating
+		if err := s.checkCircular(key); err != nil {
+			return nil, err
+		}
+
+		// Mark as resolving
+		s.startResolving(key)
+		defer s.stopResolving(key)
 
 		// Create and cache scoped instance
 		instance, err := s.createInstance(descriptor)
@@ -337,6 +339,15 @@ func (s *scope) resolve(key instanceKey, descriptor *Descriptor) (any, error) {
 		return instance, nil
 
 	case Transient:
+		// Check for circular dependency before creating
+		if err := s.checkCircular(key); err != nil {
+			return nil, err
+		}
+
+		// Mark as resolving
+		s.startResolving(key)
+		defer s.stopResolving(key)
+
 		// Always create new instance
 		return s.createInstance(descriptor)
 
@@ -413,26 +424,26 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 	if descriptor.IsMultiReturn && descriptor.ReturnIndex >= 0 {
 		// Check cache first for scoped/transient multi-return
 		constructorPtr := descriptor.Constructor.Pointer()
-		
+
 		s.multiReturnCacheMu.RLock()
 		cachedResults, cached := s.multiReturnCache[constructorPtr]
 		s.multiReturnCacheMu.RUnlock()
-		
+
 		if cached && descriptor.Lifetime == Scoped {
 			// Use cached results for scoped lifetime
 			if descriptor.ReturnIndex < len(cachedResults) {
 				instance := cachedResults[descriptor.ReturnIndex].Interface()
-				
+
 				// Apply decorators
 				decorated, err := s.applyDecorators(instance, descriptor.Type)
 				if err != nil {
 					return nil, err
 				}
-				
+
 				return decorated, nil
 			}
 		}
-		
+
 		// For multi-return constructors, cache results if scoped
 		if descriptor.Lifetime == Scoped && !cached {
 			// Cache the results for scoped instances
@@ -443,21 +454,21 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 			s.multiReturnCache[constructorPtr] = results
 			s.multiReturnCacheMu.Unlock()
 		}
-		
+
 		// Get the specific return value
 		if descriptor.ReturnIndex >= len(results) {
-			return nil, fmt.Errorf("invalid return index %d for constructor with %d returns", 
+			return nil, fmt.Errorf("invalid return index %d for constructor with %d returns",
 				descriptor.ReturnIndex, len(results))
 		}
-		
+
 		instance := results[descriptor.ReturnIndex].Interface()
-		
+
 		// Apply decorators
 		decorated, err := s.applyDecorators(instance, descriptor.Type)
 		if err != nil {
 			return nil, err
 		}
-		
+
 		return decorated, nil
 	}
 
@@ -586,3 +597,35 @@ func (s *scope) invokeDecorator(decorator *Descriptor, instance any) (any, error
 
 	return nil, fmt.Errorf("decorator returned no value")
 }
+
+// FromContext retrieves a Scope from the context.
+// This is useful in HTTP handlers or other context-aware code.
+//
+// Example:
+//
+//	func handler(ctx context.Context) {
+//	    if scope, ok := godi.FromContext(ctx); ok {
+//	        service, _ := godi.Resolve[*Service](scope)
+//	    }
+//	}
+func FromContext(ctx context.Context) (Scope, bool) {
+	if ctx == nil {
+		return nil, false
+	}
+
+	scope, ok := ctx.Value(scopeContextKey{}).(Scope)
+	return scope, ok
+}
+
+// // WithScope adds a Scope to the context.
+// // This is useful for passing scopes through context-aware code.
+// //
+// // Example:
+// //
+// //	ctx := godi.WithScope(context.Background(), scope)
+// func contextWithScope(ctx context.Context, scope Scope) context.Context {
+// 	return context.WithValue(ctx, scopeContextKey{}, scope)
+// }
+
+// scopeContextKey is the key used to store scopes in contexts
+type scopeContextKey struct{}

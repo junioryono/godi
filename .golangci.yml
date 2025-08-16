@@ -1,80 +1,244 @@
+# golangci-lint configuration for godi
+
 run:
+  # Timeout for analysis
   timeout: 5m
-  go: "1.24.3"
+  
+  # Include test files
+  tests: true
+  
+  # Skip vendor, third party, and generated files
+  skip-dirs:
+    - vendor
+    - third_party
+    - testdata
+  
+  # Skip generated files
+  skip-files:
+    - ".*\\.pb\\.go$"
+    - ".*\\.gen\\.go$"
 
 linters:
   enable:
-    - gofmt
-    - govet
-    - errcheck
-    - staticcheck
-    - unused
-    - gosimple
-    - ineffassign
-    - typecheck
-    - gocritic
-    - gocyclo
-    - copyloopvar
+    # Default linters
+    - errcheck      # Check for unchecked errors
+    - gosimple      # Simplify code
+    - govet         # Vet examines Go source code
+    - ineffassign   # Detect ineffectual assignments
+    - staticcheck   # Static analysis
+    - typecheck     # Type-check Go code
+    - unused        # Check for unused code
+    
+    # Additional linters for code quality
+    - bodyclose     # Check HTTP response body is closed
+    - dogsled       # Check for too many blank identifiers
+    - dupl          # Check for duplicated code
+    - exportloopref # Check for exported loop references
+    - gocognit      # Check cognitive complexity
+    - goconst       # Find repeated strings that could be constants
+    - gocritic      # Opinionated Go source code linter
+    - gocyclo       # Check cyclomatic complexity
+    - gofmt         # Check whether code was gofmt-ed
+    - goimports     # Check import statements are formatted
+    - gomnd         # Detect magic numbers
+    - goprintffuncname # Check that printf-like functions are named with f at the end
+    - gosec         # Security problems
+    - lll           # Report long lines
+    - misspell      # Find commonly misspelled English words
+    - nakedret      # Find naked returns
+    - nestif        # Report deeply nested if statements
+    - noctx         # Find sending http request without context.Context
+    - nolintlint    # Report ill-formed or insufficient nolint directives
+    - prealloc      # Find slice declarations that could potentially be preallocated
+    - revive        # Fast, configurable, extensible, flexible, and beautiful linter
+    - rowserrcheck  # Check whether Err of rows is checked
+    - stylecheck    # Stylecheck is a replacement for golint
+    - unconvert     # Remove unnecessary type conversions
+    - unparam       # Report unused function parameters
+    - whitespace    # Check for unnecessary newlines
+
   disable:
-    - exhaustive
-    - nestif
-    - gochecknoglobals
-    - gochecknoinits
+    # Disabled linters
+    - depguard      # We don't restrict imports
+    - exhaustive    # Too strict for this library
+    - funlen        # We allow longer functions when needed
+    - gochecknoglobals # We use some globals for errors
+    - gochecknoinits # Init functions are fine when needed
+    - godot         # We don't enforce dots at end of comments
+    - godox         # We allow TODO/FIXME comments
+    - goerr113      # Too strict error wrapping rules
+    - gofumpt       # Stricter than gofmt
+    - goheader      # We don't require file headers
+    - golint        # Deprecated, replaced by revive
+    - gomodguard    # We don't restrict module usage
+    - interfacer    # Deprecated
+    - maligned      # Deprecated
+    - nlreturn      # Too opinionated about newlines
+    - scopelint     # Deprecated
+    - testpackage   # We allow tests in same package
+    - wrapcheck     # Too strict about error wrapping
+    - wsl           # Too opinionated about whitespace
 
 linters-settings:
-  funlen:
-    lines: 100
-    statements: 50
+  # Error checking settings
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+  
+  # Vet settings
   govet:
-    enable:
-      - shadow
+    check-shadowing: true
+    enable-all: true
+  
+  # Cognitive complexity
+  gocognit:
+    min-complexity: 30
+  
+  # Cyclomatic complexity
   gocyclo:
     min-complexity: 20
-  gocritic:
-    enabled-tags:
-      - diagnostic
-      - experimental
-      - opinionated
-      - performance
-      - style
-  gomodguard:
-    blocked:
-      modules:
-        - github.com/pkg/errors:
-            recommendations:
-              - errors
-              - fmt
-            reason: "use standard library errors package"
+  
+  # Const detection
+  goconst:
+    min-len: 3
+    min-occurrences: 3
+  
+  # Security
+  gosec:
+    excludes:
+      - G104  # We handle errors where needed
+  
+  # Line length
+  lll:
+    line-length: 120
+    tab-width: 4
+  
+  # Magic numbers
+  gomnd:
+    settings:
+      mnd:
+        checks:
+          - argument
+          - case
+          - condition
+          - operation
+          - return
+        ignored-numbers:
+          - '0'
+          - '1'
+          - '2'
+          - '10'
+          - '100'
+  
+  # Duplicated code
+  dupl:
+    threshold: 150
+  
+  # Misspell
+  misspell:
+    locale: US
+  
+  # Prealloc
+  prealloc:
+    simple: true
+    range-loops: true
+    for-loops: true
+  
+  # Naked returns
+  nakedret:
+    max-func-lines: 30
+  
+  # Nested if statements
+  nestif:
+    min-complexity: 5
+  
+  # Unused parameters
+  unparam:
+    check-exported: false
+  
+  # Style check
+  stylecheck:
+    checks: ["all", "-ST1003"]  # Exclude underscore in package name check
+  
+  # Revive rules
+  revive:
+    ignore-generated-header: true
+    severity: warning
+    rules:
+      - name: blank-imports
+      - name: context-as-argument
+      - name: context-keys-type
+      - name: dot-imports
+      - name: error-return
+      - name: error-strings
+      - name: error-naming
+      - name: exported
+      - name: if-return
+      - name: increment-decrement
+      - name: var-naming
+      - name: var-declaration
+      - name: package-comments
+      - name: range
+      - name: receiver-naming
+      - name: time-naming
+      - name: unexported-return
+      - name: indent-error-flow
+      - name: errorf
+      - name: empty-block
+      - name: superfluous-else
+      - name: unreachable-code
 
 issues:
+  # Maximum issues count per one linter
+  max-issues-per-linter: 50
+  
+  # Maximum count of issues with the same text
+  max-same-issues: 3
+  
+  # Exclude some linters from running on tests files
   exclude-rules:
-    # Exclude some linters from running on tests files
     - path: _test\.go
       linters:
         - gocyclo
+        - gocognit
         - errcheck
+        - dupl
         - gosec
-        - funlen
-        - goconst
-        - gochecknoglobals
-
-    # Exclude known issues in dig dependency
-    - path: vendor/
+        - gomnd
+        - unparam
+    
+    # Exclude example files from some linters
+    - path: example_test\.go
       linters:
-        - typecheck
+        - errcheck
+        - ineffassign
+        - staticcheck
         - unused
-
-    # Allow unused parameters in interfaces
-    - linters:
-        - unused
-      text: "is unused"
-      source: "^\\s*\\w+\\s+interface\\s*{"
-
-  # Maximum issues count per one linter. Set to 0 to disable
-  max-issues-per-linter: 0
-
-  # Maximum count of issues with the same text. Set to 0 to disable
-  max-same-issues: 0
-
-  # Show only new issues
+    
+    # Allow init functions in main packages
+    - path: main\.go
+      linters:
+        - gochecknoinits
+    
+    # Allow global errors in errors.go
+    - path: errors\.go
+      linters:
+        - gochecknoglobals
+    
+    # Exclude benchmarks from complexity checks
+    - path: _test\.go
+      text: "cyclomatic complexity"
+    
+    # Exclude certain patterns
+    - text: "Magic number: 42"
+      linters:
+        - gomnd
+  
+  # Don't exclude default patterns
+  exclude-use-default: false
+  
+  # Show all issues from a linter
   new: false
+  
+  # Fix found issues (if it's supported by the linter)
+  fix: false

@@ -153,7 +153,7 @@ func GetProviderOptions() *godi.ServiceProviderOptions {
 
 // main.go
 func main() {
-    services := godi.NewServiceCollection()
+    services := godi.NewCollection()
     services.AddModules(app.Module)
 
     // Use production options

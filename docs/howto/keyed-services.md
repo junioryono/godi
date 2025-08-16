@@ -43,7 +43,7 @@ var LoggingModule = godi.NewModule("logging",
 
 // Use specific implementation
 func main() {
-    services := godi.NewServiceCollection()
+    services := godi.NewCollection()
     services.AddModules(LoggingModule)
 
     provider, _ := services.Build()
@@ -249,7 +249,7 @@ var TestPaymentModule = godi.NewModule("test-payment",
 )
 
 func TestPaymentFlow(t *testing.T) {
-    services := godi.NewServiceCollection()
+    services := godi.NewCollection()
     services.AddModules(TestPaymentModule)
 
     provider, _ := services.Build()

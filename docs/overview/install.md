@@ -34,7 +34,7 @@ func main() {
     )
 
     // Build container
-    services := godi.NewServiceCollection()
+    services := godi.NewCollection()
     services.AddModules(appModule)
 
     provider, _ := services.Build()

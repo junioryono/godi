@@ -31,7 +31,7 @@ func (g *Greeter) Greet() string {
 
 func main() {
     // 2. Register your services
-    services := godi.NewServiceCollection()
+    services := godi.NewCollection()
     services.AddSingleton(NewGreeter)
 
     // 3. Build the container
@@ -114,7 +114,7 @@ go get github.com/junioryono/godi/v3
 
 ```go
 func main() {
-    services := godi.NewServiceCollection()
+    services := godi.NewCollection()
 
     // Register services
     services.AddSingleton(NewLogger)

@@ -265,7 +265,7 @@ func (p *provider) createAllSingletons() error {
 		} else if descriptor.IsMultiReturn {
 			// For multi-return constructors, check if we've already invoked this constructor
 			constructorPtr := descriptor.Constructor.Pointer()
-			
+
 			if results, invoked := invokedConstructors[constructorPtr]; invoked {
 				// Use cached results
 				if descriptor.ReturnIndex < len(results) {
@@ -279,16 +279,16 @@ func (p *provider) createAllSingletons() error {
 				if err != nil {
 					return fmt.Errorf("failed to analyze constructor: %w", err)
 				}
-				
+
 				invoker := reflection.NewConstructorInvoker(p.analyzer)
 				results, err := invoker.Invoke(info, p.rootScope)
 				if err != nil {
 					return fmt.Errorf("failed to invoke multi-return constructor: %w", err)
 				}
-				
+
 				// Cache the results
 				invokedConstructors[constructorPtr] = results
-				
+
 				// Get the specific instance for this descriptor
 				if descriptor.ReturnIndex < len(results) {
 					instance = results[descriptor.ReturnIndex].Interface()
@@ -309,4 +309,139 @@ func (p *provider) createAllSingletons() error {
 	}
 
 	return nil
+}
+
+// Resolve resolves a service of type T from the provider.
+// This is a generic convenience function that handles type assertions.
+//
+// Example:
+//
+//	logger, err := godi.Resolve[*Logger](provider)
+//	if err != nil {
+//	    // Handle error
+//	}
+func Resolve[T any](provider Provider) (T, error) {
+	var zero T
+	serviceType := reflect.TypeOf((*T)(nil)).Elem()
+
+	service, err := provider.Get(serviceType)
+	if err != nil {
+		return zero, err
+	}
+
+	result, ok := service.(T)
+	if !ok {
+		return zero, &TypeMismatchError{
+			Expected: serviceType,
+			Actual:   reflect.TypeOf(service),
+			Context:  "type assertion",
+		}
+	}
+
+	return result, nil
+}
+
+// MustResolve resolves a service of type T from the provider.
+// It panics if the service cannot be resolved. This is useful for
+// application initialization where missing services are fatal.
+//
+// Example:
+//
+//	// Panics if logger cannot be resolved
+//	logger := godi.MustResolve[*Logger](provider)
+func MustResolve[T any](provider Provider) T {
+	service, err := Resolve[T](provider)
+	if err != nil {
+		panic(fmt.Sprintf("failed to resolve service: %v", err))
+	}
+
+	return service
+}
+
+// ResolveKeyed resolves a keyed service of type T from the provider.
+//
+// Example:
+//
+//	cache, err := godi.ResolveKeyed[Cache](provider, "redis")
+func ResolveKeyed[T any](provider Provider, key any) (T, error) {
+	var zero T
+	serviceType := reflect.TypeOf((*T)(nil)).Elem()
+
+	service, err := provider.GetKeyed(serviceType, key)
+	if err != nil {
+		return zero, err
+	}
+
+	result, ok := service.(T)
+	if !ok {
+		return zero, &TypeMismatchError{
+			Expected: serviceType,
+			Actual:   reflect.TypeOf(service),
+			Context:  "type assertion for keyed service",
+		}
+	}
+
+	return result, nil
+}
+
+// MustResolveKeyed resolves a keyed service of type T from the provider.
+// It panics if the service cannot be resolved.
+//
+// Example:
+//
+//	// Panics if redis cache cannot be resolved
+//	cache := godi.MustResolveKeyed[Cache](provider, "redis")
+func MustResolveKeyed[T any](provider Provider, key any) T {
+	service, err := ResolveKeyed[T](provider, key)
+	if err != nil {
+		panic(fmt.Sprintf("failed to resolve keyed service %v: %v", key, err))
+	}
+
+	return service
+}
+
+// ResolveGroup resolves all services of type T in the specified group.
+//
+// Example:
+//
+//	handlers, err := godi.ResolveGroup[http.Handler](provider, "routes")
+func ResolveGroup[T any](provider Provider, group string) ([]T, error) {
+	serviceType := reflect.TypeOf((*T)(nil)).Elem()
+
+	services, err := provider.GetGroup(serviceType, group)
+	if err != nil {
+		return nil, err
+	}
+
+	results := make([]T, 0, len(services))
+	for i, service := range services {
+		result, ok := service.(T)
+		if !ok {
+			return nil, &TypeMismatchError{
+				Expected: serviceType,
+				Actual:   reflect.TypeOf(service),
+				Context:  fmt.Sprintf("type assertion for group item %d", i),
+			}
+		}
+
+		results = append(results, result)
+	}
+
+	return results, nil
+}
+
+// MustResolveGroup resolves all services of type T in the specified group.
+// It panics if the services cannot be resolved.
+//
+// Example:
+//
+//	// Panics if handlers cannot be resolved
+//	handlers := godi.MustResolveGroup[http.Handler](provider, "routes")
+func MustResolveGroup[T any](provider Provider, group string) []T {
+	services, err := ResolveGroup[T](provider, group)
+	if err != nil {
+		panic(fmt.Sprintf("failed to resolve group %s: %v", group, err))
+	}
+
+	return services
 }

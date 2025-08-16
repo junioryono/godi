@@ -225,7 +225,7 @@ func TestUserService(t *testing.T) {
 ```go
 // testutil/di.go
 func BuildTestProvider(t *testing.T, modules ...godi.ModuleOption) godi.ServiceProvider {
-    services := godi.NewServiceCollection()
+    services := godi.NewCollection()
 
     err := services.AddModules(modules...)
     require.NoError(t, err)

@@ -34,7 +34,7 @@ var (
 	ErrNilServiceProvider             = errors.New("service provider cannot be nil")
 	ErrConstructorNotFunction         = errors.New("constructor must be a function")
 	ErrConstructorNoReturn            = errors.New("constructor must return at least one value")
-	ErrConstructorTooManyReturns      = errors.New("constructor must return at most 2 values") // Deprecated: kept for compatibility
+	ErrConstructorTooManyReturns      = errors.New("constructor must return at most 2 values")        // Deprecated: kept for compatibility
 	ErrConstructorInvalidSecondReturn = errors.New("constructor's second return value must be error") // Deprecated: kept for compatibility
 	ErrConstructorInvalidErrorReturn  = errors.New("constructor's last return value must be error if it returns an error")
 	ErrConstructorMultipleIn          = errors.New("constructor cannot have multiple In parameters")

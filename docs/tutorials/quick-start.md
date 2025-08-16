@@ -40,7 +40,7 @@ var AppModule = godi.NewModule("app",
 
 func main() {
     // Setup
-    services := godi.NewServiceCollection()
+    services := godi.NewCollection()
     services.AddModules(AppModule)
 
     provider, _ := services.Build()
@@ -87,7 +87,7 @@ var AppModule = godi.NewModule("app",
 )
 
 func main() {
-    services := godi.NewServiceCollection()
+    services := godi.NewCollection()
     services.AddModules(AppModule)
 
     provider, _ := services.Build()
@@ -190,7 +190,7 @@ var TestModule = godi.NewModule("test",
 )
 
 func TestUserService(t *testing.T) {
-    services := godi.NewServiceCollection()
+    services := godi.NewCollection()
     services.AddModules(TestModule) // Use test module!
 
     provider, _ := services.Build()
@@ -235,7 +235,7 @@ var AppModule = godi.NewModule("app",
 )
 
 func main() {
-    services := godi.NewServiceCollection()
+    services := godi.NewCollection()
     services.AddModules(AppModule) // Everything wired!
     // ...
 }
@@ -320,7 +320,7 @@ var AppModule = godi.NewModule("app",
 )
 
 // 3. Setup container
-services := godi.NewServiceCollection()
+services := godi.NewCollection()
 services.AddModules(AppModule)
 provider, _ := services.Build()
 defer provider.Close()
