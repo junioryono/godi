@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/google/uuid"
 	"github.com/junioryono/godi/v3/internal/graph"
 	"github.com/junioryono/godi/v3/internal/reflection"
 )
@@ -21,6 +22,7 @@ type Scope interface {
 
 // scope provides an isolated resolution context
 type scope struct {
+	id       string
 	provider *provider
 	parent   *scope
 	context  context.Context
@@ -60,6 +62,11 @@ func (s *scope) Context() context.Context {
 	return s.context
 }
 
+// ID returns the unique ID of this scope
+func (s *scope) ID() string {
+	return s.id
+}
+
 // Get resolves a service in this scope
 func (s *scope) Get(serviceType reflect.Type) (any, error) {
 	if atomic.LoadInt32(&s.disposed) != 0 {
@@ -67,7 +74,7 @@ func (s *scope) Get(serviceType reflect.Type) (any, error) {
 	}
 
 	if serviceType == nil {
-		return nil, ErrInvalidServiceType
+		return nil, ErrServiceTypeNil
 	}
 
 	key := instanceKey{Type: serviceType}
@@ -81,7 +88,7 @@ func (s *scope) GetKeyed(serviceType reflect.Type, serviceKey any) (any, error) 
 	}
 
 	if serviceType == nil {
-		return nil, ErrInvalidServiceType
+		return nil, ErrServiceTypeNil
 	}
 
 	if serviceKey == nil {
@@ -99,11 +106,14 @@ func (s *scope) GetGroup(serviceType reflect.Type, group string) ([]any, error) 
 	}
 
 	if serviceType == nil {
-		return nil, ErrInvalidServiceType
+		return nil, ErrServiceTypeNil
 	}
 
 	if group == "" {
-		return nil, fmt.Errorf("group name cannot be empty")
+		return nil, &ValidationError{
+			ServiceType: serviceType,
+			Message:     "group name cannot be empty",
+		}
 	}
 
 	// Find all descriptors in the group
@@ -117,7 +127,11 @@ func (s *scope) GetGroup(serviceType reflect.Type, group string) ([]any, error) 
 		key := instanceKey{Type: descriptor.Type, Key: descriptor.Key, Group: descriptor.Group}
 		instance, err := s.resolve(key, descriptor)
 		if err != nil {
-			return nil, fmt.Errorf("failed to resolve group member %v: %w", descriptor.Type, err)
+			return nil, &ResolutionError{
+				ServiceType: descriptor.Type,
+				ServiceKey:  descriptor.Key,
+				Cause:       fmt.Errorf("failed to resolve group member: %w", err),
+			}
 		}
 
 		instances = append(instances, instance)
@@ -139,6 +153,7 @@ func (s *scope) CreateScope(ctx context.Context) (Scope, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	child := &scope{
+		id:          uuid.NewString(),
 		provider:    s.provider,
 		parent:      s,
 		context:     ctx,
@@ -229,7 +244,10 @@ func (s *scope) Close() error {
 	s.instancesMu.Unlock()
 
 	if len(errs) > 0 {
-		return fmt.Errorf("scope disposal errors: %v", errs)
+		return &DisposalError{
+			Context: "scope",
+			Errors:  errs,
+		}
 	}
 
 	return nil
@@ -312,7 +330,11 @@ func (s *scope) resolve(key instanceKey, descriptor *Descriptor) (any, error) {
 		}
 
 		// Singleton should have been created at build time
-		return nil, fmt.Errorf("singleton %v not initialized at build time", key.Type)
+		return nil, &ResolutionError{
+			ServiceType: key.Type,
+			ServiceKey:  key.Key,
+			Cause:       ErrSingletonNotInitialized,
+		}
 
 	case Scoped:
 		// Check for circular dependency only when creating new instance
@@ -352,14 +374,19 @@ func (s *scope) resolve(key instanceKey, descriptor *Descriptor) (any, error) {
 		return s.createInstance(descriptor)
 
 	default:
-		return nil, fmt.Errorf("unknown lifetime: %v", descriptor.Lifetime)
+		return nil, &LifetimeError{
+			Value: descriptor.Lifetime,
+		}
 	}
 }
 
 // createInstance creates a new instance of a service
 func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 	if descriptor == nil {
-		return nil, fmt.Errorf("descriptor cannot be nil")
+		return nil, &ValidationError{
+			ServiceType: nil,
+			Message:     "descriptor cannot be nil",
+		}
 	}
 
 	// Handle instance descriptors
@@ -372,7 +399,11 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 	// Analyze constructor
 	info, err := s.provider.analyzer.Analyze(descriptor.Constructor.Interface())
 	if err != nil {
-		return nil, fmt.Errorf("failed to analyze constructor: %w", err)
+		return nil, &ReflectionAnalysisError{
+			Constructor: descriptor.Constructor.Interface(),
+			Operation:   "analyze",
+			Cause:       err,
+		}
 	}
 
 	// Create invoker
@@ -381,7 +412,11 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 	// Invoke constructor
 	results, err := invoker.Invoke(info, s)
 	if err != nil {
-		return nil, fmt.Errorf("constructor invocation failed: %w", err)
+		return nil, &ConstructorInvocationError{
+			Constructor: descriptor.ConstructorType,
+			Parameters:  extractParameterTypes(info),
+			Cause:       err,
+		}
 	}
 
 	// Handle result objects (Out structs)
@@ -389,7 +424,11 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 		processor := reflection.NewResultObjectProcessor(s.provider.analyzer)
 		registrations, err := processor.ProcessResultObject(results[0], info.Type.Out(0))
 		if err != nil {
-			return nil, fmt.Errorf("failed to process result object: %w", err)
+			return nil, &ReflectionAnalysisError{
+				Constructor: descriptor.Constructor.Interface(),
+				Operation:   "process result object",
+				Cause:       err,
+			}
 		}
 
 		// Find the primary service to return
@@ -417,7 +456,10 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 			return decorated, nil
 		}
 
-		return nil, fmt.Errorf("result object produced no services")
+		return nil, &ValidationError{
+			ServiceType: descriptor.Type,
+			Message:     "result object produced no services",
+		}
 	}
 
 	// Handle multi-return constructors
@@ -457,8 +499,11 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 
 		// Get the specific return value
 		if descriptor.ReturnIndex >= len(results) {
-			return nil, fmt.Errorf("invalid return index %d for constructor with %d returns",
-				descriptor.ReturnIndex, len(results))
+			return nil, &ConstructorInvocationError{
+				Constructor: descriptor.ConstructorType,
+				Parameters:  nil,
+				Cause:       fmt.Errorf("invalid return index %d for constructor with %d returns", descriptor.ReturnIndex, len(results)),
+			}
 		}
 
 		instance := results[descriptor.ReturnIndex].Interface()
@@ -474,7 +519,11 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 
 	// Regular constructor - get first result
 	if len(results) == 0 {
-		return nil, fmt.Errorf("constructor returned no values")
+		return nil, &ConstructorInvocationError{
+			Constructor: descriptor.ConstructorType,
+			Parameters:  nil,
+			Cause:       fmt.Errorf("constructor returned no values"),
+		}
 	}
 
 	instance := results[0].Interface()
@@ -491,7 +540,10 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 // applyDecorators applies all registered decorators to an instance
 func (s *scope) applyDecorators(instance any, serviceType reflect.Type) (any, error) {
 	if instance == nil {
-		return nil, fmt.Errorf("instance cannot be nil")
+		return nil, &ValidationError{
+			ServiceType: serviceType,
+			Message:     "instance cannot be nil",
+		}
 	}
 
 	// Get decorators for this type
@@ -506,7 +558,11 @@ func (s *scope) applyDecorators(instance any, serviceType reflect.Type) (any, er
 	for i, decorator := range decorators {
 		decorated, err := s.invokeDecorator(decorator, current)
 		if err != nil {
-			return nil, fmt.Errorf("decorator %d failed for %v: %w", i, serviceType, err)
+			return nil, &RegistrationError{
+				ServiceType: serviceType,
+				Operation:   fmt.Sprintf("apply decorator %d", i),
+				Cause:       err,
+			}
 		}
 
 		current = decorated
@@ -518,7 +574,10 @@ func (s *scope) applyDecorators(instance any, serviceType reflect.Type) (any, er
 // invokeDecorator invokes a single decorator
 func (s *scope) invokeDecorator(decorator *Descriptor, instance any) (any, error) {
 	if decorator == nil || !decorator.IsDecorator {
-		return nil, fmt.Errorf("invalid decorator")
+		return nil, &ValidationError{
+			ServiceType: nil,
+			Message:     "invalid decorator",
+		}
 	}
 
 	// Get the decorator function value
@@ -527,11 +586,17 @@ func (s *scope) invokeDecorator(decorator *Descriptor, instance any) (any, error
 	// Validate decorator signature
 	decoratorType := decoratorFunc.Type()
 	if decoratorType.NumIn() < 1 {
-		return nil, fmt.Errorf("decorator must have at least one parameter")
+		return nil, &ValidationError{
+			ServiceType: decorator.Type,
+			Message:     "decorator must have at least one parameter",
+		}
 	}
 
 	if decoratorType.NumOut() < 1 {
-		return nil, fmt.Errorf("decorator must return at least one value")
+		return nil, &ValidationError{
+			ServiceType: decorator.Type,
+			Message:     "decorator must return at least one value",
+		}
 	}
 
 	// Check that first parameter matches instance type
@@ -539,7 +604,11 @@ func (s *scope) invokeDecorator(decorator *Descriptor, instance any) (any, error
 	firstParamType := decoratorType.In(0)
 
 	if !instanceType.AssignableTo(firstParamType) {
-		return nil, fmt.Errorf("decorator expects %v but got %v", firstParamType, instanceType)
+		return nil, &TypeMismatchError{
+			Expected: firstParamType,
+			Actual:   instanceType,
+			Context:  "decorator parameter",
+		}
 	}
 
 	// Build arguments for decorator
@@ -557,7 +626,11 @@ func (s *scope) invokeDecorator(decorator *Descriptor, instance any) (any, error
 			if paramType.Kind() == reflect.Pointer {
 				args[i] = reflect.Zero(paramType)
 			} else {
-				return nil, fmt.Errorf("failed to resolve decorator dependency %d: %w", i, err)
+				return nil, &ResolutionError{
+					ServiceType: paramType,
+					ServiceKey:  nil,
+					Cause:       fmt.Errorf("failed to resolve decorator dependency %d: %w", i, err),
+				}
 			}
 		} else {
 			args[i] = reflect.ValueOf(dep)
@@ -573,7 +646,7 @@ func (s *scope) invokeDecorator(decorator *Descriptor, instance any) (any, error
 		if lastResult.Type().Implements(reflect.TypeOf((*error)(nil)).Elem()) {
 			if !lastResult.IsNil() {
 				if err, ok := lastResult.Interface().(error); ok {
-					return nil, fmt.Errorf("decorator error: %w", err)
+					return nil, err
 				}
 			}
 		}
@@ -595,7 +668,10 @@ func (s *scope) invokeDecorator(decorator *Descriptor, instance any) (any, error
 		return result.Interface(), nil
 	}
 
-	return nil, fmt.Errorf("decorator returned no value")
+	return nil, &ValidationError{
+		ServiceType: decorator.Type,
+		Message:     "decorator returned no value",
+	}
 }
 
 // FromContext retrieves a Scope from the context.
@@ -616,16 +692,6 @@ func FromContext(ctx context.Context) (Scope, bool) {
 	scope, ok := ctx.Value(scopeContextKey{}).(Scope)
 	return scope, ok
 }
-
-// // WithScope adds a Scope to the context.
-// // This is useful for passing scopes through context-aware code.
-// //
-// // Example:
-// //
-// //	ctx := godi.WithScope(context.Background(), scope)
-// func contextWithScope(ctx context.Context, scope Scope) context.Context {
-// 	return context.WithValue(ctx, scopeContextKey{}, scope)
-// }
 
 // scopeContextKey is the key used to store scopes in contexts
 type scopeContextKey struct{}

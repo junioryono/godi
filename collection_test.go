@@ -180,7 +180,7 @@ func TestAddSingleton(t *testing.T) {
 		collection := NewCollection()
 		err := collection.AddSingleton(nil)
 		assert.Error(t, err)
-		assert.Equal(t, ErrNilConstructor, err)
+		assert.Equal(t, ErrConstructorNil, err)
 	})
 
 	t.Run("non-function constructor should work as instance", func(t *testing.T) {

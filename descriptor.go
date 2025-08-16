@@ -64,7 +64,7 @@ type Descriptor struct {
 // newDescriptor creates a new descriptor from a constructor with the given lifetime and options
 func newDescriptor(constructor any, lifetime Lifetime, opts ...AddOption) (*Descriptor, error) {
 	if constructor == nil {
-		return nil, ErrNilConstructor
+		return nil, ErrConstructorNil
 	}
 
 	// Parse options
@@ -85,7 +85,7 @@ func newDescriptor(constructor any, lifetime Lifetime, opts ...AddOption) (*Desc
 
 	// Check for nil pointers
 	if !constructorValue.IsValid() || (constructorValue.Kind() == reflect.Ptr && constructorValue.IsNil()) {
-		return nil, ErrNilConstructor
+		return nil, ErrConstructorNil
 	}
 
 	constructorType := constructorValue.Type()
@@ -259,10 +259,6 @@ func (d *Descriptor) GetDependencies() []*reflection.Dependency {
 
 // Validate validates a descriptor
 func (d *Descriptor) Validate() error {
-	if d == nil {
-		return ErrDescriptorNil
-	}
-
 	if d.Type == nil {
 		return &ValidationError{
 			ServiceType: nil,

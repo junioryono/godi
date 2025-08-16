@@ -677,7 +677,7 @@ func TestProviderGet(t *testing.T) {
 
 		services, err := provider.GetGroup(nil, "group")
 		assert.Error(t, err)
-		assert.Equal(t, ErrInvalidServiceType, err)
+		assert.Equal(t, ErrServiceTypeNil, err)
 		assert.Nil(t, services)
 	})
 
@@ -770,7 +770,7 @@ func TestProviderGet(t *testing.T) {
 
 		service, err := provider.Get(nil)
 		assert.Error(t, err)
-		assert.Equal(t, ErrInvalidServiceType, err)
+		assert.Equal(t, ErrServiceTypeNil, err)
 		assert.Nil(t, service)
 	})
 
@@ -839,7 +839,7 @@ func TestProviderGetKeyed(t *testing.T) {
 
 		service, err := provider.GetKeyed(nil, "key")
 		assert.Error(t, err)
-		assert.Equal(t, ErrInvalidServiceType, err)
+		assert.Equal(t, ErrServiceTypeNil, err)
 		assert.Nil(t, service)
 	})
 
@@ -1271,7 +1271,7 @@ func TestInstanceRegistrationEdgeCases(t *testing.T) {
 
 		err := collection.AddSingleton(nil)
 		assert.Error(t, err)
-		assert.Equal(t, ErrNilConstructor, err)
+		assert.Equal(t, ErrConstructorNil, err)
 	})
 
 	t.Run("register nil pointer", func(t *testing.T) {
@@ -1284,7 +1284,7 @@ func TestInstanceRegistrationEdgeCases(t *testing.T) {
 		var config *Config = nil
 		err := collection.AddSingleton(config)
 		assert.Error(t, err)
-		assert.Equal(t, ErrNilConstructor, err)
+		assert.Equal(t, ErrConstructorNil, err)
 	})
 
 	t.Run("register empty string", func(t *testing.T) {

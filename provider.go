@@ -6,7 +6,9 @@ import (
 	"reflect"
 	"sync"
 	"sync/atomic"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/junioryono/godi/v3/internal/graph"
 	"github.com/junioryono/godi/v3/internal/reflection"
 )
@@ -20,20 +22,32 @@ type Disposable interface {
 type Provider interface {
 	Disposable
 
-	// Resolution methods
+	// Returns the unique identifier for this provider instance.
+	ID() string
+
+	// Resolves a service of the specified type from the root scope.
 	Get(serviceType reflect.Type) (any, error)
+
+	// Resolves a keyed service of the specified type from the root scope.
 	GetKeyed(serviceType reflect.Type, key any) (any, error)
+
+	// Resolves all services of the specified type in a group from the root scope.
 	GetGroup(serviceType reflect.Type, group string) ([]any, error)
 
-	// Scope management
+	// Creates a new service scope for resolving services.
 	CreateScope(ctx context.Context) (Scope, error)
 }
 
 type ProviderOptions struct {
+	// BuildTimeout specifies the maximum time allowed for building the provider.
+	// If building takes longer than this duration, it will timeout with an error.
+	BuildTimeout time.Duration
 }
 
 // provider is the concrete implementation of Provider
 type provider struct {
+	id string
+
 	// Service registry (immutable after build)
 	services   map[TypeKey]*Descriptor
 	groups     map[GroupKey][]*Descriptor
@@ -72,10 +86,19 @@ type instanceKey struct {
 	Group string
 }
 
+// ID returns the unique identifier for the provider
+func (p *provider) ID() string {
+	return p.id
+}
+
 // Get resolves a service from the root scope
 func (p *provider) Get(serviceType reflect.Type) (any, error) {
 	if atomic.LoadInt32(&p.disposed) != 0 {
 		return nil, ErrProviderDisposed
+	}
+
+	if serviceType == nil {
+		return nil, ErrServiceTypeNil
 	}
 
 	return p.rootScope.Get(serviceType)
@@ -87,6 +110,14 @@ func (p *provider) GetKeyed(serviceType reflect.Type, key any) (any, error) {
 		return nil, ErrProviderDisposed
 	}
 
+	if serviceType == nil {
+		return nil, ErrServiceTypeNil
+	}
+
+	if key == nil {
+		return nil, ErrServiceKeyNil
+	}
+
 	return p.rootScope.GetKeyed(serviceType, key)
 }
 
@@ -94,6 +125,17 @@ func (p *provider) GetKeyed(serviceType reflect.Type, key any) (any, error) {
 func (p *provider) GetGroup(serviceType reflect.Type, group string) ([]any, error) {
 	if atomic.LoadInt32(&p.disposed) != 0 {
 		return nil, ErrProviderDisposed
+	}
+
+	if serviceType == nil {
+		return nil, ErrServiceTypeNil
+	}
+
+	if group == "" {
+		return nil, &ValidationError{
+			ServiceType: serviceType,
+			Message:     "group name cannot be empty",
+		}
 	}
 
 	return p.rootScope.GetGroup(serviceType, group)
@@ -113,6 +155,7 @@ func (p *provider) CreateScope(ctx context.Context) (Scope, error) {
 	scopeCtx, cancel := context.WithCancel(ctx)
 
 	s := &scope{
+		id:               uuid.NewString(),
 		provider:         p,
 		parent:           nil,
 		context:          scopeCtx,
@@ -144,7 +187,7 @@ func (p *provider) Close() error {
 		return nil // Already disposed
 	}
 
-	var errs []error
+	var errors []error
 
 	// Close all scopes
 	p.scopesMu.Lock()
@@ -156,16 +199,20 @@ func (p *provider) Close() error {
 	p.scopesMu.Unlock()
 
 	for _, s := range scopes {
-		if err := s.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("failed to close scope: %w", err))
+		if s != nil {
+			if err := s.Close(); err != nil {
+				errors = append(errors, fmt.Errorf("scope %s: %w", s.ID(), err))
+			}
 		}
 	}
 
 	// Close root scope
 	if p.rootScope != nil {
 		if err := p.rootScope.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("failed to close root scope: %w", err))
+			errors = append(errors, fmt.Errorf("root scope: %w", err))
 		}
+
+		p.rootScope = nil
 	}
 
 	// Dispose all singleton disposables
@@ -176,13 +223,23 @@ func (p *provider) Close() error {
 
 	// Dispose in reverse order of creation
 	for i := len(disposables) - 1; i >= 0; i-- {
-		if err := disposables[i].Close(); err != nil {
-			errs = append(errs, fmt.Errorf("failed to dispose singleton: %w", err))
+		if disposables[i] != nil {
+			if err := disposables[i].Close(); err != nil {
+				errors = append(errors, fmt.Errorf("singleton disposable %d: %w", i, err))
+			}
 		}
 	}
 
-	if len(errs) > 0 {
-		return fmt.Errorf("provider disposal errors: %v", errs)
+	// Clear all internal state
+	p.singletonsMu.Lock()
+	p.singletons = nil
+	p.singletonsMu.Unlock()
+
+	if len(errors) > 0 {
+		return &DisposalError{
+			Context: "provider",
+			Errors:  errors,
+		}
 	}
 
 	return nil
@@ -198,6 +255,10 @@ func (p *provider) getSingleton(key instanceKey) (any, bool) {
 
 // setSingleton stores a singleton instance
 func (p *provider) setSingleton(key instanceKey, instance any) {
+	if instance == nil {
+		return
+	}
+
 	p.singletonsMu.Lock()
 	p.singletons[key] = instance
 	p.singletonsMu.Unlock()
@@ -212,27 +273,44 @@ func (p *provider) setSingleton(key instanceKey, instance any) {
 
 // findDescriptor finds a descriptor for the given service
 func (p *provider) findDescriptor(serviceType reflect.Type, key any) *Descriptor {
+	if serviceType == nil {
+		return nil
+	}
+
 	typeKey := TypeKey{Type: serviceType, Key: key}
 	return p.services[typeKey]
 }
 
 // findGroupDescriptors finds all descriptors for a group
 func (p *provider) findGroupDescriptors(serviceType reflect.Type, group string) []*Descriptor {
+	if serviceType == nil || group == "" {
+		return nil
+	}
+
 	groupKey := GroupKey{Type: serviceType, Group: group}
 	return p.groups[groupKey]
 }
 
 // getDecorators returns decorators for a service type
 func (p *provider) getDecorators(serviceType reflect.Type) []*Descriptor {
+	if serviceType == nil {
+		return nil
+	}
+
 	return p.decorators[serviceType]
 }
 
-// createAllSingletons creates all singleton instances at build time
+// createAllSingletons creates all singleton instances at build time with enhanced error handling
 func (p *provider) createAllSingletons() error {
 	// Get topological sort from dependency graph
 	sorted, err := p.graph.TopologicalSort()
 	if err != nil {
-		return fmt.Errorf("failed to sort dependencies: %w", err)
+		return &GraphOperationError{
+			Operation: "topological sort",
+			NodeType:  nil,
+			NodeKey:   nil,
+			Cause:     err,
+		}
 	}
 
 	// Track which constructors have been invoked for multi-return
@@ -240,7 +318,18 @@ func (p *provider) createAllSingletons() error {
 
 	// Create instances in dependency order
 	for _, node := range sorted {
-		descriptor := node.Provider.(*Descriptor)
+		if node == nil || node.Provider == nil {
+			continue
+		}
+
+		descriptor, ok := node.Provider.(*Descriptor)
+		if !ok {
+			return &ValidationError{
+				ServiceType: nil,
+				Message:     fmt.Sprintf("invalid provider type: %T", node.Provider),
+			}
+		}
+
 		if descriptor.Lifetime != Singleton {
 			continue
 		}
@@ -259,6 +348,7 @@ func (p *provider) createAllSingletons() error {
 
 		// Handle instance descriptors specially for singletons
 		var instance any
+
 		if descriptor.IsInstance {
 			// For instances, use the stored value directly
 			instance = descriptor.Instance
@@ -268,39 +358,69 @@ func (p *provider) createAllSingletons() error {
 
 			if results, invoked := invokedConstructors[constructorPtr]; invoked {
 				// Use cached results
-				if descriptor.ReturnIndex < len(results) {
+				if descriptor.ReturnIndex >= 0 && descriptor.ReturnIndex < len(results) {
 					instance = results[descriptor.ReturnIndex].Interface()
 				} else {
-					return fmt.Errorf("invalid return index %d for cached multi-return constructor", descriptor.ReturnIndex)
+					return &ConstructorInvocationError{
+						Constructor: descriptor.ConstructorType,
+						Parameters:  nil,
+						Cause:       fmt.Errorf("invalid return index %d for cached multi-return constructor", descriptor.ReturnIndex),
+					}
 				}
 			} else {
 				// Invoke the constructor and cache all results
 				info, err := p.analyzer.Analyze(descriptor.Constructor.Interface())
 				if err != nil {
-					return fmt.Errorf("failed to analyze constructor: %w", err)
+					return &ReflectionAnalysisError{
+						Constructor: descriptor.Constructor.Interface(),
+						Operation:   "analyze",
+						Cause:       err,
+					}
 				}
 
 				invoker := reflection.NewConstructorInvoker(p.analyzer)
 				results, err := invoker.Invoke(info, p.rootScope)
 				if err != nil {
-					return fmt.Errorf("failed to invoke multi-return constructor: %w", err)
+					return &ConstructorInvocationError{
+						Constructor: descriptor.ConstructorType,
+						Parameters:  extractParameterTypes(info),
+						Cause:       err,
+					}
 				}
 
 				// Cache the results
 				invokedConstructors[constructorPtr] = results
 
 				// Get the specific instance for this descriptor
-				if descriptor.ReturnIndex < len(results) {
+				if descriptor.ReturnIndex >= 0 && descriptor.ReturnIndex < len(results) {
 					instance = results[descriptor.ReturnIndex].Interface()
 				} else {
-					return fmt.Errorf("invalid return index %d for multi-return constructor", descriptor.ReturnIndex)
+					return &ConstructorInvocationError{
+						Constructor: descriptor.ConstructorType,
+						Parameters:  nil,
+						Cause:       fmt.Errorf("invalid return index %d for multi-return constructor with %d returns", descriptor.ReturnIndex, len(results)),
+					}
 				}
 			}
 		} else {
 			// Create the instance through constructor
+			var err error
 			instance, err = p.rootScope.createInstance(descriptor)
 			if err != nil {
-				return fmt.Errorf("failed to create singleton %v: %w", descriptor.Type, err)
+				return &ResolutionError{
+					ServiceType: descriptor.Type,
+					ServiceKey:  descriptor.Key,
+					Cause:       err,
+				}
+			}
+		}
+
+		// Validate instance is not nil
+		if instance == nil {
+			return &ResolutionError{
+				ServiceType: descriptor.Type,
+				ServiceKey:  descriptor.Key,
+				Cause:       ErrConstructorReturnedNil,
 			}
 		}
 
@@ -309,6 +429,19 @@ func (p *provider) createAllSingletons() error {
 	}
 
 	return nil
+}
+
+// extractParameterTypes extracts parameter types from constructor info
+func extractParameterTypes(info *reflection.ConstructorInfo) []reflect.Type {
+	if info == nil {
+		return nil
+	}
+
+	types := make([]reflect.Type, len(info.Parameters))
+	for i, param := range info.Parameters {
+		types[i] = param.Type
+	}
+	return types
 }
 
 // Resolve resolves a service of type T from the provider.
@@ -322,6 +455,11 @@ func (p *provider) createAllSingletons() error {
 //	}
 func Resolve[T any](provider Provider) (T, error) {
 	var zero T
+
+	if provider == nil {
+		return zero, ErrProviderNil
+	}
+
 	serviceType := reflect.TypeOf((*T)(nil)).Elem()
 
 	service, err := provider.Get(serviceType)
@@ -365,6 +503,15 @@ func MustResolve[T any](provider Provider) T {
 //	cache, err := godi.ResolveKeyed[Cache](provider, "redis")
 func ResolveKeyed[T any](provider Provider, key any) (T, error) {
 	var zero T
+
+	if provider == nil {
+		return zero, ErrProviderNil
+	}
+
+	if key == nil {
+		return zero, ErrServiceKeyNil
+	}
+
 	serviceType := reflect.TypeOf((*T)(nil)).Elem()
 
 	service, err := provider.GetKeyed(serviceType, key)
@@ -406,6 +553,17 @@ func MustResolveKeyed[T any](provider Provider, key any) T {
 //
 //	handlers, err := godi.ResolveGroup[http.Handler](provider, "routes")
 func ResolveGroup[T any](provider Provider, group string) ([]T, error) {
+	if provider == nil {
+		return nil, ErrProviderNil
+	}
+
+	if group == "" {
+		return nil, &ValidationError{
+			ServiceType: nil,
+			Message:     "group name cannot be empty",
+		}
+	}
+
 	serviceType := reflect.TypeOf((*T)(nil)).Elem()
 
 	services, err := provider.GetGroup(serviceType, group)
