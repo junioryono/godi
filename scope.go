@@ -44,10 +44,6 @@ type scope struct {
 	children   map[*scope]struct{}
 	childrenMu sync.Mutex
 
-	// Cache for multi-return constructor results
-	multiReturnCache   map[uintptr][]reflect.Value
-	multiReturnCacheMu sync.RWMutex
-
 	// State
 	disposed int32 // atomic
 }
@@ -389,11 +385,8 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 		}
 	}
 
-	// Handle instance descriptors
 	if descriptor.IsInstance {
-		// For instances, return the stored instance directly
-		// Apply decorators if needed
-		return s.applyDecorators(descriptor.Instance, descriptor.Type)
+		return descriptor.Instance, nil
 	}
 
 	// Analyze constructor
@@ -434,26 +427,13 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 		// Find the primary service to return
 		for _, reg := range registrations {
 			if reg.Type == descriptor.Type && reg.Key == descriptor.Key {
-				instance := reg.Value
-				// Apply decorators
-				decorated, err := s.applyDecorators(instance, descriptor.Type)
-				if err != nil {
-					return nil, err
-				}
-				return decorated, nil
+				return reg.Value, nil
 			}
 		}
 
 		// If no exact match, return the first one
 		if len(registrations) > 0 {
-			instance := registrations[0].Value
-
-			// Apply decorators
-			decorated, err := s.applyDecorators(instance, descriptor.Type)
-			if err != nil {
-				return nil, err
-			}
-			return decorated, nil
+			return registrations[0].Value, nil
 		}
 
 		return nil, &ValidationError{
@@ -464,39 +444,6 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 
 	// Handle multi-return constructors
 	if descriptor.IsMultiReturn && descriptor.ReturnIndex >= 0 {
-		// Check cache first for scoped/transient multi-return
-		constructorPtr := descriptor.Constructor.Pointer()
-
-		s.multiReturnCacheMu.RLock()
-		cachedResults, cached := s.multiReturnCache[constructorPtr]
-		s.multiReturnCacheMu.RUnlock()
-
-		if cached && descriptor.Lifetime == Scoped {
-			// Use cached results for scoped lifetime
-			if descriptor.ReturnIndex < len(cachedResults) {
-				instance := cachedResults[descriptor.ReturnIndex].Interface()
-
-				// Apply decorators
-				decorated, err := s.applyDecorators(instance, descriptor.Type)
-				if err != nil {
-					return nil, err
-				}
-
-				return decorated, nil
-			}
-		}
-
-		// For multi-return constructors, cache results if scoped
-		if descriptor.Lifetime == Scoped && !cached {
-			// Cache the results for scoped instances
-			s.multiReturnCacheMu.Lock()
-			if s.multiReturnCache == nil {
-				s.multiReturnCache = make(map[uintptr][]reflect.Value)
-			}
-			s.multiReturnCache[constructorPtr] = results
-			s.multiReturnCacheMu.Unlock()
-		}
-
 		// Get the specific return value
 		if descriptor.ReturnIndex >= len(results) {
 			return nil, &ConstructorInvocationError{
@@ -506,15 +453,7 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 			}
 		}
 
-		instance := results[descriptor.ReturnIndex].Interface()
-
-		// Apply decorators
-		decorated, err := s.applyDecorators(instance, descriptor.Type)
-		if err != nil {
-			return nil, err
-		}
-
-		return decorated, nil
+		return results[descriptor.ReturnIndex].Interface(), nil
 	}
 
 	// Regular constructor - get first result
@@ -526,152 +465,7 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 		}
 	}
 
-	instance := results[0].Interface()
-
-	// Apply decorators
-	decorated, err := s.applyDecorators(instance, descriptor.Type)
-	if err != nil {
-		return nil, err
-	}
-
-	return decorated, nil
-}
-
-// applyDecorators applies all registered decorators to an instance
-func (s *scope) applyDecorators(instance any, serviceType reflect.Type) (any, error) {
-	if instance == nil {
-		return nil, &ValidationError{
-			ServiceType: serviceType,
-			Cause:       fmt.Errorf("instance cannot be nil"),
-		}
-	}
-
-	// Get decorators for this type
-	decorators := s.provider.getDecorators(serviceType)
-	if len(decorators) == 0 {
-		return instance, nil
-	}
-
-	current := instance
-
-	// Apply decorators in registration order (first registered = innermost)
-	for i, decorator := range decorators {
-		decorated, err := s.invokeDecorator(decorator, current)
-		if err != nil {
-			return nil, &RegistrationError{
-				ServiceType: serviceType,
-				Operation:   fmt.Sprintf("apply decorator %d", i),
-				Cause:       err,
-			}
-		}
-
-		current = decorated
-	}
-
-	return current, nil
-}
-
-// invokeDecorator invokes a single decorator
-func (s *scope) invokeDecorator(decorator *Descriptor, instance any) (any, error) {
-	if decorator == nil || !decorator.IsDecorator {
-		return nil, &ValidationError{
-			ServiceType: nil,
-			Cause:       fmt.Errorf("invalid decorator"),
-		}
-	}
-
-	// Get the decorator function value
-	decoratorFunc := decorator.Constructor
-
-	// Validate decorator signature
-	decoratorType := decoratorFunc.Type()
-	if decoratorType.NumIn() < 1 {
-		return nil, &ValidationError{
-			ServiceType: decorator.Type,
-			Cause:       fmt.Errorf("decorator must have at least one parameter"),
-		}
-	}
-
-	if decoratorType.NumOut() < 1 {
-		return nil, &ValidationError{
-			ServiceType: decorator.Type,
-			Cause:       fmt.Errorf("decorator must return at least one value"),
-		}
-	}
-
-	// Check that first parameter matches instance type
-	instanceType := reflect.TypeOf(instance)
-	firstParamType := decoratorType.In(0)
-
-	if !instanceType.AssignableTo(firstParamType) {
-		return nil, &TypeMismatchError{
-			Expected: firstParamType,
-			Actual:   instanceType,
-			Context:  "decorator parameter",
-		}
-	}
-
-	// Build arguments for decorator
-	args := make([]reflect.Value, decoratorType.NumIn())
-	args[0] = reflect.ValueOf(instance)
-
-	// Resolve additional dependencies if any
-	for i := 1; i < decoratorType.NumIn(); i++ {
-		paramType := decoratorType.In(i)
-
-		// Try to resolve the dependency
-		dep, err := s.Get(paramType)
-		if err != nil {
-			// Check if parameter is a pointer and can be nil
-			if paramType.Kind() == reflect.Pointer {
-				args[i] = reflect.Zero(paramType)
-			} else {
-				return nil, &ResolutionError{
-					ServiceType: paramType,
-					ServiceKey:  nil,
-					Cause:       fmt.Errorf("failed to resolve decorator dependency %d: %w", i, err),
-				}
-			}
-		} else {
-			args[i] = reflect.ValueOf(dep)
-		}
-	}
-
-	// Call the decorator
-	results := decoratorFunc.Call(args)
-
-	// Handle error return if present
-	if decoratorType.NumOut() > 1 {
-		lastResult := results[len(results)-1]
-		if lastResult.Type().Implements(reflect.TypeOf((*error)(nil)).Elem()) {
-			if !lastResult.IsNil() {
-				if err, ok := lastResult.Interface().(error); ok {
-					return nil, err
-				}
-			}
-		}
-	}
-
-	// Return decorated instance
-	if len(results) > 0 {
-		result := results[0]
-
-		// Check if the result is nil (only for types that can be nil)
-		if result.Kind() == reflect.Pointer || result.Kind() == reflect.Interface ||
-			result.Kind() == reflect.Map || result.Kind() == reflect.Slice ||
-			result.Kind() == reflect.Chan || result.Kind() == reflect.Func {
-			if result.IsNil() {
-				return nil, nil
-			}
-		}
-
-		return result.Interface(), nil
-	}
-
-	return nil, &ValidationError{
-		ServiceType: decorator.Type,
-		Cause:       fmt.Errorf("decorator returned no value"),
-	}
+	return results[0].Interface(), nil
 }
 
 // FromContext retrieves a Scope from the context.

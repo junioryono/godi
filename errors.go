@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/junioryono/godi/v3/internal/graph"
-	"github.com/junioryono/godi/v3/internal/typecache"
 )
 
 // ========================================
@@ -284,6 +283,57 @@ func formatType(t reflect.Type) string {
 		return "<nil>"
 	}
 
-	info := typecache.GetTypeInfo(t)
-	return info.GetFormattedName()
+	// Handle common cases with cleaner output
+	switch t.Kind() {
+	case reflect.Pointer:
+		// Format pointers as *Type instead of *package.Type
+		elem := t.Elem()
+		if elem.PkgPath() != "" && elem.Name() != "" {
+			// Named type with package
+			return "*" + elem.Name()
+		}
+		return t.String()
+	case reflect.Slice:
+		// Format slices as []Type
+		elem := t.Elem()
+		if elem.PkgPath() != "" && elem.Name() != "" {
+			// Named type with package
+			return "[]" + elem.Name()
+		}
+		return t.String()
+	case reflect.Map:
+		// Format maps more concisely
+		key := t.Key()
+		elem := t.Elem()
+		keyStr := key.Name()
+		if keyStr == "" {
+			keyStr = key.String()
+		}
+		elemStr := elem.Name()
+		if elemStr == "" {
+			elemStr = elem.String()
+		}
+		return "map[" + keyStr + "]" + elemStr
+	case reflect.Interface:
+		// For interfaces, just use the name if available
+		if t.Name() != "" {
+			return t.Name()
+		}
+		return t.String()
+	case reflect.Struct:
+		// For structs, use the short name if available
+		if t.Name() != "" {
+			return t.Name()
+		}
+		return t.String()
+	case reflect.Func:
+		// For functions, use String() which gives a nice representation
+		return t.String()
+	default:
+		// For basic types and others, prefer the name if available
+		if t.Name() != "" {
+			return t.Name()
+		}
+		return t.String()
+	}
 }
