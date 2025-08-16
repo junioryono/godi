@@ -92,28 +92,3 @@ func validateLifetimes(c *collection) error {
 
 	return nil
 }
-
-// validateDescriptor validates a single descriptor
-func validateDescriptor(descriptor *Descriptor) error {
-	if descriptor == nil {
-		return ErrDescriptorNil
-	}
-
-	if descriptor.Type == nil {
-		return fmt.Errorf("descriptor type cannot be nil")
-	}
-
-	if !descriptor.Constructor.IsValid() {
-		return fmt.Errorf("descriptor constructor is invalid")
-	}
-
-	// Validate lifetime
-	switch descriptor.Lifetime {
-	case Singleton, Scoped, Transient:
-		// Valid lifetimes
-	default:
-		return fmt.Errorf("invalid lifetime: %v", descriptor.Lifetime)
-	}
-
-	return nil
-}
