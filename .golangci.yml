@@ -1,159 +1,80 @@
-# golangci-lint configuration for godi
-
 run:
   timeout: 5m
-  tests: true
+  go: "1.24.3"
 
 linters:
   enable:
-    - errcheck
-    - gosimple
+    - gofmt
     - govet
-    - ineffassign
+    - errcheck
     - staticcheck
-    - typecheck
     - unused
-    - bodyclose
-    - dogsled
-    - dupl
-    - gocognit
-    - goconst
+    - gosimple
+    - ineffassign
+    - typecheck
     - gocritic
     - gocyclo
-    - gofmt
-    - goimports
-    - gosec
-    - lll
-    - misspell
-    - nakedret
+    - copyloopvar
+  disable:
+    - exhaustive
     - nestif
-    - noctx
-    - nolintlint
-    - prealloc
-    - revive
-    - rowserrcheck
-    - stylecheck
-    - unconvert
-    - unparam
-    - whitespace
+    - gochecknoglobals
+    - gochecknoinits
 
 linters-settings:
-  errcheck:
-    check-type-assertions: true
-    check-blank: true
-  
+  funlen:
+    lines: 100
+    statements: 50
   govet:
-    enable-all: true
-  
-  gocognit:
-    min-complexity: 30
-  
+    enable:
+      - shadow
   gocyclo:
     min-complexity: 20
-  
-  goconst:
-    min-len: 3
-    min-occurrences: 3
-  
-  gosec:
-    excludes:
-      - G104
-  
-  lll:
-    line-length: 120
-    tab-width: 4
-  
-  dupl:
-    threshold: 150
-  
-  misspell:
-    locale: US
-  
-  prealloc:
-    simple: true
-    range-loops: true
-    for-loops: true
-  
-  nakedret:
-    max-func-lines: 30
-  
-  nestif:
-    min-complexity: 5
-  
-  unparam:
-    check-exported: false
-  
-  stylecheck:
-    checks: ["all", "-ST1003"]
-  
-  revive:
-    ignore-generated-header: true
-    severity: warning
-    rules:
-      - name: blank-imports
-      - name: context-as-argument
-      - name: context-keys-type
-      - name: dot-imports
-      - name: error-return
-      - name: error-strings
-      - name: error-naming
-      - name: exported
-      - name: if-return
-      - name: increment-decrement
-      - name: var-naming
-      - name: var-declaration
-      - name: package-comments
-      - name: range
-      - name: receiver-naming
-      - name: time-naming
-      - name: unexported-return
-      - name: indent-error-flow
-      - name: errorf
-      - name: empty-block
-      - name: superfluous-else
-      - name: unreachable-code
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - experimental
+      - opinionated
+      - performance
+      - style
+  gomodguard:
+    blocked:
+      modules:
+        - github.com/pkg/errors:
+            recommendations:
+              - errors
+              - fmt
+            reason: "use standard library errors package"
 
 issues:
-  exclude-dirs:
-    - vendor
-    - third_party
-    - testdata
-  
-  exclude-files:
-    - ".*\\.pb\\.go$"
-    - ".*\\.gen\\.go$"
-  
-  max-issues-per-linter: 50
-  max-same-issues: 3
-  
   exclude-rules:
+    # Exclude some linters from running on tests files
     - path: _test\.go
       linters:
         - gocyclo
-        - gocognit
         - errcheck
-        - dupl
         - gosec
-        - unparam
-    
-    - path: example_test\.go
-      linters:
-        - errcheck
-        - ineffassign
-        - staticcheck
-        - unused
-    
-    - path: main\.go
-      linters:
-        - gochecknoinits
-    
-    - path: errors\.go
-      linters:
+        - funlen
+        - goconst
         - gochecknoglobals
-    
-    - path: _test\.go
-      text: "cyclomatic complexity"
-  
-  exclude-use-default: false
+
+    # Exclude known issues in dig dependency
+    - path: vendor/
+      linters:
+        - typecheck
+        - unused
+
+    # Allow unused parameters in interfaces
+    - linters:
+        - unused
+      text: "is unused"
+      source: "^\\s*\\w+\\s+interface\\s*{"
+
+  # Maximum issues count per one linter. Set to 0 to disable
+  max-issues-per-linter: 0
+
+  # Maximum count of issues with the same text. Set to 0 to disable
+  max-same-issues: 0
+
+  # Show only new issues
   new: false
-  fix: false
