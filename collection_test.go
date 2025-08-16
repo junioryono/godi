@@ -1,6 +1,7 @@
 package godi
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"reflect"
@@ -1493,7 +1494,7 @@ func TestCollectionMultipleReturns(t *testing.T) {
 		require.NoError(t, err)
 		defer provider.Close()
 
-		scope, err := provider.CreateScope(nil)
+		scope, err := provider.CreateScope(context.Background())
 		require.NoError(t, err)
 		defer scope.Close()
 

@@ -1,7 +1,6 @@
 package godi
 
 import (
-	"fmt"
 	"reflect"
 
 	"github.com/junioryono/godi/v3/internal/reflection"
@@ -121,13 +120,21 @@ func newDescriptor(constructor any, lifetime Lifetime, opts ...AddOption) (*Desc
 	analyzer := reflection.New()
 	info, err := analyzer.Analyze(constructor)
 	if err != nil {
-		return nil, fmt.Errorf("failed to analyze constructor: %w", err)
+		return nil, &ReflectionAnalysisError{
+			Constructor: constructor,
+			Operation:   "analyze",
+			Cause:       err,
+		}
 	}
 
 	// Get dependencies from analyzer
 	dependencies, err := analyzer.GetDependencies(constructor)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get dependencies: %w", err)
+		return nil, &ReflectionAnalysisError{
+			Constructor: constructor,
+			Operation:   "dependencies",
+			Cause:       err,
+		}
 	}
 
 	// Get the service type
@@ -257,19 +264,31 @@ func (d *Descriptor) Validate() error {
 	}
 
 	if d.Type == nil {
-		return fmt.Errorf("descriptor type cannot be nil")
+		return &ValidationError{
+			ServiceType: nil,
+			Message:     "descriptor type cannot be nil",
+		}
 	}
 
 	if !d.Constructor.IsValid() {
-		return fmt.Errorf("descriptor constructor is invalid")
+		return &ValidationError{
+			ServiceType: d.Type,
+			Message:     "descriptor constructor is invalid",
+		}
 	}
 
 	if d.ConstructorType == nil {
-		return fmt.Errorf("descriptor constructor type cannot be nil")
+		return &ValidationError{
+			ServiceType: d.Type,
+			Message:     "descriptor constructor type cannot be nil",
+		}
 	}
 
 	if d.Key != nil && d.Group != "" {
-		return fmt.Errorf("descriptor cannot have both key and group set")
+		return &ValidationError{
+			ServiceType: d.Type,
+			Message:     "descriptor cannot have both key and group set",
+		}
 	}
 
 	// Validate lifetime
