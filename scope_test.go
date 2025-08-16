@@ -3,6 +3,7 @@ package godi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"sync"
 	"sync/atomic"
@@ -894,5 +895,579 @@ func TestProviderGetGroup(t *testing.T) {
 		assert.True(t, ids["service1"])
 		assert.True(t, ids["service2"])
 		assert.True(t, ids["service3"])
+	})
+}
+
+// Test primitive type registration
+func TestPrimitiveTypes(t *testing.T) {
+	t.Run("register int value", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Register an int value directly
+		err := collection.AddSingleton(42, Name("answer"))
+		require.NoError(t, err)
+
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		// Retrieve the int value
+		value, err := provider.GetKeyed(reflect.TypeOf(0), "answer")
+		assert.NoError(t, err)
+		assert.Equal(t, 42, value)
+	})
+
+	t.Run("register string value", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Register a string value directly
+		err := collection.AddSingleton("hello world", Name("greeting"))
+		require.NoError(t, err)
+
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		// Retrieve the string value
+		value, err := provider.GetKeyed(reflect.TypeOf(""), "greeting")
+		assert.NoError(t, err)
+		assert.Equal(t, "hello world", value)
+	})
+
+	t.Run("register bool value", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Register a bool value directly
+		err := collection.AddSingleton(true, Name("enabled"))
+		require.NoError(t, err)
+
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		// Retrieve the bool value
+		value, err := provider.GetKeyed(reflect.TypeOf(false), "enabled")
+		assert.NoError(t, err)
+		assert.Equal(t, true, value)
+	})
+
+	t.Run("register float64 value", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Register a float64 value directly
+		err := collection.AddSingleton(3.14159, Name("pi"))
+		require.NoError(t, err)
+
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		// Retrieve the float64 value
+		value, err := provider.GetKeyed(reflect.TypeOf(0.0), "pi")
+		assert.NoError(t, err)
+		assert.Equal(t, 3.14159, value)
+	})
+
+	t.Run("register slice value", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Register a slice value directly
+		numbers := []int{1, 2, 3, 4, 5}
+		err := collection.AddSingleton(numbers, Name("numbers"))
+		require.NoError(t, err)
+
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		// Retrieve the slice value
+		value, err := provider.GetKeyed(reflect.TypeOf([]int{}), "numbers")
+		assert.NoError(t, err)
+		assert.Equal(t, numbers, value)
+	})
+
+	t.Run("register map value", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Register a map value directly
+		config := map[string]string{
+			"host": "localhost",
+			"port": "8080",
+		}
+		err := collection.AddSingleton(config, Name("config"))
+		require.NoError(t, err)
+
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		// Retrieve the map value
+		value, err := provider.GetKeyed(reflect.TypeOf(map[string]string{}), "config")
+		assert.NoError(t, err)
+		assert.Equal(t, config, value)
+	})
+
+	t.Run("register channel", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Register a channel directly
+		ch := make(chan int, 10)
+		err := collection.AddSingleton(ch, Name("events"))
+		require.NoError(t, err)
+
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		// Retrieve the channel
+		value, err := provider.GetKeyed(reflect.TypeOf(make(chan int)), "events")
+		assert.NoError(t, err)
+		assert.Same(t, ch, value) // Should be the same channel
+	})
+
+	t.Run("register complex numbers", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Register complex numbers
+		c64 := complex64(1 + 2i)
+		c128 := complex128(3 + 4i)
+
+		err := collection.AddSingleton(c64, Name("c64"))
+		require.NoError(t, err)
+
+		err = collection.AddSingleton(c128, Name("c128"))
+		require.NoError(t, err)
+
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		// Retrieve complex numbers
+		val64, err := provider.GetKeyed(reflect.TypeOf(complex64(0)), "c64")
+		assert.NoError(t, err)
+		assert.Equal(t, c64, val64)
+
+		val128, err := provider.GetKeyed(reflect.TypeOf(complex128(0)), "c128")
+		assert.NoError(t, err)
+		assert.Equal(t, c128, val128)
+	})
+}
+
+// Test instance registration
+func TestInstanceRegistration(t *testing.T) {
+	type Config struct {
+		Host string
+		Port int
+	}
+
+	type Database struct {
+		ConnectionString string
+		MaxConnections   int
+	}
+
+	t.Run("register struct instance", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Create an instance
+		config := &Config{
+			Host: "localhost",
+			Port: 8080,
+		}
+
+		// Register the instance directly
+		err := collection.AddSingleton(config)
+		require.NoError(t, err)
+
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		// Retrieve the instance
+		value, err := provider.Get(reflect.TypeOf((*Config)(nil)))
+		assert.NoError(t, err)
+		assert.Same(t, config, value) // Should be the exact same instance
+	})
+
+	t.Run("register multiple instances with keys", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Create instances
+		primaryDB := &Database{
+			ConnectionString: "primary.db",
+			MaxConnections:   100,
+		}
+
+		secondaryDB := &Database{
+			ConnectionString: "secondary.db",
+			MaxConnections:   50,
+		}
+
+		// Register instances with keys
+		err := collection.AddSingleton(primaryDB, Name("primary"))
+		require.NoError(t, err)
+
+		err = collection.AddSingleton(secondaryDB, Name("secondary"))
+		require.NoError(t, err)
+
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		// Retrieve instances
+		primary, err := provider.GetKeyed(reflect.TypeOf((*Database)(nil)), "primary")
+		assert.NoError(t, err)
+		assert.Same(t, primaryDB, primary)
+
+		secondary, err := provider.GetKeyed(reflect.TypeOf((*Database)(nil)), "secondary")
+		assert.NoError(t, err)
+		assert.Same(t, secondaryDB, secondary)
+	})
+
+	t.Run("register instance in group", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Create instances
+		configs := []*Config{
+			{Host: "server1", Port: 8080},
+			{Host: "server2", Port: 8081},
+			{Host: "server3", Port: 8082},
+		}
+
+		// Register instances in a group
+		for _, cfg := range configs {
+			err := collection.AddSingleton(cfg, Group("servers"))
+			require.NoError(t, err)
+		}
+
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		// Retrieve all instances from group
+		servers, err := provider.GetGroup(reflect.TypeOf((*Config)(nil)), "servers")
+		assert.NoError(t, err)
+		assert.Len(t, servers, 3)
+
+		// Verify they are the same instances
+		for i, server := range servers {
+			assert.Same(t, configs[i], server)
+		}
+	})
+
+	t.Run("register instance with interface", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Create an instance that implements an interface
+		service := &TestService{Name: "instance-service"}
+
+		// Register as interface
+		err := collection.AddSingleton(service, As(new(TestInterface)))
+		require.NoError(t, err)
+
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		// Retrieve via interface
+		value, err := provider.Get(reflect.TypeOf((*TestInterface)(nil)).Elem())
+		assert.NoError(t, err)
+		assert.Same(t, service, value)
+	})
+
+	t.Run("mix instances and constructors", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Register an instance
+		config := &Config{Host: "localhost", Port: 8080}
+		err := collection.AddSingleton(config)
+		require.NoError(t, err)
+
+		// Register a constructor that depends on the instance
+		newDatabase := func(cfg *Config) *Database {
+			return &Database{
+				ConnectionString: fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
+				MaxConnections:   10,
+			}
+		}
+		err = collection.AddSingleton(newDatabase)
+		require.NoError(t, err)
+
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		// Retrieve the database
+		db, err := provider.Get(reflect.TypeOf((*Database)(nil)))
+		assert.NoError(t, err)
+		assert.NotNil(t, db)
+
+		database := db.(*Database)
+		assert.Equal(t, "localhost:8080", database.ConnectionString)
+	})
+
+	t.Run("scoped instance behavior", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Register an instance as scoped
+		config := &Config{Host: "localhost", Port: 8080}
+		err := collection.AddScoped(config)
+		require.NoError(t, err)
+
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		// Create two scopes
+		scope1, err := provider.CreateScope(context.Background())
+		require.NoError(t, err)
+		defer scope1.Close()
+
+		scope2, err := provider.CreateScope(context.Background())
+		require.NoError(t, err)
+		defer scope2.Close()
+
+		// Get from both scopes
+		val1, err := scope1.Get(reflect.TypeOf((*Config)(nil)))
+		assert.NoError(t, err)
+
+		val2, err := scope2.Get(reflect.TypeOf((*Config)(nil)))
+		assert.NoError(t, err)
+
+		// Should be the same instance (because we registered an instance, not a constructor)
+		assert.Same(t, val1, val2)
+		assert.Same(t, config, val1)
+	})
+
+	t.Run("transient instance behavior", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Register an instance as transient
+		config := &Config{Host: "localhost", Port: 8080}
+		err := collection.AddTransient(config)
+		require.NoError(t, err)
+
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		// Get multiple times
+		val1, err := provider.Get(reflect.TypeOf((*Config)(nil)))
+		assert.NoError(t, err)
+
+		val2, err := provider.Get(reflect.TypeOf((*Config)(nil)))
+		assert.NoError(t, err)
+
+		// Should be the same instance (because we registered an instance, not a constructor)
+		// Note: Even though it's transient, the wrapped constructor always returns the same instance
+		assert.Same(t, val1, val2)
+		assert.Same(t, config, val1)
+	})
+}
+
+// Test edge cases
+func TestInstanceRegistrationEdgeCases(t *testing.T) {
+	t.Run("register nil instance", func(t *testing.T) {
+		collection := NewCollection()
+
+		err := collection.AddSingleton(nil)
+		assert.Error(t, err)
+		assert.Equal(t, ErrNilConstructor, err)
+	})
+
+	t.Run("register nil pointer", func(t *testing.T) {
+		collection := NewCollection()
+
+		type Config struct {
+			Host string
+		}
+
+		var config *Config = nil
+		err := collection.AddSingleton(config)
+		assert.Error(t, err)
+		assert.Equal(t, ErrNilConstructor, err)
+	})
+
+	t.Run("register empty string", func(t *testing.T) {
+		collection := NewCollection()
+
+		err := collection.AddSingleton("", Name("empty"))
+		require.NoError(t, err)
+
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		value, err := provider.GetKeyed(reflect.TypeOf(""), "empty")
+		assert.NoError(t, err)
+		assert.Equal(t, "", value)
+	})
+
+	t.Run("register zero values", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Register various zero values
+		err := collection.AddSingleton(0, Name("zero-int"))
+		require.NoError(t, err)
+
+		err = collection.AddSingleton(false, Name("zero-bool"))
+		require.NoError(t, err)
+
+		err = collection.AddSingleton(0.0, Name("zero-float"))
+		require.NoError(t, err)
+
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		// Verify zero values are preserved
+		intVal, err := provider.GetKeyed(reflect.TypeOf(0), "zero-int")
+		assert.NoError(t, err)
+		assert.Equal(t, 0, intVal)
+
+		boolVal, err := provider.GetKeyed(reflect.TypeOf(false), "zero-bool")
+		assert.NoError(t, err)
+		assert.Equal(t, false, boolVal)
+
+		floatVal, err := provider.GetKeyed(reflect.TypeOf(0.0), "zero-float")
+		assert.NoError(t, err)
+		assert.Equal(t, 0.0, floatVal)
+	})
+
+	t.Run("register function value as instance", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Register a function value (not as constructor, but as a value itself)
+		myFunc := func(x int) int { return x * 2 }
+
+		// This will be treated as a constructor since it's a function
+		// To register it as a value, we need to wrap it
+		wrapperConstructor := func() func(int) int { return myFunc }
+
+		err := collection.AddSingleton(wrapperConstructor, Name("multiplier"))
+		require.NoError(t, err)
+
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		// Retrieve the function
+		value, err := provider.GetKeyed(reflect.TypeOf((func(int) int)(nil)), "multiplier")
+		assert.NoError(t, err)
+
+		fn := value.(func(int) int)
+		assert.Equal(t, 10, fn(5))
+	})
+}
+
+// Test mixing constructors and instances
+func TestMixedRegistration(t *testing.T) {
+	type Logger struct {
+		Level string
+	}
+
+	type Config struct {
+		Host string
+		Port int
+	}
+
+	type Service struct {
+		Logger *Logger
+		Config *Config
+	}
+
+	t.Run("constructor depends on instance", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Register instances
+		logger := &Logger{Level: "debug"}
+		config := &Config{Host: "localhost", Port: 8080}
+
+		err := collection.AddSingleton(logger)
+		require.NoError(t, err)
+
+		err = collection.AddSingleton(config)
+		require.NoError(t, err)
+
+		// Register constructor that depends on instances
+		newService := func(l *Logger, c *Config) *Service {
+			return &Service{Logger: l, Config: c}
+		}
+
+		err = collection.AddSingleton(newService)
+		require.NoError(t, err)
+
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		// Retrieve service
+		svc, err := provider.Get(reflect.TypeOf((*Service)(nil)))
+		assert.NoError(t, err)
+
+		service := svc.(*Service)
+		assert.Same(t, logger, service.Logger)
+		assert.Same(t, config, service.Config)
+	})
+
+	t.Run("instance depends on constructor", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Register constructor first
+		newLogger := func() *Logger {
+			return &Logger{Level: "info"}
+		}
+		err := collection.AddSingleton(newLogger)
+		require.NoError(t, err)
+
+		// Cannot directly register an instance that depends on constructor
+		// But we can register a service that uses the logger
+		newConfig := func() *Config {
+			return &Config{Host: "example.com", Port: 443}
+		}
+		err = collection.AddSingleton(newConfig)
+		require.NoError(t, err)
+
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		// Both should work
+		logger, err := provider.Get(reflect.TypeOf((*Logger)(nil)))
+		assert.NoError(t, err)
+		assert.NotNil(t, logger)
+
+		config, err := provider.Get(reflect.TypeOf((*Config)(nil)))
+		assert.NoError(t, err)
+		assert.NotNil(t, config)
+	})
+}
+
+// Benchmark tests
+func BenchmarkInstanceRegistration(b *testing.B) {
+	type Service struct {
+		Name string
+	}
+
+	b.Run("AddSingleton with instance", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			collection := NewCollection()
+			instance := &Service{Name: "bench"}
+			_ = collection.AddSingleton(instance)
+		}
+	})
+
+	b.Run("AddSingleton with constructor", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			collection := NewCollection()
+			constructor := func() *Service { return &Service{Name: "bench"} }
+			_ = collection.AddSingleton(constructor)
+		}
+	})
+
+	b.Run("AddSingleton with primitive", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			collection := NewCollection()
+			_ = collection.AddSingleton(42, Name("answer"))
+		}
 	})
 }

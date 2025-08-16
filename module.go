@@ -29,7 +29,9 @@ type ModuleOption func(Collection) error
 //	var AppModule = godi.NewModule("app",
 //	    DatabaseModule,
 //	    CacheModule,
-//	    godi.AddScoped(NewAppService),
+//	    godi.AddScoped(NewService1),
+//	    godi.AddScoped(NewService1, godi.Name("service1")),
+//	    godi.AddScoped(NewService1, godi.Name("service2")),
 //	)
 func NewModule(name string, builders ...ModuleOption) ModuleOption {
 	return func(s Collection) error {
@@ -43,28 +45,29 @@ func NewModule(name string, builders ...ModuleOption) ModuleOption {
 				return ModuleError{Module: name, Cause: err}
 			}
 		}
+
 		return nil
 	}
 }
 
 // AddSingleton creates a ModuleBuilder for adding a singleton service.
-func AddSingleton(constructor any, opts ...AddOption) ModuleOption {
+func AddSingleton(service any, opts ...AddOption) ModuleOption {
 	return func(s Collection) error {
-		return s.AddSingleton(constructor, opts...)
+		return s.AddSingleton(service, opts...)
 	}
 }
 
 // AddScoped creates a ModuleBuilder for adding a scoped service.
-func AddScoped(constructor any, opts ...AddOption) ModuleOption {
+func AddScoped(service any, opts ...AddOption) ModuleOption {
 	return func(s Collection) error {
-		return s.AddScoped(constructor, opts...)
+		return s.AddScoped(service, opts...)
 	}
 }
 
 // AddTransient creates a ModuleBuilder for adding a transient service.
-func AddTransient(constructor any, opts ...AddOption) ModuleOption {
+func AddTransient(service any, opts ...AddOption) ModuleOption {
 	return func(s Collection) error {
-		return s.AddTransient(constructor, opts...)
+		return s.AddTransient(service, opts...)
 	}
 }
 
