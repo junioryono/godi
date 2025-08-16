@@ -425,7 +425,18 @@ func (s *scope) invokeDecorator(decorator *Descriptor, instance any) (any, error
 
 	// Return decorated instance
 	if len(results) > 0 {
-		return results[0].Interface(), nil
+		result := results[0]
+
+		// Check if the result is nil (only for types that can be nil)
+		if result.Kind() == reflect.Ptr || result.Kind() == reflect.Interface ||
+			result.Kind() == reflect.Map || result.Kind() == reflect.Slice ||
+			result.Kind() == reflect.Chan || result.Kind() == reflect.Func {
+			if result.IsNil() {
+				return nil, nil
+			}
+		}
+
+		return result.Interface(), nil
 	}
 
 	return nil, fmt.Errorf("decorator returned no value")

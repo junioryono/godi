@@ -35,10 +35,9 @@ type ProviderOptions struct {
 // provider is the concrete implementation of Provider
 type provider struct {
 	// Service registry (immutable after build)
-	services      map[reflect.Type][]*Descriptor
-	keyedServices map[TypeKey][]*Descriptor
-	groups        map[GroupKey][]*Descriptor
-	decorators    map[reflect.Type][]*Descriptor
+	services   map[TypeKey]*Descriptor
+	groups     map[GroupKey][]*Descriptor
+	decorators map[reflect.Type][]*Descriptor
 
 	// Dependency graph (immutable after build)
 	graph *graph.DependencyGraph
@@ -68,8 +67,9 @@ type provider struct {
 
 // instanceKey uniquely identifies a service instance
 type instanceKey struct {
-	Type reflect.Type
-	Key  any
+	Type  reflect.Type
+	Key   any
+	Group string
 }
 
 // Get resolves a service from the root scope
@@ -208,19 +208,8 @@ func (p *provider) setSingleton(key instanceKey, instance any) {
 
 // findDescriptor finds a descriptor for the given service
 func (p *provider) findDescriptor(serviceType reflect.Type, key any) *Descriptor {
-	if key != nil {
-		// Look for keyed service
-		typeKey := TypeKey{Type: serviceType, Key: key}
-		if descriptors, ok := p.keyedServices[typeKey]; ok && len(descriptors) > 0 {
-			return descriptors[0]
-		}
-	} else {
-		// Look for non-keyed service
-		if descriptors, ok := p.services[serviceType]; ok && len(descriptors) > 0 {
-			return descriptors[0]
-		}
-	}
-	return nil
+	typeKey := TypeKey{Type: serviceType, Key: key}
+	return p.services[typeKey]
 }
 
 // findGroupDescriptors finds all descriptors for a group

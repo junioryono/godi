@@ -125,30 +125,16 @@ func (p *provider) createAllSingletons() error {
 
 	// Create instances in dependency order
 	for _, node := range sorted {
-		// Find the descriptor for this node
-		var descriptor *Descriptor
-
-		// Check if it's a provider node
-		if provider, ok := node.Provider.(*Descriptor); ok {
-			descriptor = provider
-		} else {
-			// Try to find descriptor by type and key
-			descriptor = p.findDescriptor(node.Key.Type, node.Key.Key)
-		}
-
-		if descriptor == nil {
-			continue
-		}
-
-		// Only create singletons
+		descriptor := node.Provider.(*Descriptor)
 		if descriptor.Lifetime != Singleton {
 			continue
 		}
 
 		// Create instance key
 		key := instanceKey{
-			Type: descriptor.Type,
-			Key:  descriptor.Key,
+			Type:  descriptor.Type,
+			Key:   descriptor.Key,
+			Group: descriptor.Group,
 		}
 
 		// Check if already created
