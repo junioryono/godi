@@ -347,22 +347,6 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 		return ErrNilConstructor
 	}
 
-	serviceType := reflect.TypeOf(service)
-
-	if serviceType.Kind() != reflect.Func {
-		instance := service
-		instanceType := reflect.TypeOf(instance)
-
-		// Create a properly typed constructor function
-		fnType := reflect.FuncOf([]reflect.Type{}, []reflect.Type{instanceType}, false)
-		fnValue := reflect.MakeFunc(fnType, func(args []reflect.Value) []reflect.Value {
-			return []reflect.Value{reflect.ValueOf(instance)}
-		})
-
-		service = fnValue.Interface()
-		fmt.Printf("Warning: %v is not a function, wrapping it in a constructor function\n", serviceType)
-	}
-
 	// Create descriptor from constructor
 	descriptor, err := newDescriptor(service, lifetime, opts...)
 	if err != nil {
@@ -392,7 +376,7 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 			interfaceType := reflect.TypeOf(iface).Elem()
 
 			// Validate that the service type implements the interface
-			if !descriptor.Type.Implements(interfaceType) {
+			if !descriptor.Type.Implements(interfaceType) && !reflect.PtrTo(descriptor.Type).Implements(interfaceType) {
 				return fmt.Errorf("type %v does not implement interface %v", descriptor.Type, interfaceType)
 			}
 
@@ -407,6 +391,8 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 				Group:           descriptor.Group,
 				As:              options.As,
 				IsDecorator:     false,
+				IsInstance:      descriptor.IsInstance,
+				Instance:        descriptor.Instance,
 				isFunc:          descriptor.isFunc,
 				isResultObject:  descriptor.isResultObject,
 				resultFields:    descriptor.resultFields,

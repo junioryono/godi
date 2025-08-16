@@ -18,16 +18,17 @@ type Analyzer struct {
 	errType reflect.Type
 }
 
-// ConstructorInfo contains analyzed information about a constructor function.
+// ConstructorInfo contains analyzed information about a constructor function or instance.
 type ConstructorInfo struct {
 	Type           reflect.Type
 	Value          reflect.Value
 	Parameters     []ParameterInfo
 	Returns        []ReturnInfo
-	IsFunc         bool
-	IsParamObject  bool // Has In embedded struct
-	IsResultObject bool // Has Out embedded struct
-	HasErrorReturn bool // Returns error as last value
+	IsFunc         bool        // True if this is a function constructor
+	InstanceValue  interface{} // The actual instance value when IsInstance is true
+	IsParamObject  bool        // Has In embedded struct
+	IsResultObject bool        // Has Out embedded struct
+	HasErrorReturn bool        // Returns error as last value
 
 	// Cached for performance
 	dependencies []*Dependency
@@ -170,11 +171,13 @@ func (a *Analyzer) Analyze(constructor any) (*ConstructorInfo, error) {
 
 	// Check if it's a function
 	if typ.Kind() != reflect.Func {
-		info.IsFunc = false
-		// Not a function, treat as a value provider
+		info.InstanceValue = constructor
+		info.Parameters = []ParameterInfo{}
+		info.dependencies = []*Dependency{}
 		return a.cacheAndReturn(cacheKey, info)
 	}
 
+	// It's a function constructor
 	info.IsFunc = true
 
 	// Analyze parameters
@@ -408,7 +411,7 @@ func (a *Analyzer) GetDependencies(constructor any) ([]*Dependency, error) {
 	return info.dependencies, nil
 }
 
-// GetServiceType determines the primary service type from a constructor.
+// GetServiceType determines the primary service type from a constructor or instance.
 func (a *Analyzer) GetServiceType(constructor any) (reflect.Type, error) {
 	info, err := a.Analyze(constructor)
 	if err != nil {
@@ -416,7 +419,7 @@ func (a *Analyzer) GetServiceType(constructor any) (reflect.Type, error) {
 	}
 
 	if !info.IsFunc {
-		// For non-functions, the type is the value itself
+		// For instances, the type is the type of the value
 		return info.Type, nil
 	}
 

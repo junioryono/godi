@@ -41,6 +41,12 @@ type Descriptor struct {
 	// This is typically the same as Type but kept separate for clarity
 	DecoratedType reflect.Type
 
+	// IsInstance indicates if this descriptor holds an instance value
+	IsInstance bool
+
+	// Instance is the actual instance value when IsInstance is true
+	Instance any
+
 	// Analysis results cached for performance
 	isFunc         bool
 	isResultObject bool
@@ -72,25 +78,26 @@ func newDescriptor(constructor any, lifetime Lifetime, opts ...AddOption) (*Desc
 	constructorValue := reflect.ValueOf(constructor)
 	constructorType := constructorValue.Type()
 
-	// Validate it's a function
-	if constructorType.Kind() != reflect.Func {
-		return nil, ErrConstructorNotFunction
-	}
+	// Check if it's an instance (not a function)
+	isInstance := constructorType.Kind() != reflect.Func
 
-	// Validate return values
-	numReturns := constructorType.NumOut()
-	if numReturns == 0 {
-		return nil, ErrConstructorNoReturn
-	}
-	if numReturns > 2 {
-		return nil, ErrConstructorTooManyReturns
-	}
+	// For functions, validate return values
+	if !isInstance {
+		// Validate return values
+		numReturns := constructorType.NumOut()
+		if numReturns == 0 {
+			return nil, ErrConstructorNoReturn
+		}
+		if numReturns > 2 {
+			return nil, ErrConstructorTooManyReturns
+		}
 
-	// If there are 2 return values, the second must be error
-	if numReturns == 2 {
-		errorType := reflect.TypeOf((*error)(nil)).Elem()
-		if !constructorType.Out(1).Implements(errorType) {
-			return nil, ErrConstructorInvalidSecondReturn
+		// If there are 2 return values, the second must be error
+		if numReturns == 2 {
+			errorType := reflect.TypeOf((*error)(nil)).Elem()
+			if !constructorType.Out(1).Implements(errorType) {
+				return nil, ErrConstructorInvalidSecondReturn
+			}
 		}
 	}
 
@@ -107,8 +114,15 @@ func newDescriptor(constructor any, lifetime Lifetime, opts ...AddOption) (*Desc
 		return nil, fmt.Errorf("failed to get dependencies: %w", err)
 	}
 
-	// Get the service type (first return value)
-	serviceType := constructorType.Out(0)
+	// Get the service type
+	var serviceType reflect.Type
+	if isInstance {
+		// For instances, the service type is the type of the instance
+		serviceType = constructorType
+	} else {
+		// For functions, the service type is the first return value
+		serviceType = constructorType.Out(0)
+	}
 
 	// Create descriptor
 	descriptor := &Descriptor{
@@ -119,6 +133,13 @@ func newDescriptor(constructor any, lifetime Lifetime, opts ...AddOption) (*Desc
 		Dependencies:    dependencies,
 		Group:           options.Group,
 		IsDecorator:     false,
+		IsInstance:      isInstance,
+		Instance:        nil,
+	}
+
+	// Store the instance if it's not a function
+	if isInstance {
+		descriptor.Instance = constructor
 	}
 
 	// Apply options
