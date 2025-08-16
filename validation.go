@@ -12,19 +12,9 @@ func validateDependencyGraph(c *collection) error {
 	g := graph.NewDependencyGraph()
 
 	// Add all providers to the graph
-	for _, descriptors := range c.services {
-		for _, descriptor := range descriptors {
-			if err := g.AddProvider(descriptor); err != nil {
-				return fmt.Errorf("failed to add provider %v to graph: %w", descriptor.Type, err)
-			}
-		}
-	}
-
-	for _, descriptors := range c.keyedServices {
-		for _, descriptor := range descriptors {
-			if err := g.AddProvider(descriptor); err != nil {
-				return fmt.Errorf("failed to add keyed provider %v to graph: %w", descriptor.Type, err)
-			}
+	for _, descriptor := range c.services {
+		if err := g.AddProvider(descriptor); err != nil {
+			return fmt.Errorf("failed to add provider %v to graph: %w", descriptor.Type, err)
 		}
 	}
 
@@ -50,23 +40,14 @@ func validateLifetimes(c *collection) error {
 	lifetimes := make(map[instanceKey]Lifetime)
 
 	// Populate lifetimes from all services
-	for serviceType, descriptors := range c.services {
-		for _, descriptor := range descriptors {
-			key := instanceKey{Type: serviceType, Key: descriptor.Key}
-			lifetimes[key] = descriptor.Lifetime
-		}
-	}
-
-	for typeKey, descriptors := range c.keyedServices {
-		for _, descriptor := range descriptors {
-			key := instanceKey{Type: typeKey.Type, Key: typeKey.Key}
-			lifetimes[key] = descriptor.Lifetime
-		}
+	for serviceType, descriptor := range c.services {
+		key := instanceKey{Type: serviceType.Type, Key: descriptor.Key}
+		lifetimes[key] = descriptor.Lifetime
 	}
 
 	for groupKey, descriptors := range c.groups {
 		for _, descriptor := range descriptors {
-			key := instanceKey{Type: groupKey.Type, Key: descriptor.Key}
+			key := instanceKey{Type: groupKey.Type, Key: descriptor.Key, Group: groupKey.Group}
 			lifetimes[key] = descriptor.Lifetime
 		}
 	}
@@ -78,7 +59,7 @@ func validateLifetimes(c *collection) error {
 
 		// Get dependencies
 		for _, dep := range descriptor.Dependencies {
-			depKey := instanceKey{Type: dep.Type, Key: dep.Key}
+			depKey := instanceKey{Type: dep.Type, Key: dep.Key, Group: dep.Group}
 
 			// Find the lifetime of the dependency
 			if depLifetime, ok := lifetimes[depKey]; ok {
@@ -95,19 +76,9 @@ func validateLifetimes(c *collection) error {
 	}
 
 	// Check all services
-	for _, descriptors := range c.services {
-		for _, descriptor := range descriptors {
-			if err := checkDescriptor(descriptor); err != nil {
-				return err
-			}
-		}
-	}
-
-	for _, descriptors := range c.keyedServices {
-		for _, descriptor := range descriptors {
-			if err := checkDescriptor(descriptor); err != nil {
-				return err
-			}
+	for _, descriptor := range c.services {
+		if err := checkDescriptor(descriptor); err != nil {
+			return err
 		}
 	}
 

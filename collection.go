@@ -59,11 +59,11 @@ type Collection interface {
 	// Decorators wrap existing services to modify their behavior.
 	Decorate(decorator any, opts ...AddOption) error
 
-	// Contains checks if a service type is registered.
-	Contains(serviceType reflect.Type) bool
+	// HasService checks if a service exists for the type.
+	HasService(serviceType reflect.Type) bool
 
-	// ContainsKeyed checks if a keyed service is registered.
-	ContainsKeyed(serviceType reflect.Type, key any) bool
+	// HasKeyedService checks if a keyed service exists.
+	HasKeyedService(serviceType reflect.Type, key any) bool
 
 	// Remove removes all services for a given service type.
 	Remove(serviceType reflect.Type)
@@ -84,10 +84,7 @@ type collection struct {
 	mu sync.RWMutex
 
 	// services stores all non-keyed services by type
-	services map[reflect.Type][]*Descriptor
-
-	// keyedServices stores services with keys (named services)
-	keyedServices map[TypeKey][]*Descriptor
+	services map[TypeKey]*Descriptor
 
 	// groups stores services that belong to groups
 	groups map[GroupKey][]*Descriptor
@@ -95,9 +92,6 @@ type collection struct {
 	// decorators stores decorator descriptors by type
 	// These are just Descriptors with IsDecorator=true
 	decorators map[reflect.Type][]*Descriptor
-
-	// lifetimes tracks the lifetime of each type for validation
-	lifetimes map[reflect.Type]Lifetime
 }
 
 // TypeKey uniquely identifies a keyed service
@@ -112,12 +106,6 @@ type GroupKey struct {
 	Group string
 }
 
-// typeKeyPair represents a type-key combination for keyed services.
-type typeKeyPair struct {
-	serviceType reflect.Type
-	serviceKey  any
-}
-
 // NewCollection creates a new empty Collection instance.
 //
 // Example:
@@ -127,11 +115,9 @@ type typeKeyPair struct {
 //	provider, err := collection.Build()
 func NewCollection() Collection {
 	return &collection{
-		services:      make(map[reflect.Type][]*Descriptor),
-		keyedServices: make(map[TypeKey][]*Descriptor),
-		groups:        make(map[GroupKey][]*Descriptor),
-		decorators:    make(map[reflect.Type][]*Descriptor),
-		lifetimes:     make(map[reflect.Type]Lifetime),
+		services:   make(map[TypeKey]*Descriptor),
+		groups:     make(map[GroupKey][]*Descriptor),
+		decorators: make(map[reflect.Type][]*Descriptor),
 	}
 }
 
@@ -172,16 +158,15 @@ func (sc *collection) BuildWithOptions(options *ProviderOptions) (Provider, erro
 
 	// Create the provider
 	p := &provider{
-		services:      sc.services,
-		keyedServices: sc.keyedServices,
-		groups:        sc.groups,
-		decorators:    sc.decorators,
-		graph:         g,
-		analyzer:      reflection.New(),
-		singletons:    make(map[instanceKey]any),
-		disposables:   make([]Disposable, 0),
-		scopes:        make(map[*scope]struct{}),
-		built:         true,
+		services:    sc.services,
+		groups:      sc.groups,
+		decorators:  sc.decorators,
+		graph:       g,
+		analyzer:    reflection.New(),
+		singletons:  make(map[instanceKey]any),
+		disposables: make([]Disposable, 0),
+		scopes:      make(map[*scope]struct{}),
+		built:       true,
 	}
 
 	// Create root scope
@@ -238,32 +223,14 @@ func (sc *collection) Decorate(decorator any, opts ...AddOption) error {
 	return nil
 }
 
-// Contains checks if a service type is registered in the collection.
-func (r *collection) Contains(serviceType reflect.Type) bool {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	_, exists := r.services[serviceType]
-	return exists && len(r.services[serviceType]) > 0
-}
-
-// ContainsKeyed checks if a keyed service is registered in the collection.
-func (r *collection) ContainsKeyed(serviceType reflect.Type, key any) bool {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	typeKey := TypeKey{Type: serviceType, Key: key}
-	_, exists := r.keyedServices[typeKey]
-	return exists && len(r.keyedServices[typeKey]) > 0
-}
-
 // HasService checks if a service exists for the type
 func (r *collection) HasService(t reflect.Type) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	services, ok := r.services[t]
-	return ok && len(services) > 0
+	typeKey := TypeKey{Type: t}
+	_, ok := r.services[typeKey]
+	return ok
 }
 
 // HasKeyedService checks if a keyed service exists
@@ -272,8 +239,8 @@ func (r *collection) HasKeyedService(t reflect.Type, key any) bool {
 	defer r.mu.RUnlock()
 
 	typeKey := TypeKey{Type: t, Key: key}
-	services, ok := r.keyedServices[typeKey]
-	return ok && len(services) > 0
+	_, ok := r.services[typeKey]
+	return ok
 }
 
 // HasGroup checks if a group has any services
@@ -291,25 +258,8 @@ func (r *collection) Remove(t reflect.Type) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	delete(r.services, t)
-	delete(r.lifetimes, t)
-
-	// Remove from keyed services
-	for key := range r.keyedServices {
-		if key.Type == t {
-			delete(r.keyedServices, key)
-		}
-	}
-
-	// Remove from groups
-	for key := range r.groups {
-		if key.Type == t {
-			delete(r.groups, key)
-		}
-	}
-
-	// Remove decorators for this type
-	delete(r.decorators, t)
+	typeKey := TypeKey{Type: t}
+	delete(r.services, typeKey)
 }
 
 // RemoveKeyed removes a specific keyed service
@@ -318,7 +268,7 @@ func (r *collection) RemoveKeyed(t reflect.Type, key any) {
 	defer r.mu.Unlock()
 
 	typeKey := TypeKey{Type: t, Key: key}
-	delete(r.keyedServices, typeKey)
+	delete(r.services, typeKey)
 }
 
 // ToSlice returns a copy of all registered service descriptors
@@ -331,22 +281,10 @@ func (r *collection) ToSlice() []*Descriptor {
 	descriptors := make([]*Descriptor, 0)
 
 	// Add regular services
-	for _, services := range r.services {
-		for _, service := range services {
-			if !seen[service] {
-				descriptors = append(descriptors, service)
-				seen[service] = true
-			}
-		}
-	}
-
-	// Add keyed services
-	for _, keyedServices := range r.keyedServices {
-		for _, service := range keyedServices {
-			if !seen[service] {
-				descriptors = append(descriptors, service)
-				seen[service] = true
-			}
+	for _, service := range r.services {
+		if !seen[service] {
+			descriptors = append(descriptors, service)
+			seen[service] = true
 		}
 	}
 
@@ -382,17 +320,8 @@ func (r *collection) Count() int {
 	seen := make(map[*Descriptor]bool)
 
 	// Count regular services
-	for _, services := range r.services {
-		for _, service := range services {
-			seen[service] = true
-		}
-	}
-
-	// Count keyed services
-	for _, keyedServices := range r.keyedServices {
-		for _, service := range keyedServices {
-			seen[service] = true
-		}
+	for _, service := range r.services {
+		seen[service] = true
 	}
 
 	// Count grouped services
@@ -415,13 +344,13 @@ func (r *collection) Count() int {
 // addService registers a new service
 func (r *collection) addService(constructor any, lifetime Lifetime, opts ...AddOption) error {
 	// Create descriptor from constructor
-	descriptor, err := NewDescriptor(constructor, lifetime, opts...)
+	descriptor, err := newDescriptor(constructor, lifetime, opts...)
 	if err != nil {
 		return err
 	}
 
 	// Validate the descriptor
-	if err := ValidateDescriptor(descriptor); err != nil {
+	if err := descriptor.Validate(); err != nil {
 		return err
 	}
 
@@ -455,7 +384,7 @@ func (r *collection) addService(constructor any, lifetime Lifetime, opts ...AddO
 				Constructor:     descriptor.Constructor,
 				ConstructorType: descriptor.ConstructorType,
 				Dependencies:    descriptor.Dependencies,
-				Groups:          descriptor.Groups,
+				Group:           descriptor.Group,
 				As:              options.As,
 				IsDecorator:     false,
 				isFunc:          descriptor.isFunc,
@@ -487,35 +416,20 @@ func (r *collection) registerDescriptor(descriptor *Descriptor) error {
 		return nil
 	}
 
-	// Validate lifetime consistency for non-keyed, non-grouped services
-	// Note: grouped and keyed services can have different lifetimes from the base service
-	if descriptor.Key == nil && len(descriptor.Groups) == 0 {
-		if existing, ok := r.lifetimes[descriptor.Type]; ok {
-			if existing != descriptor.Lifetime {
-				return fmt.Errorf("type %v already registered with lifetime %v, cannot register with %v",
-					descriptor.Type, existing, descriptor.Lifetime)
-			}
-		}
-		// Store lifetime for regular services only
-		r.lifetimes[descriptor.Type] = descriptor.Lifetime
-	}
-
 	// Register based on type of service
-	if descriptor.Key != nil {
-		// Keyed service - only in keyedServices
+	if descriptor.Key != nil || descriptor.Group == "" {
 		key := TypeKey{Type: descriptor.Type, Key: descriptor.Key}
-		r.keyedServices[key] = append(r.keyedServices[key], descriptor)
-	} else if len(descriptor.Groups) > 0 {
-		// Grouped service - only in groups (not in regular services)
-		// Register in groups only, handled below
-	} else {
-		// Regular service - only in services
-		r.services[descriptor.Type] = append(r.services[descriptor.Type], descriptor)
-	}
+		if _, exists := r.services[key]; exists {
+			if descriptor.Key == nil {
+				return fmt.Errorf("type %v already registered", descriptor.Type)
+			}
 
-	// Register in groups
-	for _, group := range descriptor.Groups {
-		groupKey := GroupKey{Type: descriptor.Type, Group: group}
+			return fmt.Errorf("type %v with key %v already registered", descriptor.Type, descriptor.Key)
+		}
+
+		r.services[key] = descriptor
+	} else {
+		groupKey := GroupKey{Type: descriptor.Type, Group: descriptor.Group}
 		r.groups[groupKey] = append(r.groups[groupKey], descriptor)
 	}
 

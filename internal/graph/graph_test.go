@@ -3,6 +3,7 @@ package graph_test
 import (
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -248,19 +249,19 @@ func TestDependencyGraph_ComplexCycles(t *testing.T) {
 	}
 }
 
-// Test types for depth calculation test
-type DepthA struct{}
-type DepthB struct{}
-type DepthC struct{}
-type DepthD struct{}
-type DepthE struct{}
-type DepthF struct{}
-type DepthG struct{}
-type DepthH struct{}
-type DepthI struct{}
-
 // Test depth calculation with complex graphs
 func TestDependencyGraph_DepthCalculation(t *testing.T) {
+	// Test types for depth calculation test
+	type DepthA struct{}
+	type DepthB struct{}
+	type DepthC struct{}
+	type DepthD struct{}
+	type DepthE struct{}
+	type DepthF struct{}
+	type DepthG struct{}
+	type DepthH struct{}
+	type DepthI struct{}
+
 	g := graph.NewDependencyGraph()
 
 	// Create a more complex graph:
@@ -331,7 +332,7 @@ func TestDependencyGraph_DepthCalculation(t *testing.T) {
 	}
 
 	for name, expectedDepth := range expectations {
-		node := g.GetNode(types[name], nil)
+		node := g.GetNode(types[name], nil, "")
 		if node == nil {
 			t.Errorf("Node %s not found", name)
 			continue
@@ -343,13 +344,13 @@ func TestDependencyGraph_DepthCalculation(t *testing.T) {
 	}
 }
 
-// Test types for transitive dependencies test
-type Database struct{}
-type Cache struct{}
-type Service struct{}
-
 // Test transitive dependencies with keyed services
 func TestDependencyGraph_TransitiveDependenciesWithKeys(t *testing.T) {
+	// Test types for transitive dependencies test
+	type Database struct{}
+	type Cache struct{}
+	type Service struct{}
+
 	g := graph.NewDependencyGraph()
 
 	dbType := reflect.TypeOf(Database{})
@@ -388,7 +389,7 @@ func TestDependencyGraph_TransitiveDependenciesWithKeys(t *testing.T) {
 	}
 
 	// Get transitive dependencies of primary service
-	deps := g.GetTransitiveDependencies(serviceType, "primary")
+	deps := g.GetTransitiveDependencies(serviceType, "primary", "")
 
 	if len(deps) != 2 {
 		t.Errorf("Expected 2 transitive dependencies, got %d", len(deps))
@@ -402,13 +403,13 @@ func TestDependencyGraph_TransitiveDependenciesWithKeys(t *testing.T) {
 	}
 }
 
-// Test types for removal consistency test
-type RemovalService1 struct{}
-type RemovalService2 struct{}
-type RemovalService3 struct{}
-
 // Test node removal and graph consistency
 func TestDependencyGraph_RemovalConsistency(t *testing.T) {
+	// Test types for removal consistency test
+	type RemovalService1 struct{}
+	type RemovalService2 struct{}
+	type RemovalService3 struct{}
+
 	g := graph.NewDependencyGraph()
 
 	type1 := reflect.TypeOf(RemovalService1{})
@@ -432,20 +433,20 @@ func TestDependencyGraph_RemovalConsistency(t *testing.T) {
 	}
 
 	// Remove middle node
-	g.RemoveProvider(type2, nil)
+	g.RemoveProvider(type2, nil, "")
 
 	if g.Size() != 2 {
 		t.Errorf("Expected 2 nodes after removal, got %d", g.Size())
 	}
 
 	// Service3's dependencies should be updated
-	deps := g.GetDependencies(type3, nil)
+	deps := g.GetDependencies(type3, nil, "")
 	if len(deps) != 0 {
 		t.Errorf("Service3 should have no dependencies after Service2 removal, got %d", len(deps))
 	}
 
 	// Service1 should have no dependents
-	dependents := g.GetDependents(type1, nil)
+	dependents := g.GetDependents(type1, nil, "")
 	if len(dependents) != 0 {
 		t.Errorf("Service1 should have no dependents after Service2 removal, got %d", len(dependents))
 	}
@@ -486,12 +487,12 @@ func BenchmarkDependencyGraph_TopologicalSort(b *testing.B) {
 	}
 }
 
-// Test types for cache invalidation test
-type CacheService1 struct{}
-type CacheService2 struct{}
-
 // Test Clear function
 func TestDependencyGraph_Clear(t *testing.T) {
+	// Test types for cache invalidation test
+	type CacheService1 struct{}
+	type CacheService2 struct{}
+
 	g := graph.NewDependencyGraph()
 
 	// Add some providers
@@ -546,7 +547,7 @@ func TestDependencyGraph_HasNode(t *testing.T) {
 	testType := reflect.TypeOf(HasNodeTest{})
 
 	// Check node doesn't exist initially
-	if g.HasNode(testType, nil) {
+	if g.HasNode(testType, nil, "") {
 		t.Error("HasNode should return false for non-existent node")
 	}
 
@@ -557,12 +558,12 @@ func TestDependencyGraph_HasNode(t *testing.T) {
 	})
 
 	// Check node exists
-	if !g.HasNode(testType, nil) {
+	if !g.HasNode(testType, nil, "") {
 		t.Error("HasNode should return true for existing node")
 	}
 
 	// Check with key
-	if g.HasNode(testType, "some-key") {
+	if g.HasNode(testType, "some-key", "") {
 		t.Error("HasNode should return false for non-existent keyed node")
 	}
 
@@ -574,7 +575,7 @@ func TestDependencyGraph_HasNode(t *testing.T) {
 	})
 
 	// Check keyed node exists
-	if !g.HasNode(testType, "test-key") {
+	if !g.HasNode(testType, "test-key", "") {
 		t.Error("HasNode should return true for existing keyed node")
 	}
 }
@@ -671,19 +672,19 @@ func TestDependencyGraph_GetMethods_NonExistent(t *testing.T) {
 	nonExistentType := reflect.TypeOf(NonExistent{})
 
 	// GetDependencies on non-existent node should return nil
-	deps := g.GetDependencies(nonExistentType, nil)
+	deps := g.GetDependencies(nonExistentType, nil, "")
 	if deps != nil {
 		t.Error("GetDependencies should return nil for non-existent node")
 	}
 
 	// GetDependents on non-existent node should return nil
-	dependents := g.GetDependents(nonExistentType, nil)
+	dependents := g.GetDependents(nonExistentType, nil, "")
 	if dependents != nil {
 		t.Error("GetDependents should return nil for non-existent node")
 	}
 
 	// GetNode on non-existent node should return nil
-	node := g.GetNode(nonExistentType, nil)
+	node := g.GetNode(nonExistentType, nil, "")
 	if node != nil {
 		t.Error("GetNode should return nil for non-existent node")
 	}
@@ -710,7 +711,7 @@ func TestDependencyGraph_RemoveProvider_NonExistent(t *testing.T) {
 	type NonExistent struct{}
 
 	// Should not panic when removing non-existent provider
-	g.RemoveProvider(reflect.TypeOf(NonExistent{}), nil)
+	g.RemoveProvider(reflect.TypeOf(NonExistent{}), nil, "")
 
 	// Graph should still be empty
 	if g.Size() != 0 {
@@ -720,6 +721,10 @@ func TestDependencyGraph_RemoveProvider_NonExistent(t *testing.T) {
 
 // Test cache invalidation
 func TestDependencyGraph_CacheInvalidation(t *testing.T) {
+	// Test types for cache invalidation test
+	type CacheService1 struct{}
+	type CacheService2 struct{}
+
 	g := graph.NewDependencyGraph()
 
 	type1 := reflect.TypeOf(CacheService1{})
@@ -786,7 +791,7 @@ func TestDependencyGraph_ComplexScenarios(t *testing.T) {
 		})
 
 		// Get transitive dependencies of A
-		deps := g.GetTransitiveDependencies(typeA, nil)
+		deps := g.GetTransitiveDependencies(typeA, nil, "")
 
 		// Should have B and C
 		if len(deps) != 2 {
@@ -940,21 +945,21 @@ func TestDependencyGraph_ComplexScenarios(t *testing.T) {
 		})
 
 		// Remove A - this should break the graph
-		g.RemoveProvider(typeA, nil)
+		g.RemoveProvider(typeA, nil, "")
 
 		// B and C should have no dependencies now
-		bDeps := g.GetDependencies(typeB, nil)
+		bDeps := g.GetDependencies(typeB, nil, "")
 		if len(bDeps) != 0 {
 			t.Errorf("B should have no dependencies after A removal, got %d", len(bDeps))
 		}
 
-		cDeps := g.GetDependencies(typeC, nil)
+		cDeps := g.GetDependencies(typeC, nil, "")
 		if len(cDeps) != 0 {
 			t.Errorf("C should have no dependencies after A removal, got %d", len(cDeps))
 		}
 
 		// D should still depend on B and C
-		dDeps := g.GetDependencies(typeD, nil)
+		dDeps := g.GetDependencies(typeD, nil, "")
 		if len(dDeps) != 2 {
 			t.Errorf("D should still have 2 dependencies, got %d", len(dDeps))
 		}
@@ -1143,8 +1148,8 @@ func TestTopologicalSort_DependencyOrder(t *testing.T) {
 			// For simple validation, check specific constraints
 			if tt.name == "simple_chain" {
 				// ServiceNoDeps must come before ServiceWithOneDep
-				noDepsIdx := indexOf(actualOrder, "ServiceNoDeps")
-				oneDepIdx := indexOf(actualOrder, "ServiceWithOneDep")
+				noDepsIdx := slices.Index(actualOrder, "ServiceNoDeps")
+				oneDepIdx := slices.Index(actualOrder, "ServiceWithOneDep")
 
 				if noDepsIdx == -1 || oneDepIdx == -1 {
 					t.Errorf("Missing expected types in result")
@@ -1156,9 +1161,9 @@ func TestTopologicalSort_DependencyOrder(t *testing.T) {
 
 			if tt.name == "complex_dependencies" {
 				// Check ordering: NoDeps < WithOneDep < WithTwoDeps
-				noDepsIdx := indexOf(actualOrder, "ServiceNoDeps")
-				oneDepIdx := indexOf(actualOrder, "ServiceWithOneDep")
-				twoDepsIdx := indexOf(actualOrder, "ServiceWithTwoDeps")
+				noDepsIdx := slices.Index(actualOrder, "ServiceNoDeps")
+				oneDepIdx := slices.Index(actualOrder, "ServiceWithOneDep")
+				twoDepsIdx := slices.Index(actualOrder, "ServiceWithTwoDeps")
 
 				if noDepsIdx == -1 || oneDepIdx == -1 || twoDepsIdx == -1 {
 					t.Errorf("Missing expected types in result")
@@ -1258,13 +1263,4 @@ func TestTopologicalSort_ForDependencyInjection(t *testing.T) {
 	if sorted[1].Key.Type != typeServiceWithDep {
 		t.Errorf("Second node should be ResolutionServiceWithDep (has deps), got %v", sorted[1].Key.Type)
 	}
-}
-
-func indexOf(slice []string, str string) int {
-	for i, s := range slice {
-		if s == str {
-			return i
-		}
-	}
-	return -1
 }

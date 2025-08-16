@@ -17,6 +17,9 @@ type Provider interface {
 	// GetKey returns the optional key for named/keyed services
 	GetKey() any
 
+	// GetGroup returns the optional group for grouped services
+	GetGroup() string
+
 	// GetDependencies returns the analyzed dependencies
 	GetDependencies() []*reflection.Dependency
 }
@@ -37,8 +40,9 @@ type DependencyGraph struct {
 
 // NodeKey uniquely identifies a node in the graph
 type NodeKey struct {
-	Type reflect.Type
-	Key  any // for keyed services
+	Type  reflect.Type
+	Key   any    // for keyed services
+	Group string // for grouped services
 }
 
 // Node represents a service in the dependency graph
@@ -80,8 +84,9 @@ func (g *DependencyGraph) AddProvider(provider Provider) error {
 
 	// Create node key
 	nodeKey := NodeKey{
-		Type: provider.GetType(),
-		Key:  provider.GetKey(),
+		Type:  provider.GetType(),
+		Key:   provider.GetKey(),
+		Group: provider.GetGroup(),
 	}
 
 	// Create or update node
@@ -104,8 +109,9 @@ func (g *DependencyGraph) AddProvider(provider Provider) error {
 	dependencies := make([]NodeKey, 0, len(providerDeps))
 	for _, dep := range providerDeps {
 		depKey := NodeKey{
-			Type: dep.Type,
-			Key:  dep.Key,
+			Type:  dep.Type,
+			Key:   dep.Key,
+			Group: dep.Group,
 		}
 		dependencies = append(dependencies, depKey)
 
@@ -142,13 +148,14 @@ func (g *DependencyGraph) AddProvider(provider Provider) error {
 }
 
 // RemoveProvider removes a provider from the graph
-func (g *DependencyGraph) RemoveProvider(serviceType reflect.Type, key any) {
+func (g *DependencyGraph) RemoveProvider(serviceType reflect.Type, key any, group string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
 	nodeKey := NodeKey{
-		Type: serviceType,
-		Key:  key,
+		Type:  serviceType,
+		Key:   key,
+		Group: group,
 	}
 
 	// Store the node before removing for cleanup
@@ -469,11 +476,11 @@ func (g *DependencyGraph) findCyclePath(start NodeKey) []NodeKey {
 }
 
 // GetDependencies returns the direct dependencies of a service
-func (g *DependencyGraph) GetDependencies(serviceType reflect.Type, key any) []NodeKey {
+func (g *DependencyGraph) GetDependencies(serviceType reflect.Type, key any, group string) []NodeKey {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 
-	nodeKey := NodeKey{Type: serviceType, Key: key}
+	nodeKey := NodeKey{Type: serviceType, Key: key, Group: group}
 	if node, exists := g.nodes[nodeKey]; exists {
 		result := make([]NodeKey, len(node.Dependencies))
 		copy(result, node.Dependencies)
@@ -484,11 +491,11 @@ func (g *DependencyGraph) GetDependencies(serviceType reflect.Type, key any) []N
 }
 
 // GetDependents returns services that depend on the given service
-func (g *DependencyGraph) GetDependents(serviceType reflect.Type, key any) []NodeKey {
+func (g *DependencyGraph) GetDependents(serviceType reflect.Type, key any, group string) []NodeKey {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 
-	nodeKey := NodeKey{Type: serviceType, Key: key}
+	nodeKey := NodeKey{Type: serviceType, Key: key, Group: group}
 	if node, exists := g.nodes[nodeKey]; exists {
 		result := make([]NodeKey, len(node.Dependents))
 		copy(result, node.Dependents)
@@ -499,11 +506,11 @@ func (g *DependencyGraph) GetDependents(serviceType reflect.Type, key any) []Nod
 }
 
 // GetTransitiveDependencies returns all dependencies (direct and indirect)
-func (g *DependencyGraph) GetTransitiveDependencies(serviceType reflect.Type, key any) []NodeKey {
+func (g *DependencyGraph) GetTransitiveDependencies(serviceType reflect.Type, key any, group string) []NodeKey {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 
-	nodeKey := NodeKey{Type: serviceType, Key: key}
+	nodeKey := NodeKey{Type: serviceType, Key: key, Group: group}
 	visited := make(map[NodeKey]bool)
 	result := make([]NodeKey, 0)
 
@@ -529,20 +536,20 @@ func (g *DependencyGraph) GetTransitiveDependencies(serviceType reflect.Type, ke
 }
 
 // GetNode returns the node for a given service
-func (g *DependencyGraph) GetNode(serviceType reflect.Type, key any) *Node {
+func (g *DependencyGraph) GetNode(serviceType reflect.Type, key any, group string) *Node {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 
-	nodeKey := NodeKey{Type: serviceType, Key: key}
+	nodeKey := NodeKey{Type: serviceType, Key: key, Group: group}
 	return g.nodes[nodeKey]
 }
 
 // HasNode checks if a node exists in the graph
-func (g *DependencyGraph) HasNode(serviceType reflect.Type, key any) bool {
+func (g *DependencyGraph) HasNode(serviceType reflect.Type, key any, group string) bool {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 
-	nodeKey := NodeKey{Type: serviceType, Key: key}
+	nodeKey := NodeKey{Type: serviceType, Key: key, Group: group}
 	_, exists := g.nodes[nodeKey]
 	return exists
 }
@@ -642,10 +649,14 @@ func (g *DependencyGraph) CalculateDepths() {
 
 // String returns a string representation of the node key
 func (k NodeKey) String() string {
+	var str = fmt.Sprintf("%v", k.Type)
 	if k.Key != nil {
-		return fmt.Sprintf("%v[%v]", k.Type, k.Key)
+		str += fmt.Sprintf(":%v", k.Key)
 	}
-	return fmt.Sprintf("%v", k.Type)
+	if k.Group != "" {
+		str += fmt.Sprintf(" [%s]", k.Group)
+	}
+	return str
 }
 
 // String returns a string representation of the node

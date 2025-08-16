@@ -28,7 +28,7 @@ type Descriptor struct {
 	Dependencies []*reflection.Dependency
 
 	// Groups this provider belongs to (not used for decorators)
-	Groups []string
+	Group string
 
 	// As is an optional list of interface types this service can be registered as
 	// This is typically used for interface-based services
@@ -49,42 +49,8 @@ type Descriptor struct {
 	paramFields    []reflection.ParamField
 }
 
-// IsProvider returns true if this descriptor is a provider (not a decorator)
-func (d *Descriptor) IsProvider() bool {
-	return !d.IsDecorator
-}
-
-// GetTargetType returns the type this descriptor targets
-// For providers, this is the type they provide
-// For decorators, this is the type they decorate
-func (d *Descriptor) GetTargetType() reflect.Type {
-	if d.IsDecorator && d.DecoratedType != nil {
-		return d.DecoratedType
-	}
-
-	return d.Type
-}
-
-// GetType returns the service type this descriptor produces
-// Implements the Provider interface from the graph package
-func (d *Descriptor) GetType() reflect.Type {
-	return d.Type
-}
-
-// GetKey returns the optional key for named/keyed services
-// Implements the Provider interface from the graph package
-func (d *Descriptor) GetKey() any {
-	return d.Key
-}
-
-// GetDependencies returns the analyzed dependencies
-// Implements the Provider interface from the graph package
-func (d *Descriptor) GetDependencies() []*reflection.Dependency {
-	return d.Dependencies
-}
-
-// NewDescriptor creates a new descriptor from a constructor with the given lifetime and options
-func NewDescriptor(constructor any, lifetime Lifetime, opts ...AddOption) (*Descriptor, error) {
+// newDescriptor creates a new descriptor from a constructor with the given lifetime and options
+func newDescriptor(constructor any, lifetime Lifetime, opts ...AddOption) (*Descriptor, error) {
 	if constructor == nil {
 		return nil, ErrNilConstructor
 	}
@@ -151,16 +117,13 @@ func NewDescriptor(constructor any, lifetime Lifetime, opts ...AddOption) (*Desc
 		Constructor:     constructorValue,
 		ConstructorType: constructorType,
 		Dependencies:    dependencies,
+		Group:           options.Group,
 		IsDecorator:     false,
 	}
 
 	// Apply options
 	if options.Name != "" {
 		descriptor.Key = options.Name
-	}
-
-	if options.Group != "" {
-		descriptor.Groups = []string{options.Group}
 	}
 
 	// Handle As option - this allows the service to be registered under interface types
@@ -208,8 +171,48 @@ func NewDescriptor(constructor any, lifetime Lifetime, opts ...AddOption) (*Desc
 	return descriptor, nil
 }
 
-// ValidateDescriptor validates a descriptor
-func ValidateDescriptor(d *Descriptor) error {
+// IsProvider returns true if this descriptor is a provider (not a decorator)
+func (d *Descriptor) IsProvider() bool {
+	return !d.IsDecorator
+}
+
+// GetTargetType returns the type this descriptor targets
+// For providers, this is the type they provide
+// For decorators, this is the type they decorate
+func (d *Descriptor) GetTargetType() reflect.Type {
+	if d.IsDecorator && d.DecoratedType != nil {
+		return d.DecoratedType
+	}
+
+	return d.Type
+}
+
+// GetType returns the service type this descriptor produces
+// Implements the Provider interface from the graph package
+func (d *Descriptor) GetType() reflect.Type {
+	return d.Type
+}
+
+// GetKey returns the optional key for named/keyed services
+// Implements the Provider interface from the graph package
+func (d *Descriptor) GetKey() any {
+	return d.Key
+}
+
+// GetGroup returns the groups this provider belongs to
+// Implements the Provider interface from the graph package
+func (d *Descriptor) GetGroup() string {
+	return d.Group
+}
+
+// GetDependencies returns the analyzed dependencies
+// Implements the Provider interface from the graph package
+func (d *Descriptor) GetDependencies() []*reflection.Dependency {
+	return d.Dependencies
+}
+
+// Validate validates a descriptor
+func (d *Descriptor) Validate() error {
 	if d == nil {
 		return ErrDescriptorNil
 	}
@@ -224,6 +227,10 @@ func ValidateDescriptor(d *Descriptor) error {
 
 	if d.ConstructorType == nil {
 		return fmt.Errorf("descriptor constructor type cannot be nil")
+	}
+
+	if d.Key != nil && d.Group != "" {
+		return fmt.Errorf("descriptor cannot have both key and group set")
 	}
 
 	// Validate lifetime
