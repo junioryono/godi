@@ -431,6 +431,8 @@ func (r *collection) registerDescriptor(descriptor *Descriptor) error {
 	} else {
 		groupKey := GroupKey{Type: descriptor.Type, Group: descriptor.Group}
 		r.groups[groupKey] = append(r.groups[groupKey], descriptor)
+
+		descriptor.Key = len(r.groups[groupKey])
 	}
 
 	return nil
