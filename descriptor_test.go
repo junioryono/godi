@@ -127,7 +127,9 @@ func TestNewDescriptor(t *testing.T) {
 	t.Run("nil constructor", func(t *testing.T) {
 		descriptor, err := newDescriptor(nil, Singleton)
 		assert.Error(t, err)
-		assert.Equal(t, ErrConstructorNil, err)
+		var valErr *ValidationError
+		assert.ErrorAs(t, err, &valErr)
+		assert.ErrorIs(t, valErr.Cause, ErrConstructorNil)
 		assert.Nil(t, descriptor)
 	})
 
@@ -143,7 +145,9 @@ func TestNewDescriptor(t *testing.T) {
 	t.Run("constructor with no return", func(t *testing.T) {
 		descriptor, err := newDescriptor(NewDescriptorNoReturn, Singleton)
 		assert.Error(t, err)
-		assert.Equal(t, ErrConstructorNoReturn, err)
+		var valErr *ValidationError
+		assert.ErrorAs(t, err, &valErr)
+		assert.ErrorIs(t, valErr.Cause, ErrConstructorNoReturn)
 		assert.Nil(t, descriptor)
 	})
 
@@ -355,7 +359,9 @@ func TestValidate(t *testing.T) {
 		}
 		err := descriptor.Validate()
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "type cannot be nil")
+		var valErr *ValidationError
+		assert.ErrorAs(t, err, &valErr)
+		assert.ErrorIs(t, valErr.Cause, ErrDescriptorNil)
 	})
 
 	t.Run("descriptor with invalid constructor", func(t *testing.T) {
@@ -367,7 +373,9 @@ func TestValidate(t *testing.T) {
 		}
 		err := descriptor.Validate()
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "constructor is invalid")
+		var valErr *ValidationError
+		assert.ErrorAs(t, err, &valErr)
+		assert.ErrorIs(t, valErr.Cause, ErrConstructorNil)
 	})
 
 	t.Run("descriptor with nil constructor type", func(t *testing.T) {
@@ -378,7 +386,9 @@ func TestValidate(t *testing.T) {
 		}
 		err := descriptor.Validate()
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "constructor type cannot be nil")
+		var valErr *ValidationError
+		assert.ErrorAs(t, err, &valErr)
+		assert.ErrorIs(t, valErr.Cause, ErrConstructorNil)
 	})
 
 	t.Run("descriptor with both key and group", func(t *testing.T) {
@@ -521,7 +531,9 @@ func TestValidateDescriptor(t *testing.T) {
 
 		err := descriptor.Validate()
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "type cannot be nil")
+		var valErr *ValidationError
+		assert.ErrorAs(t, err, &valErr)
+		assert.ErrorIs(t, valErr.Cause, ErrDescriptorNil)
 	})
 
 	t.Run("descriptor with invalid constructor", func(t *testing.T) {
@@ -534,7 +546,9 @@ func TestValidateDescriptor(t *testing.T) {
 
 		err := descriptor.Validate()
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "constructor is invalid")
+		var valErr *ValidationError
+		assert.ErrorAs(t, err, &valErr)
+		assert.ErrorIs(t, valErr.Cause, ErrConstructorNil)
 	})
 
 	t.Run("descriptor with invalid service lifetime", func(t *testing.T) {
