@@ -141,7 +141,7 @@ func (r *TestResolver) Get(t reflect.Type) (any, error) {
 		return val, nil
 	}
 	// Create a new instance as fallback
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		return reflect.New(t.Elem()).Interface(), nil
 	}
 	return reflect.Zero(t).Interface(), nil
@@ -500,7 +500,7 @@ func TestParamObjectBuilder_PointerTypes(t *testing.T) {
 		t.Fatalf("Failed with non-pointer type: %v", err)
 	}
 
-	if val1.Kind() == reflect.Ptr {
+	if val1.Kind() == reflect.Pointer {
 		params := val1.Elem().Interface().(NonPointerParams)
 		if params.DB != db {
 			t.Error("DB not properly set in non-pointer params")
@@ -519,7 +519,7 @@ func TestParamObjectBuilder_PointerTypes(t *testing.T) {
 		t.Fatalf("Failed with pointer type: %v", err)
 	}
 
-	if val2.Kind() != reflect.Ptr {
+	if val2.Kind() != reflect.Pointer {
 		t.Error("Expected pointer result for pointer type")
 	}
 }

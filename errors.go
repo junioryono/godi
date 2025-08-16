@@ -44,6 +44,24 @@ var (
 	ErrDescriptorNil           = errors.New("descriptor cannot be nil")
 )
 
+var (
+	_ error = LifetimeError{}
+	_ error = LifetimeConflictError{}
+	_ error = AlreadyRegisteredError{}
+	_ error = ResolutionError{}
+	_ error = TimeoutError{}
+	_ error = RegistrationError{}
+	_ error = ValidationError{}
+	_ error = ModuleError{}
+	_ error = TypeMismatchError{}
+	_ error = ReflectionAnalysisError{}
+	_ error = GraphOperationError{}
+	_ error = ConstructorInvocationError{}
+	_ error = BuildError{}
+	_ error = DisposalError{}
+	_ error = CircularDependencyError{}
+)
+
 // ========================================
 // Typed Errors for Rich Context
 // ========================================

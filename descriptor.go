@@ -88,7 +88,7 @@ func newDescriptor(constructor any, lifetime Lifetime, opts ...AddOption) (*Desc
 	constructorValue := reflect.ValueOf(constructor)
 
 	// Check for nil pointers
-	if !constructorValue.IsValid() || (constructorValue.Kind() == reflect.Ptr && constructorValue.IsNil()) {
+	if !constructorValue.IsValid() || (constructorValue.Kind() == reflect.Pointer && constructorValue.IsNil()) {
 		return nil, &ValidationError{
 			ServiceType: nil,
 			Cause:       ErrConstructorNil,

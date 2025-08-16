@@ -126,7 +126,7 @@ func (o *addOptions) Validate() error {
 			}
 		}
 
-		if t.Kind() != reflect.Ptr {
+		if t.Kind() != reflect.Pointer {
 			return &ValidationError{
 				ServiceType: nil,
 				Cause:       fmt.Errorf("invalid godi.As(%v): argument must be a pointer to an interface", t),
