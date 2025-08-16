@@ -180,7 +180,9 @@ func TestAddSingleton(t *testing.T) {
 		collection := NewCollection()
 		err := collection.AddSingleton(nil)
 		assert.Error(t, err)
-		assert.Equal(t, ErrConstructorNil, err)
+		var valErr *ValidationError
+		assert.ErrorAs(t, err, &valErr)
+		assert.ErrorIs(t, valErr.Cause, ErrConstructorNil)
 	})
 
 	t.Run("non-function constructor should work as instance", func(t *testing.T) {
@@ -194,7 +196,11 @@ func TestAddSingleton(t *testing.T) {
 		collection := NewCollection()
 		err := collection.AddSingleton(NewNothing)
 		assert.Error(t, err)
-		assert.Equal(t, ErrConstructorNoReturn, err)
+		var regErr *RegistrationError
+		assert.ErrorAs(t, err, &regErr)
+		var valErr *ValidationError
+		assert.ErrorAs(t, regErr.Cause, &valErr)
+		assert.ErrorIs(t, valErr.Cause, ErrConstructorNoReturn)
 	})
 
 	t.Run("constructor with multiple returns now valid", func(t *testing.T) {
@@ -533,7 +539,7 @@ func TestBuild(t *testing.T) {
 
 		_, err = collection.Build()
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "dependency validation failed")
+		assert.Contains(t, err.Error(), "circular dependency detected")
 	})
 
 	t.Run("build with lifetime violation", func(t *testing.T) {
@@ -678,7 +684,9 @@ func TestCollectionEdgeCases(t *testing.T) {
 		// TestService doesn't implement fmt.Stringer
 		err := collection.AddSingleton(NewTestService, As(new(fmt.Stringer)))
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "does not implement interface")
+		var typeMismatchErr *TypeMismatchError
+		assert.ErrorAs(t, err, &typeMismatchErr)
+		assert.Equal(t, "interface implementation", typeMismatchErr.Context)
 	})
 
 	t.Run("add service with nil in As", func(t *testing.T) {
@@ -1072,8 +1080,10 @@ func TestValidateLifetimes(t *testing.T) {
 
 		err = c.validateLifetimes()
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "singleton service")
-		assert.Contains(t, err.Error(), "cannot depend on scoped service")
+		var lifetimeConflictErr *LifetimeConflictError
+		assert.ErrorAs(t, err, &lifetimeConflictErr)
+		assert.Equal(t, Singleton, lifetimeConflictErr.Current)
+		assert.Equal(t, Scoped, lifetimeConflictErr.Requested)
 	})
 
 	t.Run("singleton depending on transient", func(t *testing.T) {

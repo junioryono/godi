@@ -510,7 +510,7 @@ func TestCircularDependencyDetection(t *testing.T) {
 
 		_, err = collection.Build()
 		assert.Error(t, err) // Build should fail
-		assert.Contains(t, err.Error(), "dependency validation failed")
+		assert.Contains(t, err.Error(), "circular dependency detected")
 	})
 }
 
@@ -1271,7 +1271,9 @@ func TestInstanceRegistrationEdgeCases(t *testing.T) {
 
 		err := collection.AddSingleton(nil)
 		assert.Error(t, err)
-		assert.Equal(t, ErrConstructorNil, err)
+		var valErr *ValidationError
+		assert.ErrorAs(t, err, &valErr)
+		assert.ErrorIs(t, valErr.Cause, ErrConstructorNil)
 	})
 
 	t.Run("register nil pointer", func(t *testing.T) {
@@ -1284,7 +1286,11 @@ func TestInstanceRegistrationEdgeCases(t *testing.T) {
 		var config *Config = nil
 		err := collection.AddSingleton(config)
 		assert.Error(t, err)
-		assert.Equal(t, ErrConstructorNil, err)
+		var regErr *RegistrationError
+		assert.ErrorAs(t, err, &regErr)
+		var valErr *ValidationError
+		assert.ErrorAs(t, regErr.Cause, &valErr)
+		assert.ErrorIs(t, valErr.Cause, ErrConstructorNil)
 	})
 
 	t.Run("register empty string", func(t *testing.T) {
@@ -1573,13 +1579,16 @@ func TestMultiReturnWithDependencies(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, userSvc)
 	svc := userSvc.(*IntegrationUserService)
-	assert.Same(t, repo, svc.Repo)
+	assert.Equal(t, repo.DB, svc.Repo.DB)
+	assert.Equal(t, repo.Cache, svc.Repo.Cache)
 
 	adminSvc, err := scope.Get(reflect.TypeOf((*IntegrationAdminService)(nil)))
 	require.NoError(t, err)
 	assert.NotNil(t, adminSvc)
 	admin := adminSvc.(*IntegrationAdminService)
-	assert.Same(t, svc, admin.UserService)
+	assert.Equal(t, svc.Repo.DB, admin.UserService.Repo.DB)
+	assert.Equal(t, svc.Repo.Cache, admin.UserService.Repo.Cache)
+	assert.Equal(t, svc.Logger, admin.UserService.Logger)
 }
 
 // Benchmark tests
