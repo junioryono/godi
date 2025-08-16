@@ -95,7 +95,6 @@ func NewTestDisposable() *TestDisposable {
 	return &TestDisposable{}
 }
 
-
 // Constructor that returns nothing (should fail)
 func NewNothing() {
 	// This should fail validation
@@ -201,7 +200,7 @@ func TestAddSingleton(t *testing.T) {
 		collection := NewCollection()
 		err := collection.AddSingleton(NewTooMany)
 		assert.NoError(t, err) // Now valid with multi-return support
-		
+
 		// Both types should be registered
 		assert.True(t, collection.HasService(reflect.TypeOf((*TestService)(nil))))
 		assert.True(t, collection.HasService(reflect.TypeOf((*TestServiceWithDep)(nil))))
@@ -211,7 +210,7 @@ func TestAddSingleton(t *testing.T) {
 		collection := NewCollection()
 		err := collection.AddSingleton(NewInvalidSecondReturn)
 		assert.NoError(t, err) // Now valid with multi-return support
-		
+
 		// Both types should be registered
 		assert.True(t, collection.HasService(reflect.TypeOf((*TestService)(nil))))
 		assert.True(t, collection.HasService(reflect.TypeOf(""))) // string type
@@ -1336,39 +1335,39 @@ func ExampleCollection_multipleReturns() {
 	type Database struct {
 		ConnectionString string
 	}
-	
+
 	type Cache struct {
 		Provider string
 	}
-	
+
 	type Logger struct {
 		Level string
 	}
-	
+
 	// Constructor that returns multiple services at once
 	NewInfrastructure := func() (*Database, *Cache, *Logger) {
 		return &Database{ConnectionString: "postgres://localhost"},
 			&Cache{Provider: "redis"},
 			&Logger{Level: "info"}
 	}
-	
+
 	// Create collection and register the multi-return constructor
 	collection := NewCollection()
 	_ = collection.AddSingleton(NewInfrastructure)
-	
+
 	// Build the provider
 	provider, _ := collection.Build()
 	defer provider.Close()
-	
+
 	// Each return type can be resolved independently
 	db, _ := provider.Get(reflect.TypeOf((*Database)(nil)))
 	cache, _ := provider.Get(reflect.TypeOf((*Cache)(nil)))
 	logger, _ := provider.Get(reflect.TypeOf((*Logger)(nil)))
-	
+
 	fmt.Printf("Database: %s\n", db.(*Database).ConnectionString)
 	fmt.Printf("Cache: %s\n", cache.(*Cache).Provider)
 	fmt.Printf("Logger: %s\n", logger.(*Logger).Level)
-	
+
 	// Output:
 	// Database: postgres://localhost
 	// Cache: redis
@@ -1380,11 +1379,11 @@ func ExampleCollection_multipleReturnsWithError() {
 	type UserService struct {
 		Name string
 	}
-	
+
 	type AdminService struct {
 		Name string
 	}
-	
+
 	// Constructor that returns multiple services and an error
 	NewServices := func() (*UserService, *AdminService, error) {
 		// In real code, this might connect to a database or external service
@@ -1392,19 +1391,19 @@ func ExampleCollection_multipleReturnsWithError() {
 			&AdminService{Name: "admin-service"},
 			nil // No error
 	}
-	
+
 	collection := NewCollection()
 	_ = collection.AddSingleton(NewServices)
-	
+
 	provider, _ := collection.Build()
 	defer provider.Close()
-	
+
 	userSvc, _ := provider.Get(reflect.TypeOf((*UserService)(nil)))
 	adminSvc, _ := provider.Get(reflect.TypeOf((*AdminService)(nil)))
-	
+
 	fmt.Printf("User Service: %s\n", userSvc.(*UserService).Name)
 	fmt.Printf("Admin Service: %s\n", adminSvc.(*AdminService).Name)
-	
+
 	// Output:
 	// User Service: user-service
 	// Admin Service: admin-service
@@ -1415,35 +1414,35 @@ func ExampleCollection_multipleReturnsRelationships() {
 	type Repository struct {
 		ID string
 	}
-	
+
 	type Service struct {
 		Repo *Repository
 	}
-	
+
 	// Constructor returns related instances
 	NewComponents := func() (*Repository, *Service) {
 		repo := &Repository{ID: "shared-repo"}
 		svc := &Service{Repo: repo} // Service uses the same repo instance
 		return repo, svc
 	}
-	
+
 	collection := NewCollection()
 	_ = collection.AddSingleton(NewComponents)
-	
+
 	provider, _ := collection.Build()
 	defer provider.Close()
-	
+
 	repo, _ := provider.Get(reflect.TypeOf((*Repository)(nil)))
 	svc, _ := provider.Get(reflect.TypeOf((*Service)(nil)))
-	
+
 	repoInstance := repo.(*Repository)
 	svcInstance := svc.(*Service)
-	
+
 	// The service's repository is the same instance
 	fmt.Printf("Repository ID: %s\n", repoInstance.ID)
 	fmt.Printf("Service's Repository ID: %s\n", svcInstance.Repo.ID)
 	fmt.Printf("Same instance: %v\n", repoInstance == svcInstance.Repo)
-	
+
 	// Output:
 	// Repository ID: shared-repo
 	// Service's Repository ID: shared-repo
@@ -1454,112 +1453,112 @@ func ExampleCollection_multipleReturnsRelationships() {
 func TestCollectionMultipleReturns(t *testing.T) {
 	t.Run("register constructor with two returns", func(t *testing.T) {
 		collection := NewCollection()
-		
+
 		err := collection.AddSingleton(NewMultipleServices)
 		assert.NoError(t, err)
-		
+
 		// Both types should be registered
 		assert.True(t, collection.HasService(reflect.TypeOf((*TestService)(nil))))
 		assert.True(t, collection.HasService(reflect.TypeOf((*TestServiceWithDep)(nil))))
-		
+
 		// Build and resolve
 		provider, err := collection.Build()
 		require.NoError(t, err)
 		defer provider.Close()
-		
+
 		svc1, err := provider.Get(reflect.TypeOf((*TestService)(nil)))
 		assert.NoError(t, err)
 		assert.NotNil(t, svc1)
 		assert.Equal(t, "multi", svc1.(*TestService).Name)
-		
+
 		svc2, err := provider.Get(reflect.TypeOf((*TestServiceWithDep)(nil)))
 		assert.NoError(t, err)
 		assert.NotNil(t, svc2)
 		assert.Same(t, svc1, svc2.(*TestServiceWithDep).Service)
 	})
-	
+
 	t.Run("register constructor with three returns", func(t *testing.T) {
 		collection := NewCollection()
-		
+
 		err := collection.AddScoped(NewTripleServices)
 		assert.NoError(t, err)
-		
+
 		// All three types should be registered
 		assert.True(t, collection.HasService(reflect.TypeOf((*TestService)(nil))))
 		assert.True(t, collection.HasService(reflect.TypeOf((*TestServiceWithDep)(nil))))
 		assert.True(t, collection.HasService(reflect.TypeOf((*TestDisposable)(nil))))
-		
+
 		// Build and resolve
 		provider, err := collection.Build()
 		require.NoError(t, err)
 		defer provider.Close()
-		
+
 		scope, err := provider.CreateScope(nil)
 		require.NoError(t, err)
 		defer scope.Close()
-		
+
 		svc1, err := scope.Get(reflect.TypeOf((*TestService)(nil)))
 		assert.NoError(t, err)
 		assert.NotNil(t, svc1)
-		
+
 		svc2, err := scope.Get(reflect.TypeOf((*TestServiceWithDep)(nil)))
 		assert.NoError(t, err)
 		assert.NotNil(t, svc2)
-		
+
 		svc3, err := scope.Get(reflect.TypeOf((*TestDisposable)(nil)))
 		assert.NoError(t, err)
 		assert.NotNil(t, svc3)
 	})
-	
+
 	t.Run("register constructor with multiple returns and error", func(t *testing.T) {
 		collection := NewCollection()
-		
+
 		err := collection.AddTransient(NewMultipleServicesWithError)
 		assert.NoError(t, err)
-		
+
 		// Both non-error types should be registered
 		assert.True(t, collection.HasService(reflect.TypeOf((*TestService)(nil))))
 		assert.True(t, collection.HasService(reflect.TypeOf((*TestServiceWithDep)(nil))))
-		
+
 		provider, err := collection.Build()
 		require.NoError(t, err)
 		defer provider.Close()
-		
+
 		svc1, err := provider.Get(reflect.TypeOf((*TestService)(nil)))
 		assert.NoError(t, err)
 		assert.NotNil(t, svc1)
-		
+
 		svc2, err := provider.Get(reflect.TypeOf((*TestServiceWithDep)(nil)))
 		assert.NoError(t, err)
 		assert.NotNil(t, svc2)
 	})
-	
+
 	t.Run("register constructor with four returns", func(t *testing.T) {
 		collection := NewCollection()
-		
+
 		err := collection.AddSingleton(NewQuadServices)
 		assert.NoError(t, err)
-		
+
 		// All four types should be registered
 		assert.True(t, collection.HasService(reflect.TypeOf((*TestService)(nil))))
 		assert.True(t, collection.HasService(reflect.TypeOf((*TestServiceWithDep)(nil))))
 		assert.True(t, collection.HasService(reflect.TypeOf((*TestDisposable)(nil))))
 		assert.True(t, collection.HasService(reflect.TypeOf(""))) // string type
 	})
-	
+
 	t.Run("register constructor with named option applies to first return", func(t *testing.T) {
 		collection := NewCollection()
-		
+
 		err := collection.AddSingleton(NewMultipleServices, Name("primary"))
 		assert.NoError(t, err)
-		
+
 		// First type should be keyed
 		assert.True(t, collection.HasKeyedService(reflect.TypeOf((*TestService)(nil)), "primary"))
 		// Second type should not be keyed
 		assert.False(t, collection.HasKeyedService(reflect.TypeOf((*TestServiceWithDep)(nil)), "primary"))
 		assert.True(t, collection.HasService(reflect.TypeOf((*TestServiceWithDep)(nil))))
 	})
-	
+
 	t.Run("multiple returns maintain single constructor invocation", func(t *testing.T) {
 		// Track invocations
 		invocations := 0
@@ -1569,27 +1568,27 @@ func TestCollectionMultipleReturns(t *testing.T) {
 			dep := &TestServiceWithDep{Service: svc}
 			return svc, dep
 		}
-		
+
 		collection := NewCollection()
 		err := collection.AddSingleton(trackingConstructor)
 		assert.NoError(t, err)
-		
+
 		provider, err := collection.Build()
 		require.NoError(t, err)
 		defer provider.Close()
-		
+
 		// Get both services
 		svc1, err := provider.Get(reflect.TypeOf((*TestService)(nil)))
 		assert.NoError(t, err)
 		assert.NotNil(t, svc1)
-		
+
 		svc2, err := provider.Get(reflect.TypeOf((*TestServiceWithDep)(nil)))
 		assert.NoError(t, err)
 		assert.NotNil(t, svc2)
-		
+
 		// Constructor should only be invoked once for singletons
 		assert.Equal(t, 1, invocations)
-		
+
 		// Services should be related (same instance)
 		assert.Same(t, svc1, svc2.(*TestServiceWithDep).Service)
 	})

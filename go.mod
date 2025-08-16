@@ -3,7 +3,7 @@ module github.com/junioryono/godi/v3
 go 1.24.3
 
 require (
-	github.com/stretchr/testify v1.7.1
+	github.com/stretchr/testify v1.10.0
 	go.uber.org/dig v1.19.0
 )
 

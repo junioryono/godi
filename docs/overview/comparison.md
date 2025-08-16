@@ -38,7 +38,7 @@ var AppModule = godi.NewModule("app",
 )
 
 func main() {
-    services := godi.NewServiceCollection()
+    services := godi.NewCollection()
     services.AddModules(AppModule)
 
     provider, _ := services.Build()
@@ -95,7 +95,7 @@ var AppModule = godi.NewModule("app",
 )
 
 // Use immediately
-services := godi.NewServiceCollection()
+services := godi.NewCollection()
 services.AddModules(AppModule)
 provider, _ := services.Build()
 app, _ := godi.Resolve[*App](provider)
@@ -155,7 +155,7 @@ var AppModule = godi.NewModule("app",
 )
 
 func main() {
-    services := godi.NewServiceCollection()
+    services := godi.NewCollection()
     services.AddModules(AppModule)
 
     provider, _ := services.Build()

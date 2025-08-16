@@ -10,7 +10,7 @@ When you first start, you might think this is fine:
 
 ```go
 func main() {
-    services := godi.NewServiceCollection()
+    services := godi.NewCollection()
 
     // Just a few services...
     services.AddSingleton(NewLogger)
@@ -29,7 +29,7 @@ Now you have more services:
 
 ```go
 func main() {
-    services := godi.NewServiceCollection()
+    services := godi.NewCollection()
 
     // Getting messy...
     services.AddSingleton(NewLogger)
@@ -94,7 +94,7 @@ var BusinessModule = godi.NewModule("business",
 
 // main.go - Clean and simple!
 func main() {
-    services := godi.NewServiceCollection()
+    services := godi.NewCollection()
     services.AddModules(BusinessModule) // Includes everything!
 
     provider, _ := services.Build()
@@ -200,7 +200,7 @@ var ProdModule = godi.NewModule("prod",
 
 // main.go
 func main() {
-    services := godi.NewServiceCollection()
+    services := godi.NewCollection()
 
     // Core business logic
     services.AddModules(BusinessModule)
@@ -228,7 +228,7 @@ var AppModule = godi.NewModule("app",
 )
 
 func main() {
-    services := godi.NewServiceCollection()
+    services := godi.NewCollection()
     services.AddModules(AppModule) // Clean from the start
 }
 ```

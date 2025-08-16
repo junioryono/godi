@@ -297,11 +297,11 @@ func (a *Analyzer) analyzeReturns(info *ConstructorInfo) error {
 
 	// Handle multiple returns (including multiple non-error returns)
 	info.Returns = make([]ReturnInfo, 0, fnType.NumOut())
-	
+
 	for i := 0; i < fnType.NumOut(); i++ {
 		retType := fnType.Out(i)
 		isError := a.implementsError(retType)
-		
+
 		// Check if this is the last return and it's an error
 		if isError && i == fnType.NumOut()-1 {
 			info.HasErrorReturn = true
@@ -467,7 +467,7 @@ func (a *Analyzer) GetResultTypes(constructor any) ([]reflect.Type, error) {
 		return nil, err
 	}
 
-	// For all cases (Out structs, multiple returns, single return), 
+	// For all cases (Out structs, multiple returns, single return),
 	// return all non-error types
 	types := make([]reflect.Type, 0, len(info.Returns))
 	for _, ret := range info.Returns {

@@ -56,7 +56,7 @@ func TestUserService_GetUser(t *testing.T) {
     )
 
     // Build provider
-    services := godi.NewServiceCollection()
+    services := godi.NewCollection()
     services.AddModules(testModule)
     provider, _ := services.Build()
     defer provider.Close()
@@ -229,7 +229,7 @@ func TestUserService_CreateUser(t *testing.T) {
         godi.AddScoped(NewUserService),
     )
 
-    services := godi.NewServiceCollection()
+    services := godi.NewCollection()
     services.AddModules(testModule)
     provider, _ := services.Build()
     defer provider.Close()
@@ -254,7 +254,7 @@ func TestUserService_CreateUser_DatabaseError(t *testing.T) {
         godi.AddScoped(NewUserService),
     )
 
-    services := godi.NewServiceCollection()
+    services := godi.NewCollection()
     services.AddModules(testModule)
     provider, _ := services.Build()
     defer provider.Close()
@@ -307,7 +307,7 @@ func TestUserService_Validation(t *testing.T) {
                 godi.AddScoped(NewUserService),
             )
 
-            services := godi.NewServiceCollection()
+            services := godi.NewCollection()
             services.AddModules(testModule)
             provider, _ := services.Build()
             defer provider.Close()
@@ -339,7 +339,7 @@ func TestConcurrentRequests(t *testing.T) {
         godi.AddScoped(NewRequestContext),
     )
 
-    services := godi.NewServiceCollection()
+    services := godi.NewCollection()
     services.AddModules(appModule)
     provider, _ := services.Build()
     defer provider.Close()
@@ -409,7 +409,7 @@ func TestUserService_SendsWelcomeEmail(t *testing.T) {
 ```go
 // testutil/di.go
 func BuildTestProvider(t *testing.T, modules ...godi.ModuleOption) godi.ServiceProvider {
-    services := godi.NewServiceCollection()
+    services := godi.NewCollection()
 
     // Always include base test module
     allModules := append([]godi.ModuleOption{NewTestModule()}, modules...)

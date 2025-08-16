@@ -2,219 +2,198 @@ name: CI
 
 on:
   push:
-    branches: ["*"]
-    tags: ["v*"]
+    branches: [ main, master, develop ]
   pull_request:
-    branches: ["*"]
+    branches: [ main, master, develop ]
+  schedule:
+    # Run tests every Monday at 9am UTC
+    - cron: '0 9 * * 1'
 
-permissions:
-  contents: read
+env:
+  GO_VERSION: '1.21'
 
 jobs:
-  build:
+  test:
+    name: Test
     runs-on: ${{ matrix.os }}
-    name: Build and test
-
     strategy:
       matrix:
-        os: ["ubuntu-latest", "windows-latest"]
-        go: ["1.23.x", "1.24.x"]
-
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        go: ['1.21', '1.22', '1.23']
+    
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ matrix.go }}
-
-      - name: Download Dependencies
-        run: go mod download
-
-      - name: Test
-        run: make test-cover
-
-      - name: Upload coverage to codecov.io
-        uses: codecov/codecov-action@v5
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ matrix.go }}
+        cache: true
+    
+    - name: Get dependencies
+      run: go mod download
+    
+    - name: Run tests
+      run: go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
+    
+    - name: Upload coverage to Codecov
+      if: matrix.os == 'ubuntu-latest' && matrix.go == '1.21'
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage.txt
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
 
   lint:
     name: Lint
     runs-on: ubuntu-latest
-
+    
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+    
+    - name: Run golangci-lint
+      uses: golangci/golangci-lint-action@v3
+      with:
+        version: latest
+        args: --config .golangci.yml
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: 1.24.x
-          cache: false # managed by golangci-lint
-
-      - uses: golangci/golangci-lint-action@v8
-        name: Install golangci-lint
-        with:
-          version: latest
-          args: --help # make lint will run the linter
-
-      - run: make lint
-        name: Lint
-
-  # Consolidated check for branch protection
-  all-checks:
-    name: All checks passed
+  build:
+    name: Build
     runs-on: ubuntu-latest
-    needs: [build, lint]
-    if: always()
+    
     steps:
-      - name: Verify all checks passed
-        run: |
-          if [[ "${{ needs.build.result }}" != "success" || "${{ needs.lint.result }}" != "success" ]]; then
-            echo "One or more checks failed"
-            echo "Build: ${{ needs.build.result }}"
-            echo "Lint: ${{ needs.lint.result }}"
-            exit 1
-          fi
-          echo "All checks passed successfully"
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+    
+    - name: Verify module
+      run: |
+        go mod verify
+        go mod tidy
+        git diff --exit-code go.mod go.sum
+    
+    - name: Build
+      run: go build -v ./...
+    
+    - name: Check formatting
+      run: |
+        if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
+          echo "Code is not formatted. Please run 'gofmt -s -w .'"
+          gofmt -s -d .
+          exit 1
+        fi
 
-  # release:
-  #   name: Release
-  #   runs-on: ubuntu-latest
-  #   needs: [all-checks]
-  #   if: |
-  #     success() &&
-  #     github.event_name == 'push' &&
-  #     github.ref == 'refs/heads/main' &&
-  #     !contains(github.event.head_commit.message, 'skip ci') &&
-  #     !contains(github.event.head_commit.message, 'skip release')
+  benchmark:
+    name: Benchmark
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+    
+    - name: Run benchmarks
+      run: go test -bench=. -benchmem -run=^$ ./... | tee benchmark.txt
+    
+    - name: Upload benchmark results
+      uses: actions/upload-artifact@v4
+      with:
+        name: benchmark-results
+        path: benchmark.txt
 
-  #   concurrency:
-  #     group: release
-  #     cancel-in-progress: false
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+    
+    - name: Run gosec
+      uses: securego/gosec@master
+      with:
+        args: '-fmt sarif -out gosec-results.sarif ./...'
+    
+    - name: Upload SARIF file
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: gosec-results.sarif
 
-  #   permissions:
-  #     contents: write
-  #     pull-requests: write
+  examples:
+    name: Validate Examples
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+    
+    - name: Test examples
+      run: go test -v ./example_test.go
 
-  #   steps:
-  #     - name: Checkout
-  #       uses: actions/checkout@v4
-  #       with:
-  #         fetch-depth: 0
-  #         token: ${{ secrets.RELEASE_TOKEN }}
-
-  #     - name: Setup Go
-  #       uses: actions/setup-go@v5
-  #       with:
-  #         go-version: 1.24.x
-
-  #     # Configure git to use GitHub Actions bot
-  #     - name: Configure Git
-  #       run: |
-  #         git config user.name 'github-actions[bot]'
-  #         git config user.email 'github-actions[bot]@users.noreply.github.com'
-
-  #     - name: Check for conventional commits
-  #       id: check_commits
-  #       run: |
-  #         # Get commits since last tag
-  #         LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-
-  #         if [ -z "$LAST_TAG" ]; then
-  #           echo "No previous tag found, checking all commits"
-  #           COMMITS=$(git log --pretty=format:"%s")
-  #         else
-  #           echo "Checking commits since $LAST_TAG"
-  #           COMMITS=$(git log ${LAST_TAG}..HEAD --pretty=format:"%s")
-  #         fi
-
-  #         # Check if any commits are releasable (feat, fix, or breaking change)
-  #         RELEASABLE=false
-  #         while IFS= read -r commit; do
-  #           if [[ "$commit" =~ ^(feat|fix)(\(.+\))?!?:|BREAKING\ CHANGE: ]] || [[ "$commit" =~ ^[a-z]+(\(.+\))?!: ]]; then
-  #             RELEASABLE=true
-  #             break
-  #           fi
-  #         done <<< "$COMMITS"
-
-  #         echo "releasable=$RELEASABLE" >> $GITHUB_OUTPUT
-
-  #         if [ "$RELEASABLE" = "false" ]; then
-  #           echo "No releasable changes found. Skipping release."
-  #         fi
-
-  #     - name: Conventional Changelog Action
-  #       id: changelog
-  #       if: steps.check_commits.outputs.releasable == 'true'
-  #       uses: TriPSs/conventional-changelog-action@v6.0.0
-  #       with:
-  #         github-token: ${{ secrets.RELEASE_TOKEN }}
-  #         git-message: |
-  #           chore(release): {tag} [skip ci]
-
-  #           - Update changelog
-  #           - Bump version
-  #         preset: "conventionalcommits"
-  #         tag-prefix: "v"
-  #         release-count: 0
-  #         output-file: "docs/reference/changelog.md"
-  #         version-file: "version.json"
-  #         skip-on-empty: "true"
-  #         skip-version-file: "false"
-  #         skip-git-pull: "false"
-  #         create-summary: "true"
-  #         skip-commit: "true"
-  #         skip-tag: "true"
-
-  #     - name: Fix changelog and commit
-  #       if: |
-  #         steps.check_commits.outputs.releasable == 'true' &&
-  #         steps.changelog.outputs.skipped == 'false'
-  #       run: |
-  #         # Add main heading if it doesn't exist
-  #         if ! grep -q "^# Changelog" docs/reference/changelog.md; then
-  #           {
-  #             echo "# Changelog"
-  #             echo ""
-  #             echo "All notable changes to godi are documented here. This project follows [Semantic Versioning](https://semver.org/) and uses [Conventional Commits](https://www.conventionalcommits.org/) for automatic versioning."
-  #             echo ""
-  #             cat docs/reference/changelog.md
-  #           } > docs/reference/changelog.md.tmp
-  #           mv docs/reference/changelog.md.tmp docs/reference/changelog.md
-  #         fi
-
-  #         # Replace h1 version headers with h2
-  #         sed -i 's/^# \[\([0-9]\)/## [\1/g' docs/reference/changelog.md
-
-  #         # Commit all changes
-  #         git add docs/reference/changelog.md version.json
-  #         git commit -m "chore(release): ${{ steps.changelog.outputs.tag }} [skip ci]
-
-  #         - Update changelog
-  #         - Bump version"
-
-  #         # Create and push tag
-  #         git tag ${{ steps.changelog.outputs.tag }}
-  #         git push origin HEAD:main --tags
-
-  #     - name: Create Release
-  #       if: |
-  #         steps.check_commits.outputs.releasable == 'true' &&
-  #         steps.changelog.outputs.skipped == 'false'
-  #       uses: ncipollo/release-action@v1
-  #       with:
-  #         tag: ${{ steps.changelog.outputs.tag }}
-  #         name: ${{ steps.changelog.outputs.tag }}
-  #         body: ${{ steps.changelog.outputs.clean_changelog }}
-  #         token: ${{ secrets.RELEASE_TOKEN }}
-
-  #     - name: Create release branch
-  #       if: |
-  #         steps.check_commits.outputs.releasable == 'true' &&
-  #         steps.changelog.outputs.skipped == 'false'
-  #       run: |
-  #         git checkout -b release/${{ steps.changelog.outputs.tag }}
-  #         git push origin release/${{ steps.changelog.outputs.tag }}
+  coverage:
+    name: Coverage Report
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+    
+    - name: Generate coverage report
+      run: |
+        go test -coverprofile=coverage.out ./...
+        go tool cover -html=coverage.out -o coverage.html
+    
+    - name: Upload coverage report
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-report
+        path: |
+          coverage.out
+          coverage.html
+    
+    - name: Check coverage threshold
+      run: |
+        COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+        echo "Total coverage: $COVERAGE%"
+        if (( $(echo "$COVERAGE < 80" | bc -l) )); then
+          echo "Coverage is below 80% threshold"
+          exit 1
+        fi

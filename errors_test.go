@@ -21,8 +21,6 @@ func TestSentinelErrors(t *testing.T) {
 		{ErrServiceNotFound, "service not found"},
 		{ErrServiceKeyNil, "service key cannot be nil"},
 		{ErrInvalidServiceType, "invalid service type"},
-		{ErrFailedToExtractService, "failed to extract service"},
-		{ErrFailedToExtractKeyedService, "failed to extract keyed service"},
 		{ErrDisposed, "disposed"},
 		{ErrNilScope, "scope cannot be nil"},
 		{ErrScopeDisposed, "scope has been disposed"},

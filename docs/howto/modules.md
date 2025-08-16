@@ -23,7 +23,7 @@ Use it:
 
 ```go
 // main.go
-services := godi.NewServiceCollection()
+services := godi.NewCollection()
 services.AddModules(email.Module)
 
 provider, _ := services.Build()
@@ -159,7 +159,7 @@ func main() {
     )
 
     // Build and run
-    services := godi.NewServiceCollection()
+    services := godi.NewCollection()
     services.AddModules(appModule)
     provider, _ := services.Build()
 }
@@ -289,7 +289,7 @@ func TestUserService(t *testing.T) {
         TestOverridesModule, // Test implementations
     )
 
-    services := godi.NewServiceCollection()
+    services := godi.NewCollection()
     services.AddModules(testModule)
 
     provider, _ := services.Build()

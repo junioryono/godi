@@ -10,7 +10,7 @@ Container for service registrations.
 
 ```go
 // Create
-collection := godi.NewServiceCollection()
+collection := godi.NewCollection()
 
 // Register services
 collection.AddSingleton(constructor, options...)
@@ -275,7 +275,7 @@ var AppModule = godi.NewModule("app",
 
 // Use it
 func main() {
-    services := godi.NewServiceCollection()
+    services := godi.NewCollection()
     services.AddModules(AppModule)
 
     provider, err := services.Build()

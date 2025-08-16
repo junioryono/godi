@@ -879,11 +879,11 @@ func TestAnalyzer_ComplexParamObject(t *testing.T) {
 // Test multiple return types support
 func TestAnalyzer_MultipleReturns(t *testing.T) {
 	tests := []struct {
-		name           string
-		constructor    any
-		expectedTypes  []reflect.Type
-		hasError       bool
-		errorPosition  int // -1 if no error
+		name          string
+		constructor   any
+		expectedTypes []reflect.Type
+		hasError      bool
+		errorPosition int // -1 if no error
 	}{
 		{
 			name: "single return no error",

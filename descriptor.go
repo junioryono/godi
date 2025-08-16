@@ -83,12 +83,12 @@ func newDescriptor(constructor any, lifetime Lifetime, opts ...AddOption) (*Desc
 
 	// Get constructor value and type
 	constructorValue := reflect.ValueOf(constructor)
-	
+
 	// Check for nil pointers
 	if !constructorValue.IsValid() || (constructorValue.Kind() == reflect.Ptr && constructorValue.IsNil()) {
 		return nil, ErrNilConstructor
 	}
-	
+
 	constructorType := constructorValue.Type()
 
 	// Check if it's an instance (not a function)
@@ -105,7 +105,7 @@ func newDescriptor(constructor any, lifetime Lifetime, opts ...AddOption) (*Desc
 		// Check if the last return is an error (if any)
 		if numReturns > 0 {
 			errorType := reflect.TypeOf((*error)(nil)).Elem()
-			
+
 			// If there's an error type in the returns, it must be the last one
 			for i := 0; i < numReturns-1; i++ {
 				if constructorType.Out(i).Implements(errorType) {

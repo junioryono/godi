@@ -639,7 +639,7 @@ import (
 
 func main() {
     // Create DI container
-    services := godi.NewServiceCollection()
+    services := godi.NewCollection()
 
     // Add all modules
     if err := services.AddModules(modules.WebModule); err != nil {
@@ -733,7 +733,7 @@ func TestCreatePost(t *testing.T) {
         godi.AddScoped(services.NewPostService),
     )
 
-    services := godi.NewServiceCollection()
+    services := godi.NewCollection()
     services.AddModules(testModule)
     provider, _ := services.Build()
     defer provider.Close()

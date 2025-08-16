@@ -154,7 +154,7 @@ import (
 
 func main() {
     // Create DI container
-    collection := godi.NewServiceCollection()
+    collection := godi.NewCollection()
 
     // Add your app module (includes everything!)
     if err := collection.AddModules(modules.AppModule); err != nil {
@@ -286,7 +286,7 @@ func TestUserService(t *testing.T) {
     )
 
     // Set up DI
-    collection := godi.NewServiceCollection()
+    collection := godi.NewCollection()
     collection.AddModules(testModule)
 
     provider, _ := collection.Build()

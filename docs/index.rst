@@ -10,7 +10,7 @@ Quick Start
 .. code-block:: go
 
    // 1. Register your services
-   services := godi.NewServiceCollection()
+   services := godi.NewCollection()
    services.AddSingleton(NewLogger)
    services.AddScoped(NewUserService)
 
