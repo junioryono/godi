@@ -17,7 +17,7 @@ func (tf *TypeFormatter) FormatType(t reflect.Type) string {
 
 	// Handle common types with simpler names
 	switch t.Kind() {
-	case reflect.Ptr:
+	case reflect.Pointer:
 		return "*" + tf.FormatType(t.Elem())
 	case reflect.Slice:
 		return "[]" + tf.FormatType(t.Elem())
@@ -207,7 +207,7 @@ func (v *ValidateConstructor) validateParameters(info *ConstructorInfo) error {
 		// For regular functions, check that we don't have multiple In parameters
 		inCount := 0
 		for i := 0; i < info.Type.NumIn(); i++ {
-			if v.analyzer.hasEmbeddedType(info.Type.In(i), v.analyzer.inType) {
+			if hasEmbeddedType(info.Type.In(i), inType) {
 				inCount++
 			}
 		}

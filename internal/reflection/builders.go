@@ -30,7 +30,7 @@ func (b *ParamObjectBuilder) BuildParamObject(
 
 	// Get struct type (dereference if pointer)
 	structType := paramType
-	if structType.Kind() == reflect.Ptr {
+	if structType.Kind() == reflect.Pointer {
 		structType = structType.Elem()
 	}
 
@@ -53,7 +53,7 @@ func (b *ParamObjectBuilder) BuildParamObject(
 		}
 
 		// Skip embedded In field
-		if field.Anonymous && b.isInField(field.Type) {
+		if field.Anonymous && isInOutType(field.Type, inType) {
 			continue
 		}
 
@@ -83,7 +83,7 @@ func (b *ParamObjectBuilder) BuildParamObject(
 	}
 
 	// Return the appropriate type (pointer or value)
-	if paramType.Kind() == reflect.Ptr {
+	if paramType.Kind() == reflect.Pointer {
 		return structPtr, nil
 	}
 	return structValue, nil
@@ -136,11 +136,6 @@ func (b *ParamObjectBuilder) resolveFieldDependency(
 	return reflect.ValueOf(value), nil
 }
 
-// isInField checks if a type is the In marker type.
-func (b *ParamObjectBuilder) isInField(t reflect.Type) bool {
-	return b.analyzer.isInOutType(t, b.analyzer.inType)
-}
-
 // ResultObjectProcessor processes result objects (Out structs) after construction.
 type ResultObjectProcessor struct {
 	analyzer *Analyzer
@@ -157,14 +152,14 @@ func (p *ResultObjectProcessor) ProcessResultObject(
 	resultType reflect.Type,
 ) ([]ServiceRegistration, error) {
 	// Handle pointer to struct
-	if result.Kind() == reflect.Ptr {
+	if result.Kind() == reflect.Pointer {
 		if result.IsNil() {
 			return nil, fmt.Errorf("result object is nil")
 		}
 		result = result.Elem()
 	}
 
-	if resultType.Kind() == reflect.Ptr {
+	if resultType.Kind() == reflect.Pointer {
 		resultType = resultType.Elem()
 	}
 
@@ -184,7 +179,7 @@ func (p *ResultObjectProcessor) ProcessResultObject(
 		}
 
 		// Skip embedded Out field
-		if field.Anonymous && p.isOutField(field.Type) {
+		if field.Anonymous && isInOutType(field.Type, outType) {
 			continue
 		}
 
@@ -204,7 +199,7 @@ func (p *ResultObjectProcessor) ProcessResultObject(
 
 		// Skip nil values for types that can be nil
 		switch fieldValue.Kind() {
-		case reflect.Ptr, reflect.Interface, reflect.Slice, reflect.Map, reflect.Chan, reflect.Func:
+		case reflect.Pointer, reflect.Interface, reflect.Slice, reflect.Map, reflect.Chan, reflect.Func:
 			if fieldValue.IsNil() {
 				continue
 			}
@@ -223,11 +218,6 @@ func (p *ResultObjectProcessor) ProcessResultObject(
 	}
 
 	return registrations, nil
-}
-
-// isOutField checks if a type is the Out marker type.
-func (p *ResultObjectProcessor) isOutField(t reflect.Type) bool {
-	return p.analyzer.isInOutType(t, p.analyzer.outType)
 }
 
 // ServiceRegistration represents a service to be registered from an Out struct.

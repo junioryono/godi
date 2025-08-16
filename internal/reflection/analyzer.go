@@ -6,16 +6,20 @@ import (
 	"sync"
 )
 
+type In struct{}
+type Out struct{}
+
+var (
+	inType  = reflect.TypeOf((*In)(nil)).Elem()
+	outType = reflect.TypeOf((*Out)(nil)).Elem()
+	errType = reflect.TypeOf((*error)(nil)).Elem()
+)
+
 // Analyzer performs reflection-based analysis of constructors and types.
 // It caches analysis results for performance.
 type Analyzer struct {
 	mu    sync.RWMutex
 	cache map[uintptr]*ConstructorInfo
-
-	// Type caches for common checks
-	inType  reflect.Type
-	outType reflect.Type
-	errType reflect.Type
 }
 
 // ConstructorInfo contains analyzed information about a constructor function or instance.
@@ -109,21 +113,8 @@ type ParamField struct {
 // New creates a new Analyzer.
 func New() *Analyzer {
 	return &Analyzer{
-		cache:   make(map[uintptr]*ConstructorInfo),
-		inType:  reflect.TypeOf((*In)(nil)).Elem(),
-		outType: reflect.TypeOf((*Out)(nil)).Elem(),
-		errType: reflect.TypeOf((*error)(nil)).Elem(),
+		cache: make(map[uintptr]*ConstructorInfo),
 	}
-}
-
-// In is a marker interface for parameter objects (matches godi.In)
-type In interface {
-	isIn()
-}
-
-// Out is a marker interface for result objects (matches godi.Out)
-type Out interface {
-	isOut()
 }
 
 // Analyze analyzes a constructor function and extracts dependency information.
@@ -203,7 +194,7 @@ func (a *Analyzer) analyzeParameters(info *ConstructorInfo) error {
 	// Check for In parameter object
 	if fnType.NumIn() == 1 {
 		paramType := fnType.In(0)
-		if a.hasEmbeddedType(paramType, a.inType) {
+		if hasEmbeddedType(paramType, inType) {
 			info.IsParamObject = true
 			return a.analyzeParamObject(info, paramType)
 		}
@@ -226,7 +217,7 @@ func (a *Analyzer) analyzeParameters(info *ConstructorInfo) error {
 
 // analyzeParamObject analyzes an In struct's fields.
 func (a *Analyzer) analyzeParamObject(info *ConstructorInfo, structType reflect.Type) error {
-	if structType.Kind() == reflect.Ptr {
+	if structType.Kind() == reflect.Pointer {
 		structType = structType.Elem()
 	}
 
@@ -245,7 +236,7 @@ func (a *Analyzer) analyzeParamObject(info *ConstructorInfo, structType reflect.
 		}
 
 		// Skip embedded In field itself
-		if field.Anonymous && a.isInOutType(field.Type, a.inType) {
+		if field.Anonymous && isInOutType(field.Type, inType) {
 			continue
 		}
 
@@ -290,7 +281,7 @@ func (a *Analyzer) analyzeReturns(info *ConstructorInfo) error {
 
 	// Check for Out result object
 	firstReturn := fnType.Out(0)
-	if a.hasEmbeddedType(firstReturn, a.outType) {
+	if hasEmbeddedType(firstReturn, outType) {
 		info.IsResultObject = true
 		return a.analyzeResultObject(info, firstReturn)
 	}
@@ -300,7 +291,7 @@ func (a *Analyzer) analyzeReturns(info *ConstructorInfo) error {
 
 	for i := 0; i < fnType.NumOut(); i++ {
 		retType := fnType.Out(i)
-		isError := a.implementsError(retType)
+		isError := implementsError(retType)
 
 		// Check if this is the last return and it's an error
 		if isError && i == fnType.NumOut()-1 {
@@ -334,7 +325,7 @@ func (a *Analyzer) analyzeReturns(info *ConstructorInfo) error {
 
 // analyzeResultObject analyzes an Out struct's fields.
 func (a *Analyzer) analyzeResultObject(info *ConstructorInfo, structType reflect.Type) error {
-	if structType.Kind() == reflect.Ptr {
+	if structType.Kind() == reflect.Pointer {
 		structType = structType.Elem()
 	}
 
@@ -353,7 +344,7 @@ func (a *Analyzer) analyzeResultObject(info *ConstructorInfo, structType reflect
 		}
 
 		// Skip embedded Out field itself
-		if field.Anonymous && a.isInOutType(field.Type, a.outType) {
+		if field.Anonymous && isInOutType(field.Type, outType) {
 			continue
 		}
 
@@ -386,7 +377,7 @@ func (a *Analyzer) analyzeResultObject(info *ConstructorInfo, structType reflect
 	// Check if function also returns error
 	if info.Type.NumOut() == 2 {
 		secondReturn := info.Type.Out(1)
-		if a.implementsError(secondReturn) {
+		if implementsError(secondReturn) {
 			info.HasErrorReturn = true
 		}
 	}
@@ -511,47 +502,6 @@ func (a *Analyzer) parseFieldTags(tag reflect.StructTag) TagInfo {
 	return info
 }
 
-// hasEmbeddedType checks if a type has an embedded field of the given type.
-func (a *Analyzer) hasEmbeddedType(t, embedded reflect.Type) bool {
-	if t.Kind() == reflect.Ptr {
-		t = t.Elem()
-	}
-
-	if t.Kind() != reflect.Struct {
-		return false
-	}
-
-	for i := 0; i < t.NumField(); i++ {
-		field := t.Field(i)
-		if field.Anonymous && a.isInOutType(field.Type, embedded) {
-			return true
-		}
-	}
-
-	return false
-}
-
-// isInOutType checks if a type matches the In or Out interface.
-func (a *Analyzer) isInOutType(t, target reflect.Type) bool {
-	// Direct type match
-	if t == target {
-		return true
-	}
-
-	// Check if it implements the interface
-	if target.Kind() == reflect.Interface {
-		return t.Implements(target)
-	}
-
-	// No fallback - type must actually match or implement the interface
-	return false
-}
-
-// implementsError checks if a type implements the error interface.
-func (a *Analyzer) implementsError(t reflect.Type) bool {
-	return t.Implements(a.errType)
-}
-
 // getSliceElemType returns the element type of a slice, or nil if not a slice.
 func (a *Analyzer) getSliceElemType(t reflect.Type) reflect.Type {
 	if t.Kind() == reflect.Slice {
@@ -581,4 +531,45 @@ func (a *Analyzer) CacheSize() int {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return len(a.cache)
+}
+
+// hasEmbeddedType checks if a type has an embedded field of the given type.
+func hasEmbeddedType(t, embedded reflect.Type) bool {
+	if t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+
+	if t.Kind() != reflect.Struct {
+		return false
+	}
+
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		if field.Anonymous && isInOutType(field.Type, embedded) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// isInOutType checks if a type matches the In or Out interface.
+func isInOutType(t, target reflect.Type) bool {
+	// Direct type match
+	if t == target {
+		return true
+	}
+
+	// Check if it implements the interface
+	if target.Kind() == reflect.Interface {
+		return t.Implements(target)
+	}
+
+	// No fallback - type must actually match or implement the interface
+	return false
+}
+
+// implementsError checks if a type implements the error interface.
+func implementsError(t reflect.Type) bool {
+	return t.Implements(errType)
 }
