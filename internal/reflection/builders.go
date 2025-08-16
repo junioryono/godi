@@ -104,7 +104,7 @@ func (b *ParamObjectBuilder) resolveFieldDependency(
 		}
 
 		elemType := fieldType.Elem()
-		values, err := resolver.ResolveGroup(elemType, tagInfo.Group)
+		values, err := resolver.GetGroup(elemType, tagInfo.Group)
 		if err != nil {
 			return reflect.Value{}, err
 		}
@@ -120,7 +120,7 @@ func (b *ParamObjectBuilder) resolveFieldDependency(
 
 	// Handle keyed dependencies
 	if tagInfo.Name != "" {
-		value, err := resolver.ResolveKeyed(fieldType, tagInfo.Name)
+		value, err := resolver.GetKeyed(fieldType, tagInfo.Name)
 		if err != nil {
 			return reflect.Value{}, err
 		}
@@ -128,7 +128,7 @@ func (b *ParamObjectBuilder) resolveFieldDependency(
 	}
 
 	// Regular dependency
-	value, err := resolver.Resolve(fieldType)
+	value, err := resolver.Get(fieldType)
 	if err != nil {
 		return reflect.Value{}, err
 	}
@@ -201,7 +201,7 @@ func (p *ResultObjectProcessor) ProcessResultObject(
 		if !fieldValue.IsValid() {
 			continue
 		}
-		
+
 		// Skip nil values for types that can be nil
 		switch fieldValue.Kind() {
 		case reflect.Ptr, reflect.Interface, reflect.Slice, reflect.Map, reflect.Chan, reflect.Func:
@@ -242,9 +242,9 @@ type ServiceRegistration struct {
 // DependencyResolver is the interface for resolving dependencies.
 // This will be implemented by the actual resolver.
 type DependencyResolver interface {
-	Resolve(t reflect.Type) (any, error)
-	ResolveKeyed(t reflect.Type, key any) (any, error)
-	ResolveGroup(t reflect.Type, group string) ([]any, error)
+	Get(t reflect.Type) (any, error)
+	GetKeyed(t reflect.Type, key any) (any, error)
+	GetGroup(t reflect.Type, group string) ([]any, error)
 }
 
 // ConstructorInvoker invokes constructors with resolved dependencies.
@@ -328,11 +328,11 @@ func (ci *ConstructorInvoker) resolveParameter(
 ) (any, error) {
 	// Handle group parameters
 	if param.Group != "" {
-		values, err := resolver.ResolveGroup(param.ElemType, param.Group)
+		values, err := resolver.GetGroup(param.ElemType, param.Group)
 		if err != nil {
 			return nil, err
 		}
-		
+
 		// Create a slice of the correct type and populate it
 		slice := reflect.MakeSlice(param.Type, len(values), len(values))
 		for i, val := range values {
@@ -343,9 +343,9 @@ func (ci *ConstructorInvoker) resolveParameter(
 
 	// Handle keyed parameters
 	if param.Key != nil {
-		return resolver.ResolveKeyed(param.Type, param.Key)
+		return resolver.GetKeyed(param.Type, param.Key)
 	}
 
 	// Regular parameter
-	return resolver.Resolve(param.Type)
+	return resolver.Get(param.Type)
 }

@@ -1288,20 +1288,20 @@ func TestAnalyzer_ClearWithSameSignature(t *testing.T) {
 // Test GetDependencies edge cases
 func TestAnalyzer_GetDependencies(t *testing.T) {
 	analyzer := reflection.New()
-	
+
 	t.Run("with nil constructor", func(t *testing.T) {
 		_, err := analyzer.GetDependencies(nil)
 		if err == nil {
 			t.Error("Expected error for nil constructor")
 		}
 	})
-	
+
 	t.Run("with valid constructor", func(t *testing.T) {
 		deps, err := analyzer.GetDependencies(NewUserService)
 		if err != nil {
 			t.Fatalf("GetDependencies failed: %v", err)
 		}
-		
+
 		if len(deps) != 2 {
 			t.Errorf("Expected 2 dependencies, got %d", len(deps))
 		}
@@ -1311,28 +1311,28 @@ func TestAnalyzer_GetDependencies(t *testing.T) {
 // Test GetServiceType edge cases
 func TestAnalyzer_GetServiceTypeEdgeCases(t *testing.T) {
 	analyzer := reflection.New()
-	
+
 	t.Run("constructor with no returns", func(t *testing.T) {
 		noReturnFunc := func(db *Database) {}
-		
+
 		_, err := analyzer.GetServiceType(noReturnFunc)
 		if err == nil {
 			t.Error("Expected error for constructor with no return values")
 		}
 	})
-	
+
 	t.Run("nil constructor", func(t *testing.T) {
 		_, err := analyzer.GetServiceType(nil)
 		if err == nil {
 			t.Error("Expected error for nil constructor")
 		}
 	})
-	
+
 	t.Run("function that only returns error", func(t *testing.T) {
 		errorOnlyFunc := func() error {
 			return nil
 		}
-		
+
 		_, err := analyzer.GetServiceType(errorOnlyFunc)
 		if err == nil {
 			t.Error("Expected error for function that only returns error")
@@ -1343,49 +1343,49 @@ func TestAnalyzer_GetServiceTypeEdgeCases(t *testing.T) {
 // Test GetResultTypes edge cases
 func TestAnalyzer_GetResultTypesEdgeCases(t *testing.T) {
 	analyzer := reflection.New()
-	
+
 	t.Run("nil constructor", func(t *testing.T) {
 		_, err := analyzer.GetResultTypes(nil)
 		if err == nil {
 			t.Error("Expected error for nil constructor")
 		}
 	})
-	
+
 	t.Run("result object with error", func(t *testing.T) {
 		type ResultWithError struct {
 			reflection.Out
 			Service *UserService
 		}
-		
+
 		resultFunc := func() (ResultWithError, error) {
 			return ResultWithError{}, nil
 		}
-		
+
 		types, err := analyzer.GetResultTypes(resultFunc)
 		if err != nil {
 			t.Fatalf("GetResultTypes failed: %v", err)
 		}
-		
+
 		// Should include the service type but not error
 		if len(types) != 1 {
 			t.Errorf("Expected 1 type, got %d", len(types))
 		}
 	})
-	
+
 	t.Run("non-result object", func(t *testing.T) {
 		simpleFunc := func() *Database {
 			return &Database{}
 		}
-		
+
 		types, err := analyzer.GetResultTypes(simpleFunc)
 		if err != nil {
 			t.Fatalf("GetResultTypes failed: %v", err)
 		}
-		
+
 		if len(types) != 1 {
 			t.Errorf("Expected 1 type, got %d", len(types))
 		}
-		
+
 		if types[0] != reflect.TypeOf((*Database)(nil)) {
 			t.Error("Wrong type returned")
 		}
@@ -1395,20 +1395,20 @@ func TestAnalyzer_GetResultTypesEdgeCases(t *testing.T) {
 // Test analyzer with types that don't embed In/Out
 func TestAnalyzer_NonInOutTypes(t *testing.T) {
 	analyzer := reflection.New()
-	
+
 	type NotInOut struct {
 		Field string
 	}
-	
+
 	notInOutFunc := func(n NotInOut) int {
 		return 0
 	}
-	
+
 	info, err := analyzer.Analyze(notInOutFunc)
 	if err != nil {
 		t.Fatalf("Failed to analyze: %v", err)
 	}
-	
+
 	// Should not be detected as param object
 	if info.IsParamObject {
 		t.Error("Function with non-In parameter should not be detected as param object")
@@ -1447,7 +1447,7 @@ type mockResolver struct {
 	resolved   map[string]any
 }
 
-func (m *mockResolver) Resolve(t reflect.Type) (any, error) {
+func (m *mockResolver) Get(t reflect.Type) (any, error) {
 	if m.shouldFail {
 		return nil, m.failError
 	}
@@ -1457,14 +1457,14 @@ func (m *mockResolver) Resolve(t reflect.Type) (any, error) {
 	return reflect.New(t.Elem()).Interface(), nil
 }
 
-func (m *mockResolver) ResolveKeyed(t reflect.Type, key any) (any, error) {
+func (m *mockResolver) GetKeyed(t reflect.Type, key any) (any, error) {
 	if m.shouldFail {
 		return nil, m.failError
 	}
-	return m.Resolve(t)
+	return m.Get(t)
 }
 
-func (m *mockResolver) ResolveGroup(t reflect.Type, group string) ([]any, error) {
+func (m *mockResolver) GetGroup(t reflect.Type, group string) ([]any, error) {
 	if m.shouldFail {
 		return nil, m.failError
 	}

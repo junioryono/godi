@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 
 	"github.com/junioryono/godi/v3/internal/graph"
+	"github.com/junioryono/godi/v3/internal/reflection"
 )
 
 // Scope provides an isolated resolution context
@@ -114,6 +115,7 @@ func (s *scope) GetGroup(serviceType reflect.Type, group string) ([]any, error) 
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve group member %v: %w", descriptor.Type, err)
 		}
+
 		instances = append(instances, instance)
 	}
 
@@ -232,16 +234,16 @@ func (s *scope) Close() error {
 // getInstance retrieves a cached instance from this scope
 func (s *scope) getInstance(key instanceKey) (any, bool) {
 	s.instancesMu.RLock()
-	defer s.instancesMu.RUnlock()
 	instance, ok := s.instances[key]
+	s.instancesMu.RUnlock()
 	return instance, ok
 }
 
 // setInstance caches an instance in this scope
 func (s *scope) setInstance(key instanceKey, instance any) {
 	s.instancesMu.Lock()
-	defer s.instancesMu.Unlock()
 	s.instances[key] = instance
+	s.instancesMu.Unlock()
 
 	// Track if disposable
 	if d, ok := instance.(Disposable); ok {
@@ -254,9 +256,10 @@ func (s *scope) setInstance(key instanceKey, instance any) {
 // checkCircular checks for circular dependencies
 func (s *scope) checkCircular(key instanceKey) error {
 	s.resolvingMu.Lock()
-	defer s.resolvingMu.Unlock()
+	_, ok := s.resolving[key]
+	s.resolvingMu.Unlock()
 
-	if _, ok := s.resolving[key]; ok {
+	if ok {
 		return &CircularDependencyError{
 			Node: graph.NodeKey{
 				Type: key.Type,
@@ -264,21 +267,22 @@ func (s *scope) checkCircular(key instanceKey) error {
 			},
 		}
 	}
+
 	return nil
 }
 
 // startResolving marks a service as being resolved
 func (s *scope) startResolving(key instanceKey) {
 	s.resolvingMu.Lock()
-	defer s.resolvingMu.Unlock()
 	s.resolving[key] = struct{}{}
+	s.resolvingMu.Unlock()
 }
 
 // stopResolving marks a service as no longer being resolved
 func (s *scope) stopResolving(key instanceKey) {
 	s.resolvingMu.Lock()
-	defer s.resolvingMu.Unlock()
 	delete(s.resolving, key)
+	s.resolvingMu.Unlock()
 }
 
 // resolve performs the actual service resolution
@@ -310,6 +314,7 @@ func (s *scope) resolve(key instanceKey, descriptor *Descriptor) (any, error) {
 		if instance, ok := s.provider.getSingleton(key); ok {
 			return instance, nil
 		}
+
 		// Singleton should have been created at build time
 		return nil, fmt.Errorf("singleton %v not initialized at build time", key.Type)
 
@@ -317,11 +322,13 @@ func (s *scope) resolve(key instanceKey, descriptor *Descriptor) (any, error) {
 		if instance, ok := s.getInstance(key); ok {
 			return instance, nil
 		}
+
 		// Create and cache scoped instance
 		instance, err := s.createInstance(descriptor)
 		if err != nil {
 			return nil, err
 		}
+
 		s.setInstance(key, instance)
 		return instance, nil
 
@@ -332,6 +339,79 @@ func (s *scope) resolve(key instanceKey, descriptor *Descriptor) (any, error) {
 	default:
 		return nil, fmt.Errorf("unknown lifetime: %v", descriptor.Lifetime)
 	}
+}
+
+// createInstance creates a new instance of a service
+func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
+	if descriptor == nil {
+		return nil, fmt.Errorf("descriptor cannot be nil")
+	}
+
+	// Analyze constructor
+	info, err := s.provider.analyzer.Analyze(descriptor.Constructor.Interface())
+	if err != nil {
+		return nil, fmt.Errorf("failed to analyze constructor: %w", err)
+	}
+
+	// Create invoker
+	invoker := reflection.NewConstructorInvoker(s.provider.analyzer)
+
+	// Invoke constructor
+	results, err := invoker.Invoke(info, s)
+	if err != nil {
+		return nil, fmt.Errorf("constructor invocation failed: %w", err)
+	}
+
+	// Handle result objects (Out structs)
+	if info.IsResultObject && len(results) > 0 {
+		processor := reflection.NewResultObjectProcessor(s.provider.analyzer)
+		registrations, err := processor.ProcessResultObject(results[0], info.Type.Out(0))
+		if err != nil {
+			return nil, fmt.Errorf("failed to process result object: %w", err)
+		}
+
+		// Find the primary service to return
+		for _, reg := range registrations {
+			if reg.Type == descriptor.Type && reg.Key == descriptor.Key {
+				instance := reg.Value
+				// Apply decorators
+				decorated, err := s.applyDecorators(instance, descriptor.Type)
+				if err != nil {
+					return nil, err
+				}
+				return decorated, nil
+			}
+		}
+
+		// If no exact match, return the first one
+		if len(registrations) > 0 {
+			instance := registrations[0].Value
+
+			// Apply decorators
+			decorated, err := s.applyDecorators(instance, descriptor.Type)
+			if err != nil {
+				return nil, err
+			}
+			return decorated, nil
+		}
+
+		return nil, fmt.Errorf("result object produced no services")
+	}
+
+	// Regular constructor - get first result
+	if len(results) == 0 {
+		return nil, fmt.Errorf("constructor returned no values")
+	}
+
+	instance := results[0].Interface()
+
+	// Apply decorators
+	decorated, err := s.applyDecorators(instance, descriptor.Type)
+	if err != nil {
+		return nil, err
+	}
+
+	return decorated, nil
 }
 
 // applyDecorators applies all registered decorators to an instance
@@ -354,6 +434,7 @@ func (s *scope) applyDecorators(instance any, serviceType reflect.Type) (any, er
 		if err != nil {
 			return nil, fmt.Errorf("decorator %d failed for %v: %w", i, serviceType, err)
 		}
+
 		current = decorated
 	}
 
@@ -374,6 +455,7 @@ func (s *scope) invokeDecorator(decorator *Descriptor, instance any) (any, error
 	if decoratorType.NumIn() < 1 {
 		return nil, fmt.Errorf("decorator must have at least one parameter")
 	}
+
 	if decoratorType.NumOut() < 1 {
 		return nil, fmt.Errorf("decorator must return at least one value")
 	}
@@ -398,7 +480,7 @@ func (s *scope) invokeDecorator(decorator *Descriptor, instance any) (any, error
 		dep, err := s.Get(paramType)
 		if err != nil {
 			// Check if parameter is a pointer and can be nil
-			if paramType.Kind() == reflect.Ptr {
+			if paramType.Kind() == reflect.Pointer {
 				args[i] = reflect.Zero(paramType)
 			} else {
 				return nil, fmt.Errorf("failed to resolve decorator dependency %d: %w", i, err)
