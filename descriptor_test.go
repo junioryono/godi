@@ -122,9 +122,11 @@ func TestNewDescriptor(t *testing.T) {
 
 	t.Run("non-function constructor", func(t *testing.T) {
 		descriptor, err := newDescriptor("not a function", Singleton)
-		assert.Error(t, err)
-		assert.Equal(t, ErrConstructorNotFunction, err)
-		assert.Nil(t, descriptor)
+		assert.NoError(t, err)
+		assert.NotNil(t, descriptor)
+		assert.Equal(t, reflect.TypeOf("not a function"), descriptor.ConstructorType)
+		assert.Equal(t, Singleton, descriptor.Lifetime)
+		assert.False(t, descriptor.IsDecorator)
 	})
 
 	t.Run("constructor with no return", func(t *testing.T) {

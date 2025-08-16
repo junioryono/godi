@@ -347,6 +347,13 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 		return nil, fmt.Errorf("descriptor cannot be nil")
 	}
 
+	// Handle instance descriptors
+	if descriptor.IsInstance {
+		// For instances, return the stored instance directly
+		// Apply decorators if needed
+		return s.applyDecorators(descriptor.Instance, descriptor.Type)
+	}
+
 	// Analyze constructor
 	info, err := s.provider.analyzer.Analyze(descriptor.Constructor.Interface())
 	if err != nil {

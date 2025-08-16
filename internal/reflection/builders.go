@@ -261,14 +261,15 @@ func NewConstructorInvoker(analyzer *Analyzer) *ConstructorInvoker {
 	}
 }
 
-// Invoke calls a constructor with resolved dependencies.
+// Invoke calls a constructor with resolved dependencies or returns an instance value.
 func (ci *ConstructorInvoker) Invoke(
 	info *ConstructorInfo,
 	resolver DependencyResolver,
 ) ([]reflect.Value, error) {
+	// Handle instance values
 	if !info.IsFunc {
-		// Non-function, return the value itself
-		return []reflect.Value{info.Value}, nil
+		// For instances, return the instance value directly
+		return []reflect.Value{reflect.ValueOf(info.InstanceValue)}, nil
 	}
 
 	// Build arguments

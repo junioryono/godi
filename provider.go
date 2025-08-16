@@ -253,10 +253,17 @@ func (p *provider) createAllSingletons() error {
 			continue
 		}
 
-		// Create the instance
-		instance, err := p.rootScope.createInstance(descriptor)
-		if err != nil {
-			return fmt.Errorf("failed to create singleton %v: %w", descriptor.Type, err)
+		// Handle instance descriptors specially for singletons
+		var instance any
+		if descriptor.IsInstance {
+			// For instances, use the stored value directly
+			instance = descriptor.Instance
+		} else {
+			// Create the instance through constructor
+			instance, err = p.rootScope.createInstance(descriptor)
+			if err != nil {
+				return fmt.Errorf("failed to create singleton %v: %w", descriptor.Type, err)
+			}
 		}
 
 		// Store the singleton
