@@ -166,7 +166,7 @@ Organize your test dependencies:
 // testutil/modules.go
 package testutil
 
-import "github.com/junioryono/godi/v3"
+import "github.com/junioryono/godi/v4"
 
 // Basic test module with mocks
 func NewTestModule() godi.ModuleOption {

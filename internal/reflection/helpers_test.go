@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/junioryono/godi/v3/internal/reflection"
+	"github.com/junioryono/godi/v4/internal/reflection"
 )
 
 // Test FormatConstructor

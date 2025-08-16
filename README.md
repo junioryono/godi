@@ -13,7 +13,7 @@ package main
 
 import (
     "fmt"
-    "github.com/junioryono/godi/v3"
+    "github.com/junioryono/godi/v4"
 )
 
 // 1. Define your service
@@ -105,7 +105,7 @@ services.AddSingleton(func() Database {
 ## Installation
 
 ```bash
-go get github.com/junioryono/godi/v3
+go get github.com/junioryono/godi/v4
 ```
 
 ## Common Patterns

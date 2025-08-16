@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/junioryono/godi/v3/internal/graph"
-	"github.com/junioryono/godi/v3/internal/reflection"
+	"github.com/junioryono/godi/v4/internal/graph"
+	"github.com/junioryono/godi/v4/internal/reflection"
 )
 
 // Disposable interface for resources that need cleanup

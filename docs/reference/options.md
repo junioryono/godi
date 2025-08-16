@@ -120,7 +120,7 @@ if godi.IsTimeout(err) {
 package production
 
 import (
-    "github.com/junioryono/godi/v3"
+    "github.com/junioryono/godi/v4"
     "myapp/monitoring"
     "time"
     "log"

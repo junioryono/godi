@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 
 	"github.com/google/uuid"
-	"github.com/junioryono/godi/v3/internal/graph"
-	"github.com/junioryono/godi/v3/internal/reflection"
+	"github.com/junioryono/godi/v4/internal/graph"
+	"github.com/junioryono/godi/v4/internal/reflection"
 )
 
 // Scope provides an isolated resolution context
