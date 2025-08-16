@@ -42,6 +42,10 @@ type scope struct {
 	children   map[*scope]struct{}
 	childrenMu sync.Mutex
 
+	// Cache for multi-return constructor results
+	multiReturnCache   map[uintptr][]reflect.Value
+	multiReturnCacheMu sync.RWMutex
+
 	// State
 	disposed int32 // atomic
 }
@@ -403,6 +407,58 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 		}
 
 		return nil, fmt.Errorf("result object produced no services")
+	}
+
+	// Handle multi-return constructors
+	if descriptor.IsMultiReturn && descriptor.ReturnIndex >= 0 {
+		// Check cache first for scoped/transient multi-return
+		constructorPtr := descriptor.Constructor.Pointer()
+		
+		s.multiReturnCacheMu.RLock()
+		cachedResults, cached := s.multiReturnCache[constructorPtr]
+		s.multiReturnCacheMu.RUnlock()
+		
+		if cached && descriptor.Lifetime == Scoped {
+			// Use cached results for scoped lifetime
+			if descriptor.ReturnIndex < len(cachedResults) {
+				instance := cachedResults[descriptor.ReturnIndex].Interface()
+				
+				// Apply decorators
+				decorated, err := s.applyDecorators(instance, descriptor.Type)
+				if err != nil {
+					return nil, err
+				}
+				
+				return decorated, nil
+			}
+		}
+		
+		// For multi-return constructors, cache results if scoped
+		if descriptor.Lifetime == Scoped && !cached {
+			// Cache the results for scoped instances
+			s.multiReturnCacheMu.Lock()
+			if s.multiReturnCache == nil {
+				s.multiReturnCache = make(map[uintptr][]reflect.Value)
+			}
+			s.multiReturnCache[constructorPtr] = results
+			s.multiReturnCacheMu.Unlock()
+		}
+		
+		// Get the specific return value
+		if descriptor.ReturnIndex >= len(results) {
+			return nil, fmt.Errorf("invalid return index %d for constructor with %d returns", 
+				descriptor.ReturnIndex, len(results))
+		}
+		
+		instance := results[descriptor.ReturnIndex].Interface()
+		
+		// Apply decorators
+		decorated, err := s.applyDecorators(instance, descriptor.Type)
+		if err != nil {
+			return nil, err
+		}
+		
+		return decorated, nil
 	}
 
 	// Regular constructor - get first result

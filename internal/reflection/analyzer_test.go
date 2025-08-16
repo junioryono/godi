@@ -876,6 +876,122 @@ func TestAnalyzer_ComplexParamObject(t *testing.T) {
 	}
 }
 
+// Test multiple return types support
+func TestAnalyzer_MultipleReturns(t *testing.T) {
+	tests := []struct {
+		name           string
+		constructor    any
+		expectedTypes  []reflect.Type
+		hasError       bool
+		errorPosition  int // -1 if no error
+	}{
+		{
+			name: "single return no error",
+			constructor: func() *Database {
+				return &Database{}
+			},
+			expectedTypes: []reflect.Type{
+				reflect.TypeOf((*Database)(nil)),
+			},
+			hasError:      false,
+			errorPosition: -1,
+		},
+		{
+			name: "single return with error",
+			constructor: func() (*Database, error) {
+				return &Database{}, nil
+			},
+			expectedTypes: []reflect.Type{
+				reflect.TypeOf((*Database)(nil)),
+			},
+			hasError:      true,
+			errorPosition: 1,
+		},
+		{
+			name: "multiple returns no error",
+			constructor: func() (*Database, *UserService, Logger) {
+				return &Database{}, &UserService{}, &ConsoleLogger{}
+			},
+			expectedTypes: []reflect.Type{
+				reflect.TypeOf((*Database)(nil)),
+				reflect.TypeOf((*UserService)(nil)),
+				reflect.TypeOf((*Logger)(nil)).Elem(),
+			},
+			hasError:      false,
+			errorPosition: -1,
+		},
+		{
+			name: "multiple returns with error",
+			constructor: func() (*Database, *UserService, Logger, error) {
+				return &Database{}, &UserService{}, &ConsoleLogger{}, nil
+			},
+			expectedTypes: []reflect.Type{
+				reflect.TypeOf((*Database)(nil)),
+				reflect.TypeOf((*UserService)(nil)),
+				reflect.TypeOf((*Logger)(nil)).Elem(),
+			},
+			hasError:      true,
+			errorPosition: 3,
+		},
+		{
+			name: "three returns with error",
+			constructor: func() (*Database, Logger, error) {
+				return &Database{}, &ConsoleLogger{}, nil
+			},
+			expectedTypes: []reflect.Type{
+				reflect.TypeOf((*Database)(nil)),
+				reflect.TypeOf((*Logger)(nil)).Elem(),
+			},
+			hasError:      true,
+			errorPosition: 2,
+		},
+	}
+
+	analyzer := reflection.New()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info, err := analyzer.Analyze(tt.constructor)
+			if err != nil {
+				t.Fatalf("Failed to analyze constructor: %v", err)
+			}
+
+			// Check HasErrorReturn flag
+			if info.HasErrorReturn != tt.hasError {
+				t.Errorf("Expected HasErrorReturn=%v, got %v", tt.hasError, info.HasErrorReturn)
+			}
+
+			// Get result types
+			types, err := analyzer.GetResultTypes(tt.constructor)
+			if err != nil {
+				t.Fatalf("Failed to get result types: %v", err)
+			}
+
+			// Check number of types (excluding error)
+			if len(types) != len(tt.expectedTypes) {
+				t.Errorf("Expected %d types, got %d", len(tt.expectedTypes), len(types))
+			}
+
+			// Check each type
+			for i, expectedType := range tt.expectedTypes {
+				if i < len(types) && types[i] != expectedType {
+					t.Errorf("Type %d: expected %v, got %v", i, expectedType, types[i])
+				}
+			}
+
+			// Verify error position if present
+			if tt.hasError && tt.errorPosition >= 0 {
+				if tt.errorPosition < len(info.Returns) {
+					ret := info.Returns[tt.errorPosition]
+					if !ret.IsError {
+						t.Errorf("Expected return at position %d to be error", tt.errorPosition)
+					}
+				}
+			}
+		})
+	}
+}
+
 // Test error handling in builders
 func TestParamObjectBuilder_ErrorCases(t *testing.T) {
 	analyzer := reflection.New()

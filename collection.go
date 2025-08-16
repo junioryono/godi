@@ -172,12 +172,13 @@ func (sc *collection) BuildWithOptions(options *ProviderOptions) (Provider, erro
 	// Create root scope
 	rootCtx := context.Background()
 	p.rootScope = &scope{
-		provider:    p,
-		context:     rootCtx,
-		instances:   make(map[instanceKey]any),
-		disposables: make([]Disposable, 0),
-		resolving:   make(map[instanceKey]struct{}),
-		children:    make(map[*scope]struct{}),
+		provider:         p,
+		context:          rootCtx,
+		instances:        make(map[instanceKey]any),
+		disposables:      make([]Disposable, 0),
+		resolving:        make(map[instanceKey]struct{}),
+		children:         make(map[*scope]struct{}),
+		multiReturnCache: make(map[uintptr][]reflect.Value),
 	}
 
 	// Eagerly create all singletons
@@ -369,6 +370,62 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 		}
 	}
 
+	// Check if this is a multi-return constructor (not an Out struct)
+	analyzer := reflection.New()
+	info, err := analyzer.Analyze(service)
+	if err != nil {
+		return fmt.Errorf("failed to analyze constructor: %w", err)
+	}
+
+	// Handle multiple return types (not Out structs)
+	if info.IsFunc && len(info.Returns) > 1 && !info.IsResultObject {
+		// Filter out error returns to get actual service types
+		nonErrorReturns := make([]reflection.ReturnInfo, 0)
+		for _, ret := range info.Returns {
+			if !ret.IsError {
+				nonErrorReturns = append(nonErrorReturns, ret)
+			}
+		}
+
+		// If we have multiple non-error returns, register each as a separate service
+		if len(nonErrorReturns) > 1 {
+			for i, ret := range nonErrorReturns {
+				// Create a descriptor for each return type
+				typeDescriptor := &Descriptor{
+					Type:            ret.Type,
+					Lifetime:        descriptor.Lifetime,
+					Constructor:     descriptor.Constructor,
+					ConstructorType: descriptor.ConstructorType,
+					Dependencies:    descriptor.Dependencies,
+					Group:           descriptor.Group,
+					As:              descriptor.As,
+					IsDecorator:     false,
+					IsInstance:      false,
+					ReturnIndex:     ret.Index,
+					IsMultiReturn:   true,
+					isFunc:          descriptor.isFunc,
+					isParamObject:   descriptor.isParamObject,
+					paramFields:     descriptor.paramFields,
+				}
+
+				// Apply name/key only to the first return if specified
+				if options.Name != "" && i == 0 {
+					typeDescriptor.Key = options.Name
+				} else if options.Name != "" {
+					// For subsequent returns, could optionally append an index
+					// but for now we'll leave them unkeyed
+					typeDescriptor.Key = nil
+				}
+
+				// Register each type descriptor
+				if err := r.registerDescriptor(typeDescriptor); err != nil {
+					return fmt.Errorf("failed to register return type %v: %w", ret.Type, err)
+				}
+			}
+			return nil
+		}
+	}
+
 	// Handle As option - register under interface types
 	if len(options.As) > 0 {
 		// When As is specified, register the service under each interface type
@@ -393,6 +450,8 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 				IsDecorator:     false,
 				IsInstance:      descriptor.IsInstance,
 				Instance:        descriptor.Instance,
+				ReturnIndex:     descriptor.ReturnIndex,
+				IsMultiReturn:   descriptor.IsMultiReturn,
 				isFunc:          descriptor.isFunc,
 				isResultObject:  descriptor.isResultObject,
 				resultFields:    descriptor.resultFields,

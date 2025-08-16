@@ -47,6 +47,13 @@ type Descriptor struct {
 	// Instance is the actual instance value when IsInstance is true
 	Instance any
 
+	// ReturnIndex indicates which return value this descriptor represents
+	// -1 for single returns or Out structs, >= 0 for specific return index in multi-return
+	ReturnIndex int
+
+	// IsMultiReturn indicates if this descriptor is from a multi-return constructor
+	IsMultiReturn bool
+
 	// Analysis results cached for performance
 	isFunc         bool
 	isResultObject bool
@@ -94,15 +101,18 @@ func newDescriptor(constructor any, lifetime Lifetime, opts ...AddOption) (*Desc
 		if numReturns == 0 {
 			return nil, ErrConstructorNoReturn
 		}
-		if numReturns > 2 {
-			return nil, ErrConstructorTooManyReturns
-		}
 
-		// If there are 2 return values, the second must be error
-		if numReturns == 2 {
+		// Check if the last return is an error (if any)
+		if numReturns > 0 {
 			errorType := reflect.TypeOf((*error)(nil)).Elem()
-			if !constructorType.Out(1).Implements(errorType) {
-				return nil, ErrConstructorInvalidSecondReturn
+			
+			// If there's an error type in the returns, it must be the last one
+			for i := 0; i < numReturns-1; i++ {
+				if constructorType.Out(i).Implements(errorType) {
+					// Found error in non-last position - this is allowed but unusual
+					// The analyzer will handle this case by treating it as a regular type
+					break
+				}
 			}
 		}
 	}
@@ -141,6 +151,8 @@ func newDescriptor(constructor any, lifetime Lifetime, opts ...AddOption) (*Desc
 		IsDecorator:     false,
 		IsInstance:      isInstance,
 		Instance:        nil,
+		ReturnIndex:     -1, // Default: not a multi-return descriptor
+		IsMultiReturn:   false,
 	}
 
 	// Store the instance if it's not a function

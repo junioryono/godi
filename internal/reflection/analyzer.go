@@ -295,19 +295,37 @@ func (a *Analyzer) analyzeReturns(info *ConstructorInfo) error {
 		return a.analyzeResultObject(info, firstReturn)
 	}
 
-	// Regular returns
-	info.Returns = make([]ReturnInfo, fnType.NumOut())
+	// Handle multiple returns (including multiple non-error returns)
+	info.Returns = make([]ReturnInfo, 0, fnType.NumOut())
+	
 	for i := 0; i < fnType.NumOut(); i++ {
 		retType := fnType.Out(i)
-		info.Returns[i] = ReturnInfo{
-			Type:    retType,
-			Index:   i,
-			IsError: a.implementsError(retType),
-		}
-
-		// Check if last return is error
-		if i == fnType.NumOut()-1 && info.Returns[i].IsError {
+		isError := a.implementsError(retType)
+		
+		// Check if this is the last return and it's an error
+		if isError && i == fnType.NumOut()-1 {
 			info.HasErrorReturn = true
+			// Still add it to Returns for completeness, but mark as error
+			info.Returns = append(info.Returns, ReturnInfo{
+				Type:    retType,
+				Index:   i,
+				IsError: true,
+			})
+		} else if isError {
+			// Error in non-last position is treated as a regular type
+			// This allows for advanced use cases while maintaining backward compatibility
+			info.Returns = append(info.Returns, ReturnInfo{
+				Type:    retType,
+				Index:   i,
+				IsError: false, // Treat as regular type if not in last position
+			})
+		} else {
+			// Regular non-error return
+			info.Returns = append(info.Returns, ReturnInfo{
+				Type:    retType,
+				Index:   i,
+				IsError: false,
+			})
 		}
 	}
 
@@ -442,28 +460,25 @@ func (a *Analyzer) GetServiceType(constructor any) (reflect.Type, error) {
 	return nil, fmt.Errorf("constructor only returns error")
 }
 
-// GetResultTypes returns all types produced by a constructor (for Out structs).
+// GetResultTypes returns all types produced by a constructor (for Out structs or multiple returns).
 func (a *Analyzer) GetResultTypes(constructor any) ([]reflect.Type, error) {
 	info, err := a.Analyze(constructor)
 	if err != nil {
 		return nil, err
 	}
 
-	if !info.IsResultObject {
-		// Regular constructor returns single type
-		serviceType, err := a.GetServiceType(constructor)
-		if err != nil {
-			return nil, err
-		}
-		return []reflect.Type{serviceType}, nil
-	}
-
-	// For result objects, return all field types
+	// For all cases (Out structs, multiple returns, single return), 
+	// return all non-error types
 	types := make([]reflect.Type, 0, len(info.Returns))
 	for _, ret := range info.Returns {
 		if !ret.IsError {
 			types = append(types, ret.Type)
 		}
+	}
+
+	// If no types were found and it's not a function, return the instance type
+	if len(types) == 0 && !info.IsFunc {
+		return []reflect.Type{info.Type}, nil
 	}
 
 	return types, nil
