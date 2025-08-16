@@ -1442,6 +1442,146 @@ func TestMixedRegistration(t *testing.T) {
 	})
 }
 
+// Test types for multi-return integration tests
+type IntegrationDatabase struct {
+	ConnectionString string
+}
+
+type IntegrationCache struct {
+	Provider string
+}
+
+type IntegrationLogger struct {
+	Level string
+}
+
+type IntegrationUserRepository struct {
+	DB    *IntegrationDatabase
+	Cache *IntegrationCache
+}
+
+type IntegrationUserService struct {
+	Repo   *IntegrationUserRepository
+	Logger *IntegrationLogger
+}
+
+type IntegrationAdminService struct {
+	UserService *IntegrationUserService
+	Logger      *IntegrationLogger
+}
+
+type IntegrationNotificationService struct {
+	Logger *IntegrationLogger
+}
+
+// Test multi-return with scoped lifetime
+func TestMultiReturnScopedLifetime(t *testing.T) {
+	// Multi-return constructor
+	NewInfrastructure := func() (*IntegrationDatabase, *IntegrationCache, *IntegrationLogger) {
+		return &IntegrationDatabase{ConnectionString: "postgres://localhost"},
+			&IntegrationCache{Provider: "redis"},
+			&IntegrationLogger{Level: "info"}
+	}
+
+	collection := NewCollection()
+	err := collection.AddScoped(NewInfrastructure)
+	require.NoError(t, err)
+
+	provider, err := collection.Build()
+	require.NoError(t, err)
+	defer provider.Close()
+
+	// Create two scopes
+	scope1, err := provider.CreateScope(context.Background())
+	require.NoError(t, err)
+	defer scope1.Close()
+
+	scope2, err := provider.CreateScope(context.Background())
+	require.NoError(t, err)
+	defer scope2.Close()
+
+	// Get services from scope1
+	db1, err := scope1.Get(reflect.TypeOf((*IntegrationDatabase)(nil)))
+	require.NoError(t, err)
+	cache1, err := scope1.Get(reflect.TypeOf((*IntegrationCache)(nil)))
+	require.NoError(t, err)
+	logger1, err := scope1.Get(reflect.TypeOf((*IntegrationLogger)(nil)))
+	require.NoError(t, err)
+
+	// Get services from scope2
+	db2, err := scope2.Get(reflect.TypeOf((*IntegrationDatabase)(nil)))
+	require.NoError(t, err)
+	cache2, err := scope2.Get(reflect.TypeOf((*IntegrationCache)(nil)))
+	require.NoError(t, err)
+	logger2, err := scope2.Get(reflect.TypeOf((*IntegrationLogger)(nil)))
+	require.NoError(t, err)
+
+	// Services from different scopes should be different instances
+	assert.NotSame(t, db1, db2)
+	assert.NotSame(t, cache1, cache2)
+	assert.NotSame(t, logger1, logger2)
+
+	// But within same scope, multiple gets should return same instance
+	db1Again, err := scope1.Get(reflect.TypeOf((*IntegrationDatabase)(nil)))
+	require.NoError(t, err)
+	assert.Same(t, db1, db1Again)
+}
+
+// Test multi-return with dependencies across scopes
+func TestMultiReturnWithDependencies(t *testing.T) {
+	NewInfrastructure := func() (*IntegrationDatabase, *IntegrationCache, *IntegrationLogger) {
+		return &IntegrationDatabase{ConnectionString: "postgres://localhost"},
+			&IntegrationCache{Provider: "redis"},
+			&IntegrationLogger{Level: "info"}
+	}
+
+	NewServices := func(db *IntegrationDatabase, cache *IntegrationCache, logger *IntegrationLogger) (*IntegrationUserRepository, *IntegrationUserService, *IntegrationAdminService) {
+		repo := &IntegrationUserRepository{DB: db, Cache: cache}
+		userSvc := &IntegrationUserService{Repo: repo, Logger: logger}
+		adminSvc := &IntegrationAdminService{UserService: userSvc, Logger: logger}
+		return repo, userSvc, adminSvc
+	}
+
+	collection := NewCollection()
+
+	// Register infrastructure (multi-return)
+	err := collection.AddSingleton(NewInfrastructure)
+	require.NoError(t, err)
+
+	// Register services that depend on infrastructure (also multi-return)
+	err = collection.AddScoped(NewServices)
+	require.NoError(t, err)
+
+	provider, err := collection.Build()
+	require.NoError(t, err)
+	defer provider.Close()
+
+	// Create scope for scoped services
+	scope, err := provider.CreateScope(context.Background())
+	require.NoError(t, err)
+	defer scope.Close()
+
+	// Resolve services
+	userRepo, err := scope.Get(reflect.TypeOf((*IntegrationUserRepository)(nil)))
+	require.NoError(t, err)
+	assert.NotNil(t, userRepo)
+	repo := userRepo.(*IntegrationUserRepository)
+	assert.NotNil(t, repo.DB)
+	assert.NotNil(t, repo.Cache)
+
+	userSvc, err := scope.Get(reflect.TypeOf((*IntegrationUserService)(nil)))
+	require.NoError(t, err)
+	assert.NotNil(t, userSvc)
+	svc := userSvc.(*IntegrationUserService)
+	assert.Same(t, repo, svc.Repo)
+
+	adminSvc, err := scope.Get(reflect.TypeOf((*IntegrationAdminService)(nil)))
+	require.NoError(t, err)
+	assert.NotNil(t, adminSvc)
+	admin := adminSvc.(*IntegrationAdminService)
+	assert.Same(t, svc, admin.UserService)
+}
+
 // Benchmark tests
 func BenchmarkInstanceRegistration(b *testing.B) {
 	type Service struct {
@@ -1468,6 +1608,76 @@ func BenchmarkInstanceRegistration(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			collection := NewCollection()
 			_ = collection.AddSingleton(42, Name("answer"))
+		}
+	})
+}
+
+// Benchmark multi-return performance
+func BenchmarkMultiReturnResolution(b *testing.B) {
+	NewInfrastructure := func() (*IntegrationDatabase, *IntegrationCache, *IntegrationLogger) {
+		return &IntegrationDatabase{ConnectionString: "postgres://localhost"},
+			&IntegrationCache{Provider: "redis"},
+			&IntegrationLogger{Level: "info"}
+	}
+
+	collection := NewCollection()
+	_ = collection.AddSingleton(NewInfrastructure)
+
+	provider, _ := collection.Build()
+	defer provider.Close()
+
+	dbType := reflect.TypeOf((*IntegrationDatabase)(nil))
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = provider.Get(dbType)
+	}
+}
+
+func BenchmarkMultiReturnVsSingle(b *testing.B) {
+	b.Run("multi-return", func(b *testing.B) {
+		NewInfrastructure := func() (*IntegrationDatabase, *IntegrationCache, *IntegrationLogger) {
+			return &IntegrationDatabase{}, &IntegrationCache{}, &IntegrationLogger{}
+		}
+
+		collection := NewCollection()
+		_ = collection.AddSingleton(NewInfrastructure)
+		provider, _ := collection.Build()
+		defer provider.Close()
+
+		types := []reflect.Type{
+			reflect.TypeOf((*IntegrationDatabase)(nil)),
+			reflect.TypeOf((*IntegrationCache)(nil)),
+			reflect.TypeOf((*IntegrationLogger)(nil)),
+		}
+
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			for _, t := range types {
+				_, _ = provider.Get(t)
+			}
+		}
+	})
+
+	b.Run("single-return", func(b *testing.B) {
+		collection := NewCollection()
+		_ = collection.AddSingleton(func() *IntegrationDatabase { return &IntegrationDatabase{} })
+		_ = collection.AddSingleton(func() *IntegrationCache { return &IntegrationCache{} })
+		_ = collection.AddSingleton(func() *IntegrationLogger { return &IntegrationLogger{} })
+		provider, _ := collection.Build()
+		defer provider.Close()
+
+		types := []reflect.Type{
+			reflect.TypeOf((*IntegrationDatabase)(nil)),
+			reflect.TypeOf((*IntegrationCache)(nil)),
+			reflect.TypeOf((*IntegrationLogger)(nil)),
+		}
+
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			for _, t := range types {
+				_, _ = provider.Get(t)
+			}
 		}
 	})
 }
