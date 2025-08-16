@@ -47,7 +47,7 @@ func TestProviderCreateScope(t *testing.T) {
 		require.NoError(t, err)
 		defer provider.Close()
 
-		scope, err := provider.CreateScope(nil)
+		scope, err := provider.CreateScope(context.TODO())
 		assert.NoError(t, err)
 		assert.NotNil(t, scope)
 		defer scope.Close()

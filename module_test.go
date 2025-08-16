@@ -55,17 +55,67 @@ func TestNewModule(t *testing.T) {
 		assert.Equal(t, 1, collection.Count())
 	})
 
-	t.Run("module with multiple services", func(t *testing.T) {
+	t.Run("module with multiple registrations of same service type (should error)", func(t *testing.T) {
+		// This test expects an error because we're trying to register
+		// the same type (*ModuleTestService) multiple times without keys
 		module := NewModule("multiple",
 			AddSingleton(NewModuleTestService),
+			// These should fail because *ModuleTestService is already registered
 			AddScoped(func() *ModuleTestService { return &ModuleTestService{Name: "scoped"} }),
 			AddTransient(func() *ModuleTestService { return &ModuleTestService{Name: "transient"} }),
 		)
 
 		collection := NewCollection()
 		err := module(collection)
+		assert.Error(t, err, "Should error when registering same type multiple times without keys")
+		assert.Contains(t, err.Error(), "already registered")
+	})
+
+	t.Run("module with multiple of same service (using keys)", func(t *testing.T) {
+		// This test shows the correct way to register the same type multiple times
+		// by using the Name() option to create keyed services
+		module := NewModule("multiple-keyed",
+			AddSingleton(NewModuleTestService), // Default (non-keyed)
+			AddScoped(func() *ModuleTestService {
+				return &ModuleTestService{Name: "scoped"}
+			}, Name("scoped-service")), // Keyed with "scoped-service"
+			AddTransient(func() *ModuleTestService {
+				return &ModuleTestService{Name: "transient"}
+			}, Name("transient-service")), // Keyed with "transient-service"
+		)
+
+		collection := NewCollection()
+		err := module(collection)
 		assert.NoError(t, err)
-		assert.Equal(t, 3, collection.Count())
+		assert.Equal(t, 3, collection.Count(), "Should have 3 services: 1 default and 2 keyed")
+
+		// Verify the services are registered correctly
+		assert.True(t, collection.HasService(reflect.TypeOf((*ModuleTestService)(nil))))
+		assert.True(t, collection.HasKeyedService(reflect.TypeOf((*ModuleTestService)(nil)), "scoped-service"))
+		assert.True(t, collection.HasKeyedService(reflect.TypeOf((*ModuleTestService)(nil)), "transient-service"))
+	})
+
+	t.Run("module with multiple services using groups", func(t *testing.T) {
+		// Another way to register multiple instances of the same type is using groups
+		module := NewModule("multiple-grouped",
+			AddTransient(func() *ModuleTestService {
+				return &ModuleTestService{Name: "handler1"}
+			}, Group("handlers")),
+			AddTransient(func() *ModuleTestService {
+				return &ModuleTestService{Name: "handler2"}
+			}, Group("handlers")),
+			AddTransient(func() *ModuleTestService {
+				return &ModuleTestService{Name: "handler3"}
+			}, Group("handlers")),
+		)
+
+		cl := NewCollection()
+		err := module(cl)
+		assert.NoError(t, err)
+		assert.Equal(t, 3, cl.Count())
+
+		c := cl.(*collection)
+		assert.True(t, c.HasGroup(reflect.TypeOf((*ModuleTestService)(nil)), "handlers"))
 	})
 
 	t.Run("nested modules", func(t *testing.T) {
@@ -73,14 +123,18 @@ func TestNewModule(t *testing.T) {
 			AddSingleton(NewModuleTestService),
 		)
 
+		// Use different service types or keys to avoid conflicts
+		type MiddleService struct{ Name string }
+		type OuterService struct{ Name string }
+
 		middleModule := NewModule("middle",
 			innerModule,
-			AddScoped(func() *ModuleTestService { return &ModuleTestService{Name: "middle"} }),
+			AddScoped(func() *MiddleService { return &MiddleService{Name: "middle"} }),
 		)
 
 		outerModule := NewModule("outer",
 			middleModule,
-			AddTransient(func() *ModuleTestService { return &ModuleTestService{Name: "outer"} }),
+			AddTransient(func() *OuterService { return &OuterService{Name: "outer"} }),
 		)
 
 		collection := NewCollection()
@@ -97,7 +151,7 @@ func TestNewModule(t *testing.T) {
 
 		// Module that tries to add duplicate
 		module := NewModule("error",
-			AddSingleton(NewModuleTestService), // This should fail
+			AddSingleton(NewModuleTestService), // This should fail - duplicate
 		)
 
 		err = module(collection)
@@ -425,21 +479,26 @@ func TestComplexModules(t *testing.T) {
 	})
 
 	t.Run("module composition", func(t *testing.T) {
+		// Use different types to avoid conflicts
+		type CoreService struct{ Name string }
+		type FeatureService struct{ Name string }
+		type AppService struct{ Name string }
+
 		// Core module
 		coreModule := NewModule("core",
-			AddSingleton(func() *ModuleTestService { return &ModuleTestService{Name: "core"} }),
+			AddSingleton(func() *CoreService { return &CoreService{Name: "core"} }),
 		)
 
 		// Feature module depends on core
 		featureModule := NewModule("feature",
 			coreModule,
-			AddScoped(func() *ModuleTestService { return &ModuleTestService{Name: "feature"} }),
+			AddScoped(func() *FeatureService { return &FeatureService{Name: "feature"} }),
 		)
 
 		// App module combines everything
 		appModule := NewModule("app",
 			featureModule,
-			AddTransient(func() *ModuleTestService { return &ModuleTestService{Name: "app"} }),
+			AddTransient(func() *AppService { return &AppService{Name: "app"} }),
 		)
 
 		collection := NewCollection()
@@ -480,6 +539,28 @@ func TestComplexModules(t *testing.T) {
 		assert.ErrorAs(t, err, &moduleErr)
 		assert.Equal(t, "failing", moduleErr.Module)
 		assert.Contains(t, moduleErr.Cause.Error(), "intentional error")
+	})
+
+	t.Run("real-world example with keyed services", func(t *testing.T) {
+		// Example showing how to use keyed services in a module
+		type Logger struct{ Name string }
+
+		loggingModule := NewModule("logging",
+			// Register different logger implementations with keys
+			AddSingleton(func() *Logger { return &Logger{Name: "default"} }),
+			AddSingleton(func() *Logger { return &Logger{Name: "debug"} }, Name("debug")),
+			AddSingleton(func() *Logger { return &Logger{Name: "audit"} }, Name("audit")),
+		)
+
+		collection := NewCollection()
+		err := collection.AddModules(loggingModule)
+		assert.NoError(t, err)
+		assert.Equal(t, 3, collection.Count())
+
+		// Verify all three loggers are registered
+		assert.True(t, collection.HasService(reflect.TypeOf((*Logger)(nil))))
+		assert.True(t, collection.HasKeyedService(reflect.TypeOf((*Logger)(nil)), "debug"))
+		assert.True(t, collection.HasKeyedService(reflect.TypeOf((*Logger)(nil)), "audit"))
 	})
 }
 

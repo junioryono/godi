@@ -77,6 +77,7 @@ func (p *provider) Get(serviceType reflect.Type) (any, error) {
 	if atomic.LoadInt32(&p.disposed) != 0 {
 		return nil, ErrProviderDisposed
 	}
+
 	return p.rootScope.Get(serviceType)
 }
 
@@ -85,6 +86,7 @@ func (p *provider) GetKeyed(serviceType reflect.Type, key any) (any, error) {
 	if atomic.LoadInt32(&p.disposed) != 0 {
 		return nil, ErrProviderDisposed
 	}
+
 	return p.rootScope.GetKeyed(serviceType, key)
 }
 
@@ -93,6 +95,7 @@ func (p *provider) GetGroup(serviceType reflect.Type, group string) ([]any, erro
 	if atomic.LoadInt32(&p.disposed) != 0 {
 		return nil, ErrProviderDisposed
 	}
+
 	return p.rootScope.GetGroup(serviceType, group)
 }
 
@@ -187,16 +190,16 @@ func (p *provider) Close() error {
 // getSingleton retrieves a singleton instance
 func (p *provider) getSingleton(key instanceKey) (any, bool) {
 	p.singletonsMu.RLock()
-	defer p.singletonsMu.RUnlock()
 	instance, ok := p.singletons[key]
+	p.singletonsMu.RUnlock()
 	return instance, ok
 }
 
 // setSingleton stores a singleton instance
 func (p *provider) setSingleton(key instanceKey, instance any) {
 	p.singletonsMu.Lock()
-	defer p.singletonsMu.Unlock()
 	p.singletons[key] = instance
+	p.singletonsMu.Unlock()
 
 	// Track if disposable
 	if d, ok := instance.(Disposable); ok {
@@ -221,4 +224,44 @@ func (p *provider) findGroupDescriptors(serviceType reflect.Type, group string) 
 // getDecorators returns decorators for a service type
 func (p *provider) getDecorators(serviceType reflect.Type) []*Descriptor {
 	return p.decorators[serviceType]
+}
+
+// createAllSingletons creates all singleton instances at build time
+func (p *provider) createAllSingletons() error {
+	// Get topological sort from dependency graph
+	sorted, err := p.graph.TopologicalSort()
+	if err != nil {
+		return fmt.Errorf("failed to sort dependencies: %w", err)
+	}
+
+	// Create instances in dependency order
+	for _, node := range sorted {
+		descriptor := node.Provider.(*Descriptor)
+		if descriptor.Lifetime != Singleton {
+			continue
+		}
+
+		// Create instance key
+		key := instanceKey{
+			Type:  descriptor.Type,
+			Key:   descriptor.Key,
+			Group: descriptor.Group,
+		}
+
+		// Check if already created
+		if _, exists := p.getSingleton(key); exists {
+			continue
+		}
+
+		// Create the instance
+		instance, err := p.rootScope.createInstance(descriptor)
+		if err != nil {
+			return fmt.Errorf("failed to create singleton %v: %w", descriptor.Type, err)
+		}
+
+		// Store the singleton
+		p.setSingleton(key, instance)
+	}
+
+	return nil
 }
