@@ -15,80 +15,40 @@ import (
 // ========================================
 // Core Error Values (Sentinel Errors)
 // ========================================
+// These are base errors that should be wrapped in typed errors when returned.
+// Never return these directly to users - always wrap them with context.
 
 var (
 	// Service resolution errors.
-	ErrServiceNotFound             = errors.New("service not found")
-	ErrServiceKeyNil               = errors.New("service key cannot be nil")
-	ErrInvalidServiceType          = errors.New("invalid service type")
-	ErrFailedToExtractService      = errors.New("failed to extract service")
-	ErrFailedToExtractKeyedService = errors.New("failed to extract keyed service")
+	ErrServiceNotFound = errors.New("service not found")
+	ErrServiceKeyNil   = errors.New("service key cannot be nil")
+	ErrServiceTypeNil  = errors.New("service type cannot be nil")
 
 	// Lifecycle errors.
-	ErrDisposed         = errors.New("disposed")
-	ErrNilScope         = errors.New("scope cannot be nil")
-	ErrScopeDisposed    = errors.New("scope has been disposed")
+	ErrProviderNil      = errors.New("service provider cannot be nil")
 	ErrProviderDisposed = errors.New("service provider has been disposed")
+	ErrScopeDisposed    = errors.New("scope has been disposed")
 
 	// Constructor/registration errors.
-	ErrNilConstructor                 = errors.New("constructor cannot be nil")
-	ErrNilServiceProvider             = errors.New("service provider cannot be nil")
-	ErrConstructorNotFunction         = errors.New("constructor must be a function")
-	ErrConstructorNoReturn            = errors.New("constructor must return at least one value")
-	ErrConstructorTooManyReturns      = errors.New("constructor must return at most 2 values")        // Deprecated: kept for compatibility
-	ErrConstructorInvalidSecondReturn = errors.New("constructor's second return value must be error") // Deprecated: kept for compatibility
-	ErrConstructorInvalidErrorReturn  = errors.New("constructor's last return value must be error if it returns an error")
-	ErrConstructorMultipleIn          = errors.New("constructor cannot have multiple In parameters")
-	ErrConstructorOutMaxReturns       = errors.New("constructor with Out must return at most 2 values")
+	ErrConstructorNil         = errors.New("constructor cannot be nil")
+	ErrConstructorNotFunction = errors.New("constructor must be a function")
+	ErrConstructorNoReturn    = errors.New("constructor must return at least one value")
+	ErrConstructorReturnedNil = errors.New("constructor returned nil")
 
 	// Decorator errors.
-	ErrDecoratorNil         = errors.New("decorator cannot be nil")
-	ErrDecoratorNotFunction = errors.New("decorator must be a function")
-	ErrDecoratorNoParams    = errors.New("decorator must have at least one parameter")
-	ErrDecoratorNoReturn    = errors.New("decorator must return at least one value")
+	ErrDecoratorNil = errors.New("decorator cannot be nil")
 
-	// Collection/descriptor errors.
-	ErrCollectionBuilt             = errors.New("service collection has already been built")
-	ErrCollectionModifyAfterBuild  = errors.New("cannot modify service collection after build")
-	ErrDescriptorNil               = errors.New("descriptor cannot be nil")
-	ErrNoConstructorOrDecorator    = errors.New("constructor or decorator must be provided")
-	ErrBothConstructorAndDecorator = errors.New("cannot have both constructor and decorator")
-
-	// Provider errors.
-	ErrServicesNil                   = errors.New("services cannot be nil")
-	ErrProviderFunctionNotFound      = errors.New("provider function not found")
-	ErrKeyedProviderFunctionNotFound = errors.New("keyed provider function not found")
-	ErrConstructorMustReturnValue    = errors.New("constructor must be a function that returns at least one value")
-	ErrServiceHasNoConstructor       = errors.New("service has no constructor")
-	ErrDescriptorHasNoConstructor    = errors.New("descriptor has no constructor")
-	ErrFailedToCreateScope           = errors.New("failed to create dig scope: dig container is nil")
-
-	// Special cases.
-	ErrResultObjectConstructor = errors.New("constructor returns Out - use collection.Add* methods")
-	ErrReplaceResultObject     = errors.New("replace not supported for result object constructors")
-
-	// Context errors
-	ErrScopeNotInContext = errors.New("no scope found in context")
-
-	// Reflection/Analysis errors
-	ErrConstructorNil         = errors.New("constructor cannot be nil")
-	ErrInvalidConstructorKind = errors.New("constructor must be a function")
-	ErrInvalidParamType       = errors.New("In parameter must be a struct")
-	ErrInvalidResultType      = errors.New("Out result must be a struct")
-	ErrGroupFieldNotSlice     = errors.New("group field must be slice")
-	ErrDuplicateFieldName     = errors.New("duplicate field name in struct")
-	ErrResolverNil            = errors.New("resolver cannot be nil")
-	ErrParamTypeNil           = errors.New("param type cannot be nil")
-	ErrResultObjectNil        = errors.New("result object is nil")
-
-	// Graph errors
-	ErrProviderNil  = errors.New("provider cannot be nil")
-	ErrNodeNotFound = errors.New("node not found in graph")
+	// Validation errors.
+	ErrGroupNameEmpty          = errors.New("group name cannot be empty")
+	ErrSingletonNotInitialized = errors.New("singleton not initialized at build time")
+	ErrDescriptorNil           = errors.New("descriptor cannot be nil")
 )
 
 // ========================================
 // Typed Errors for Rich Context
 // ========================================
+// Always use these typed errors instead of fmt.Errorf() or errors.New()
+// for domain-specific errors. Wrap sentinel errors with these types.
 
 // LifetimeError indicates an invalid service lifetime value.
 type LifetimeError struct {
@@ -168,19 +128,6 @@ func (e RegistrationError) Error() string {
 
 func (e RegistrationError) Unwrap() error {
 	return e.Cause
-}
-
-// MissingConstructorError indicates a service has no constructor.
-type MissingConstructorError struct {
-	ServiceType reflect.Type
-	Context     string // "service" or "descriptor"
-}
-
-func (e MissingConstructorError) Error() string {
-	if e.Context != "" {
-		return fmt.Sprintf("%s %s has no constructor", e.Context, formatType(e.ServiceType))
-	}
-	return fmt.Sprintf("%s has no constructor", formatType(e.ServiceType))
 }
 
 // ValidationError indicates a validation failure.
@@ -279,12 +226,46 @@ func (e ConstructorInvocationError) Error() string {
 	for i, p := range e.Parameters {
 		paramStrs[i] = formatType(p)
 	}
-	return fmt.Sprintf("failed to invoke %s with parameters [%s]: %v", 
+	return fmt.Sprintf("failed to invoke %s with parameters [%s]: %v",
 		formatType(e.Constructor), strings.Join(paramStrs, ", "), e.Cause)
 }
 
 func (e ConstructorInvocationError) Unwrap() error {
 	return e.Cause
+}
+
+// BuildError wraps errors that occur during provider building
+type BuildError struct {
+	Phase   string // "validation", "graph", "singleton-creation"
+	Details string
+	Cause   error
+}
+
+func (e BuildError) Error() string {
+	return fmt.Sprintf("build failed during %s phase: %s: %v", e.Phase, e.Details, e.Cause)
+}
+
+func (e BuildError) Unwrap() error {
+	return e.Cause
+}
+
+// DisposalError aggregates disposal errors
+type DisposalError struct {
+	Context string // "provider", "scope", "singleton"
+	Errors  []error
+}
+
+func (e DisposalError) Error() string {
+	if len(e.Errors) == 1 {
+		return fmt.Sprintf("%s disposal failed: %v", e.Context, e.Errors[0])
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("%s disposal failed with %d errors:", e.Context, len(e.Errors)))
+	for i, err := range e.Errors {
+		sb.WriteString(fmt.Sprintf("\n  %d. %v", i+1, err))
+	}
+	return sb.String()
 }
 
 // formatType formats a reflect.Type for error messages.

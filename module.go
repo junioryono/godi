@@ -92,7 +92,10 @@ type addOptions struct {
 func (o *addOptions) Validate() error {
 	if len(o.Group) > 0 {
 		if len(o.Name) > 0 {
-			return fmt.Errorf("cannot use both godi.Name and godi.Group: name:%q provided with group:%q", o.Name, o.Group)
+			return &ValidationError{
+				ServiceType: nil,
+				Message:     fmt.Sprintf("cannot use both godi.Name and godi.Group: name:%q provided with group:%q", o.Name, o.Group),
+			}
 		}
 	}
 
@@ -101,26 +104,41 @@ func (o *addOptions) Validate() error {
 	// https://golang.org/ref/spec#raw_string_lit is that they cannot contain
 	// backquotes.
 	if strings.ContainsRune(o.Name, '`') {
-		return fmt.Errorf("invalid godi.Name(%q): names cannot contain backquotes", o.Name)
+		return &ValidationError{
+			ServiceType: nil,
+			Message:     fmt.Sprintf("invalid godi.Name(%q): names cannot contain backquotes", o.Name),
+		}
 	}
 	if strings.ContainsRune(o.Group, '`') {
-		return fmt.Errorf("invalid godi.Group(%q): group names cannot contain backquotes", o.Group)
+		return &ValidationError{
+			ServiceType: nil,
+			Message:     fmt.Sprintf("invalid godi.Group(%q): group names cannot contain backquotes", o.Group),
+		}
 	}
 
 	for _, i := range o.As {
 		t := reflect.TypeOf(i)
 
 		if t == nil {
-			return fmt.Errorf("invalid godi.As(nil): argument must be a pointer to an interface")
+			return &ValidationError{
+				ServiceType: nil,
+				Message:     "invalid godi.As(nil): argument must be a pointer to an interface",
+			}
 		}
 
 		if t.Kind() != reflect.Ptr {
-			return fmt.Errorf("invalid godi.As(%v): argument must be a pointer to an interface", t)
+			return &ValidationError{
+				ServiceType: nil,
+				Message:     fmt.Sprintf("invalid godi.As(%v): argument must be a pointer to an interface", t),
+			}
 		}
 
 		pointingTo := t.Elem()
 		if pointingTo.Kind() != reflect.Interface {
-			return fmt.Errorf("invalid godi.As(*%v): argument must be a pointer to an interface", pointingTo)
+			return &ValidationError{
+				ServiceType: nil,
+				Message:     fmt.Sprintf("invalid godi.As(*%v): argument must be a pointer to an interface", pointingTo),
+			}
 		}
 	}
 	return nil

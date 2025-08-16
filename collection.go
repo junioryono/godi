@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"sync"
 
+	"github.com/google/uuid"
 	"github.com/junioryono/godi/v3/internal/graph"
 	"github.com/junioryono/godi/v3/internal/reflection"
 )
@@ -128,47 +129,81 @@ func (sc *collection) Build() (Provider, error) {
 
 // BuildWithOptions creates a Provider with custom options for validation and behavior configuration.
 func (sc *collection) BuildWithOptions(options *ProviderOptions) (Provider, error) {
+	// Handle build timeout if specified
+	if options != nil && options.BuildTimeout > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), options.BuildTimeout)
+		defer cancel()
+
+		done := make(chan struct{})
+		var buildErr error
+		var provider Provider
+
+		go func() {
+			provider, buildErr = sc.doBuild(options)
+			close(done)
+		}()
+
+		select {
+		case <-ctx.Done():
+			return nil, &TimeoutError{
+				ServiceType: nil,
+				Timeout:     options.BuildTimeout,
+			}
+		case <-done:
+			return provider, buildErr
+		}
+	}
+
+	return sc.doBuild(options)
+}
+
+func (sc *collection) doBuild(options *ProviderOptions) (Provider, error) {
 	// Get all descriptors before locking to avoid deadlock
 	allDescriptors := sc.ToSlice()
 
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 
-	// Validate the dependency graph
+	// Phase 1: Validate dependency graph
 	if err := sc.validateDependencyGraph(); err != nil {
-		return nil, &ValidationError{
-			ServiceType: nil,
-			Message:     fmt.Sprintf("dependency validation failed: %v", err),
+		return nil, &BuildError{
+			Phase:   "validation",
+			Details: "dependency graph validation failed",
+			Cause:   err,
 		}
 	}
 
-	// Validate lifetime consistency
+	// Phase 2: Validate lifetimes
 	if err := sc.validateLifetimes(); err != nil {
-		return nil, &ValidationError{
-			ServiceType: nil,
-			Message:     fmt.Sprintf("lifetime validation failed: %v", err),
+		return nil, &BuildError{
+			Phase:   "validation",
+			Details: "lifetime validation failed",
+			Cause:   err,
 		}
 	}
 
-	// Build the dependency graph
+	// Phase 3: Build dependency graph
 	g := graph.NewDependencyGraph()
 
-	// Add all providers to the graph
 	for _, descriptor := range allDescriptors {
+		if descriptor == nil {
+			continue // Skip nil descriptors gracefully
+		}
+
 		if !descriptor.IsDecorator {
 			if err := g.AddProvider(descriptor); err != nil {
-				return nil, &GraphOperationError{
-					Operation: "add",
-					NodeType:  descriptor.Type,
-					NodeKey:   descriptor.Key,
-					Cause:     err,
+				return nil, &BuildError{
+					Phase:   "graph",
+					Details: fmt.Sprintf("failed to add provider %v", formatType(descriptor.Type)),
+					Cause:   err,
 				}
 			}
 		}
 	}
 
-	// Create the provider
+	// Phase 4: Create provider
 	p := &provider{
+		id:          uuid.NewString(),
 		services:    sc.services,
 		groups:      sc.groups,
 		decorators:  sc.decorators,
@@ -180,9 +215,10 @@ func (sc *collection) BuildWithOptions(options *ProviderOptions) (Provider, erro
 		built:       true,
 	}
 
-	// Create root scope
+	// Phase 5: Create root scope
 	rootCtx := context.Background()
 	p.rootScope = &scope{
+		id:               uuid.NewString(),
 		provider:         p,
 		context:          rootCtx,
 		instances:        make(map[instanceKey]any),
@@ -192,11 +228,14 @@ func (sc *collection) BuildWithOptions(options *ProviderOptions) (Provider, erro
 		multiReturnCache: make(map[uintptr][]reflect.Value),
 	}
 
-	// Eagerly create all singletons
+	// Phase 6: Create singletons
 	if err := p.createAllSingletons(); err != nil {
-		return nil, &ValidationError{
-			ServiceType: nil,
-			Message:     fmt.Sprintf("failed to initialize singletons: %v", err),
+		// Clean up partially created provider
+		p.Close()
+		return nil, &BuildError{
+			Phase:   "singleton-creation",
+			Details: "failed to initialize singletons",
+			Cause:   err,
 		}
 	}
 
@@ -235,11 +274,20 @@ func (sc *collection) AddTransient(service any, opts ...AddOption) error {
 
 // Decorate registers a decorator for a service type.
 func (sc *collection) Decorate(decorator any, opts ...AddOption) error {
+	if decorator == nil {
+		return ErrDecoratorNil
+	}
+
+	// TODO: Implement decorator registration
 	return nil
 }
 
 // HasService checks if a service exists for the type
 func (r *collection) HasService(t reflect.Type) bool {
+	if t == nil {
+		return false
+	}
+
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -250,6 +298,10 @@ func (r *collection) HasService(t reflect.Type) bool {
 
 // HasKeyedService checks if a keyed service exists
 func (r *collection) HasKeyedService(t reflect.Type, key any) bool {
+	if t == nil {
+		return false
+	}
+
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -260,6 +312,10 @@ func (r *collection) HasKeyedService(t reflect.Type, key any) bool {
 
 // HasGroup checks if a group has any services
 func (r *collection) HasGroup(t reflect.Type, group string) bool {
+	if t == nil || group == "" {
+		return false
+	}
+
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -270,6 +326,10 @@ func (r *collection) HasGroup(t reflect.Type, group string) bool {
 
 // Remove removes all services for a given type
 func (r *collection) Remove(t reflect.Type) {
+	if t == nil {
+		return
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -279,6 +339,10 @@ func (r *collection) Remove(t reflect.Type) {
 
 // RemoveKeyed removes a specific keyed service
 func (r *collection) RemoveKeyed(t reflect.Type, key any) {
+	if t == nil {
+		return
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -297,7 +361,7 @@ func (r *collection) ToSlice() []*Descriptor {
 
 	// Add regular services
 	for _, service := range r.services {
-		if !seen[service] {
+		if service != nil && !seen[service] {
 			descriptors = append(descriptors, service)
 			seen[service] = true
 		}
@@ -306,7 +370,7 @@ func (r *collection) ToSlice() []*Descriptor {
 	// Add grouped services
 	for _, groupServices := range r.groups {
 		for _, service := range groupServices {
-			if !seen[service] {
+			if service != nil && !seen[service] {
 				descriptors = append(descriptors, service)
 				seen[service] = true
 			}
@@ -316,7 +380,7 @@ func (r *collection) ToSlice() []*Descriptor {
 	// Add decorators
 	for _, decoratorList := range r.decorators {
 		for _, decorator := range decoratorList {
-			if !seen[decorator] {
+			if decorator != nil && !seen[decorator] {
 				descriptors = append(descriptors, decorator)
 				seen[decorator] = true
 			}
@@ -336,41 +400,59 @@ func (r *collection) Count() int {
 
 	// Count regular services
 	for _, service := range r.services {
-		seen[service] = true
+		if service != nil {
+			seen[service] = true
+		}
 	}
 
 	// Count grouped services
 	for _, groupServices := range r.groups {
 		for _, service := range groupServices {
-			seen[service] = true
+			if service != nil {
+				seen[service] = true
+			}
 		}
 	}
 
 	// Count decorators
 	for _, decoratorList := range r.decorators {
 		for _, decorator := range decoratorList {
-			seen[decorator] = true
+			if decorator != nil {
+				seen[decorator] = true
+			}
 		}
 	}
 
 	return len(seen)
 }
 
-// addService registers a new service
+// addService registers a new service with enhanced error handling
 func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOption) error {
+	// Validate inputs
 	if service == nil {
-		return ErrNilConstructor
+		return &ValidationError{
+			ServiceType: nil,
+			Message:     "service cannot be nil",
+		}
 	}
 
 	// Create descriptor from constructor
 	descriptor, err := newDescriptor(service, lifetime, opts...)
 	if err != nil {
-		return err
+		return &RegistrationError{
+			ServiceType: nil,
+			Operation:   "create descriptor",
+			Cause:       err,
+		}
 	}
 
 	// Validate the descriptor
 	if err := descriptor.Validate(); err != nil {
-		return err
+		return &RegistrationError{
+			ServiceType: descriptor.Type,
+			Operation:   "validate descriptor",
+			Cause:       err,
+		}
 	}
 
 	r.mu.Lock()
@@ -381,6 +463,15 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 	for _, opt := range opts {
 		if opt != nil {
 			opt.applyAddOption(options)
+		}
+	}
+
+	// Validate options
+	if err := options.Validate(); err != nil {
+		return &RegistrationError{
+			ServiceType: descriptor.Type,
+			Operation:   "validate options",
+			Cause:       err,
 		}
 	}
 
@@ -430,14 +521,17 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 				if options.Name != "" && i == 0 {
 					typeDescriptor.Key = options.Name
 				} else if options.Name != "" {
-					// For subsequent returns, could optionally append an index
-					// but for now we'll leave them unkeyed
+					// For subsequent returns, leave them unkeyed
 					typeDescriptor.Key = nil
 				}
 
 				// Register each type descriptor
 				if err := r.registerDescriptor(typeDescriptor); err != nil {
-					return fmt.Errorf("failed to register return type %v: %w", ret.Type, err)
+					return &RegistrationError{
+						ServiceType: ret.Type,
+						Operation:   "register multi-return type",
+						Cause:       err,
+					}
 				}
 			}
 			return nil
@@ -451,8 +545,12 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 			interfaceType := reflect.TypeOf(iface).Elem()
 
 			// Validate that the service type implements the interface
-			if !descriptor.Type.Implements(interfaceType) && !reflect.PtrTo(descriptor.Type).Implements(interfaceType) {
-				return fmt.Errorf("type %v does not implement interface %v", descriptor.Type, interfaceType)
+			if !descriptor.Type.Implements(interfaceType) && !reflect.PointerTo(descriptor.Type).Implements(interfaceType) {
+				return &TypeMismatchError{
+					Expected: interfaceType,
+					Actual:   descriptor.Type,
+					Context:  "interface implementation",
+				}
 			}
 
 			// Create a new descriptor for the interface type
@@ -479,7 +577,11 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 
 			// Register the interface descriptor
 			if err := r.registerDescriptor(interfaceDescriptor); err != nil {
-				return err
+				return &RegistrationError{
+					ServiceType: interfaceType,
+					Operation:   "register as interface",
+					Cause:       err,
+				}
 			}
 		}
 
@@ -504,10 +606,13 @@ func (r *collection) registerDescriptor(descriptor *Descriptor) error {
 		key := TypeKey{Type: descriptor.Type, Key: descriptor.Key}
 		if _, exists := r.services[key]; exists {
 			if descriptor.Key == nil {
-				return fmt.Errorf("type %v already registered", descriptor.Type)
+				return &AlreadyRegisteredError{ServiceType: descriptor.Type}
 			}
-
-			return fmt.Errorf("type %v with key %v already registered", descriptor.Type, descriptor.Key)
+			return &RegistrationError{
+				ServiceType: descriptor.Type,
+				Operation:   "register",
+				Cause:       &AlreadyRegisteredError{ServiceType: descriptor.Type},
+			}
 		}
 
 		r.services[key] = descriptor
@@ -515,6 +620,7 @@ func (r *collection) registerDescriptor(descriptor *Descriptor) error {
 		groupKey := GroupKey{Type: descriptor.Type, Group: descriptor.Group}
 		r.groups[groupKey] = append(r.groups[groupKey], descriptor)
 
+		// Set a numeric key for group members
 		descriptor.Key = len(r.groups[groupKey])
 	}
 
@@ -528,15 +634,29 @@ func (r *collection) validateDependencyGraph() error {
 
 	// Add all providers to the graph
 	for _, descriptor := range r.services {
-		if err := g.AddProvider(descriptor); err != nil {
-			return fmt.Errorf("failed to add provider %v to graph: %w", descriptor.Type, err)
+		if descriptor != nil {
+			if err := g.AddProvider(descriptor); err != nil {
+				return &GraphOperationError{
+					Operation: "add",
+					NodeType:  descriptor.Type,
+					NodeKey:   descriptor.Key,
+					Cause:     err,
+				}
+			}
 		}
 	}
 
 	for _, descriptors := range r.groups {
 		for _, descriptor := range descriptors {
-			if err := g.AddProvider(descriptor); err != nil {
-				return fmt.Errorf("failed to add group provider %v to graph: %w", descriptor.Type, err)
+			if descriptor != nil {
+				if err := g.AddProvider(descriptor); err != nil {
+					return &GraphOperationError{
+						Operation: "add",
+						NodeType:  descriptor.Type,
+						NodeKey:   descriptor.Key,
+						Cause:     err,
+					}
+				}
 			}
 		}
 	}
@@ -556,33 +676,46 @@ func (c *collection) validateLifetimes() error {
 
 	// Populate lifetimes from all services
 	for serviceType, descriptor := range c.services {
-		key := instanceKey{Type: serviceType.Type, Key: descriptor.Key}
-		lifetimes[key] = descriptor.Lifetime
-	}
-
-	for groupKey, descriptors := range c.groups {
-		for _, descriptor := range descriptors {
-			key := instanceKey{Type: groupKey.Type, Key: descriptor.Key, Group: groupKey.Group}
+		if descriptor != nil {
+			key := instanceKey{Type: serviceType.Type, Key: descriptor.Key}
 			lifetimes[key] = descriptor.Lifetime
 		}
 	}
 
+	for groupKey, descriptors := range c.groups {
+		for _, descriptor := range descriptors {
+			if descriptor != nil {
+				key := instanceKey{Type: groupKey.Type, Key: descriptor.Key, Group: groupKey.Group}
+				lifetimes[key] = descriptor.Lifetime
+			}
+		}
+	}
+
 	checkDescriptor := func(descriptor *Descriptor) error {
+		if descriptor == nil {
+			return nil
+		}
+
 		if descriptor.Lifetime != Singleton {
 			return nil // Only validate singleton dependencies
 		}
 
 		// Get dependencies
 		for _, dep := range descriptor.Dependencies {
+			if dep == nil {
+				continue
+			}
+
 			depKey := instanceKey{Type: dep.Type, Key: dep.Key, Group: dep.Group}
 
 			// Find the lifetime of the dependency
 			if depLifetime, ok := lifetimes[depKey]; ok {
 				if depLifetime == Scoped {
-					return fmt.Errorf(
-						"singleton service %v cannot depend on scoped service %v",
-						descriptor.Type, dep.Type,
-					)
+					return &LifetimeConflictError{
+						ServiceType: descriptor.Type,
+						Current:     descriptor.Lifetime,
+						Requested:   depLifetime,
+					}
 				}
 			}
 		}

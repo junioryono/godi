@@ -127,7 +127,7 @@ func TestNewDescriptor(t *testing.T) {
 	t.Run("nil constructor", func(t *testing.T) {
 		descriptor, err := newDescriptor(nil, Singleton)
 		assert.Error(t, err)
-		assert.Equal(t, ErrNilConstructor, err)
+		assert.Equal(t, ErrConstructorNil, err)
 		assert.Nil(t, descriptor)
 	})
 
@@ -345,13 +345,6 @@ func TestValidate(t *testing.T) {
 		require.NoError(t, err)
 		err = descriptor.Validate()
 		assert.NoError(t, err)
-	})
-
-	t.Run("nil descriptor", func(t *testing.T) {
-		var descriptor *Descriptor
-		err := descriptor.Validate()
-		assert.Error(t, err)
-		assert.Equal(t, ErrDescriptorNil, err)
 	})
 
 	t.Run("descriptor with nil type", func(t *testing.T) {
