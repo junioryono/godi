@@ -112,7 +112,7 @@ func (s *scope) GetGroup(serviceType reflect.Type, group string) ([]any, error) 
 	if group == "" {
 		return nil, &ValidationError{
 			ServiceType: serviceType,
-			Message:     "group name cannot be empty",
+			Cause:       ErrGroupNameEmpty,
 		}
 	}
 
@@ -385,7 +385,7 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 	if descriptor == nil {
 		return nil, &ValidationError{
 			ServiceType: nil,
-			Message:     "descriptor cannot be nil",
+			Cause:       ErrDescriptorNil,
 		}
 	}
 
@@ -458,7 +458,7 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 
 		return nil, &ValidationError{
 			ServiceType: descriptor.Type,
-			Message:     "result object produced no services",
+			Cause:       fmt.Errorf("result object produced no services"),
 		}
 	}
 
@@ -542,7 +542,7 @@ func (s *scope) applyDecorators(instance any, serviceType reflect.Type) (any, er
 	if instance == nil {
 		return nil, &ValidationError{
 			ServiceType: serviceType,
-			Message:     "instance cannot be nil",
+			Cause:       fmt.Errorf("instance cannot be nil"),
 		}
 	}
 
@@ -576,7 +576,7 @@ func (s *scope) invokeDecorator(decorator *Descriptor, instance any) (any, error
 	if decorator == nil || !decorator.IsDecorator {
 		return nil, &ValidationError{
 			ServiceType: nil,
-			Message:     "invalid decorator",
+			Cause:       fmt.Errorf("invalid decorator"),
 		}
 	}
 
@@ -588,14 +588,14 @@ func (s *scope) invokeDecorator(decorator *Descriptor, instance any) (any, error
 	if decoratorType.NumIn() < 1 {
 		return nil, &ValidationError{
 			ServiceType: decorator.Type,
-			Message:     "decorator must have at least one parameter",
+			Cause:       fmt.Errorf("decorator must have at least one parameter"),
 		}
 	}
 
 	if decoratorType.NumOut() < 1 {
 		return nil, &ValidationError{
 			ServiceType: decorator.Type,
-			Message:     "decorator must return at least one value",
+			Cause:       fmt.Errorf("decorator must return at least one value"),
 		}
 	}
 
@@ -670,7 +670,7 @@ func (s *scope) invokeDecorator(decorator *Descriptor, instance any) (any, error
 
 	return nil, &ValidationError{
 		ServiceType: decorator.Type,
-		Message:     "decorator returned no value",
+		Cause:       fmt.Errorf("decorator returned no value"),
 	}
 }
 

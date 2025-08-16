@@ -94,7 +94,7 @@ func (o *addOptions) Validate() error {
 		if len(o.Name) > 0 {
 			return &ValidationError{
 				ServiceType: nil,
-				Message:     fmt.Sprintf("cannot use both godi.Name and godi.Group: name:%q provided with group:%q", o.Name, o.Group),
+				Cause:       fmt.Errorf("cannot use both godi.Name and godi.Group: name:%q provided with group:%q", o.Name, o.Group),
 			}
 		}
 	}
@@ -106,13 +106,13 @@ func (o *addOptions) Validate() error {
 	if strings.ContainsRune(o.Name, '`') {
 		return &ValidationError{
 			ServiceType: nil,
-			Message:     fmt.Sprintf("invalid godi.Name(%q): names cannot contain backquotes", o.Name),
+			Cause:       fmt.Errorf("invalid godi.Name(%q): names cannot contain backquotes", o.Name),
 		}
 	}
 	if strings.ContainsRune(o.Group, '`') {
 		return &ValidationError{
 			ServiceType: nil,
-			Message:     fmt.Sprintf("invalid godi.Group(%q): group names cannot contain backquotes", o.Group),
+			Cause:       fmt.Errorf("invalid godi.Group(%q): group names cannot contain backquotes", o.Group),
 		}
 	}
 
@@ -122,14 +122,14 @@ func (o *addOptions) Validate() error {
 		if t == nil {
 			return &ValidationError{
 				ServiceType: nil,
-				Message:     "invalid godi.As(nil): argument must be a pointer to an interface",
+				Cause:       fmt.Errorf("invalid godi.As(nil): argument must be a pointer to an interface"),
 			}
 		}
 
 		if t.Kind() != reflect.Ptr {
 			return &ValidationError{
 				ServiceType: nil,
-				Message:     fmt.Sprintf("invalid godi.As(%v): argument must be a pointer to an interface", t),
+				Cause:       fmt.Errorf("invalid godi.As(%v): argument must be a pointer to an interface", t),
 			}
 		}
 
@@ -137,7 +137,7 @@ func (o *addOptions) Validate() error {
 		if pointingTo.Kind() != reflect.Interface {
 			return &ValidationError{
 				ServiceType: nil,
-				Message:     fmt.Sprintf("invalid godi.As(*%v): argument must be a pointer to an interface", pointingTo),
+				Cause:       fmt.Errorf("invalid godi.As(*%v): argument must be a pointer to an interface", pointingTo),
 			}
 		}
 	}
