@@ -2,15 +2,12 @@ name: CI
 
 on:
   push:
-    branches: [ main, master, develop ]
+    branches:
+      - main
   pull_request:
-    branches: [ main, master, develop ]
-  schedule:
-    # Run tests every Monday at 9am UTC
-    - cron: '0 9 * * 1'
 
 env:
-  GO_VERSION: '1.21'
+  GO_VERSION: "1.25"
 
 jobs:
   test:
@@ -19,181 +16,183 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        go: ['1.21', '1.22', '1.23']
-    
+        go: ["1.21", "1.22", "1.23", "1.24", "1.25"]
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Setup Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: ${{ matrix.go }}
-        cache: true
-    
-    - name: Get dependencies
-      run: go mod download
-    
-    - name: Run tests
-      run: go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
-    
-    - name: Upload coverage to Codecov
-      if: matrix.os == 'ubuntu-latest' && matrix.go == '1.21'
-      uses: codecov/codecov-action@v4
-      with:
-        file: ./coverage.txt
-        flags: unittests
-        name: codecov-umbrella
-        fail_ci_if_error: false
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+          cache: true
+
+      - name: Get dependencies
+        run: go mod download
+
+      - name: Run tests
+        run: go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
+
+      - name: Upload coverage to Codecov
+        if: matrix.os == 'ubuntu-latest' && matrix.go == '1.21'
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.txt
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: false
 
   lint:
     name: Lint
     runs-on: ubuntu-latest
-    
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Setup Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: ${{ env.GO_VERSION }}
-        cache: true
-    
-    - name: Run golangci-lint
-      uses: golangci/golangci-lint-action@v3
-      with:
-        version: latest
-        args: --config .golangci.yml
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v3
+        with:
+          version: latest
+          args: --config .golangci.yml
 
   build:
     name: Build
     runs-on: ubuntu-latest
-    
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Setup Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: ${{ env.GO_VERSION }}
-        cache: true
-    
-    - name: Verify module
-      run: |
-        go mod verify
-        go mod tidy
-        git diff --exit-code go.mod go.sum
-    
-    - name: Build
-      run: go build -v ./...
-    
-    - name: Check formatting
-      run: |
-        if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
-          echo "Code is not formatted. Please run 'gofmt -s -w .'"
-          gofmt -s -d .
-          exit 1
-        fi
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Verify module
+        run: |
+          go mod verify
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
+      - name: Build
+        run: go build -v ./...
+
+      - name: Check formatting
+        run: |
+          if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
+            echo "Code is not formatted. Please run 'gofmt -s -w .'"
+            gofmt -s -d .
+            exit 1
+          fi
 
   benchmark:
     name: Benchmark
     runs-on: ubuntu-latest
-    
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Setup Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: ${{ env.GO_VERSION }}
-        cache: true
-    
-    - name: Run benchmarks
-      run: go test -bench=. -benchmem -run=^$ ./... | tee benchmark.txt
-    
-    - name: Upload benchmark results
-      uses: actions/upload-artifact@v4
-      with:
-        name: benchmark-results
-        path: benchmark.txt
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run benchmarks
+        run: go test -bench=. -benchmem -run=^$ ./... | tee benchmark.txt
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: benchmark.txt
 
   security:
     name: Security Scan
     runs-on: ubuntu-latest
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Setup Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: ${{ env.GO_VERSION }}
-        cache: true
-    
-    - name: Run gosec
-      uses: securego/gosec@master
-      with:
-        args: '-fmt sarif -out gosec-results.sarif ./...'
-    
-    - name: Upload SARIF file
-      uses: github/codeql-action/upload-sarif@v3
-      with:
-        sarif_file: gosec-results.sarif
 
-  examples:
-    name: Validate Examples
-    runs-on: ubuntu-latest
-    
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Setup Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: ${{ env.GO_VERSION }}
-        cache: true
-    
-    - name: Test examples
-      run: go test -v ./example_test.go
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run gosec
+        uses: securego/gosec@master
+        with:
+          args: "-fmt sarif -out gosec-results.sarif ./..."
+
+      - name: Upload SARIF file
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: gosec-results.sarif
 
   coverage:
     name: Coverage Report
     runs-on: ubuntu-latest
     needs: test
-    
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Setup Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: ${{ env.GO_VERSION }}
-        cache: true
-    
-    - name: Generate coverage report
-      run: |
-        go test -coverprofile=coverage.out ./...
-        go tool cover -html=coverage.out -o coverage.html
-    
-    - name: Upload coverage report
-      uses: actions/upload-artifact@v4
-      with:
-        name: coverage-report
-        path: |
-          coverage.out
-          coverage.html
-    
-    - name: Check coverage threshold
-      run: |
-        COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
-        echo "Total coverage: $COVERAGE%"
-        if (( $(echo "$COVERAGE < 80" | bc -l) )); then
-          echo "Coverage is below 80% threshold"
-          exit 1
-        fi
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Generate coverage report
+        run: |
+          go test -coverprofile=coverage.out ./...
+          go tool cover -html=coverage.out -o coverage.html
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            coverage.out
+            coverage.html
+
+      - name: Check coverage threshold
+        run: |
+          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+          echo "Total coverage: $COVERAGE%"
+          if (( $(echo "$COVERAGE < 80" | bc -l) )); then
+            echo "Coverage is below 80% threshold"
+            exit 1
+          fi
+
+  all-checks:
+    name: All checks passed
+    runs-on: ubuntu-latest
+    needs: [test, lint, build, security]
+    if: always()
+
+    steps:
+      - name: Verify all checks passed
+        run: |
+          if [[ "${{ needs.test.result }}" != "success" || "${{ needs.lint.result }}" != "success" || "${{ needs.build.result }}" != "success" || "${{ needs.security.result }}" != "success" ]]; then
+            echo "One or more checks failed"
+            echo "Test: ${{ needs.test.result }}"
+            echo "Lint: ${{ needs.lint.result }}"
+            echo "Build: ${{ needs.build.result }}"
+            echo "Security: ${{ needs.security.result }}"
+            exit 1
+          fi
+          echo "All checks passed successfully"

@@ -1,0 +1,139 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+
+    concurrency:
+      group: release
+      cancel-in-progress: false
+
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_TOKEN }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.24.x
+
+      # Configure git to use GitHub Actions bot
+      - name: Configure Git
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+
+      - name: Check for conventional commits
+        id: check_commits
+        run: |
+          # Get commits since last tag
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
+          if [ -z "$LAST_TAG" ]; then
+              echo "No previous tag found, checking all commits"
+              COMMITS=$(git log --pretty=format:"%s")
+          else
+              echo "Checking commits since $LAST_TAG"
+              COMMITS=$(git log ${LAST_TAG}..HEAD --pretty=format:"%s")
+          fi
+
+          # Check if any commits are releasable (feat, fix, or breaking change)
+          RELEASABLE=false
+          while IFS= read -r commit; do
+              if [[ "$commit" =~ ^(feat|fix)(\(.+\))?!?:|BREAKING\ CHANGE: ]] || [[ "$commit" =~ ^[a-z]+(\(.+\))?!: ]]; then
+              RELEASABLE=true
+              break
+              fi
+          done <<< "$COMMITS"
+
+          echo "releasable=$RELEASABLE" >> $GITHUB_OUTPUT
+
+          if [ "$RELEASABLE" = "false" ]; then
+              echo "No releasable changes found. Skipping release."
+          fi
+
+      - name: Conventional Changelog Action
+        id: changelog
+        if: steps.check_commits.outputs.releasable == 'true'
+        uses: TriPSs/conventional-changelog-action@v6.0.0
+        with:
+          github-token: ${{ secrets.RELEASE_TOKEN }}
+          git-message: |
+            chore(release): {tag} [skip ci]
+
+            - Update changelog
+            - Bump version
+          preset: "conventionalcommits"
+          tag-prefix: "v"
+          release-count: 0
+          output-file: "docs/reference/changelog.md"
+          version-file: "version.json"
+          skip-on-empty: "true"
+          skip-version-file: "false"
+          skip-git-pull: "false"
+          create-summary: "true"
+          skip-commit: "true"
+          skip-tag: "true"
+
+      - name: Fix changelog and commit
+        if: |
+          steps.check_commits.outputs.releasable == 'true' && 
+          steps.changelog.outputs.skipped == 'false'
+        run: |
+          # Add main heading if it doesn't exist
+          if ! grep -q "^# Changelog" docs/reference/changelog.md; then
+              {
+              echo "# Changelog"
+              echo ""
+              echo "All notable changes to godi are documented here. This project follows [Semantic Versioning](https://semver.org/) and uses [Conventional Commits](https://www.conventionalcommits.org/) for automatic versioning."
+              echo ""
+              cat docs/reference/changelog.md
+              } > docs/reference/changelog.md.tmp
+              mv docs/reference/changelog.md.tmp docs/reference/changelog.md
+          fi
+
+          # Replace h1 version headers with h2
+          sed -i 's/^# \[\([0-9]\)/## [\1/g' docs/reference/changelog.md
+
+          # Commit all changes
+          git add docs/reference/changelog.md version.json
+          git commit -m "chore(release): ${{ steps.changelog.outputs.tag }} [skip ci]
+
+          - Update changelog
+          - Bump version"
+
+          # Create and push tag
+          git tag ${{ steps.changelog.outputs.tag }}
+          git push origin HEAD:main --tags
+
+      - name: Create Release
+        if: |
+          steps.check_commits.outputs.releasable == 'true' && 
+          steps.changelog.outputs.skipped == 'false'
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ steps.changelog.outputs.tag }}
+          name: ${{ steps.changelog.outputs.tag }}
+          body: ${{ steps.changelog.outputs.clean_changelog }}
+          token: ${{ secrets.RELEASE_TOKEN }}
+
+      - name: Create release branch
+        if: |
+          steps.check_commits.outputs.releasable == 'true' && 
+          steps.changelog.outputs.skipped == 'false'
+        run: |
+          git checkout -b release/${{ steps.changelog.outputs.tag }}
+          git push origin release/${{ steps.changelog.outputs.tag }}
