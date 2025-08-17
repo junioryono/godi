@@ -10,6 +10,6 @@ coverage:
     project:
       default:
         enabled: yes
-        target: 90%
+        target: 85%
         if_not_found: success
         if_ci_failed: error

@@ -13,6 +13,7 @@ Quick Start
    services := godi.NewCollection()
    services.AddSingleton(NewLogger)
    services.AddScoped(NewUserService)
+   services.AddTransient(NewStringFormatterService)
 
    // 2. Build the container
    provider, _ := services.Build()

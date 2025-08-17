@@ -34,9 +34,6 @@ type Descriptor struct {
 	// This is typically used for interface-based services
 	As []any
 
-	// IsDecorator indicates if this descriptor is a decorator
-	IsDecorator bool
-
 	// DecoratedType is the type being decorated (only for decorators)
 	// This is typically the same as Type but kept separate for clarity
 	DecoratedType reflect.Type
@@ -165,7 +162,6 @@ func newDescriptor(service any, lifetime Lifetime, opts ...AddOption) (*Descript
 		ConstructorType: constructorType,
 		Dependencies:    dependencies,
 		Group:           options.Group,
-		IsDecorator:     false,
 		IsInstance:      isInstance,
 		Instance:        nil,
 		ReturnIndex:     -1, // Default: not a multi-return descriptor
@@ -219,24 +215,6 @@ func newDescriptor(service any, lifetime Lifetime, opts ...AddOption) (*Descript
 	}
 
 	return descriptor, nil
-}
-
-// IsProvider returns true if this descriptor is a provider (not a decorator).
-// Providers create service instances, while decorators modify existing services.
-func (d *Descriptor) IsProvider() bool {
-	return !d.IsDecorator
-}
-
-// GetTargetType returns the type this descriptor targets.
-// For providers, this returns the type they provide.
-// For decorators, this returns the type they decorate.
-// This distinction is important for dependency graph construction.
-func (d *Descriptor) GetTargetType() reflect.Type {
-	if d.IsDecorator && d.DecoratedType != nil {
-		return d.DecoratedType
-	}
-
-	return d.Type
 }
 
 // GetType returns the service type this descriptor produces.
