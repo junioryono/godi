@@ -203,31 +203,6 @@ Yes, but efficiently:
 - Resolution is optimized
 - No runtime code generation
 
-## Migration
-
-### How do I migrate from v3 to v4?
-
-Main change: Resolution functions now accept both Provider and Scope.
-
-```go
-// v3
-service, _ := godi.Resolve[*Service](scope)
-
-// v4 (both work!)
-service, _ := godi.Resolve[*Service](provider)
-service, _ := godi.Resolve[*Service](scope)
-```
-
-See [Migration Guide](../migration-v3-v4.md) for details.
-
-### Can I gradually migrate a large codebase?
-
-Yes! v4 is mostly backward compatible. You can:
-
-1. Update imports to v4
-2. Fix any compilation errors (minimal)
-3. Gradually adopt new patterns
-
 ## Best Practices
 
 ### How should I structure modules?
