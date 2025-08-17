@@ -2,6 +2,7 @@ package godi
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"sync"
@@ -48,16 +49,19 @@ func newScope(rootProvider *provider, parent *scope, ctx context.Context, cancel
 		ctx = context.Background()
 	}
 
-	return &scope{
+	s := &scope{
 		id:           uuid.NewString(),
 		rootProvider: rootProvider,
 		parentScope:  parent,
-		context:      ctx,
 		cancel:       cancel,
 		instances:    make(map[instanceKey]any),
 		disposables:  make([]Disposable, 0),
 		children:     make(map[*scope]struct{}),
 	}
+
+	ctx = context.WithValue(ctx, scopeContextKey{}, s)
+	s.context = ctx
+	return s
 }
 
 // Provider returns the parent provider that created this scope.
@@ -163,8 +167,6 @@ func (s *scope) CreateScope(ctx context.Context) (Scope, error) {
 
 	ctx, cancel := context.WithCancel(ctx)
 	child := newScope(s.rootProvider, s, ctx, cancel)
-	ctx = context.WithValue(ctx, scopeContextKey{}, child)
-	child.context = ctx
 
 	// Track child
 	s.childrenMu.Lock()
@@ -548,22 +550,33 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 // Example:
 //
 //	func UserHandler(ctx context.Context) {
-//	    scope, ok := godi.FromContext(ctx)
-//	    if !ok {
-//	        // Handle error - no scope found
+//	    scope, err := godi.FromContext(ctx)
+//	    if err != nil {
+//	        // Handle error - no scope found or context was nil
 //	        return
 //	    }
 //
 //	    // Use the scope to resolve services
 //	    service, _ := godi.Resolve[*Service](scope)
 //	}
-func FromContext(ctx context.Context) (Scope, bool) {
+func FromContext(ctx context.Context) (Scope, error) {
 	if ctx == nil {
-		return nil, false
+		return nil, &ValidationError{
+			ServiceType: nil,
+			Cause:       errors.New("context cannot be nil"),
+		}
 	}
 
 	scope, ok := ctx.Value(scopeContextKey{}).(Scope)
-	return scope, ok
+	if !ok {
+		return nil, &ResolutionError{
+			ServiceType: scopeType,
+			ServiceKey:  nil,
+			Cause:       errors.New("no scope found in context"),
+		}
+	}
+
+	return scope, nil
 }
 
 // scopeContextKey is the key used to store scopes in contexts
