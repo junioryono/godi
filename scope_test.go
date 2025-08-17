@@ -2609,10 +2609,10 @@ func TestMixedLifetimeGroups(t *testing.T) {
 		// Transients for stateless handlers
 		for i := 0; i < 3; i++ {
 			id := i
-			err := collection.AddTransient(func() *MixedService {
+			err2 := collection.AddTransient(func() *MixedService {
 				return &MixedService{ID: string(rune('a' + id))}
 			}, Group("handlers"))
-			require.NoError(t, err)
+			require.NoError(t, err2)
 		}
 
 		provider, err := collection.Build()
