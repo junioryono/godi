@@ -315,7 +315,7 @@ func TestDecorate(t *testing.T) {
 
 	t.Run("nil decorator", func(t *testing.T) {
 		collection := NewCollection()
-		
+
 		err := collection.Decorate(nil)
 		assert.Error(t, err)
 		// The error is wrapped in ValidationError
@@ -394,7 +394,7 @@ func TestRemove(t *testing.T) {
 
 	t.Run("remove with nil type", func(t *testing.T) {
 		collection := NewCollection()
-		
+
 		// Should not panic with nil type
 		collection.Remove(nil)
 	})
@@ -445,7 +445,7 @@ func TestRemoveKeyed(t *testing.T) {
 
 		// Should not panic with nil type
 		collection.RemoveKeyed(nil, "key")
-		
+
 		// Should not panic with nil key
 		collection.RemoveKeyed(serviceType, nil)
 	})
@@ -500,10 +500,10 @@ func TestToSlice(t *testing.T) {
 		// Add various types of services
 		err := collection.AddSingleton(NewTestService)
 		assert.NoError(t, err)
-		
+
 		err = collection.AddSingleton(NewTestService, Name("keyed"))
 		assert.NoError(t, err)
-		
+
 		err = collection.AddSingleton(NewTestService, Group("group1"))
 		assert.NoError(t, err)
 
@@ -521,7 +521,7 @@ func TestToSlice(t *testing.T) {
 				regular++
 			}
 		}
-		
+
 		assert.Equal(t, 1, regular)
 		assert.Equal(t, 1, keyed)
 		assert.Equal(t, 1, grouped)
@@ -539,7 +539,7 @@ func TestToSlice(t *testing.T) {
 
 		// Should return different slices
 		assert.NotSame(t, &descriptors1, &descriptors2)
-		
+
 		// But contain the same data
 		assert.Equal(t, descriptors1, descriptors2)
 	})
@@ -798,15 +798,15 @@ func TestBuildWithOptions(t *testing.T) {
 		options := &ProviderOptions{
 			BuildTimeout: 10 * time.Millisecond,
 		}
-		
+
 		provider, err := collection.BuildWithOptions(options)
 		assert.Error(t, err)
 		assert.Nil(t, provider)
-		
+
 		// Verify it's a timeout error
 		var timeoutErr *TimeoutError
 		assert.True(t, errors.As(err, &timeoutErr))
-		
+
 		close(blockChan) // Clean up
 	})
 }
@@ -1347,7 +1347,7 @@ func TestValidateLifetimes(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("transient depending on any", func(t *testing.T) {
+	t.Run("transient depending on scoped", func(t *testing.T) {
 		c := &collection{
 			services:   make(map[TypeKey]*Descriptor),
 			groups:     make(map[GroupKey][]*Descriptor),
@@ -1359,7 +1359,53 @@ func TestValidateLifetimes(t *testing.T) {
 		require.NoError(t, err)
 		c.services[TypeKey{Type: d1.Type}] = d1
 
-		// Transient depending on scoped - OK
+		// Transient depending on scoped - NOT OK (aligns with .NET DI rules)
+		d2, err := newDescriptor(NewValidationServiceE, Transient)
+		require.NoError(t, err)
+		c.services[TypeKey{Type: d2.Type}] = d2
+
+		err = c.validateLifetimes()
+		assert.Error(t, err)
+		var lifetimeConflictErr *LifetimeConflictError
+		assert.ErrorAs(t, err, &lifetimeConflictErr)
+		assert.Equal(t, Transient, lifetimeConflictErr.Current)
+		assert.Equal(t, Scoped, lifetimeConflictErr.Requested)
+	})
+
+	t.Run("transient depending on singleton", func(t *testing.T) {
+		c := &collection{
+			services:   make(map[TypeKey]*Descriptor),
+			groups:     make(map[GroupKey][]*Descriptor),
+			decorators: make(map[reflect.Type][]*Descriptor),
+		}
+
+		// Singleton service
+		d1, err := newDescriptor(NewValidationServiceD, Singleton)
+		require.NoError(t, err)
+		c.services[TypeKey{Type: d1.Type}] = d1
+
+		// Transient depending on singleton - OK
+		d2, err := newDescriptor(NewValidationServiceE, Transient)
+		require.NoError(t, err)
+		c.services[TypeKey{Type: d2.Type}] = d2
+
+		err = c.validateLifetimes()
+		assert.NoError(t, err)
+	})
+
+	t.Run("transient depending on transient", func(t *testing.T) {
+		c := &collection{
+			services:   make(map[TypeKey]*Descriptor),
+			groups:     make(map[GroupKey][]*Descriptor),
+			decorators: make(map[reflect.Type][]*Descriptor),
+		}
+
+		// Transient service
+		d1, err := newDescriptor(NewValidationServiceD, Transient)
+		require.NoError(t, err)
+		c.services[TypeKey{Type: d1.Type}] = d1
+
+		// Transient depending on transient - OK
 		d2, err := newDescriptor(NewValidationServiceE, Transient)
 		require.NoError(t, err)
 		c.services[TypeKey{Type: d2.Type}] = d2
