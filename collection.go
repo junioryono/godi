@@ -158,6 +158,15 @@ func (sc *collection) BuildWithOptions(options *ProviderOptions) (Provider, erro
 }
 
 func (sc *collection) doBuild() (Provider, error) {
+	// Register internal services first
+	if err := sc.registerInternalServices(); err != nil {
+		return nil, &BuildError{
+			Phase:   "register-internal-services",
+			Details: "failed to register internal services",
+			Cause:   err,
+		}
+	}
+
 	// Get all descriptors before locking to avoid deadlock
 	allDescriptors := sc.ToSlice()
 
@@ -227,6 +236,9 @@ func (sc *collection) doBuild() (Provider, error) {
 		children:    make(map[*scope]struct{}),
 	}
 
+	// Register built-in services for root scope
+	// p.rootScope.registerBuiltinServices()
+
 	// Phase 6: Create singletons
 	if err := p.createAllSingletons(); err != nil {
 		// Clean up partially created provider
@@ -246,6 +258,60 @@ func (sc *collection) doBuild() (Provider, error) {
 	}
 
 	return p, nil
+}
+
+func (sc *collection) registerInternalServices() error {
+	contextDescriptor, err := newDescriptor(context.Background(), Singleton)
+	if err != nil {
+		return &BuildError{
+			Phase:   "descriptor-creation",
+			Details: "failed to create context descriptor",
+			Cause:   err,
+		}
+	}
+	sc.services[TypeKey{Type: reflect.TypeOf((*context.Context)(nil)).Elem()}] = contextDescriptor
+
+	providerDescriptor, err := newDescriptor(func(ctx context.Context) (Provider, error) {
+		provider, ok := FromContext(ctx)
+		if !ok {
+			return nil, &ResolutionError{
+				ServiceType: reflect.TypeOf((*Provider)(nil)).Elem(),
+				Cause:       fmt.Errorf("no provider found in context"),
+			}
+		}
+
+		return provider, nil
+	}, Scoped)
+	if err != nil {
+		return &BuildError{
+			Phase:   "descriptor-creation",
+			Details: "failed to create provider descriptor",
+			Cause:   err,
+		}
+	}
+	sc.services[TypeKey{Type: reflect.TypeOf((*Provider)(nil)).Elem()}] = providerDescriptor
+
+	scopeDescriptor, err := newDescriptor(func(ctx context.Context) (Scope, error) {
+		scope, ok := FromContext(ctx)
+		if !ok {
+			return nil, &ResolutionError{
+				ServiceType: reflect.TypeOf((*Scope)(nil)).Elem(),
+				Cause:       fmt.Errorf("no scope found in context"),
+			}
+		}
+
+		return scope, nil
+	}, Scoped)
+	if err != nil {
+		return &BuildError{
+			Phase:   "descriptor-creation",
+			Details: "failed to create scope descriptor",
+			Cause:   err,
+		}
+	}
+	sc.services[TypeKey{Type: reflect.TypeOf((*Scope)(nil)).Elem()}] = scopeDescriptor
+
+	return nil
 }
 
 // AddModules applies one or more module configurations to the service collection.

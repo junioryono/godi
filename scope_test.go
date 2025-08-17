@@ -1778,6 +1778,261 @@ func TestMultiReturnWithDependencies(t *testing.T) {
 	assert.Equal(t, svc.Logger, admin.UserService.Logger)
 }
 
+// TestBuiltinServices tests that context, scope, and provider are automatically registered
+func TestBuiltinServices(t *testing.T) {
+	t.Run("context injection", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Add a service that requires context
+		type ServiceWithContext struct {
+			ctx context.Context
+		}
+
+		collection.AddScoped(func(ctx context.Context) *ServiceWithContext {
+			return &ServiceWithContext{ctx: ctx}
+		})
+
+		provider, err := collection.Build()
+		if err != nil {
+			t.Fatalf("Failed to build provider: %v", err)
+		}
+		defer provider.Close()
+
+		// Create a scope with custom context
+		type contextKey string
+		const testKey contextKey = "test"
+		customCtx := context.WithValue(context.Background(), testKey, "value")
+		scope, err := provider.CreateScope(customCtx)
+		if err != nil {
+			t.Fatalf("Failed to create scope: %v", err)
+		}
+		defer scope.Close()
+
+		// Resolve the service
+		serviceType := reflect.TypeOf((*ServiceWithContext)(nil))
+		service, err := scope.Get(serviceType)
+		if err != nil {
+			t.Fatalf("Failed to resolve service: %v", err)
+		}
+
+		svc := service.(*ServiceWithContext)
+		if svc.ctx == nil {
+			t.Fatal("Context was not injected")
+		}
+
+		// Verify it's the same context
+		if val := svc.ctx.Value("test-key"); val != "test-value" {
+			t.Fatalf("Expected context value 'test-value', got %v", val)
+		}
+	})
+
+	t.Run("scope injection", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Add a service that requires scope
+		type ServiceWithScope struct {
+			scope Scope
+		}
+
+		collection.AddScoped(func(scope Scope) *ServiceWithScope {
+			return &ServiceWithScope{scope: scope}
+		})
+
+		provider, err := collection.Build()
+		if err != nil {
+			t.Fatalf("Failed to build provider: %v", err)
+		}
+		defer provider.Close()
+
+		scope, err := provider.CreateScope(context.Background())
+		if err != nil {
+			t.Fatalf("Failed to create scope: %v", err)
+		}
+		defer scope.Close()
+
+		// Resolve the service
+		serviceType := reflect.TypeOf((*ServiceWithScope)(nil))
+		service, err := scope.Get(serviceType)
+		if err != nil {
+			t.Fatalf("Failed to resolve service: %v", err)
+		}
+
+		svc := service.(*ServiceWithScope)
+		if svc.scope == nil {
+			t.Fatal("Scope was not injected")
+		}
+
+		// Verify it's the same scope
+		if svc.scope.ID() != scope.ID() {
+			t.Fatalf("Injected scope ID %v doesn't match expected %v", svc.scope.ID(), scope.ID())
+		}
+	})
+
+	t.Run("provider injection", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Add a service that requires provider
+		type ServiceWithProvider struct {
+			provider Provider
+		}
+
+		collection.AddScoped(func(provider Provider) *ServiceWithProvider {
+			return &ServiceWithProvider{provider: provider}
+		})
+
+		provider, err := collection.Build()
+		if err != nil {
+			t.Fatalf("Failed to build provider: %v", err)
+		}
+		defer provider.Close()
+
+		scope, err := provider.CreateScope(context.Background())
+		if err != nil {
+			t.Fatalf("Failed to create scope: %v", err)
+		}
+		defer scope.Close()
+
+		// Resolve the service
+		serviceType := reflect.TypeOf((*ServiceWithProvider)(nil))
+		service, err := scope.Get(serviceType)
+		if err != nil {
+			t.Fatalf("Failed to resolve service: %v", err)
+		}
+
+		svc := service.(*ServiceWithProvider)
+		if svc.provider == nil {
+			t.Fatal("Provider was not injected")
+		}
+
+		// Verify it's the same provider
+		if svc.provider.ID() != provider.ID() {
+			t.Fatalf("Injected provider ID %v doesn't match expected %v", svc.provider.ID(), provider.ID())
+		}
+	})
+
+	t.Run("combined injection with In struct", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Add a service that requires all built-in services
+		type ServiceParams struct {
+			In
+
+			Context  context.Context
+			Scope    Scope
+			Provider Provider
+		}
+
+		type ComplexService struct {
+			ctx      context.Context
+			scope    Scope
+			provider Provider
+		}
+
+		collection.AddScoped(func(params ServiceParams) *ComplexService {
+			return &ComplexService{
+				ctx:      params.Context,
+				scope:    params.Scope,
+				provider: params.Provider,
+			}
+		})
+
+		provider, err := collection.Build()
+		if err != nil {
+			t.Fatalf("Failed to build provider: %v", err)
+		}
+		defer provider.Close()
+
+		type contextKey string
+		const testKey contextKey = "test"
+		customCtx := context.WithValue(context.Background(), testKey, "value")
+		scope, err := provider.CreateScope(customCtx)
+		if err != nil {
+			t.Fatalf("Failed to create scope: %v", err)
+		}
+		defer scope.Close()
+
+		// Resolve the service
+		serviceType := reflect.TypeOf((*ComplexService)(nil))
+		service, err := scope.Get(serviceType)
+		if err != nil {
+			t.Fatalf("Failed to resolve service: %v", err)
+		}
+
+		svc := service.(*ComplexService)
+
+		// Verify all injections
+		if svc.ctx == nil {
+			t.Fatal("Context was not injected")
+		}
+		if val := svc.ctx.Value("key"); val != "value" {
+			t.Fatalf("Expected context value 'value', got %v", val)
+		}
+
+		if svc.scope == nil {
+			t.Fatal("Scope was not injected")
+		}
+		if svc.scope.ID() != scope.ID() {
+			t.Fatalf("Injected scope ID doesn't match")
+		}
+
+		if svc.provider == nil {
+			t.Fatal("Provider was not injected")
+		}
+		if svc.provider.ID() != provider.ID() {
+			t.Fatalf("Injected provider ID doesn't match")
+		}
+	})
+
+	t.Run("child scope inherits provider", func(t *testing.T) {
+		collection := NewCollection()
+
+		type ServiceWithProvider struct {
+			provider Provider
+		}
+
+		collection.AddScoped(func(provider Provider) *ServiceWithProvider {
+			return &ServiceWithProvider{provider: provider}
+		})
+
+		provider, err := collection.Build()
+		if err != nil {
+			t.Fatalf("Failed to build provider: %v", err)
+		}
+		defer provider.Close()
+
+		// Create parent scope
+		parentScope, err := provider.CreateScope(context.Background())
+		if err != nil {
+			t.Fatalf("Failed to create parent scope: %v", err)
+		}
+		defer parentScope.Close()
+
+		// Create child scope
+		childScope, err := parentScope.CreateScope(context.Background())
+		if err != nil {
+			t.Fatalf("Failed to create child scope: %v", err)
+		}
+		defer childScope.Close()
+
+		// Resolve from child scope
+		serviceType := reflect.TypeOf((*ServiceWithProvider)(nil))
+		service, err := childScope.Get(serviceType)
+		if err != nil {
+			t.Fatalf("Failed to resolve service: %v", err)
+		}
+
+		svc := service.(*ServiceWithProvider)
+		if svc.provider == nil {
+			t.Fatal("Provider was not injected in child scope")
+		}
+
+		// Provider should be the same across all scopes
+		if svc.provider.ID() != provider.ID() {
+			t.Fatalf("Child scope has different provider ID")
+		}
+	})
+}
+
 // Benchmark tests
 func BenchmarkInstanceRegistration(b *testing.B) {
 	type Service struct {

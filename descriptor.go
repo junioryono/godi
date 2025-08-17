@@ -62,9 +62,9 @@ type Descriptor struct {
 	paramFields    []reflection.ParamField
 }
 
-// newDescriptor creates a new descriptor from a constructor with the given lifetime and options
-func newDescriptor(constructor any, lifetime Lifetime, opts ...AddOption) (*Descriptor, error) {
-	if constructor == nil {
+// newDescriptor creates a new descriptor from a service with the given lifetime and options
+func newDescriptor(service any, lifetime Lifetime, opts ...AddOption) (*Descriptor, error) {
+	if service == nil {
 		return nil, &ValidationError{
 			ServiceType: nil,
 			Cause:       ErrConstructorNil,
@@ -85,7 +85,7 @@ func newDescriptor(constructor any, lifetime Lifetime, opts ...AddOption) (*Desc
 	}
 
 	// Get constructor value and type
-	constructorValue := reflect.ValueOf(constructor)
+	constructorValue := reflect.ValueOf(service)
 
 	// Check for nil pointers
 	if !constructorValue.IsValid() || (constructorValue.Kind() == reflect.Pointer && constructorValue.IsNil()) {
@@ -128,20 +128,20 @@ func newDescriptor(constructor any, lifetime Lifetime, opts ...AddOption) (*Desc
 
 	// Create analyzer to analyze the constructor
 	analyzer := reflection.New()
-	info, err := analyzer.Analyze(constructor)
+	info, err := analyzer.Analyze(service)
 	if err != nil {
 		return nil, &ReflectionAnalysisError{
-			Constructor: constructor,
+			Constructor: service,
 			Operation:   "analyze",
 			Cause:       err,
 		}
 	}
 
 	// Get dependencies from analyzer
-	dependencies, err := analyzer.GetDependencies(constructor)
+	dependencies, err := analyzer.GetDependencies(service)
 	if err != nil {
 		return nil, &ReflectionAnalysisError{
-			Constructor: constructor,
+			Constructor: service,
 			Operation:   "dependencies",
 			Cause:       err,
 		}
@@ -174,7 +174,7 @@ func newDescriptor(constructor any, lifetime Lifetime, opts ...AddOption) (*Desc
 
 	// Store the instance if it's not a function
 	if isInstance {
-		descriptor.Instance = constructor
+		descriptor.Instance = service
 	}
 
 	// Apply options
