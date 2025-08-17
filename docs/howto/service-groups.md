@@ -311,6 +311,138 @@ func (d *EventDispatcher) Dispatch(event Event) error {
 }
 ```
 
+## Mixed Lifetime Groups
+
+Service groups can contain services with different lifetimes. Each service maintains its lifetime semantics:
+
+- **Singleton**: Same instance everywhere - created once at build time
+- **Scoped**: Same instance within a scope - created per scope
+- **Transient**: New instance every time - never cached
+
+This is particularly useful for plugin systems where some plugins are stateless (transient), some maintain request state (scoped), and some are application-wide (singleton).
+
+### Example: Mixed Lifetime Plugins
+
+```go
+// Plugin interface
+type Plugin interface {
+    Name() string
+    Process(data any) error
+}
+
+// Singleton plugin - maintains global state
+type MetricsPlugin struct {
+    counter int64
+}
+
+func NewMetricsPlugin() Plugin {
+    return &MetricsPlugin{}
+}
+
+func (p *MetricsPlugin) Process(data any) error {
+    atomic.AddInt64(&p.counter, 1)
+    return nil
+}
+
+// Scoped plugin - request-specific state
+type RequestContextPlugin struct {
+    requestID string
+}
+
+func NewRequestContextPlugin(ctx context.Context) Plugin {
+    return &RequestContextPlugin{
+        requestID: ctx.Value("requestID").(string),
+    }
+}
+
+// Transient plugin - stateless processor
+type ValidationPlugin struct{}
+
+func NewValidationPlugin() Plugin {
+    return &ValidationPlugin{}
+}
+
+// Register with mixed lifetimes
+var PluginModule = godi.NewModule("plugins",
+    // Global metrics collector - singleton
+    godi.AddSingleton(NewMetricsPlugin, godi.Group("processors")),
+    
+    // Request context - scoped
+    godi.AddScoped(NewRequestContextPlugin, godi.Group("processors")),
+    
+    // Stateless validators - transient
+    godi.AddTransient(NewValidationPlugin, godi.Group("processors")),
+    godi.AddTransient(NewSanitizationPlugin, godi.Group("processors")),
+)
+
+// Using mixed lifetime group
+type ProcessingPipeline struct {
+    processors []Plugin
+}
+
+func NewProcessingPipeline(params struct {
+    godi.In
+    Processors []Plugin `group:"processors"`
+}) *ProcessingPipeline {
+    return &ProcessingPipeline{
+        processors: params.Processors,
+    }
+}
+
+func (p *ProcessingPipeline) Process(data any) error {
+    for _, processor := range p.processors {
+        // Each processor maintains its own lifetime behavior:
+        // - MetricsPlugin: same instance, accumulates count
+        // - RequestContextPlugin: same instance per request/scope
+        // - ValidationPlugin: new instance each time group is resolved
+        if err := processor.Process(data); err != nil {
+            return err
+        }
+    }
+    return nil
+}
+```
+
+### Lifetime Behavior in Groups
+
+When you resolve a group containing mixed lifetimes:
+
+1. **Singleton services** return the pre-created instance from provider cache
+2. **Scoped services** return the cached instance from current scope (or create if first access)
+3. **Transient services** always create a new instance
+
+```go
+// Build provider
+provider, _ := collection.Build()
+
+// First resolution from provider
+services1 := provider.GetGroup("processors")
+services2 := provider.GetGroup("processors")
+
+// Singleton (index 0): same instance
+assert.Same(services1[0], services2[0])
+
+// Scoped (index 1): same in provider context
+assert.Same(services1[1], services2[1])
+
+// Transient (index 2,3): always different
+assert.NotSame(services1[2], services2[2])
+assert.NotSame(services1[3], services2[3])
+
+// Create scope
+scope := provider.CreateScope(ctx)
+scopeServices := scope.GetGroup("processors")
+
+// Singleton: still same instance
+assert.Same(services1[0], scopeServices[0])
+
+// Scoped: different in new scope
+assert.NotSame(services1[1], scopeServices[1])
+
+// Transient: always different
+assert.NotSame(services1[2], scopeServices[2])
+```
+
 ## Combining Groups with Keys
 
 You can use both groups and keys together:

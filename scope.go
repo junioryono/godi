@@ -8,7 +8,6 @@ import (
 	"sync/atomic"
 
 	"github.com/google/uuid"
-	"github.com/junioryono/godi/v4/internal/graph"
 	"github.com/junioryono/godi/v4/internal/reflection"
 )
 
@@ -36,10 +35,6 @@ type scope struct {
 	disposables   []Disposable
 	disposablesMu sync.Mutex
 
-	// Resolution tracking for circular dependency detection
-	resolving   map[instanceKey]struct{}
-	resolvingMu sync.Mutex
-
 	// Child scopes for hierarchical cleanup
 	children   map[*scope]struct{}
 	childrenMu sync.Mutex
@@ -61,7 +56,6 @@ func newScope(provider *provider, parent *scope, ctx context.Context, cancel con
 		cancel:      cancel,
 		instances:   make(map[instanceKey]any),
 		disposables: make([]Disposable, 0),
-		resolving:   make(map[instanceKey]struct{}),
 		children:    make(map[*scope]struct{}),
 	}
 }
@@ -289,42 +283,6 @@ func (s *scope) setInstance(key instanceKey, instance any) {
 	}
 }
 
-// checkCircular checks for circular dependencies during resolution.
-// Returns an error if the service is already being resolved in the current
-// resolution chain, indicating a circular dependency.
-func (s *scope) checkCircular(key instanceKey) error {
-	s.resolvingMu.Lock()
-	_, ok := s.resolving[key]
-	s.resolvingMu.Unlock()
-
-	if ok {
-		return &CircularDependencyError{
-			Node: graph.NodeKey{
-				Type: key.Type,
-				Key:  key.Key,
-			},
-		}
-	}
-
-	return nil
-}
-
-// startResolving marks a service as being resolved to track circular dependencies.
-// This should be called before attempting to create a service instance.
-func (s *scope) startResolving(key instanceKey) {
-	s.resolvingMu.Lock()
-	s.resolving[key] = struct{}{}
-	s.resolvingMu.Unlock()
-}
-
-// stopResolving marks a service as no longer being resolved.
-// This should be called after a service instance has been created or resolution fails.
-func (s *scope) stopResolving(key instanceKey) {
-	s.resolvingMu.Lock()
-	delete(s.resolving, key)
-	s.resolvingMu.Unlock()
-}
-
 var (
 	contextType  = reflect.TypeOf((*context.Context)(nil)).Elem()
 	providerType = reflect.TypeOf((*Provider)(nil)).Elem()
@@ -379,15 +337,6 @@ func (s *scope) resolve(key instanceKey, descriptor *Descriptor) (any, error) {
 			return instance, nil
 		}
 
-		// Check for circular dependency before creating
-		if err := s.checkCircular(key); err != nil {
-			return nil, err
-		}
-
-		// Mark as resolving
-		s.startResolving(key)
-		defer s.stopResolving(key)
-
 		// Create and cache scoped instance
 		instance, err := s.createInstance(descriptor)
 		if err != nil {
@@ -398,15 +347,6 @@ func (s *scope) resolve(key instanceKey, descriptor *Descriptor) (any, error) {
 		return instance, nil
 
 	case Transient:
-		// Check for circular dependency before creating
-		if err := s.checkCircular(key); err != nil {
-			return nil, err
-		}
-
-		// Mark as resolving
-		s.startResolving(key)
-		defer s.stopResolving(key)
-
 		// Always create new instance
 		return s.createInstance(descriptor)
 
