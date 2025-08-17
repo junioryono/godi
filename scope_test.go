@@ -430,6 +430,193 @@ func TestScopeProviderAndContext(t *testing.T) {
 		assert.NotNil(t, scopeCtx)
 		assert.Equal(t, "value", scopeCtx.Value(testKey))
 	})
+
+	t.Run("scope ID", func(t *testing.T) {
+		collection := NewCollection()
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		scope, err := provider.CreateScope(context.Background())
+		require.NoError(t, err)
+		defer scope.Close()
+
+		// ID should be non-empty
+		id := scope.ID()
+		assert.NotEmpty(t, id)
+
+		// ID should remain constant
+		id2 := scope.ID()
+		assert.Equal(t, id, id2)
+	})
+}
+
+// Test Scope GetKeyed
+func TestScopeGetKeyed(t *testing.T) {
+	t.Run("get keyed service", func(t *testing.T) {
+		collection := NewCollection()
+		
+		// Add keyed services
+		err := collection.AddScoped(func() *ScopedTestService {
+			return &ScopedTestService{Scope: "primary"}
+		}, Name("primary"))
+		require.NoError(t, err)
+		
+		err = collection.AddScoped(func() *ScopedTestService {
+			return &ScopedTestService{Scope: "secondary"}
+		}, Name("secondary"))
+		require.NoError(t, err)
+
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		scope, err := provider.CreateScope(context.Background())
+		require.NoError(t, err)
+		defer scope.Close()
+
+		// Get primary
+		serviceType := reflect.TypeOf((*ScopedTestService)(nil))
+		primary, err := scope.GetKeyed(serviceType, "primary")
+		require.NoError(t, err)
+		assert.NotNil(t, primary)
+		assert.Equal(t, "primary", primary.(*ScopedTestService).Scope)
+
+		// Get secondary
+		secondary, err := scope.GetKeyed(serviceType, "secondary")
+		require.NoError(t, err)
+		assert.NotNil(t, secondary)
+		assert.Equal(t, "secondary", secondary.(*ScopedTestService).Scope)
+
+		// Same key should return same instance
+		primary2, err := scope.GetKeyed(serviceType, "primary")
+		require.NoError(t, err)
+		assert.Same(t, primary, primary2)
+	})
+
+	t.Run("keyed service not found", func(t *testing.T) {
+		collection := NewCollection()
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		scope, err := provider.CreateScope(context.Background())
+		require.NoError(t, err)
+		defer scope.Close()
+
+		serviceType := reflect.TypeOf((*ScopedTestService)(nil))
+		_, err = scope.GetKeyed(serviceType, "nonexistent")
+		assert.Error(t, err)
+	})
+
+	t.Run("nil key", func(t *testing.T) {
+		collection := NewCollection()
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		scope, err := provider.CreateScope(context.Background())
+		require.NoError(t, err)
+		defer scope.Close()
+
+		serviceType := reflect.TypeOf((*ScopedTestService)(nil))
+		_, err = scope.GetKeyed(serviceType, nil)
+		assert.Error(t, err)
+		assert.Equal(t, ErrServiceKeyNil, err)
+	})
+
+	t.Run("nil type", func(t *testing.T) {
+		collection := NewCollection()
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		scope, err := provider.CreateScope(context.Background())
+		require.NoError(t, err)
+		defer scope.Close()
+
+		_, err = scope.GetKeyed(nil, "key")
+		assert.Error(t, err)
+		assert.Equal(t, ErrServiceTypeNil, err)
+	})
+}
+
+// Test Scope GetGroup
+func TestScopeGetGroup(t *testing.T) {
+	t.Run("get group services", func(t *testing.T) {
+		collection := NewCollection()
+		
+		// Add services to a group
+		err := collection.AddScoped(func() *ScopedTestService {
+			return &ScopedTestService{Scope: "handler1"}
+		}, Group("handlers"))
+		require.NoError(t, err)
+		
+		err = collection.AddScoped(func() *ScopedTestService {
+			return &ScopedTestService{Scope: "handler2"}
+		}, Group("handlers"))
+		require.NoError(t, err)
+
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		scope, err := provider.CreateScope(context.Background())
+		require.NoError(t, err)
+		defer scope.Close()
+
+		serviceType := reflect.TypeOf((*ScopedTestService)(nil))
+		services, err := scope.GetGroup(serviceType, "handlers")
+		require.NoError(t, err)
+		assert.Len(t, services, 2)
+
+		// Verify both services are present
+		names := make([]string, 0, 2)
+		for _, svc := range services {
+			names = append(names, svc.(*ScopedTestService).Scope)
+		}
+		assert.Contains(t, names, "handler1")
+		assert.Contains(t, names, "handler2")
+
+		// Getting the same group again should return the same instances
+		services2, err := scope.GetGroup(serviceType, "handlers")
+		require.NoError(t, err)
+		assert.Len(t, services2, 2)
+		for i := range services {
+			assert.Same(t, services[i], services2[i])
+		}
+	})
+
+	t.Run("empty group", func(t *testing.T) {
+		collection := NewCollection()
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		scope, err := provider.CreateScope(context.Background())
+		require.NoError(t, err)
+		defer scope.Close()
+
+		serviceType := reflect.TypeOf((*ScopedTestService)(nil))
+		services, err := scope.GetGroup(serviceType, "nonexistent")
+		require.NoError(t, err)
+		assert.Empty(t, services)
+	})
+
+	t.Run("empty group name", func(t *testing.T) {
+		collection := NewCollection()
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		scope, err := provider.CreateScope(context.Background())
+		require.NoError(t, err)
+		defer scope.Close()
+
+		serviceType := reflect.TypeOf((*ScopedTestService)(nil))
+		_, err = scope.GetGroup(serviceType, "")
+		assert.Error(t, err)
+	})
 }
 
 // Test concurrent access
