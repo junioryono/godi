@@ -721,22 +721,22 @@ func (c *collection) validateLifetimes() error {
 		}
 
 		// Both Singleton and Transient cannot depend on Scoped
-		// Get dependencies
 		for _, dep := range descriptor.Dependencies {
 			if dep == nil {
 				continue
 			}
 
 			depKey := instanceKey{Type: dep.Type, Key: dep.Key, Group: dep.Group}
+			depLifetime, ok := lifetimes[depKey]
+			if !ok {
+				continue
+			}
 
-			// Find the lifetime of the dependency
-			if depLifetime, ok := lifetimes[depKey]; ok {
-				if depLifetime == Scoped {
-					return &LifetimeConflictError{
-						ServiceType: descriptor.Type,
-						Current:     descriptor.Lifetime,
-						Requested:   depLifetime,
-					}
+			if depLifetime == Scoped {
+				return &LifetimeConflictError{
+					ServiceType: descriptor.Type,
+					Current:     descriptor.Lifetime,
+					Requested:   depLifetime,
 				}
 			}
 		}
