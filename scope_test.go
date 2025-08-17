@@ -2132,3 +2132,615 @@ func BenchmarkMultiReturnVsSingle(b *testing.B) {
 		}
 	})
 }
+
+// Test service types for mixed lifetime groups
+type MixedService struct {
+	ID       string
+	Instance int
+}
+
+var mixedInstanceCounter int
+var mixedCounterMu sync.Mutex
+
+func newMixedSingleton() *MixedService {
+	mixedCounterMu.Lock()
+	defer mixedCounterMu.Unlock()
+	mixedInstanceCounter++
+	return &MixedService{ID: "singleton", Instance: mixedInstanceCounter}
+}
+
+func newMixedScoped() *MixedService {
+	mixedCounterMu.Lock()
+	defer mixedCounterMu.Unlock()
+	mixedInstanceCounter++
+	return &MixedService{ID: "scoped", Instance: mixedInstanceCounter}
+}
+
+func newMixedTransient() *MixedService {
+	mixedCounterMu.Lock()
+	defer mixedCounterMu.Unlock()
+	mixedInstanceCounter++
+	return &MixedService{ID: "transient", Instance: mixedInstanceCounter}
+}
+
+// TestMixedLifetimeGroups tests comprehensive scenarios with mixed lifetime services in groups
+func TestMixedLifetimeGroups(t *testing.T) {
+	t.Run("singleton_scoped_transient_in_same_group", func(t *testing.T) {
+		// Reset counter
+		mixedCounterMu.Lock()
+		mixedInstanceCounter = 0
+		mixedCounterMu.Unlock()
+
+		collection := NewCollection()
+
+		// Add services with different lifetimes to the same group
+		err := collection.AddSingleton(newMixedSingleton, Group("mixed"))
+		require.NoError(t, err)
+
+		err = collection.AddScoped(newMixedScoped, Group("mixed"))
+		require.NoError(t, err)
+
+		err = collection.AddTransient(newMixedTransient, Group("mixed"))
+		require.NoError(t, err)
+
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		// Test from root provider
+		services1, err := ResolveGroup[*MixedService](provider, "mixed")
+		require.NoError(t, err)
+		assert.Len(t, services1, 3)
+
+		services2, err := ResolveGroup[*MixedService](provider, "mixed")
+		require.NoError(t, err)
+		assert.Len(t, services2, 3)
+
+		// Singleton should be same instance (instance number 1)
+		assert.Equal(t, services1[0].ID, "singleton")
+		assert.Equal(t, services1[0].Instance, 1)
+		assert.Same(t, services1[0], services2[0])
+
+		// Scoped should be same in provider context (instance number 2)
+		assert.Equal(t, services1[1].ID, "scoped")
+		assert.Equal(t, services1[1].Instance, 2)
+		assert.Same(t, services1[1], services2[1])
+
+		// Transient should be different (instance 3 and 4)
+		assert.Equal(t, services1[2].ID, "transient")
+		assert.Equal(t, services1[2].Instance, 3)
+		assert.Equal(t, services2[2].ID, "transient")
+		assert.Equal(t, services2[2].Instance, 4)
+		assert.NotSame(t, services1[2], services2[2])
+
+		// Test from different scopes
+		scope1, err := provider.CreateScope(context.Background())
+		require.NoError(t, err)
+		defer scope1.Close()
+
+		scope2, err := provider.CreateScope(context.Background())
+		require.NoError(t, err)
+		defer scope2.Close()
+
+		scope1Services, err := ResolveGroup[*MixedService](scope1, "mixed")
+		require.NoError(t, err)
+		assert.Len(t, scope1Services, 3)
+
+		scope2Services, err := ResolveGroup[*MixedService](scope2, "mixed")
+		require.NoError(t, err)
+		assert.Len(t, scope2Services, 3)
+
+		// Singleton same across scopes (still instance 1)
+		assert.Equal(t, scope1Services[0].Instance, 1)
+		assert.Equal(t, scope2Services[0].Instance, 1)
+		assert.Same(t, scope1Services[0], scope2Services[0])
+
+		// Scoped different across scopes (instances 5 and 6)
+		assert.Equal(t, scope1Services[1].ID, "scoped")
+		assert.Equal(t, scope2Services[1].ID, "scoped")
+		assert.NotSame(t, scope1Services[1], scope2Services[1])
+		assert.NotEqual(t, scope1Services[1].Instance, scope2Services[1].Instance)
+
+		// Transient always different
+		assert.Equal(t, scope1Services[2].ID, "transient")
+		assert.Equal(t, scope2Services[2].ID, "transient")
+		assert.NotSame(t, scope1Services[2], scope2Services[2])
+		assert.NotEqual(t, scope1Services[2].Instance, scope2Services[2].Instance)
+
+		// Get from same scope twice - verify scoped consistency
+		scope1Services2, err := ResolveGroup[*MixedService](scope1, "mixed")
+		require.NoError(t, err)
+
+		// Singleton still same
+		assert.Same(t, scope1Services[0], scope1Services2[0])
+
+		// Scoped same within scope
+		assert.Same(t, scope1Services[1], scope1Services2[1])
+
+		// Transient different even within same scope
+		assert.NotSame(t, scope1Services[2], scope1Services2[2])
+	})
+
+	t.Run("all_singleton_group", func(t *testing.T) {
+		collection := NewCollection()
+
+		err := collection.AddSingleton(func() *MixedService {
+			return &MixedService{ID: "s1"}
+		}, Group("singletons"))
+
+		require.NoError(t, err)
+
+		err = collection.AddSingleton(func() *MixedService {
+			return &MixedService{ID: "s2"}
+		}, Group("singletons"))
+		require.NoError(t, err)
+
+		err = collection.AddSingleton(func() *MixedService {
+			return &MixedService{ID: "s3"}
+		}, Group("singletons"))
+		require.NoError(t, err)
+
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		// All should be created at build time
+		services1, err := ResolveGroup[*MixedService](provider, "singletons")
+		require.NoError(t, err)
+		assert.Len(t, services1, 3)
+
+		services2, err := ResolveGroup[*MixedService](provider, "singletons")
+		require.NoError(t, err)
+
+		// All should be the same instances
+		for i := 0; i < 3; i++ {
+			assert.Same(t, services1[i], services2[i])
+		}
+	})
+
+	t.Run("all_scoped_group", func(t *testing.T) {
+		collection := NewCollection()
+
+		for i := 1; i <= 3; i++ {
+			id := i // Capture loop variable
+			err := collection.AddScoped(func() *MixedService {
+				return &MixedService{ID: string(rune('a' + id - 1))}
+			}, Group("scoped"))
+			require.NoError(t, err)
+		}
+
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		scope1, err := provider.CreateScope(context.Background())
+		require.NoError(t, err)
+		defer scope1.Close()
+
+		scope2, err := provider.CreateScope(context.Background())
+		require.NoError(t, err)
+		defer scope2.Close()
+
+		scope1Services1, err := ResolveGroup[*MixedService](scope1, "scoped")
+		require.NoError(t, err)
+
+		scope1Services2, err := ResolveGroup[*MixedService](scope1, "scoped")
+		require.NoError(t, err)
+
+		scope2Services, err := ResolveGroup[*MixedService](scope2, "scoped")
+		require.NoError(t, err)
+
+		// Same instances within scope
+		for i := 0; i < 3; i++ {
+			assert.Same(t, scope1Services1[i], scope1Services2[i])
+		}
+
+		// Different instances across scopes
+		for i := 0; i < 3; i++ {
+			assert.NotSame(t, scope1Services1[i], scope2Services[i])
+		}
+	})
+
+	t.Run("all_transient_group", func(t *testing.T) {
+		collection := NewCollection()
+
+		for i := 1; i <= 3; i++ {
+			id := i // Capture loop variable
+			err := collection.AddTransient(func() *MixedService {
+				return &MixedService{ID: string(rune('x' + id - 1))}
+			}, Group("transient"))
+			require.NoError(t, err)
+		}
+
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		services1, err := ResolveGroup[*MixedService](provider, "transient")
+		require.NoError(t, err)
+
+		services2, err := ResolveGroup[*MixedService](provider, "transient")
+		require.NoError(t, err)
+
+		// All should be different instances
+		for i := 0; i < 3; i++ {
+			assert.NotSame(t, services1[i], services2[i])
+		}
+	})
+
+	t.Run("mixed_group_ordering_preserved", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Register in specific order: transient, singleton, scoped, transient
+		err := collection.AddTransient(func() *MixedService {
+			return &MixedService{ID: "t1"}
+		}, Group("ordered"))
+		require.NoError(t, err)
+
+		err = collection.AddSingleton(func() *MixedService {
+			return &MixedService{ID: "s1"}
+		}, Group("ordered"))
+		require.NoError(t, err)
+
+		err = collection.AddScoped(func() *MixedService {
+			return &MixedService{ID: "sc1"}
+		}, Group("ordered"))
+		require.NoError(t, err)
+
+		err = collection.AddTransient(func() *MixedService {
+			return &MixedService{ID: "t2"}
+		}, Group("ordered"))
+		require.NoError(t, err)
+
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		services, err := ResolveGroup[*MixedService](provider, "ordered")
+		require.NoError(t, err)
+		assert.Len(t, services, 4)
+
+		// Verify order is preserved
+		assert.Equal(t, "t1", services[0].ID)
+		assert.Equal(t, "s1", services[1].ID)
+		assert.Equal(t, "sc1", services[2].ID)
+		assert.Equal(t, "t2", services[3].ID)
+	})
+
+	t.Run("concurrent_mixed_group_resolution", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Add mixed lifetime services
+		err := collection.AddSingleton(func() *MixedService {
+			return &MixedService{ID: "singleton"}
+		}, Group("concurrent"))
+		require.NoError(t, err)
+
+		err = collection.AddScoped(func() *MixedService {
+			return &MixedService{ID: "scoped"}
+		}, Group("concurrent"))
+		require.NoError(t, err)
+
+		err = collection.AddTransient(func() *MixedService {
+			return &MixedService{ID: "transient"}
+		}, Group("concurrent"))
+		require.NoError(t, err)
+
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		var wg sync.WaitGroup
+		errors := make(chan error, 20)
+		results := make(chan []*MixedService, 20)
+
+		// Concurrent resolution from provider
+		for i := 0; i < 5; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				services, err := ResolveGroup[*MixedService](provider, "concurrent")
+				if err != nil {
+					errors <- err
+					return
+				}
+				results <- services
+			}()
+		}
+
+		// Concurrent resolution from different scopes
+		for i := 0; i < 5; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				scope, err := provider.CreateScope(context.Background())
+				if err != nil {
+					errors <- err
+					return
+				}
+				defer scope.Close()
+
+				services, err := ResolveGroup[*MixedService](scope, "concurrent")
+				if err != nil {
+					errors <- err
+					return
+				}
+				results <- services
+			}()
+		}
+
+		wg.Wait()
+		close(errors)
+		close(results)
+
+		// Check for errors
+		for err := range errors {
+			assert.NoError(t, err)
+		}
+
+		// Verify all results have 3 services
+		for services := range results {
+			assert.Len(t, services, 3)
+			assert.Equal(t, "singleton", services[0].ID)
+			assert.Equal(t, "scoped", services[1].ID)
+			assert.Equal(t, "transient", services[2].ID)
+		}
+	})
+
+	t.Run("mixed_group_with_dependencies", func(t *testing.T) {
+		// Test that services in mixed groups can depend on each other
+		type BaseService struct {
+			Name string
+		}
+
+		type DependentService struct {
+			Base *BaseService
+			Type string
+		}
+
+		collection := NewCollection()
+
+		// Add base service as singleton
+		err := collection.AddSingleton(func() *BaseService {
+			return &BaseService{Name: "base"}
+		})
+		require.NoError(t, err)
+
+		// Add dependent services with different lifetimes to a group
+		err = collection.AddSingleton(func(base *BaseService) *DependentService {
+			return &DependentService{Base: base, Type: "singleton"}
+		}, Group("deps"))
+		require.NoError(t, err)
+
+		err = collection.AddScoped(func(base *BaseService) *DependentService {
+			return &DependentService{Base: base, Type: "scoped"}
+		}, Group("deps"))
+		require.NoError(t, err)
+
+		err = collection.AddTransient(func(base *BaseService) *DependentService {
+			return &DependentService{Base: base, Type: "transient"}
+		}, Group("deps"))
+		require.NoError(t, err)
+
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		services, err := ResolveGroup[*DependentService](provider, "deps")
+		require.NoError(t, err)
+		assert.Len(t, services, 3)
+
+		// All should have the same base service (singleton)
+		base := services[0].Base
+		for _, svc := range services {
+			assert.Same(t, base, svc.Base)
+			assert.Equal(t, "base", svc.Base.Name)
+		}
+	})
+
+	t.Run("empty_mixed_group", func(t *testing.T) {
+		collection := NewCollection()
+
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		// Non-existent group should return empty slice
+		services, err := ResolveGroup[*MixedService](provider, "nonexistent")
+		require.NoError(t, err)
+		assert.Empty(t, services)
+	})
+
+	t.Run("mixed_group_disposal_order", func(t *testing.T) {
+		// Test that disposable services in mixed groups are disposed correctly
+		type DisposableService struct {
+			ID       string
+			Disposed bool
+		}
+
+		newDisposable := func(id string) func() *DisposableService {
+			return func() *DisposableService {
+				return &DisposableService{ID: id}
+			}
+		}
+
+		collection := NewCollection()
+
+		// Add disposable services with different lifetimes
+		err := collection.AddSingleton(newDisposable("singleton"), Group("disposables"))
+		require.NoError(t, err)
+
+		err = collection.AddScoped(newDisposable("scoped"), Group("disposables"))
+		require.NoError(t, err)
+
+		err = collection.AddTransient(newDisposable("transient"), Group("disposables"))
+		require.NoError(t, err)
+
+		provider, err := collection.Build()
+		require.NoError(t, err)
+
+		scope, err := provider.CreateScope(context.Background())
+		require.NoError(t, err)
+
+		// Resolve services in scope
+		services, err := ResolveGroup[*DisposableService](scope, "disposables")
+		require.NoError(t, err)
+		assert.Len(t, services, 3)
+
+		// Close scope - should dispose scoped service
+		err = scope.Close()
+		assert.NoError(t, err)
+
+		// Close provider - should dispose singleton
+		err = provider.Close()
+		assert.NoError(t, err)
+	})
+
+	t.Run("singleton_and_transient_only", func(t *testing.T) {
+		// Common pattern: mix singleton (shared state) with transient (stateless handlers)
+		collection := NewCollection()
+
+		// Singleton for shared state
+		err := collection.AddSingleton(func() *MixedService {
+			return &MixedService{ID: "shared-state"}
+		}, Group("handlers"))
+		require.NoError(t, err)
+
+		// Transients for stateless handlers
+		for i := 0; i < 3; i++ {
+			id := i
+			err := collection.AddTransient(func() *MixedService {
+				return &MixedService{ID: string(rune('a' + id))}
+			}, Group("handlers"))
+			require.NoError(t, err)
+		}
+
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		services1, err := ResolveGroup[*MixedService](provider, "handlers")
+		require.NoError(t, err)
+
+		services2, err := ResolveGroup[*MixedService](provider, "handlers")
+		require.NoError(t, err)
+
+		// First service (singleton) should be same
+		assert.Same(t, services1[0], services2[0])
+
+		// Rest (transients) should be different
+		for i := 1; i < 4; i++ {
+			assert.NotSame(t, services1[i], services2[i])
+		}
+	})
+
+	t.Run("scoped_and_transient_only", func(t *testing.T) {
+		// Pattern: mix scoped (request state) with transient (validators)
+		collection := NewCollection()
+
+		// Scoped for request state
+		err := collection.AddScoped(func() *MixedService {
+			return &MixedService{ID: "request-state"}
+		}, Group("processors"))
+		require.NoError(t, err)
+
+		// Transients for validators
+		err = collection.AddTransient(func() *MixedService {
+			return &MixedService{ID: "validator1"}
+		}, Group("processors"))
+		require.NoError(t, err)
+
+		err = collection.AddTransient(func() *MixedService {
+			return &MixedService{ID: "validator2"}
+		}, Group("processors"))
+		require.NoError(t, err)
+
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		scope, err := provider.CreateScope(context.Background())
+		require.NoError(t, err)
+		defer scope.Close()
+
+		services1, err := ResolveGroup[*MixedService](scope, "processors")
+		require.NoError(t, err)
+
+		services2, err := ResolveGroup[*MixedService](scope, "processors")
+		require.NoError(t, err)
+
+		// Scoped should be same within scope
+		assert.Same(t, services1[0], services2[0])
+
+		// Transients should be different
+		assert.NotSame(t, services1[1], services2[1])
+		assert.NotSame(t, services1[2], services2[2])
+	})
+}
+
+// BenchmarkMixedLifetimeGroupResolution benchmarks resolving groups with mixed lifetimes
+func BenchmarkMixedLifetimeGroupResolution(b *testing.B) {
+	collection := NewCollection()
+
+	// Add services with different lifetimes
+	_ = collection.AddSingleton(func() *MixedService {
+		return &MixedService{ID: "singleton"}
+	}, Group("bench"))
+
+	_ = collection.AddScoped(func() *MixedService {
+		return &MixedService{ID: "scoped"}
+	}, Group("bench"))
+
+	_ = collection.AddTransient(func() *MixedService {
+		return &MixedService{ID: "transient"}
+	}, Group("bench"))
+
+	provider, _ := collection.Build()
+	defer provider.Close()
+
+	scope, _ := provider.CreateScope(context.Background())
+	defer scope.Close()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = ResolveGroup[*MixedService](scope, "bench")
+	}
+}
+
+// BenchmarkLargeGroupMixedLifetimes benchmarks resolving large groups with mixed lifetimes
+func BenchmarkLargeGroupMixedLifetimes(b *testing.B) {
+	collection := NewCollection()
+
+	// Add 100 services with mixed lifetimes
+	for i := 0; i < 33; i++ {
+		id := i
+		_ = collection.AddSingleton(func() *MixedService {
+			return &MixedService{ID: "s", Instance: id}
+		}, Group("large"))
+	}
+
+	for i := 0; i < 33; i++ {
+		id := i
+		_ = collection.AddScoped(func() *MixedService {
+			return &MixedService{ID: "sc", Instance: id}
+		}, Group("large"))
+	}
+
+	for i := 0; i < 34; i++ {
+		id := i
+		_ = collection.AddTransient(func() *MixedService {
+			return &MixedService{ID: "t", Instance: id}
+		}, Group("large"))
+	}
+
+	provider, _ := collection.Build()
+	defer provider.Close()
+
+	scope, _ := provider.CreateScope(context.Background())
+	defer scope.Close()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = ResolveGroup[*MixedService](scope, "large")
+	}
+}
