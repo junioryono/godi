@@ -368,7 +368,25 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 	}
 
 	if descriptor.IsInstance {
-		return descriptor.Instance, nil
+		instance := descriptor.Instance
+		if instance == nil {
+			return nil, &ValidationError{
+				ServiceType: descriptor.Type,
+				Cause:       fmt.Errorf("instance descriptor has nil instance"),
+			}
+		}
+
+		// Cache the instance based on lifetime
+		switch descriptor.Lifetime {
+		case Singleton:
+			s.rootProvider.setSingleton(instanceKey{Type: descriptor.Type, Key: descriptor.Key, Group: descriptor.Group}, instance)
+		case Scoped:
+			s.setInstance(instanceKey{Type: descriptor.Type, Key: descriptor.Key, Group: descriptor.Group}, instance)
+		case Transient:
+			// Transient instances are not cached
+		}
+
+		return instance, nil
 	}
 
 	// Analyze constructor
