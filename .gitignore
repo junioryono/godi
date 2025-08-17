@@ -57,3 +57,4 @@ build/
 # Temporary files
 *.tmp
 *.temp
+*.sarif

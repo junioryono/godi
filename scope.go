@@ -177,7 +177,11 @@ func (s *scope) CreateScope(ctx context.Context) (Scope, error) {
 	// Auto-close on context cancellation
 	go func() {
 		<-ctx.Done()
-		child.Close()
+		if err := child.Close(); err != nil {
+			// Context cancellation cleanup errors are expected during shutdown
+			// and cannot be meaningfully handled, so we ignore them
+			_ = err
+		}
 	}()
 
 	return child, nil
