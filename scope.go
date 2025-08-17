@@ -21,11 +21,11 @@ type Scope interface {
 
 // scope provides an isolated resolution context
 type scope struct {
-	id       string
-	provider *provider
-	parent   *scope
-	context  context.Context
-	cancel   context.CancelFunc
+	id           string
+	rootProvider *provider
+	parentScope  *scope
+	context      context.Context
+	cancel       context.CancelFunc
 
 	// Scoped instances (isolated per scope)
 	instances   map[instanceKey]any
@@ -43,27 +43,27 @@ type scope struct {
 	disposed int32 // atomic
 }
 
-func newScope(provider *provider, parent *scope, ctx context.Context, cancel context.CancelFunc) *scope {
+func newScope(rootProvider *provider, parent *scope, ctx context.Context, cancel context.CancelFunc) *scope {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
 	return &scope{
-		id:          uuid.NewString(),
-		provider:    provider,
-		parent:      parent,
-		context:     ctx,
-		cancel:      cancel,
-		instances:   make(map[instanceKey]any),
-		disposables: make([]Disposable, 0),
-		children:    make(map[*scope]struct{}),
+		id:           uuid.NewString(),
+		rootProvider: rootProvider,
+		parentScope:  parent,
+		context:      ctx,
+		cancel:       cancel,
+		instances:    make(map[instanceKey]any),
+		disposables:  make([]Disposable, 0),
+		children:     make(map[*scope]struct{}),
 	}
 }
 
 // Provider returns the parent provider that created this scope.
 // The provider contains the service registry and dependency graph.
 func (s *scope) Provider() Provider {
-	return s.provider
+	return s.rootProvider
 }
 
 // Context returns the context associated with this scope.
@@ -128,7 +128,7 @@ func (s *scope) GetGroup(serviceType reflect.Type, group string) ([]any, error) 
 	}
 
 	// Find all descriptors in the group
-	descriptors := s.provider.findGroupDescriptors(serviceType, group)
+	descriptors := s.rootProvider.findGroupDescriptors(serviceType, group)
 	if len(descriptors) == 0 {
 		return []any{}, nil
 	}
@@ -162,7 +162,7 @@ func (s *scope) CreateScope(ctx context.Context) (Scope, error) {
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
-	child := newScope(s.provider, s, ctx, cancel)
+	child := newScope(s.rootProvider, s, ctx, cancel)
 	ctx = context.WithValue(ctx, scopeContextKey{}, child)
 	child.context = ctx
 
@@ -172,9 +172,9 @@ func (s *scope) CreateScope(ctx context.Context) (Scope, error) {
 	s.childrenMu.Unlock()
 
 	// Track in provider
-	s.provider.scopesMu.Lock()
-	s.provider.scopes[child] = struct{}{}
-	s.provider.scopesMu.Unlock()
+	s.rootProvider.scopesMu.Lock()
+	s.rootProvider.scopes[child] = struct{}{}
+	s.rootProvider.scopesMu.Unlock()
 
 	// Auto-close on context cancellation
 	go func() {
@@ -230,17 +230,17 @@ func (s *scope) Close() error {
 	}
 
 	// Remove from parent's children
-	if s.parent != nil {
-		s.parent.childrenMu.Lock()
-		delete(s.parent.children, s)
-		s.parent.childrenMu.Unlock()
+	if s.parentScope != nil {
+		s.parentScope.childrenMu.Lock()
+		delete(s.parentScope.children, s)
+		s.parentScope.childrenMu.Unlock()
 	}
 
 	// Remove from provider's tracking
-	if s.provider != nil {
-		s.provider.scopesMu.Lock()
-		delete(s.provider.scopes, s)
-		s.provider.scopesMu.Unlock()
+	if s.rootProvider != nil {
+		s.rootProvider.scopesMu.Lock()
+		delete(s.rootProvider.scopes, s)
+		s.rootProvider.scopesMu.Unlock()
 	}
 
 	// Clear instances
@@ -300,13 +300,13 @@ func (s *scope) resolve(key instanceKey, descriptor *Descriptor) (any, error) {
 			case contextType:
 				return s.context, nil
 			case providerType:
-				return s.provider, nil
+				return s.rootProvider, nil
 			case scopeType:
 				return s, nil
 			}
 		}
 
-		descriptor = s.provider.findDescriptor(key.Type, key.Key)
+		descriptor = s.rootProvider.findDescriptor(key.Type, key.Key)
 		if descriptor == nil {
 			return nil, &ResolutionError{
 				ServiceType: key.Type,
@@ -320,7 +320,7 @@ func (s *scope) resolve(key instanceKey, descriptor *Descriptor) (any, error) {
 	switch descriptor.Lifetime {
 	case Singleton:
 		// Singletons are created at build time, no circular check needed
-		if instance, ok := s.provider.getSingleton(key); ok {
+		if instance, ok := s.rootProvider.getSingleton(key); ok {
 			return instance, nil
 		}
 
@@ -343,7 +343,6 @@ func (s *scope) resolve(key instanceKey, descriptor *Descriptor) (any, error) {
 			return nil, err
 		}
 
-		s.setInstance(key, instance)
 		return instance, nil
 
 	case Transient:
@@ -373,7 +372,7 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 	}
 
 	// Analyze constructor
-	info, err := s.provider.analyzer.Analyze(descriptor.Constructor.Interface())
+	info, err := s.rootProvider.analyzer.Analyze(descriptor.Constructor.Interface())
 	if err != nil {
 		return nil, &ReflectionAnalysisError{
 			Constructor: descriptor.Constructor.Interface(),
@@ -383,7 +382,7 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 	}
 
 	// Create invoker
-	invoker := reflection.NewConstructorInvoker(s.provider.analyzer)
+	invoker := reflection.NewConstructorInvoker(s.rootProvider.analyzer)
 
 	// Invoke constructor
 	results, err := invoker.Invoke(info, s)
@@ -406,7 +405,7 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 
 	// Handle result objects (Out structs)
 	if info.IsResultObject {
-		processor := reflection.NewResultObjectProcessor(s.provider.analyzer)
+		processor := reflection.NewResultObjectProcessor(s.rootProvider.analyzer)
 		registrations, err := processor.ProcessResultObject(results[0], info.Type.Out(0))
 		if err != nil {
 			return nil, &ReflectionAnalysisError{
@@ -417,29 +416,96 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 		}
 
 		// Find the primary service to return
+		var primaryService any
 		for _, reg := range registrations {
+			value := reg.Value
+
 			if reg.Type == descriptor.Type && reg.Key == descriptor.Key {
-				return reg.Value, nil
+				primaryService = value
+			}
+
+			descriptor := s.rootProvider.findDescriptor(reg.Type, reg.Key)
+			if descriptor == nil {
+				return nil, &ResolutionError{
+					ServiceType: reg.Type,
+					ServiceKey:  reg.Key,
+					Cause:       fmt.Errorf("no descriptor found for return type %v", reg.Type),
+				}
+			}
+
+			// Store based on lifetime
+			switch descriptor.Lifetime {
+			case Singleton:
+				s.rootProvider.setSingleton(instanceKey{Type: reg.Type, Key: reg.Key, Group: reg.Group}, value)
+			case Scoped:
+				s.setInstance(instanceKey{Type: reg.Type, Key: reg.Key, Group: reg.Group}, value)
+			case Transient:
+				// Transient instances are not cached
 			}
 		}
 
-		// If no exact match, return the first one
-		if len(registrations) > 0 {
-			return registrations[0].Value, nil
+		if primaryService == nil {
+			return nil, &ValidationError{
+				ServiceType: descriptor.Type,
+				Cause:       fmt.Errorf("result object produced no services"),
+			}
 		}
 
-		return nil, &ValidationError{
-			ServiceType: descriptor.Type,
-			Cause:       fmt.Errorf("result object produced no services"),
-		}
+		return primaryService, nil
 	}
 
 	// Handle multi-return constructors
 	if descriptor.MultiReturnIndex >= 0 {
+		for _, ret := range info.Returns {
+			if ret.IsError {
+				continue
+			}
+
+			value := results[ret.Index].Interface()
+
+			// Find the descriptor for this return type
+			serviceDescriptor := s.rootProvider.findDescriptor(ret.Type, nil)
+			if serviceDescriptor == nil {
+				return nil, &ResolutionError{
+					ServiceType: ret.Type,
+					ServiceKey:  nil,
+					Cause:       fmt.Errorf("no descriptor found for return type %v", ret.Type),
+				}
+			}
+
+			key := instanceKey{
+				Type:  ret.Type,
+				Key:   serviceDescriptor.Key,
+				Group: serviceDescriptor.Group,
+			}
+
+			// Save based on lifetime
+			switch serviceDescriptor.Lifetime {
+			case Singleton:
+				s.rootProvider.setSingleton(key, value)
+			case Scoped:
+				s.setInstance(key, value)
+			case Transient:
+				// Transient instances are not cached
+			}
+		}
+
 		return results[descriptor.MultiReturnIndex].Interface(), nil
 	}
 
-	return results[0].Interface(), nil
+	instance := results[0].Interface()
+
+	// Cache the instance based on lifetime
+	switch descriptor.Lifetime {
+	case Singleton:
+		s.rootProvider.setSingleton(instanceKey{Type: descriptor.Type, Key: descriptor.Key, Group: descriptor.Group}, instance)
+	case Scoped:
+		s.setInstance(instanceKey{Type: descriptor.Type, Key: descriptor.Key, Group: descriptor.Group}, instance)
+	case Transient:
+		// Transient instances are not cached
+	}
+
+	return instance, nil
 }
 
 // FromContext retrieves a Scope from the context.
