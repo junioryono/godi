@@ -382,28 +382,20 @@ func TestFromContext(t *testing.T) {
 		}
 		defer provider.Close()
 
-		scope, err := provider.CreateScope(context.Background())
+		ctx := context.Background()
+		scope, err := provider.CreateScope(ctx)
 		if err != nil {
 			t.Fatalf("CreateScope failed: %v", err)
 		}
 		defer scope.Close()
 
-		ctx := scope.Context()
-		// FromContext returns (Scope, bool) but scope context might not have it embedded
-		// This is a limitation of the current implementation
-		retrievedScope, ok := FromContext(ctx)
+		scope, err = FromContext(scope.Context())
+		if err != nil {
+			t.Fatalf("FromContext failed: %v", err)
+		}
 
-		// For now, let's just verify it doesn't panic
-		_ = retrievedScope
-		_ = ok
-	})
-
-	t.Run("no scope in context", func(t *testing.T) {
-		ctx := context.Background()
-		scope, ok := FromContext(ctx)
-
-		if ok || scope != nil {
-			t.Error("Expected nil scope from empty context")
+		if scope == nil {
+			t.Error("Expected non-nil scope from context")
 		}
 	})
 }

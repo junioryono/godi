@@ -150,8 +150,8 @@ func (p *provider) CreateScope(ctx context.Context) (Scope, error) {
 	}
 
 	// Create scope with cancellable context
-	scopeCtx, cancel := context.WithCancel(ctx)
-	s := newScope(p, nil, scopeCtx, cancel)
+	ctx, cancel := context.WithCancel(ctx)
+	s := newScope(p, nil, ctx, cancel)
 
 	// Track scope
 	p.scopesMu.Lock()
@@ -160,7 +160,7 @@ func (p *provider) CreateScope(ctx context.Context) (Scope, error) {
 
 	// Auto-close on context cancellation
 	go func() {
-		<-scopeCtx.Done()
+		<-ctx.Done()
 		if err := s.Close(); err != nil {
 			// Context cancellation cleanup errors are expected during shutdown
 			// and cannot be meaningfully handled, so we ignore them
