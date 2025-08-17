@@ -132,7 +132,7 @@ func TestAddSingleton(t *testing.T) {
 		err := collection.AddSingleton(NewTestService)
 		assert.NoError(t, err)
 		assert.Equal(t, 1, collection.Count())
-		assert.True(t, collection.HasService(reflect.TypeOf((*TestService)(nil))))
+		assert.True(t, collection.Contains(reflect.TypeOf((*TestService)(nil))))
 	})
 
 	t.Run("singleton with error return", func(t *testing.T) {
@@ -146,7 +146,7 @@ func TestAddSingleton(t *testing.T) {
 		collection := NewCollection()
 		err := collection.AddSingleton(NewTestService, Name("primary"))
 		assert.NoError(t, err)
-		assert.True(t, collection.HasKeyedService(reflect.TypeOf((*TestService)(nil)), "primary"))
+		assert.True(t, collection.ContainsKeyed(reflect.TypeOf((*TestService)(nil)), "primary"))
 	})
 
 	t.Run("singleton with group", func(t *testing.T) {
@@ -163,7 +163,7 @@ func TestAddSingleton(t *testing.T) {
 		err := collection.AddSingleton(NewTestService, As(new(TestInterface)))
 		assert.NoError(t, err)
 		// When using As, it registers under the interface type, not the concrete type
-		assert.True(t, collection.HasService(reflect.TypeOf((*TestInterface)(nil)).Elem()))
+		assert.True(t, collection.Contains(reflect.TypeOf((*TestInterface)(nil)).Elem()))
 	})
 
 	t.Run("duplicate singleton should fail", func(t *testing.T) {
@@ -189,7 +189,7 @@ func TestAddSingleton(t *testing.T) {
 		collection := NewCollection()
 		err := collection.AddSingleton("not a function", Name("str"))
 		assert.NoError(t, err) // Instance registration is valid
-		assert.True(t, collection.HasKeyedService(reflect.TypeOf(""), "str"))
+		assert.True(t, collection.ContainsKeyed(reflect.TypeOf(""), "str"))
 	})
 
 	t.Run("constructor with no return should fail", func(t *testing.T) {
@@ -209,8 +209,8 @@ func TestAddSingleton(t *testing.T) {
 		assert.NoError(t, err) // Now valid with multi-return support
 
 		// Both types should be registered
-		assert.True(t, collection.HasService(reflect.TypeOf((*TestService)(nil))))
-		assert.True(t, collection.HasService(reflect.TypeOf((*TestServiceWithDep)(nil))))
+		assert.True(t, collection.Contains(reflect.TypeOf((*TestService)(nil))))
+		assert.True(t, collection.Contains(reflect.TypeOf((*TestServiceWithDep)(nil))))
 	})
 
 	t.Run("constructor with multiple non-error returns now valid", func(t *testing.T) {
@@ -219,8 +219,8 @@ func TestAddSingleton(t *testing.T) {
 		assert.NoError(t, err) // Now valid with multi-return support
 
 		// Both types should be registered
-		assert.True(t, collection.HasService(reflect.TypeOf((*TestService)(nil))))
-		assert.True(t, collection.HasService(reflect.TypeOf(""))) // string type
+		assert.True(t, collection.Contains(reflect.TypeOf((*TestService)(nil))))
+		assert.True(t, collection.Contains(reflect.TypeOf(""))) // string type
 	})
 }
 
@@ -231,7 +231,7 @@ func TestAddScoped(t *testing.T) {
 		err := collection.AddScoped(NewTestService)
 		assert.NoError(t, err)
 		assert.Equal(t, 1, collection.Count())
-		assert.True(t, collection.HasService(reflect.TypeOf((*TestService)(nil))))
+		assert.True(t, collection.Contains(reflect.TypeOf((*TestService)(nil))))
 	})
 
 	t.Run("scoped with dependencies", func(t *testing.T) {
@@ -248,7 +248,7 @@ func TestAddScoped(t *testing.T) {
 		collection := NewCollection()
 		err := collection.AddScoped(NewTestService, Name("scoped"))
 		assert.NoError(t, err)
-		assert.True(t, collection.HasKeyedService(reflect.TypeOf((*TestService)(nil)), "scoped"))
+		assert.True(t, collection.ContainsKeyed(reflect.TypeOf((*TestService)(nil)), "scoped"))
 	})
 
 	t.Run("multiple scoped with different names", func(t *testing.T) {
@@ -260,8 +260,8 @@ func TestAddScoped(t *testing.T) {
 		assert.NoError(t, err)
 
 		assert.Equal(t, 2, collection.Count())
-		assert.True(t, collection.HasKeyedService(reflect.TypeOf((*TestService)(nil)), "scoped1"))
-		assert.True(t, collection.HasKeyedService(reflect.TypeOf((*TestService)(nil)), "scoped2"))
+		assert.True(t, collection.ContainsKeyed(reflect.TypeOf((*TestService)(nil)), "scoped1"))
+		assert.True(t, collection.ContainsKeyed(reflect.TypeOf((*TestService)(nil)), "scoped2"))
 	})
 }
 
@@ -272,7 +272,7 @@ func TestAddTransient(t *testing.T) {
 		err := collection.AddTransient(NewTestService)
 		assert.NoError(t, err)
 		assert.Equal(t, 1, collection.Count())
-		assert.True(t, collection.HasService(reflect.TypeOf((*TestService)(nil))))
+		assert.True(t, collection.Contains(reflect.TypeOf((*TestService)(nil))))
 	})
 
 	t.Run("transient with disposable", func(t *testing.T) {
@@ -292,17 +292,17 @@ func TestAddTransient(t *testing.T) {
 	})
 }
 
-// Test HasService
-func TestHasService(t *testing.T) {
+// Test Contains
+func TestContains(t *testing.T) {
 	collection := NewCollection()
 	serviceType := reflect.TypeOf((*TestService)(nil))
 
-	assert.False(t, collection.HasService(serviceType))
+	assert.False(t, collection.Contains(serviceType))
 
 	err := collection.AddSingleton(NewTestService)
 	assert.NoError(t, err)
 
-	assert.True(t, collection.HasService(serviceType))
+	assert.True(t, collection.Contains(serviceType))
 }
 
 // Test HasKeyedService
@@ -310,13 +310,13 @@ func TestHasKeyedService(t *testing.T) {
 	collection := NewCollection()
 	serviceType := reflect.TypeOf((*TestService)(nil))
 
-	assert.False(t, collection.HasKeyedService(serviceType, "test"))
+	assert.False(t, collection.ContainsKeyed(serviceType, "test"))
 
 	err := collection.AddSingleton(NewTestService, Name("test"))
 	assert.NoError(t, err)
 
-	assert.True(t, collection.HasKeyedService(serviceType, "test"))
-	assert.False(t, collection.HasKeyedService(serviceType, "other"))
+	assert.True(t, collection.ContainsKeyed(serviceType, "test"))
+	assert.False(t, collection.ContainsKeyed(serviceType, "other"))
 }
 
 // Test Remove
@@ -327,10 +327,10 @@ func TestRemove(t *testing.T) {
 
 		err := collection.AddSingleton(NewTestService)
 		assert.NoError(t, err)
-		assert.True(t, collection.HasService(serviceType))
+		assert.True(t, collection.Contains(serviceType))
 
 		collection.Remove(serviceType)
-		assert.False(t, collection.HasService(serviceType))
+		assert.False(t, collection.Contains(serviceType))
 		assert.Equal(t, 0, collection.Count())
 	})
 
@@ -340,7 +340,7 @@ func TestRemove(t *testing.T) {
 
 		// Remove a service that was never added
 		collection.Remove(serviceType)
-		assert.False(t, collection.HasService(serviceType))
+		assert.False(t, collection.Contains(serviceType))
 	})
 
 	t.Run("remove with nil type", func(t *testing.T) {
@@ -360,9 +360,9 @@ func TestRemove(t *testing.T) {
 		assert.NoError(t, err)
 
 		collection.Remove(serviceType)
-		assert.False(t, collection.HasService(serviceType))
+		assert.False(t, collection.Contains(serviceType))
 		// Keyed services should remain
-		assert.True(t, collection.HasKeyedService(serviceType, "key1"))
+		assert.True(t, collection.ContainsKeyed(serviceType, "key1"))
 	})
 }
 
@@ -374,10 +374,10 @@ func TestRemoveKeyed(t *testing.T) {
 
 		err := collection.AddSingleton(NewTestService, Name("test"))
 		assert.NoError(t, err)
-		assert.True(t, collection.HasKeyedService(serviceType, "test"))
+		assert.True(t, collection.ContainsKeyed(serviceType, "test"))
 
 		collection.RemoveKeyed(serviceType, "test")
-		assert.False(t, collection.HasKeyedService(serviceType, "test"))
+		assert.False(t, collection.ContainsKeyed(serviceType, "test"))
 		assert.Equal(t, 0, collection.Count())
 	})
 
@@ -387,7 +387,7 @@ func TestRemoveKeyed(t *testing.T) {
 
 		// Remove a keyed service that was never added
 		collection.RemoveKeyed(serviceType, "nonexistent")
-		assert.False(t, collection.HasKeyedService(serviceType, "nonexistent"))
+		assert.False(t, collection.ContainsKeyed(serviceType, "nonexistent"))
 	})
 
 	t.Run("remove with nil type or key", func(t *testing.T) {
@@ -411,8 +411,8 @@ func TestRemoveKeyed(t *testing.T) {
 		assert.NoError(t, err)
 
 		collection.RemoveKeyed(serviceType, "key1")
-		assert.False(t, collection.HasKeyedService(serviceType, "key1"))
-		assert.True(t, collection.HasKeyedService(serviceType, "key2"))
+		assert.False(t, collection.ContainsKeyed(serviceType, "key1"))
+		assert.True(t, collection.ContainsKeyed(serviceType, "key2"))
 	})
 }
 
@@ -793,7 +793,7 @@ func TestCollectionConcurrency(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 			serviceType := reflect.TypeOf((*TestService)(nil))
-			_ = collection.HasService(serviceType)
+			_ = collection.Contains(serviceType)
 			_ = collection.Count()
 			_ = collection.ToSlice()
 		}(i)
@@ -1436,7 +1436,7 @@ func BenchmarkCollectionConcurrentRead(b *testing.B) {
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			_ = collection.HasService(serviceType)
+			_ = collection.Contains(serviceType)
 			_ = collection.Count()
 		}
 	})
@@ -1484,8 +1484,8 @@ func TestCollectionMultipleReturns(t *testing.T) {
 		assert.NoError(t, err)
 
 		// Both types should be registered
-		assert.True(t, collection.HasService(reflect.TypeOf((*TestService)(nil))))
-		assert.True(t, collection.HasService(reflect.TypeOf((*TestServiceWithDep)(nil))))
+		assert.True(t, collection.Contains(reflect.TypeOf((*TestService)(nil))))
+		assert.True(t, collection.Contains(reflect.TypeOf((*TestServiceWithDep)(nil))))
 
 		// Build and resolve
 		provider, err := collection.Build()
@@ -1510,9 +1510,9 @@ func TestCollectionMultipleReturns(t *testing.T) {
 		assert.NoError(t, err)
 
 		// All three types should be registered
-		assert.True(t, collection.HasService(reflect.TypeOf((*TestService)(nil))))
-		assert.True(t, collection.HasService(reflect.TypeOf((*TestServiceWithDep)(nil))))
-		assert.True(t, collection.HasService(reflect.TypeOf((*TestDisposable)(nil))))
+		assert.True(t, collection.Contains(reflect.TypeOf((*TestService)(nil))))
+		assert.True(t, collection.Contains(reflect.TypeOf((*TestServiceWithDep)(nil))))
+		assert.True(t, collection.Contains(reflect.TypeOf((*TestDisposable)(nil))))
 
 		// Build and resolve
 		provider, err := collection.Build()
@@ -1543,8 +1543,8 @@ func TestCollectionMultipleReturns(t *testing.T) {
 		assert.NoError(t, err)
 
 		// Both non-error types should be registered
-		assert.True(t, collection.HasService(reflect.TypeOf((*TestService)(nil))))
-		assert.True(t, collection.HasService(reflect.TypeOf((*TestServiceWithDep)(nil))))
+		assert.True(t, collection.Contains(reflect.TypeOf((*TestService)(nil))))
+		assert.True(t, collection.Contains(reflect.TypeOf((*TestServiceWithDep)(nil))))
 
 		provider, err := collection.Build()
 		require.NoError(t, err)
@@ -1566,10 +1566,10 @@ func TestCollectionMultipleReturns(t *testing.T) {
 		assert.NoError(t, err)
 
 		// All four types should be registered
-		assert.True(t, collection.HasService(reflect.TypeOf((*TestService)(nil))))
-		assert.True(t, collection.HasService(reflect.TypeOf((*TestServiceWithDep)(nil))))
-		assert.True(t, collection.HasService(reflect.TypeOf((*TestDisposable)(nil))))
-		assert.True(t, collection.HasService(reflect.TypeOf(""))) // string type
+		assert.True(t, collection.Contains(reflect.TypeOf((*TestService)(nil))))
+		assert.True(t, collection.Contains(reflect.TypeOf((*TestServiceWithDep)(nil))))
+		assert.True(t, collection.Contains(reflect.TypeOf((*TestDisposable)(nil))))
+		assert.True(t, collection.Contains(reflect.TypeOf(""))) // string type
 	})
 
 	t.Run("register constructor with named option applies to first return", func(t *testing.T) {
@@ -1579,10 +1579,10 @@ func TestCollectionMultipleReturns(t *testing.T) {
 		assert.NoError(t, err)
 
 		// First type should be keyed
-		assert.True(t, collection.HasKeyedService(reflect.TypeOf((*TestService)(nil)), "primary"))
+		assert.True(t, collection.ContainsKeyed(reflect.TypeOf((*TestService)(nil)), "primary"))
 		// Second type should not be keyed
-		assert.False(t, collection.HasKeyedService(reflect.TypeOf((*TestServiceWithDep)(nil)), "primary"))
-		assert.True(t, collection.HasService(reflect.TypeOf((*TestServiceWithDep)(nil))))
+		assert.False(t, collection.ContainsKeyed(reflect.TypeOf((*TestServiceWithDep)(nil)), "primary"))
+		assert.True(t, collection.Contains(reflect.TypeOf((*TestServiceWithDep)(nil))))
 	})
 
 	t.Run("multiple returns maintain single constructor invocation", func(t *testing.T) {

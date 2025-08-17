@@ -56,11 +56,11 @@ type Collection interface {
 	// A new instance is created every time the service is resolved.
 	AddTransient(service any, opts ...AddOption) error
 
-	// HasService checks if a service exists for the type.
-	HasService(serviceType reflect.Type) bool
+	// Contains checks if a service exists for the type.
+	Contains(serviceType reflect.Type) bool
 
-	// HasKeyedService checks if a keyed service exists.
-	HasKeyedService(serviceType reflect.Type, key any) bool
+	// ContainsKeyed checks if a keyed service exists.
+	ContainsKeyed(serviceType reflect.Type, key any) bool
 
 	// Remove removes all services for a given service type.
 	Remove(serviceType reflect.Type)
@@ -257,8 +257,8 @@ func (sc *collection) AddTransient(service any, opts ...AddOption) error {
 	return sc.addService(service, Transient, opts...)
 }
 
-// HasService checks if a service exists for the type
-func (r *collection) HasService(t reflect.Type) bool {
+// Contains checks if a service exists for the type
+func (r *collection) Contains(t reflect.Type) bool {
 	if t == nil {
 		return false
 	}
@@ -271,8 +271,8 @@ func (r *collection) HasService(t reflect.Type) bool {
 	return ok
 }
 
-// HasKeyedService checks if a keyed service exists
-func (r *collection) HasKeyedService(t reflect.Type, key any) bool {
+// ContainsKeyed checks if a keyed service exists
+func (r *collection) ContainsKeyed(t reflect.Type, key any) bool {
 	if t == nil {
 		return false
 	}
