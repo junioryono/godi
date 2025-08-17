@@ -230,7 +230,14 @@ func (sc *collection) doBuild() (Provider, error) {
 	// Phase 6: Create singletons
 	if err := p.createAllSingletons(); err != nil {
 		// Clean up partially created provider
-		p.Close()
+		if err = p.Close(); err != nil {
+			return nil, &BuildError{
+				Phase:   "cleanup",
+				Details: "failed to clean up partially created provider",
+				Cause:   err,
+			}
+		}
+
 		return nil, &BuildError{
 			Phase:   "singleton-creation",
 			Details: "failed to initialize singletons",

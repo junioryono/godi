@@ -84,7 +84,7 @@ type LifetimeConflictError struct {
 }
 
 func (e LifetimeConflictError) Error() string {
-	return fmt.Sprintf("service %s already registered as %s, cannot register as %s (use Replace to change)", formatType(e.ServiceType), e.Current, e.Requested)
+	return fmt.Sprintf("service %s already registered as %s, cannot register as %s", formatType(e.ServiceType), e.Current, e.Requested)
 }
 
 // AlreadyRegisteredError indicates a service type is already registered.
@@ -93,7 +93,7 @@ type AlreadyRegisteredError struct {
 }
 
 func (e AlreadyRegisteredError) Error() string {
-	return fmt.Sprintf("service %s already registered (use keyed services, groups, or Replace)", formatType(e.ServiceType))
+	return fmt.Sprintf("service %s already registered (use keyed services or groups)", formatType(e.ServiceType))
 }
 
 // Type aliases for graph package types to maintain backward compatibility
