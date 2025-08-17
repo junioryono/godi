@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -311,6 +312,33 @@ func TestDecorate(t *testing.T) {
 		// Current implementation returns nil
 		assert.NoError(t, err)
 	})
+
+	t.Run("nil decorator", func(t *testing.T) {
+		collection := NewCollection()
+		
+		err := collection.Decorate(nil)
+		assert.Error(t, err)
+		// The error is wrapped in ValidationError
+		var valErr *ValidationError
+		assert.True(t, errors.As(err, &valErr))
+	})
+
+	t.Run("decorator with options", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Add a service first
+		err := collection.AddSingleton(NewTestService)
+		assert.NoError(t, err)
+
+		// Add a decorator with options
+		decorator := func(service *TestService) *TestService {
+			service.Name = "decorated-with-options"
+			return service
+		}
+
+		err = collection.Decorate(decorator, As(TestInterface(nil)))
+		assert.NoError(t, err)
+	})
 }
 
 // Test HasService
@@ -342,56 +370,179 @@ func TestHasKeyedService(t *testing.T) {
 
 // Test Remove
 func TestRemove(t *testing.T) {
-	collection := NewCollection()
-	serviceType := reflect.TypeOf((*TestService)(nil))
+	t.Run("remove existing service", func(t *testing.T) {
+		collection := NewCollection()
+		serviceType := reflect.TypeOf((*TestService)(nil))
 
-	err := collection.AddSingleton(NewTestService)
-	assert.NoError(t, err)
-	assert.True(t, collection.HasService(serviceType))
+		err := collection.AddSingleton(NewTestService)
+		assert.NoError(t, err)
+		assert.True(t, collection.HasService(serviceType))
 
-	collection.Remove(serviceType)
-	assert.False(t, collection.HasService(serviceType))
-	assert.Equal(t, 0, collection.Count())
+		collection.Remove(serviceType)
+		assert.False(t, collection.HasService(serviceType))
+		assert.Equal(t, 0, collection.Count())
+	})
+
+	t.Run("remove non-existent service", func(t *testing.T) {
+		collection := NewCollection()
+		serviceType := reflect.TypeOf((*TestService)(nil))
+
+		// Remove a service that was never added
+		collection.Remove(serviceType)
+		assert.False(t, collection.HasService(serviceType))
+	})
+
+	t.Run("remove with nil type", func(t *testing.T) {
+		collection := NewCollection()
+		
+		// Should not panic with nil type
+		collection.Remove(nil)
+	})
+
+	t.Run("remove only non-keyed services", func(t *testing.T) {
+		collection := NewCollection()
+		serviceType := reflect.TypeOf((*TestService)(nil))
+
+		err := collection.AddSingleton(NewTestService)
+		assert.NoError(t, err)
+		err = collection.AddSingleton(NewTestService, Name("key1"))
+		assert.NoError(t, err)
+
+		collection.Remove(serviceType)
+		assert.False(t, collection.HasService(serviceType))
+		// Keyed services should remain
+		assert.True(t, collection.HasKeyedService(serviceType, "key1"))
+	})
 }
 
 // Test RemoveKeyed
 func TestRemoveKeyed(t *testing.T) {
-	collection := NewCollection()
-	serviceType := reflect.TypeOf((*TestService)(nil))
+	t.Run("remove existing keyed service", func(t *testing.T) {
+		collection := NewCollection()
+		serviceType := reflect.TypeOf((*TestService)(nil))
 
-	err := collection.AddSingleton(NewTestService, Name("test"))
-	assert.NoError(t, err)
-	assert.True(t, collection.HasKeyedService(serviceType, "test"))
+		err := collection.AddSingleton(NewTestService, Name("test"))
+		assert.NoError(t, err)
+		assert.True(t, collection.HasKeyedService(serviceType, "test"))
 
-	collection.RemoveKeyed(serviceType, "test")
-	assert.False(t, collection.HasKeyedService(serviceType, "test"))
-	assert.Equal(t, 0, collection.Count())
+		collection.RemoveKeyed(serviceType, "test")
+		assert.False(t, collection.HasKeyedService(serviceType, "test"))
+		assert.Equal(t, 0, collection.Count())
+	})
+
+	t.Run("remove non-existent keyed service", func(t *testing.T) {
+		collection := NewCollection()
+		serviceType := reflect.TypeOf((*TestService)(nil))
+
+		// Remove a keyed service that was never added
+		collection.RemoveKeyed(serviceType, "nonexistent")
+		assert.False(t, collection.HasKeyedService(serviceType, "nonexistent"))
+	})
+
+	t.Run("remove with nil type or key", func(t *testing.T) {
+		collection := NewCollection()
+		serviceType := reflect.TypeOf((*TestService)(nil))
+
+		// Should not panic with nil type
+		collection.RemoveKeyed(nil, "key")
+		
+		// Should not panic with nil key
+		collection.RemoveKeyed(serviceType, nil)
+	})
+
+	t.Run("preserve other keyed services", func(t *testing.T) {
+		collection := NewCollection()
+		serviceType := reflect.TypeOf((*TestService)(nil))
+
+		err := collection.AddSingleton(NewTestService, Name("key1"))
+		assert.NoError(t, err)
+		err = collection.AddSingleton(NewTestService, Name("key2"))
+		assert.NoError(t, err)
+
+		collection.RemoveKeyed(serviceType, "key1")
+		assert.False(t, collection.HasKeyedService(serviceType, "key1"))
+		assert.True(t, collection.HasKeyedService(serviceType, "key2"))
+	})
 }
 
 // Test ToSlice
 func TestToSlice(t *testing.T) {
-	collection := NewCollection()
+	t.Run("empty collection", func(t *testing.T) {
+		collection := NewCollection()
+		descriptors := collection.ToSlice()
+		assert.Empty(t, descriptors)
+	})
 
-	// Empty collection
-	descriptors := collection.ToSlice()
-	assert.Empty(t, descriptors)
+	t.Run("with services", func(t *testing.T) {
+		collection := NewCollection()
 
-	// Add services
-	err := collection.AddSingleton(NewTestService)
-	assert.NoError(t, err)
+		// Add services
+		err := collection.AddSingleton(NewTestService)
+		assert.NoError(t, err)
 
-	err = collection.AddScoped(NewTestServiceWithDep)
-	assert.NoError(t, err)
+		err = collection.AddScoped(NewTestServiceWithDep)
+		assert.NoError(t, err)
 
-	descriptors = collection.ToSlice()
-	assert.Len(t, descriptors, 2)
+		descriptors := collection.ToSlice()
+		assert.Len(t, descriptors, 2)
 
-	// Verify descriptors
-	for _, d := range descriptors {
-		assert.NotNil(t, d)
-		assert.NotNil(t, d.Type)
-		assert.NotNil(t, d.Constructor)
-	}
+		// Verify descriptors
+		for _, d := range descriptors {
+			assert.NotNil(t, d)
+			assert.NotNil(t, d.Type)
+			assert.NotNil(t, d.Constructor)
+		}
+	})
+
+	t.Run("with keyed and grouped services", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Add various types of services
+		err := collection.AddSingleton(NewTestService)
+		assert.NoError(t, err)
+		
+		err = collection.AddSingleton(NewTestService, Name("keyed"))
+		assert.NoError(t, err)
+		
+		err = collection.AddSingleton(NewTestService, Group("group1"))
+		assert.NoError(t, err)
+
+		descriptors := collection.ToSlice()
+		assert.Len(t, descriptors, 3)
+
+		// Count different types
+		var regular, keyed, grouped int
+		for _, d := range descriptors {
+			if d.Group != "" {
+				grouped++
+			} else if d.Key != nil {
+				keyed++
+			} else {
+				regular++
+			}
+		}
+		
+		assert.Equal(t, 1, regular)
+		assert.Equal(t, 1, keyed)
+		assert.Equal(t, 1, grouped)
+	})
+
+	t.Run("descriptor immutability", func(t *testing.T) {
+		collection := NewCollection()
+
+		err := collection.AddSingleton(NewTestService)
+		assert.NoError(t, err)
+
+		// Get descriptors
+		descriptors1 := collection.ToSlice()
+		descriptors2 := collection.ToSlice()
+
+		// Should return different slices
+		assert.NotSame(t, &descriptors1, &descriptors2)
+		
+		// But contain the same data
+		assert.Equal(t, descriptors1, descriptors2)
+	})
 }
 
 // Test Count
@@ -610,6 +761,53 @@ func TestBuildWithOptions(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NotNil(t, provider)
 		defer provider.Close()
+	})
+
+	t.Run("build with timeout", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Add a constructor that takes some time
+		err := collection.AddSingleton(func() *TestService {
+			// Simulate some work
+			return &TestService{Name: "timeout-test"}
+		})
+		assert.NoError(t, err)
+
+		// Set a reasonable timeout
+		options := &ProviderOptions{
+			BuildTimeout: 5 * time.Second,
+		}
+		provider, err := collection.BuildWithOptions(options)
+		assert.NoError(t, err)
+		assert.NotNil(t, provider)
+		defer provider.Close()
+	})
+
+	t.Run("build with timeout exceeded", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Add a constructor that blocks indefinitely
+		blockChan := make(chan struct{})
+		err := collection.AddSingleton(func() *TestService {
+			<-blockChan // Block forever
+			return &TestService{Name: "blocked"}
+		})
+		assert.NoError(t, err)
+
+		// Set a very short timeout
+		options := &ProviderOptions{
+			BuildTimeout: 10 * time.Millisecond,
+		}
+		
+		provider, err := collection.BuildWithOptions(options)
+		assert.Error(t, err)
+		assert.Nil(t, provider)
+		
+		// Verify it's a timeout error
+		var timeoutErr *TimeoutError
+		assert.True(t, errors.As(err, &timeoutErr))
+		
+		close(blockChan) // Clean up
 	})
 }
 
