@@ -42,10 +42,7 @@ type Descriptor struct {
 
 	// ReturnIndex indicates which return value this descriptor represents
 	// -1 for single returns or Out structs, >= 0 for specific return index in multi-return
-	ReturnIndex int
-
-	// IsMultiReturn indicates if this descriptor is from a multi-return constructor
-	IsMultiReturn bool
+	MultiReturnIndex int
 
 	// Analysis results cached for performance
 	isFunc         bool
@@ -152,16 +149,15 @@ func newDescriptor(service any, lifetime Lifetime, opts ...AddOption) (*Descript
 
 	// Create descriptor
 	descriptor := &Descriptor{
-		Type:            serviceType,
-		Lifetime:        lifetime,
-		Constructor:     constructorValue,
-		ConstructorType: constructorType,
-		Dependencies:    dependencies,
-		Group:           options.Group,
-		IsInstance:      isInstance,
-		Instance:        nil,
-		ReturnIndex:     -1, // Default: not a multi-return descriptor
-		IsMultiReturn:   false,
+		Type:             serviceType,
+		Lifetime:         lifetime,
+		Constructor:      constructorValue,
+		ConstructorType:  constructorType,
+		Dependencies:     dependencies,
+		Group:            options.Group,
+		IsInstance:       isInstance,
+		Instance:         nil,
+		MultiReturnIndex: -1,
 	}
 
 	// Store the instance if it's not a function

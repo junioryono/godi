@@ -395,8 +395,17 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 		}
 	}
 
+	// Regular constructor - get first result
+	if len(results) == 0 {
+		return nil, &ConstructorInvocationError{
+			Constructor: descriptor.ConstructorType,
+			Parameters:  nil,
+			Cause:       fmt.Errorf("constructor returned no values"),
+		}
+	}
+
 	// Handle result objects (Out structs)
-	if info.IsResultObject && len(results) > 0 {
+	if info.IsResultObject {
 		processor := reflection.NewResultObjectProcessor(s.provider.analyzer)
 		registrations, err := processor.ProcessResultObject(results[0], info.Type.Out(0))
 		if err != nil {
@@ -426,26 +435,8 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 	}
 
 	// Handle multi-return constructors
-	if descriptor.IsMultiReturn && descriptor.ReturnIndex >= 0 {
-		// Get the specific return value
-		if descriptor.ReturnIndex >= len(results) {
-			return nil, &ConstructorInvocationError{
-				Constructor: descriptor.ConstructorType,
-				Parameters:  nil,
-				Cause:       fmt.Errorf("invalid return index %d for constructor with %d returns", descriptor.ReturnIndex, len(results)),
-			}
-		}
-
-		return results[descriptor.ReturnIndex].Interface(), nil
-	}
-
-	// Regular constructor - get first result
-	if len(results) == 0 {
-		return nil, &ConstructorInvocationError{
-			Constructor: descriptor.ConstructorType,
-			Parameters:  nil,
-			Cause:       fmt.Errorf("constructor returned no values"),
-		}
+	if descriptor.MultiReturnIndex >= 0 {
+		return results[descriptor.MultiReturnIndex].Interface(), nil
 	}
 
 	return results[0].Interface(), nil
