@@ -1,10 +1,13 @@
 # godi - Type-Safe Dependency Injection for Go
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/junioryono/godi/v4.svg)](https://pkg.go.dev/github.com/junioryono/godi/v4)
-[![Go Report Card](https://goreportcard.com/badge/github.com/junioryono/godi)](https://goreportcard.com/report/github.com/junioryono/godi)
+[![GoDoc](https://pkg.go.dev/badge/go.uber.org/fx)](https://pkg.go.dev/go.uber.org/fx)
+[![Github release](https://img.shields.io/github/release/uber-go/fx.svg)](https://github.com/uber-go/fx/releases)
+[![Build Status](https://github.com/uber-go/fx/actions/workflows/go.yml/badge.svg)](https://github.com/uber-go/fx/actions/workflows/go.yml)
+[![Coverage Status](https://codecov.io/gh/uber-go/fx/branch/master/graph/badge.svg)](https://codecov.io/gh/uber-go/fx/branch/master)
+[![Go Report Card](https://goreportcard.com/badge/go.uber.org/fx)](https://goreportcard.com/report/go.uber.org/fx)
 [![License](https://img.shields.io/github/license/junioryono/godi)](LICENSE)
 
-**godi** brings type-safe, zero-magic dependency injection to Go. Wire your dependencies once, change your constructors freely.
+**godi** makes dependency injection effortless. Change your dependencies anytime, your wiring just works.
 
 ## Quick Start
 
