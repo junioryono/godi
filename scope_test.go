@@ -455,13 +455,13 @@ func TestScopeProviderAndContext(t *testing.T) {
 func TestScopeGetKeyed(t *testing.T) {
 	t.Run("get keyed service", func(t *testing.T) {
 		collection := NewCollection()
-		
+
 		// Add keyed services
 		err := collection.AddScoped(func() *ScopedTestService {
 			return &ScopedTestService{Scope: "primary"}
 		}, Name("primary"))
 		require.NoError(t, err)
-		
+
 		err = collection.AddScoped(func() *ScopedTestService {
 			return &ScopedTestService{Scope: "secondary"}
 		}, Name("secondary"))
@@ -545,13 +545,13 @@ func TestScopeGetKeyed(t *testing.T) {
 func TestScopeGetGroup(t *testing.T) {
 	t.Run("get group services", func(t *testing.T) {
 		collection := NewCollection()
-		
+
 		// Add services to a group
 		err := collection.AddScoped(func() *ScopedTestService {
 			return &ScopedTestService{Scope: "handler1"}
 		}, Group("handlers"))
 		require.NoError(t, err)
-		
+
 		err = collection.AddScoped(func() *ScopedTestService {
 			return &ScopedTestService{Scope: "handler2"}
 		}, Group("handlers"))

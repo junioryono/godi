@@ -25,7 +25,7 @@ func TestLifetimeConflictError(t *testing.T) {
 		Current:     Singleton,
 		Requested:   Scoped,
 	}
-	
+
 	errStr := err.Error()
 	if !strings.Contains(errStr, "already registered as Singleton") {
 		t.Errorf("Error should mention current lifetime: %s", errStr)
@@ -38,7 +38,7 @@ func TestLifetimeConflictError(t *testing.T) {
 func TestAlreadyRegisteredError(t *testing.T) {
 	serviceType := reflect.TypeOf((*testService)(nil))
 	err := AlreadyRegisteredError{ServiceType: serviceType}
-	
+
 	errStr := err.Error()
 	if !strings.Contains(errStr, "already registered") {
 		t.Errorf("Error should mention already registered: %s", errStr)
@@ -54,7 +54,7 @@ func TestResolutionError(t *testing.T) {
 			ServiceKey:  nil,
 			Cause:       cause,
 		}
-		
+
 		errStr := err.Error()
 		if !strings.Contains(errStr, "unable to resolve") {
 			t.Errorf("Error should mention resolution failure: %s", errStr)
@@ -62,12 +62,12 @@ func TestResolutionError(t *testing.T) {
 		if strings.Contains(errStr, "key=") {
 			t.Errorf("Error should not mention key when nil: %s", errStr)
 		}
-		
+
 		if err.Unwrap() != cause {
 			t.Error("Unwrap should return the cause")
 		}
 	})
-	
+
 	t.Run("with key", func(t *testing.T) {
 		serviceType := reflect.TypeOf((*testService)(nil))
 		cause := errors.New("keyed service not found")
@@ -76,7 +76,7 @@ func TestResolutionError(t *testing.T) {
 			ServiceKey:  "primary",
 			Cause:       cause,
 		}
-		
+
 		errStr := err.Error()
 		if !strings.Contains(errStr, "key=primary") {
 			t.Errorf("Error should mention key: %s", errStr)
@@ -90,7 +90,7 @@ func TestTimeoutError(t *testing.T) {
 		ServiceType: serviceType,
 		Timeout:     5 * time.Second,
 	}
-	
+
 	errStr := err.Error()
 	if !strings.Contains(errStr, "timed out") {
 		t.Errorf("Error should mention timeout: %s", errStr)
@@ -98,7 +98,7 @@ func TestTimeoutError(t *testing.T) {
 	if !strings.Contains(errStr, "5s") {
 		t.Errorf("Error should include timeout duration: %s", errStr)
 	}
-	
+
 	// Test Is method
 	if !err.Is(context.DeadlineExceeded) {
 		t.Error("TimeoutError should match context.DeadlineExceeded")
@@ -113,12 +113,12 @@ func TestRegistrationError(t *testing.T) {
 		Operation:   "provide",
 		Cause:       cause,
 	}
-	
+
 	errStr := err.Error()
 	if !strings.Contains(errStr, "failed to provide") {
 		t.Errorf("Error should mention operation: %s", errStr)
 	}
-	
+
 	if err.Unwrap() != cause {
 		t.Error("Unwrap should return the cause")
 	}
@@ -132,24 +132,24 @@ func TestValidationError(t *testing.T) {
 			ServiceType: serviceType,
 			Cause:       cause,
 		}
-		
+
 		errStr := err.Error()
 		if !strings.Contains(errStr, "testService") {
 			t.Errorf("Error should mention service type: %s", errStr)
 		}
-		
+
 		if err.Unwrap() != cause {
 			t.Error("Unwrap should return the cause")
 		}
 	})
-	
+
 	t.Run("without service type", func(t *testing.T) {
 		cause := errors.New("validation failed")
 		err := ValidationError{
 			ServiceType: nil,
 			Cause:       cause,
 		}
-		
+
 		if err.Error() != cause.Error() {
 			t.Errorf("Error should use cause directly when no service type: %s", err.Error())
 		}
@@ -162,12 +162,12 @@ func TestModuleError(t *testing.T) {
 		Module: "TestModule",
 		Cause:  cause,
 	}
-	
+
 	errStr := err.Error()
 	if !strings.Contains(errStr, "module \"TestModule\"") {
 		t.Errorf("Error should mention module name: %s", errStr)
 	}
-	
+
 	if err.Unwrap() != cause {
 		t.Error("Unwrap should return the cause")
 	}
@@ -181,7 +181,7 @@ func TestTypeMismatchError(t *testing.T) {
 		Actual:   actual,
 		Context:  "type assertion",
 	}
-	
+
 	errStr := err.Error()
 	if !strings.Contains(errStr, "type assertion") {
 		t.Errorf("Error should mention context: %s", errStr)
@@ -202,12 +202,12 @@ func TestReflectionAnalysisError(t *testing.T) {
 		Operation:   "analyze",
 		Cause:       cause,
 	}
-	
+
 	errStr := err.Error()
 	if !strings.Contains(errStr, "reflection analyze failed") {
 		t.Errorf("Error should mention reflection operation: %s", errStr)
 	}
-	
+
 	if err.Unwrap() != cause {
 		t.Error("Unwrap should return the cause")
 	}
@@ -223,7 +223,7 @@ func TestGraphOperationError(t *testing.T) {
 			NodeKey:   nil,
 			Cause:     cause,
 		}
-		
+
 		errStr := err.Error()
 		if !strings.Contains(errStr, "graph add failed") {
 			t.Errorf("Error should mention graph operation: %s", errStr)
@@ -231,12 +231,12 @@ func TestGraphOperationError(t *testing.T) {
 		if strings.Contains(errStr, "[") && strings.Contains(errStr, "]") {
 			t.Errorf("Error should not include brackets when no key: %s", errStr)
 		}
-		
+
 		if err.Unwrap() != cause {
 			t.Error("Unwrap should return the cause")
 		}
 	})
-	
+
 	t.Run("with key", func(t *testing.T) {
 		nodeType := reflect.TypeOf((*testService)(nil))
 		cause := errors.New("node exists")
@@ -246,7 +246,7 @@ func TestGraphOperationError(t *testing.T) {
 			NodeKey:   "primary",
 			Cause:     cause,
 		}
-		
+
 		errStr := err.Error()
 		if !strings.Contains(errStr, "[primary]") {
 			t.Errorf("Error should include key in brackets: %s", errStr)
@@ -258,13 +258,13 @@ func TestConstructorInvocationError(t *testing.T) {
 	constructorType := reflect.TypeOf(func(*testService) *testDependency { return nil })
 	paramTypes := []reflect.Type{reflect.TypeOf((*testService)(nil))}
 	cause := errors.New("service not found")
-	
+
 	err := ConstructorInvocationError{
 		Constructor: constructorType,
 		Parameters:  paramTypes,
 		Cause:       cause,
 	}
-	
+
 	errStr := err.Error()
 	if !strings.Contains(errStr, "failed to invoke") {
 		t.Errorf("Error should mention invocation failure: %s", errStr)
@@ -272,7 +272,7 @@ func TestConstructorInvocationError(t *testing.T) {
 	if !strings.Contains(errStr, "with parameters") {
 		t.Errorf("Error should mention parameters: %s", errStr)
 	}
-	
+
 	if err.Unwrap() != cause {
 		t.Error("Unwrap should return the cause")
 	}
@@ -285,7 +285,7 @@ func TestBuildError(t *testing.T) {
 		Details: "circular dependency detected",
 		Cause:   cause,
 	}
-	
+
 	errStr := err.Error()
 	if !strings.Contains(errStr, "build failed during validation phase") {
 		t.Errorf("Error should mention build phase: %s", errStr)
@@ -293,7 +293,7 @@ func TestBuildError(t *testing.T) {
 	if !strings.Contains(errStr, "circular dependency detected") {
 		t.Errorf("Error should include details: %s", errStr)
 	}
-	
+
 	if err.Unwrap() != cause {
 		t.Error("Unwrap should return the cause")
 	}
@@ -305,7 +305,7 @@ func TestDisposalError(t *testing.T) {
 			Context: "provider",
 			Errors:  []error{errors.New("close failed")},
 		}
-		
+
 		errStr := err.Error()
 		if !strings.Contains(errStr, "provider disposal failed") {
 			t.Errorf("Error should mention disposal context: %s", errStr)
@@ -314,7 +314,7 @@ func TestDisposalError(t *testing.T) {
 			t.Errorf("Single error should not use plural format: %s", errStr)
 		}
 	})
-	
+
 	t.Run("multiple errors", func(t *testing.T) {
 		err := DisposalError{
 			Context: "scope",
@@ -323,7 +323,7 @@ func TestDisposalError(t *testing.T) {
 				errors.New("service2 close failed"),
 			},
 		}
-		
+
 		errStr := err.Error()
 		if !strings.Contains(errStr, "scope disposal failed with 2 errors:") {
 			t.Errorf("Error should mention error count: %s", errStr)
@@ -381,7 +381,7 @@ func TestFormatType(t *testing.T) {
 			contains: "int",
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := formatType(tt.typ)
@@ -395,7 +395,7 @@ func TestFormatType(t *testing.T) {
 func TestErrorWrapping(t *testing.T) {
 	// Test that our errors properly implement error wrapping
 	baseErr := errors.New("base error")
-	
+
 	wrappers := []error{
 		&ResolutionError{Cause: baseErr},
 		&RegistrationError{Cause: baseErr},
@@ -406,7 +406,7 @@ func TestErrorWrapping(t *testing.T) {
 		&ConstructorInvocationError{Cause: baseErr},
 		&BuildError{Cause: baseErr},
 	}
-	
+
 	for _, wrapper := range wrappers {
 		if !errors.Is(wrapper, baseErr) {
 			t.Errorf("%T should wrap base error", wrapper)

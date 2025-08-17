@@ -678,9 +678,10 @@ func (r *collection) validateDependencyGraph() error {
 	return nil
 }
 
-// validateLifetimes ensures singleton services don't depend on scoped services.
-// This validation prevents runtime errors where a singleton (created once) would
-// incorrectly hold a reference to a scoped service (created per scope).
+// validateLifetimes ensures singleton and transient services don't depend on scoped services.
+// This validation prevents runtime errors where:
+// - A singleton (created once) would incorrectly hold a reference to a scoped service
+// - A transient (created per request) could outlive and hold a reference to a disposed scoped service
 func (c *collection) validateLifetimes() error {
 	// Create a map of service lifetimes
 	lifetimes := make(map[instanceKey]Lifetime)
@@ -707,10 +708,12 @@ func (c *collection) validateLifetimes() error {
 			return nil
 		}
 
-		if descriptor.Lifetime != Singleton {
-			return nil // Only validate singleton dependencies
+		// Skip scoped services - they can depend on anything
+		if descriptor.Lifetime == Scoped {
+			return nil
 		}
 
+		// Both Singleton and Transient cannot depend on Scoped
 		// Get dependencies
 		for _, dep := range descriptor.Dependencies {
 			if dep == nil {
