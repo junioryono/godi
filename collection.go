@@ -139,7 +139,7 @@ func (sc *collection) BuildWithOptions(options *ProviderOptions) (Provider, erro
 		var provider Provider
 
 		go func() {
-			provider, buildErr = sc.doBuild(options)
+			provider, buildErr = sc.doBuild()
 			close(done)
 		}()
 
@@ -154,10 +154,10 @@ func (sc *collection) BuildWithOptions(options *ProviderOptions) (Provider, erro
 		}
 	}
 
-	return sc.doBuild(options)
+	return sc.doBuild()
 }
 
-func (sc *collection) doBuild(options *ProviderOptions) (Provider, error) {
+func (sc *collection) doBuild() (Provider, error) {
 	// Get all descriptors before locking to avoid deadlock
 	allDescriptors := sc.ToSlice()
 
@@ -312,7 +312,8 @@ func (r *collection) HasKeyedService(t reflect.Type, key any) bool {
 	return ok
 }
 
-// HasGroup checks if a group has any services
+// HasGroup checks if a group has any services registered for the specified type and group name.
+// Returns false if the type is nil, group name is empty, or no services are registered in the group.
 func (r *collection) HasGroup(t reflect.Type, group string) bool {
 	if t == nil || group == "" {
 		return false
@@ -428,7 +429,9 @@ func (r *collection) Count() int {
 	return len(seen)
 }
 
-// addService registers a new service with enhanced error handling
+// addService registers a new service with the specified lifetime and options.
+// It performs validation, creates descriptors, handles multi-return constructors,
+// and manages interface registrations when using the As option.
 func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOption) error {
 	// Validate inputs
 	if service == nil {
@@ -595,7 +598,9 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 	return r.registerDescriptor(descriptor)
 }
 
-// registerDescriptor registers a descriptor in the appropriate collections
+// registerDescriptor registers a descriptor in the appropriate collections based on its type.
+// Decorators are registered separately, regular services are registered by type and key,
+// and grouped services are registered in their respective groups.
 func (r *collection) registerDescriptor(descriptor *Descriptor) error {
 	// If it's a decorator, register it as such
 	if descriptor.IsDecorator {
@@ -629,7 +634,9 @@ func (r *collection) registerDescriptor(descriptor *Descriptor) error {
 	return nil
 }
 
-// validateDependencyGraph validates the entire dependency graph for cycles
+// validateDependencyGraph validates the entire dependency graph for cycles.
+// It builds a graph of all service dependencies and checks for circular dependencies
+// that would prevent successful resolution at runtime.
 func (r *collection) validateDependencyGraph() error {
 	// Build the dependency graph
 	g := graph.NewDependencyGraph()
@@ -671,7 +678,9 @@ func (r *collection) validateDependencyGraph() error {
 	return nil
 }
 
-// validateLifetimes ensures singleton services don't depend on scoped services
+// validateLifetimes ensures singleton services don't depend on scoped services.
+// This validation prevents runtime errors where a singleton (created once) would
+// incorrectly hold a reference to a scoped service (created per scope).
 func (c *collection) validateLifetimes() error {
 	// Create a map of service lifetimes
 	lifetimes := make(map[instanceKey]Lifetime)

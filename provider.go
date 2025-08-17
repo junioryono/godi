@@ -86,7 +86,8 @@ type instanceKey struct {
 	Group string
 }
 
-// ID returns the unique identifier for the provider
+// ID returns the unique identifier for the provider.
+// This ID is a UUID generated when the provider is created during the build process.
 func (p *provider) ID() string {
 	return p.id
 }
@@ -244,7 +245,8 @@ func (p *provider) Close() error {
 	return nil
 }
 
-// getSingleton retrieves a singleton instance
+// getSingleton retrieves a singleton instance in a thread-safe manner.
+// Returns the instance and true if found, or nil and false if not found.
 func (p *provider) getSingleton(key instanceKey) (any, bool) {
 	p.singletonsMu.RLock()
 	instance, ok := p.singletons[key]
@@ -252,7 +254,9 @@ func (p *provider) getSingleton(key instanceKey) (any, bool) {
 	return instance, ok
 }
 
-// setSingleton stores a singleton instance
+// setSingleton stores a singleton instance in a thread-safe manner.
+// It also tracks the instance if it implements the Disposable interface
+// for proper cleanup during provider disposal.
 func (p *provider) setSingleton(key instanceKey, instance any) {
 	if instance == nil {
 		return
@@ -270,7 +274,8 @@ func (p *provider) setSingleton(key instanceKey, instance any) {
 	}
 }
 
-// findDescriptor finds a descriptor for the given service
+// findDescriptor finds a descriptor for the given service type and optional key.
+// Returns nil if no matching descriptor is found in the service registry.
 func (p *provider) findDescriptor(serviceType reflect.Type, key any) *Descriptor {
 	if serviceType == nil {
 		return nil
@@ -280,7 +285,8 @@ func (p *provider) findDescriptor(serviceType reflect.Type, key any) *Descriptor
 	return p.services[typeKey]
 }
 
-// findGroupDescriptors finds all descriptors for a group
+// findGroupDescriptors finds all descriptors for a specific type within a group.
+// Returns an empty slice if the type is nil, group is empty, or no services are found.
 func (p *provider) findGroupDescriptors(serviceType reflect.Type, group string) []*Descriptor {
 	if serviceType == nil || group == "" {
 		return nil
@@ -290,7 +296,9 @@ func (p *provider) findGroupDescriptors(serviceType reflect.Type, group string) 
 	return p.groups[groupKey]
 }
 
-// createAllSingletons creates all singleton instances at build time with enhanced error handling
+// createAllSingletons creates all singleton instances at build time.
+// Services are created in topological order based on their dependencies to ensure
+// all required dependencies are available. Multi-return constructors are invoked only once.
 func (p *provider) createAllSingletons() error {
 	// Get topological sort from dependency graph
 	sorted, err := p.graph.TopologicalSort()
@@ -422,7 +430,9 @@ func (p *provider) createAllSingletons() error {
 	return nil
 }
 
-// extractParameterTypes extracts parameter types from constructor info
+// extractParameterTypes extracts parameter types from constructor info.
+// Returns a slice of reflect.Type representing each parameter's type,
+// or nil if the info is nil.
 func extractParameterTypes(info *reflection.ConstructorInfo) []reflect.Type {
 	if info == nil {
 		return nil
