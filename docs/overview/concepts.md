@@ -105,25 +105,43 @@ db2, _ := godi.Resolve[*Database](provider)
 godi.AddScoped(NewShoppingCart)
 
 // Different requests get different carts
-scope1 := provider.CreateScope(ctx)
-cart1, _ := godi.Resolve[*ShoppingCart](scope1.ServiceProvider())
+scope1, _ := provider.CreateScope(ctx)
+cart1, _ := godi.Resolve[*ShoppingCart](scope1)
 
-scope2 := provider.CreateScope(ctx)
-cart2, _ := godi.Resolve[*ShoppingCart](scope2.ServiceProvider())
+scope2, _ := provider.CreateScope(ctx)
+cart2, _ := godi.Resolve[*ShoppingCart](scope2)
 // cart1 != cart2 (different instances)
 ```
 
 **Use for:** Request handlers, repositories, business logic
+
+### Transient (New Every Time)
+
+```go
+// New instance every time
+godi.AddTransient(NewRequestID)
+
+// Every resolution creates a new instance
+id1, _ := godi.Resolve[*RequestID](provider)
+id2, _ := godi.Resolve[*RequestID](provider)
+// id1 != id2 (always different instances)
+```
+
+**Use for:** Unique IDs, temporary objects, stateless operations
 
 ## 5. Scopes
 
 A **scope** creates a boundary for scoped services. Perfect for web requests!
 
 ```go
-func handleRequest(provider godi.ServiceProvider) http.HandlerFunc {
+func handleRequest(provider godi.Provider) http.HandlerFunc {
     return func(w http.ResponseWriter, r *http.Request) {
         // Create scope for this request
-        scope := provider.CreateScope(r.Context())
+        scope, err := provider.CreateScope(r.Context())
+        if err != nil {
+            http.Error(w, "Scope error", http.StatusInternalServerError)
+            return
+        }
         defer scope.Close() // Clean up when done
 
         // All scoped services in this request share the same instances
@@ -172,6 +190,7 @@ func NewUserRepository(tx *Transaction) *UserRepository {
 | **Module**      | Group of related services       | Organize your app      |
 | **Singleton**   | One instance forever            | Shared resources       |
 | **Scoped**      | One instance per scope          | Request-specific       |
+| **Transient**   | New instance every time         | Temporary objects      |
 | **Scope**       | Boundary for scoped services    | Web requests           |
 
 ## Visual: How It All Works

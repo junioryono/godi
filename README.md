@@ -1,10 +1,10 @@
-# godi - Dependency Injection for Go
+# godi - Type-Safe Dependency Injection for Go
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/junioryono/godi.svg)](https://pkg.go.dev/github.com/junioryono/godi)
+[![Go Reference](https://pkg.go.dev/badge/github.com/junioryono/godi/v4.svg)](https://pkg.go.dev/github.com/junioryono/godi/v4)
 [![Go Report Card](https://goreportcard.com/badge/github.com/junioryono/godi)](https://goreportcard.com/report/github.com/junioryono/godi)
 [![License](https://img.shields.io/github/license/junioryono/godi)](LICENSE)
 
-**godi** makes dependency injection in Go simple and familiar. If you've used .NET's DI container, you'll feel right at home.
+**godi** brings type-safe, zero-magic dependency injection to Go. Wire your dependencies once, change your constructors freely.
 
 ## Quick Start
 
@@ -71,14 +71,16 @@ func NewUserService(logger Logger) *UserService {  // godi injects the logger
 
 ## Core Features
 
-### 🎯 Two Service Lifetimes
+### 🎯 Three Service Lifetimes
 
 - **Singleton**: One instance for the entire app (databases, loggers)
-- **Scoped**: New instance per request/operation (web handlers, transactions)
+- **Scoped**: New instance per scope/request (repositories, handlers)
+- **Transient**: New instance every time (unique IDs, stateless operations)
 
 ```go
 services.AddSingleton(NewDatabase)    // Shared across app
 services.AddScoped(NewUserService)    // Fresh per request
+services.AddTransient(NewRequestID)   // New every time
 ```
 
 ### 🧪 Testing Made Easy
@@ -120,6 +122,7 @@ func main() {
     services.AddSingleton(NewLogger)
     services.AddSingleton(NewDatabase)
     services.AddScoped(NewUserRepository)
+    services.AddTransient(NewRequestID)
 
     provider, _ := services.Build()
     defer provider.Close()
@@ -127,11 +130,12 @@ func main() {
     // Use with your web framework
     http.HandleFunc("/users", func(w http.ResponseWriter, r *http.Request) {
         // Create a scope for this request
-        scope := provider.CreateScope(r.Context())
+        scope, _ := provider.CreateScope(r.Context())
         defer scope.Close()
 
-        // Services are isolated per request
+        // Services are resolved with proper lifetime
         repo, _ := godi.Resolve[*UserRepository](scope)
+        reqID, _ := godi.Resolve[*RequestID](scope)
         // ... handle request
     })
 }
@@ -154,21 +158,25 @@ services.AddScoped(NewUserRepository)
 services.AddScoped(NewUserService)
 ```
 
-### Interfaces for Flexibility
+### Interface Registration with As()
 
 ```go
 type Cache interface {
-    Get(key string) (string, error)
-    Set(key string, value string) error
+    Get(key string) (any, error)
+    Set(key string, value any) error
 }
 
-// Easy to swap implementations
-services.AddSingleton(func() Cache {
-    if config.UseRedis {
-        return NewRedisCache()
-    }
-    return NewMemoryCache()
-})
+type RedisCache struct { /* ... */ }
+
+func NewRedisCache() *RedisCache {
+    return &RedisCache{}
+}
+
+// Register concrete type as interface
+services.AddSingleton(NewRedisCache, godi.As(new(Cache)))
+
+// Resolve by interface
+cache, _ := godi.Resolve[Cache](provider)
 ```
 
 ## Documentation

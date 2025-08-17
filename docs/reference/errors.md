@@ -2,11 +2,28 @@
 
 Quick reference for common godi errors and their solutions.
 
+## Error Types
+
+godi v4 uses typed errors for better error handling:
+
+```go
+// Example error handling
+service, err := godi.Resolve[*UserService](provider)
+if err != nil {
+    var resErr *godi.ResolutionError
+    if errors.As(err, &resErr) {
+        log.Printf("Failed to resolve %v: %v", 
+            resErr.ServiceType, resErr.Cause)
+    }
+}
+```
+
 ## Common Errors
 
-### ServiceNotFoundError
+### ResolutionError
 
-**Message**: `no service registered for type: X`
+**Type**: `ResolutionError`
+**Message**: `unable to resolve Type: cause`
 
 **Cause**: Trying to resolve a service that wasn't registered.
 
@@ -25,7 +42,8 @@ var AppModule = godi.NewModule("app",
 
 ### CircularDependencyError
 
-**Message**: `circular dependency detected: A -> B -> C -> A`
+**Type**: `CircularDependencyError`
+**Message**: `circular dependency detected: Node`
 
 **Cause**: Services depend on each other in a circle.
 
@@ -45,9 +63,9 @@ type A struct { provider godi.ServiceProvider }
 // Resolve B when needed
 ```
 
-### ScopeDisposedError
+### Disposed Errors
 
-**Message**: `scope has been disposed`
+**Message**: `scope has been disposed` or `service provider has been disposed`
 
 **Cause**: Using a scope after closing it.
 
@@ -65,60 +83,65 @@ service, _ := godi.Resolve[Service](scope) // Works!
 
 ### LifetimeConflictError
 
-**Message**: `service X already registered as Singleton, cannot register as Scoped`
+**Type**: `LifetimeConflictError`
+**Message**: `service Type already registered as Singleton, cannot register as Scoped`
 
-**Cause**: Registering same type with different lifetimes.
+**Cause**: Invalid lifetime dependencies (e.g., Singleton depending on Scoped).
 
 **Solution**:
 
 ```go
-// ❌ Problem
-godi.AddSingleton(NewLogger)
-godi.AddScoped(NewLogger) // Error!
+// ❌ Problem - Singleton can't depend on Scoped
+func NewSingleton(scoped *ScopedService) *Singleton { }
 
-// ✅ Solution - Use consistent lifetime
-godi.AddSingleton(NewLogger)
-// OR use Replace
-services.Replace(godi.Scoped, NewLogger)
+// ✅ Solution - Make both the same lifetime
+godi.AddScoped(NewSingleton) // Change to scoped
+// OR
+godi.AddSingleton(NewScopedService) // Change dependency to singleton
 ```
 
-### ConstructorError
-
-**Message**: Various constructor-related errors
+### Constructor Errors
 
 **Common Issues**:
 
 ```go
 // ❌ No return value
-func NewService() { } // Must return something
+func NewService() { } // ErrConstructorNoReturn
 
-// ❌ Only returns error
-func NewService() error { } // Must return (Service, error)
-
-// ❌ Too many returns
-func NewService() (S1, S2, S3) { } // Max 2 returns
+// ❌ Returns nil
+func NewService() *Service { 
+    return nil // ErrConstructorReturnedNil
+}
 
 // ✅ Correct patterns
-func NewService() Service { }
-func NewService() (Service, error) { }
+func NewService() *Service { }
+func NewService() (*Service, error) { }
+func NewService() (Service1, Service2) { } // Multi-return
+func NewService() (Service1, Service2, error) { } // With error
 ```
 
-## Error Checking Helpers
+## Error Handling Patterns
 
 ```go
-// Check if service not found
-if godi.IsNotFound(err) {
-    // Handle missing service
-}
-
-// Check for circular dependency
-if godi.IsCircularDependency(err) {
-    // Fix dependency cycle
-}
-
-// Check if disposed
-if godi.IsDisposed(err) {
-    // Scope or provider was closed
+// Using errors.As for typed errors
+service, err := godi.Resolve[*Service](provider)
+if err != nil {
+    var resErr *godi.ResolutionError
+    if errors.As(err, &resErr) {
+        if errors.Is(resErr.Cause, godi.ErrServiceNotFound) {
+            // Service not registered
+        }
+    }
+    
+    var circErr *godi.CircularDependencyError
+    if errors.As(err, &circErr) {
+        // Handle circular dependency
+    }
+    
+    var lifetimeErr *godi.LifetimeConflictError
+    if errors.As(err, &lifetimeErr) {
+        // Handle lifetime conflict
+    }
 }
 ```
 
@@ -132,10 +155,36 @@ if godi.IsDisposed(err) {
 | Lifetime conflict   | Same type with different lifetimes? |
 | Constructor error   | Does it return a value?             |
 
-Most errors are caught at build time when using:
+## Build-Time Validation
+
+Most errors are caught when building the provider:
 
 ```go
-options := &godi.ServiceProviderOptions{
-    ValidateOnBuild: true,
+provider, err := collection.Build()
+if err != nil {
+    // Handle build errors:
+    // - Circular dependencies
+    // - Lifetime conflicts
+    // - Missing dependencies
+    log.Fatal("Build failed:", err)
 }
+```
+
+## Sentinel Errors
+
+Common pre-defined errors:
+
+```go
+var (
+    ErrServiceNotFound         // Service not registered
+    ErrServiceTypeNil          // nil type passed
+    ErrServiceKeyNil           // nil key passed
+    ErrProviderDisposed        // Provider closed
+    ErrScopeDisposed           // Scope closed
+    ErrConstructorNil          // nil constructor
+    ErrConstructorNoReturn     // No return values
+    ErrConstructorReturnedNil  // Returned nil
+    ErrGroupNameEmpty          // Empty group name
+    ErrSingletonNotInitialized // Singleton not built
+)
 ```

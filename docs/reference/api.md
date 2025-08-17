@@ -4,7 +4,7 @@ Quick reference for all godi types and functions.
 
 ## Core Types
 
-### ServiceCollection
+### Collection
 
 Container for service registrations.
 
@@ -15,42 +15,56 @@ collection := godi.NewCollection()
 // Register services
 collection.AddSingleton(constructor, options...)
 collection.AddScoped(constructor, options...)
+collection.AddTransient(constructor, options...)
 
 // Add modules
 err := collection.AddModules(module1, module2)
 
 // Build provider
 provider, err := collection.Build()
-provider, err := collection.BuildServiceProviderWithOptions(options)
+provider, err := collection.BuildWithOptions(options)
 
-// Other methods
+// Query methods
 count := collection.Count()
-collection.Clear()
+exists := collection.HasService(reflect.TypeOf((*T)(nil)).Elem())
+exists := collection.HasKeyedService(type, key)
+
+// Remove services
+collection.Remove(reflect.TypeOf((*T)(nil)).Elem())
+collection.RemoveKeyed(type, key)
+
+// Get all descriptors
+descriptors := collection.ToSlice()
 ```
 
-### ServiceProvider
+### Provider
 
 Resolves services and creates scopes.
 
 ```go
-// Resolve services
+// Generic helpers (recommended)
 service, err := godi.Resolve[T](provider)
 service, err := godi.ResolveKeyed[T](provider, key)
+services, err := godi.ResolveGroup[T](provider, "group")
 
-// Direct resolution (avoid - use generic helpers)
-err := provider.Resolve(reflect.TypeOf((*T)(nil)).Elem())
-err := provider.ResolveKeyed(type, key)
+// Must variants (panic on error)
+service := godi.MustResolve[T](provider)
+service := godi.MustResolveKeyed[T](provider, key)
+services := godi.MustResolveGroup[T](provider, "group")
+
+// Direct resolution (use generic helpers instead)
+service, err := provider.Get(reflect.TypeOf((*T)(nil)).Elem())
+service, err := provider.GetKeyed(type, key)
+services, err := provider.GetGroup(type, "group")
 
 // Create scopes
-scope := provider.CreateScope(context)
+scope, err := provider.CreateScope(context)
 
-// Check registration
-exists := provider.IsService(reflect.TypeOf((*T)(nil)).Elem())
-exists := provider.IsKeyedService(type, key)
+// Provider info
+id := provider.ID()
 
 // Cleanup
 err := provider.Close()
-disposed := provider.IsDisposed()
 ```
 
 ### Scope
@@ -58,15 +72,22 @@ disposed := provider.IsDisposed()
 Isolated service lifetime boundary.
 
 ```go
-// Get scoped provider
-scopedProvider := scope.ServiceProvider()
+// Scope implements Provider interface
+service, err := godi.Resolve[T](scope)
+service, err := scope.Get(reflect.TypeOf((*T)(nil)).Elem())
+
+// Get context and provider
+ctx := scope.Context()
+provider := scope.Provider()
 
 // Create nested scope
-nestedScope := scope.ServiceProvider().CreateScope(ctx)
+nestedScope, err := scope.CreateScope(ctx)
 
 // Cleanup
 err := scope.Close()
-disposed := scope.IsDisposed()
+
+// Get scope from context
+scope, ok := godi.FromContext(ctx)
 ```
 
 ## Modules
@@ -84,6 +105,7 @@ var MyModule = godi.NewModule("name",
 // Module builder functions
 godi.AddSingleton(constructor, opts...)
 godi.AddScoped(constructor, opts...)
+godi.AddTransient(constructor, opts...)
 godi.AddDecorator(decorator, opts...)
 ```
 
@@ -98,12 +120,16 @@ service, _ := godi.ResolveKeyed[Service](provider, "primary")
 
 // Service groups
 godi.AddSingleton(NewValidator, godi.Group("validators"))
-// Use with parameter objects to get []Validator
+validators, _ := godi.ResolveGroup[Validator](provider, "validators")
 
-// Both
+// Register as interface
+godi.AddSingleton(NewRedisCache, godi.As(new(Cache)))
+cache, _ := godi.Resolve[Cache](provider)
+
+// Combine options
 godi.AddSingleton(NewService,
     godi.Name("primary"),
-    godi.Group("services"))
+    godi.As(new(IService)))
 ```
 
 ### Decorators
@@ -160,20 +186,18 @@ func NewServices(db Database) ServiceBundle {
 }
 ```
 
-## Disposal Interfaces
+## Disposal Interface
 
-Services can implement these for cleanup:
+Services can implement this for cleanup:
 
 ```go
-// Simple disposal
+// Disposable interface for resources that need cleanup
 type Disposable interface {
     Close() error
 }
 
-// Context-aware disposal
-type DisposableWithContext interface {
-    Close(ctx context.Context) error
-}
+// Services implementing Disposable are automatically
+// cleaned up when their scope/provider is closed
 ```
 
 ## Provider Options
@@ -181,58 +205,66 @@ type DisposableWithContext interface {
 Configure provider behavior:
 
 ```go
-options := &godi.ServiceProviderOptions{
-    // Validate all services on build
-    ValidateOnBuild: true,
-
-    // Resolution callbacks
-    OnServiceResolved: func(
-        serviceType reflect.Type,
-        instance any,
-        duration time.Duration,
-    ) {
-        log.Printf("Resolved %s in %v", serviceType, duration)
-    },
-
-    OnServiceError: func(
-        serviceType reflect.Type,
-        err error,
-    ) {
-        log.Printf("Failed to resolve %s: %v", serviceType, err)
-    },
-
-    // Resolution timeout
-    ResolutionTimeout: 30 * time.Second,
+options := &godi.ProviderOptions{
+    // Build timeout
+    BuildTimeout: 30 * time.Second,
 }
 
-provider, err := collection.BuildServiceProviderWithOptions(options)
+provider, err := collection.BuildWithOptions(options)
 ```
 
 ## Service Lifetimes
 
 ```go
 const (
-    Singleton ServiceLifetime = iota // One instance forever
-    Scoped                          // One instance per scope
+    Singleton Lifetime = iota // One instance forever
+    Scoped                    // One instance per scope
+    Transient                 // New instance every time
 )
 ```
 
 ## Error Types
 
 ```go
-// Check error types
-if godi.IsNotFound(err) { }
-if godi.IsCircularDependency(err) { }
-if godi.IsDisposed(err) { }
-if godi.IsTimeout(err) { }
+// Typed errors for rich context
+type ResolutionError struct {
+    ServiceType reflect.Type
+    ServiceKey  any
+    Cause       error
+}
 
-// Common errors
+type CircularDependencyError struct {
+    Node graph.NodeKey
+}
+
+type LifetimeConflictError struct {
+    ServiceType reflect.Type
+    Current     Lifetime
+    Requested   Lifetime
+}
+
+type ValidationError struct {
+    ServiceType reflect.Type
+    Cause       error
+}
+
+// Error checking
+var resErr *godi.ResolutionError
+if errors.As(err, &resErr) {
+    // Handle resolution error
+}
+
+// Common sentinel errors
 var (
-    ErrServiceNotFound      // Service not registered
-    ErrCircularDependency   // A -> B -> A
-    ErrScopeDisposed        // Using closed scope
-    ErrProviderDisposed     // Using closed provider
-    ErrLifetimeConflict     // Same type, different lifetimes
+    ErrServiceNotFound         // Service not registered
+    ErrServiceTypeNil          // Service type is nil
+    ErrServiceKeyNil           // Service key is nil
+    ErrProviderDisposed        // Provider has been disposed
+    ErrScopeDisposed           // Scope has been disposed
+    ErrConstructorNil          // Constructor is nil
+    ErrConstructorNoReturn     // Constructor has no returns
+    ErrConstructorReturnedNil  // Constructor returned nil
+    ErrSingletonNotInitialized // Singleton not created at build
 )
 ```
 

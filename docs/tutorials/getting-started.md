@@ -175,10 +175,14 @@ func main() {
     log.Fatal(http.ListenAndServe(":8080", nil))
 }
 
-func handleUser(provider godi.ServiceProvider) http.HandlerFunc {
+func handleUser(provider godi.Provider) http.HandlerFunc {
     return func(w http.ResponseWriter, r *http.Request) {
         // Create a scope for this request
-        scope := provider.CreateScope(r.Context())
+        scope, err := provider.CreateScope(r.Context())
+        if err != nil {
+            http.Error(w, "Scope error", http.StatusInternalServerError)
+            return
+        }
         defer scope.Close()
 
         // Get services for this request
@@ -229,11 +233,19 @@ type Cache interface {
 }
 
 type MemoryCache struct {
-    data map[string]any
+    data sync.Map
 }
 
-func NewCache() Cache {
-    return &MemoryCache{data: make(map[string]any)}
+func NewCache() *MemoryCache {
+    return &MemoryCache{}
+}
+
+func (c *MemoryCache) Get(key string) (any, bool) {
+    return c.data.Load(key)
+}
+
+func (c *MemoryCache) Set(key string, value any) {
+    c.data.Store(key, value)
 }
 
 // Update UserService constructor
@@ -245,7 +257,7 @@ func NewUserService(db *Database, logger Logger, cache Cache) *UserService {
 var CoreModule = godi.NewModule("core",
     godi.AddSingleton(services.NewLogger),
     godi.AddSingleton(services.NewDatabase),
-    godi.AddSingleton(services.NewCache), // Just add this!
+    godi.AddSingleton(services.NewCache, godi.As(new(services.Cache))), // Register as interface!
 )
 ```
 
@@ -320,6 +332,7 @@ Groups of related services. Makes your code organized and reusable.
 
 - **Singleton**: One instance for the entire app (database, logger)
 - **Scoped**: New instance per request (user service, repositories)
+- **Transient**: New instance every time (unique IDs, temporary objects)
 
 ### 4. Scopes
 
