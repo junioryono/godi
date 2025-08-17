@@ -325,12 +325,29 @@ func (s *scope) stopResolving(key instanceKey) {
 	s.resolvingMu.Unlock()
 }
 
+var (
+	contextType  = reflect.TypeOf((*context.Context)(nil)).Elem()
+	providerType = reflect.TypeOf((*Provider)(nil)).Elem()
+	scopeType    = reflect.TypeOf((*Scope)(nil)).Elem()
+)
+
 // resolve performs the actual service resolution using the appropriate lifetime strategy.
 // It handles singleton caching, scoped caching, and transient creation, while also
 // detecting circular dependencies during resolution.
 func (s *scope) resolve(key instanceKey, descriptor *Descriptor) (any, error) {
 	// Find descriptor if not provided
 	if descriptor == nil {
+		if key.Key == nil && key.Group == "" {
+			switch key.Type {
+			case contextType:
+				return s.context, nil
+			case providerType:
+				return s.provider, nil
+			case scopeType:
+				return s, nil
+			}
+		}
+
 		descriptor = s.provider.findDescriptor(key.Type, key.Key)
 		if descriptor == nil {
 			return nil, &ResolutionError{

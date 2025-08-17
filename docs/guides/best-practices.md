@@ -14,13 +14,11 @@ var CoreModule = godi.NewModule("core",
 )
 
 var DataModule = godi.NewModule("data",
-    CoreModule,
     godi.AddSingleton(NewDatabase),
     godi.AddScoped(NewRepository),
 )
 
 var AppModule = godi.NewModule("app",
-    DataModule,
     godi.AddScoped(NewUserService),
 )
 

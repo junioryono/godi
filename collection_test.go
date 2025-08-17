@@ -123,7 +123,6 @@ func TestNewCollection(t *testing.T) {
 	assert.True(t, ok)
 	assert.NotNil(t, c.services)
 	assert.NotNil(t, c.groups)
-	assert.NotNil(t, c.decorators)
 }
 
 // Test AddSingleton
@@ -1084,11 +1083,7 @@ func NewValidationServiceE(d *ValidationServiceD) *ValidationServiceE {
 // Test validateDependencyGraph
 func TestValidateDependencyGraph(t *testing.T) {
 	t.Run("valid dependency graph", func(t *testing.T) {
-		c := &collection{
-			services:   make(map[TypeKey]*Descriptor),
-			groups:     make(map[GroupKey][]*Descriptor),
-			decorators: make(map[reflect.Type][]*Descriptor),
-		}
+		c := NewCollection().(*collection)
 
 		// Add services without cycles
 		d1, err := newDescriptor(NewValidationServiceD, Singleton)
@@ -1104,11 +1099,7 @@ func TestValidateDependencyGraph(t *testing.T) {
 	})
 
 	t.Run("circular dependency", func(t *testing.T) {
-		c := &collection{
-			services:   make(map[TypeKey]*Descriptor),
-			groups:     make(map[GroupKey][]*Descriptor),
-			decorators: make(map[reflect.Type][]*Descriptor),
-		}
+		c := NewCollection().(*collection)
 
 		// Create circular dependency A -> B -> C -> A
 		dA, err := newDescriptor(NewValidationServiceA, Singleton)
@@ -1137,11 +1128,7 @@ func TestValidateDependencyGraph(t *testing.T) {
 			return &SelfDependent{Self: self}
 		}
 
-		c := &collection{
-			services:   make(map[TypeKey]*Descriptor),
-			groups:     make(map[GroupKey][]*Descriptor),
-			decorators: make(map[reflect.Type][]*Descriptor),
-		}
+		c := NewCollection().(*collection)
 
 		d, err := newDescriptor(newSelfDependent, Singleton)
 		require.NoError(t, err)
@@ -1153,11 +1140,7 @@ func TestValidateDependencyGraph(t *testing.T) {
 	})
 
 	t.Run("graph with groups", func(t *testing.T) {
-		c := &collection{
-			services:   make(map[TypeKey]*Descriptor),
-			groups:     make(map[GroupKey][]*Descriptor),
-			decorators: make(map[reflect.Type][]*Descriptor),
-		}
+		c := NewCollection().(*collection)
 
 		// Add services to groups
 		d1, err := newDescriptor(NewValidationServiceD, Singleton)
@@ -1181,11 +1164,7 @@ func TestValidateDependencyGraph(t *testing.T) {
 	})
 
 	t.Run("empty collection", func(t *testing.T) {
-		c := &collection{
-			services:   make(map[TypeKey]*Descriptor),
-			groups:     make(map[GroupKey][]*Descriptor),
-			decorators: make(map[reflect.Type][]*Descriptor),
-		}
+		c := NewCollection().(*collection)
 
 		err := c.validateDependencyGraph()
 		assert.NoError(t, err)
@@ -1204,11 +1183,7 @@ func TestValidateDependencyGraph(t *testing.T) {
 			S3 *Service3
 		}
 
-		c := &collection{
-			services:   make(map[TypeKey]*Descriptor),
-			groups:     make(map[GroupKey][]*Descriptor),
-			decorators: make(map[reflect.Type][]*Descriptor),
-		}
+		c := NewCollection().(*collection)
 
 		d1, err := newDescriptor(func() *Service1 { return &Service1{} }, Singleton)
 		require.NoError(t, err)
@@ -1240,11 +1215,7 @@ func TestValidateDependencyGraph(t *testing.T) {
 // Test validateLifetimes
 func TestValidateLifetimes(t *testing.T) {
 	t.Run("valid lifetimes", func(t *testing.T) {
-		c := &collection{
-			services:   make(map[TypeKey]*Descriptor),
-			groups:     make(map[GroupKey][]*Descriptor),
-			decorators: make(map[reflect.Type][]*Descriptor),
-		}
+		c := NewCollection().(*collection)
 
 		// Singleton depending on singleton - OK
 		d1, err := newDescriptor(NewValidationServiceD, Singleton)
@@ -1260,11 +1231,7 @@ func TestValidateLifetimes(t *testing.T) {
 	})
 
 	t.Run("singleton depending on scoped", func(t *testing.T) {
-		c := &collection{
-			services:   make(map[TypeKey]*Descriptor),
-			groups:     make(map[GroupKey][]*Descriptor),
-			decorators: make(map[reflect.Type][]*Descriptor),
-		}
+		c := NewCollection().(*collection)
 
 		// Scoped service
 		d1, err := newDescriptor(NewValidationServiceD, Scoped)
@@ -1285,11 +1252,7 @@ func TestValidateLifetimes(t *testing.T) {
 	})
 
 	t.Run("singleton depending on transient", func(t *testing.T) {
-		c := &collection{
-			services:   make(map[TypeKey]*Descriptor),
-			groups:     make(map[GroupKey][]*Descriptor),
-			decorators: make(map[reflect.Type][]*Descriptor),
-		}
+		c := NewCollection().(*collection)
 
 		// Transient service
 		d1, err := newDescriptor(NewValidationServiceD, Transient)
@@ -1306,11 +1269,7 @@ func TestValidateLifetimes(t *testing.T) {
 	})
 
 	t.Run("scoped depending on singleton", func(t *testing.T) {
-		c := &collection{
-			services:   make(map[TypeKey]*Descriptor),
-			groups:     make(map[GroupKey][]*Descriptor),
-			decorators: make(map[reflect.Type][]*Descriptor),
-		}
+		c := NewCollection().(*collection)
 
 		// Singleton service
 		d1, err := newDescriptor(NewValidationServiceD, Singleton)
@@ -1327,11 +1286,7 @@ func TestValidateLifetimes(t *testing.T) {
 	})
 
 	t.Run("scoped depending on scoped", func(t *testing.T) {
-		c := &collection{
-			services:   make(map[TypeKey]*Descriptor),
-			groups:     make(map[GroupKey][]*Descriptor),
-			decorators: make(map[reflect.Type][]*Descriptor),
-		}
+		c := NewCollection().(*collection)
 
 		// Scoped service
 		d1, err := newDescriptor(NewValidationServiceD, Scoped)
@@ -1348,11 +1303,7 @@ func TestValidateLifetimes(t *testing.T) {
 	})
 
 	t.Run("transient depending on scoped", func(t *testing.T) {
-		c := &collection{
-			services:   make(map[TypeKey]*Descriptor),
-			groups:     make(map[GroupKey][]*Descriptor),
-			decorators: make(map[reflect.Type][]*Descriptor),
-		}
+		c := NewCollection().(*collection)
 
 		// Scoped service
 		d1, err := newDescriptor(NewValidationServiceD, Scoped)
@@ -1373,11 +1324,7 @@ func TestValidateLifetimes(t *testing.T) {
 	})
 
 	t.Run("transient depending on singleton", func(t *testing.T) {
-		c := &collection{
-			services:   make(map[TypeKey]*Descriptor),
-			groups:     make(map[GroupKey][]*Descriptor),
-			decorators: make(map[reflect.Type][]*Descriptor),
-		}
+		c := NewCollection().(*collection)
 
 		// Singleton service
 		d1, err := newDescriptor(NewValidationServiceD, Singleton)
@@ -1394,11 +1341,7 @@ func TestValidateLifetimes(t *testing.T) {
 	})
 
 	t.Run("transient depending on transient", func(t *testing.T) {
-		c := &collection{
-			services:   make(map[TypeKey]*Descriptor),
-			groups:     make(map[GroupKey][]*Descriptor),
-			decorators: make(map[reflect.Type][]*Descriptor),
-		}
+		c := NewCollection().(*collection)
 
 		// Transient service
 		d1, err := newDescriptor(NewValidationServiceD, Transient)
@@ -1415,11 +1358,7 @@ func TestValidateLifetimes(t *testing.T) {
 	})
 
 	t.Run("empty collection", func(t *testing.T) {
-		c := &collection{
-			services:   make(map[TypeKey]*Descriptor),
-			groups:     make(map[GroupKey][]*Descriptor),
-			decorators: make(map[reflect.Type][]*Descriptor),
-		}
+		c := NewCollection().(*collection)
 
 		err := c.validateLifetimes()
 		assert.NoError(t, err)
@@ -1442,11 +1381,7 @@ func TestComplexValidationScenarios(t *testing.T) {
 			Log  *Logger
 		}
 
-		c := &collection{
-			services:   make(map[TypeKey]*Descriptor),
-			groups:     make(map[GroupKey][]*Descriptor),
-			decorators: make(map[reflect.Type][]*Descriptor),
-		}
+		c := NewCollection().(*collection)
 
 		// All singletons - should be valid
 		descriptors := []struct {
@@ -1483,11 +1418,7 @@ func TestComplexValidationScenarios(t *testing.T) {
 		type Service2 struct{ S1 *Service1 }
 		type Service3 struct{ S2 *Service2 }
 
-		c := &collection{
-			services:   make(map[TypeKey]*Descriptor),
-			groups:     make(map[GroupKey][]*Descriptor),
-			decorators: make(map[reflect.Type][]*Descriptor),
-		}
+		c := NewCollection().(*collection)
 
 		// Service1: Singleton
 		d1, err := newDescriptor(func() *Service1 { return &Service1{} }, Singleton)
@@ -1560,11 +1491,7 @@ func BenchmarkCollectionConcurrentRead(b *testing.B) {
 
 // Benchmark validation
 func BenchmarkValidateDependencyGraph(b *testing.B) {
-	c := &collection{
-		services:   make(map[TypeKey]*Descriptor),
-		groups:     make(map[GroupKey][]*Descriptor),
-		decorators: make(map[reflect.Type][]*Descriptor),
-	}
+	c := NewCollection().(*collection)
 
 	// Add some services
 	d1, _ := newDescriptor(NewValidationServiceD, Singleton)
@@ -1580,11 +1507,7 @@ func BenchmarkValidateDependencyGraph(b *testing.B) {
 }
 
 func BenchmarkValidateLifetimes(b *testing.B) {
-	c := &collection{
-		services:   make(map[TypeKey]*Descriptor),
-		groups:     make(map[GroupKey][]*Descriptor),
-		decorators: make(map[reflect.Type][]*Descriptor),
-	}
+	c := NewCollection().(*collection)
 
 	// Add some services
 	d1, _ := newDescriptor(NewValidationServiceD, Singleton)

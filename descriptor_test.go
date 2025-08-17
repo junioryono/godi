@@ -87,7 +87,6 @@ func TestNewDescriptor(t *testing.T) {
 		assert.NotNil(t, descriptor)
 		assert.Equal(t, reflect.TypeOf((*DescriptorTestService)(nil)), descriptor.Type)
 		assert.Equal(t, Singleton, descriptor.Lifetime)
-		assert.False(t, descriptor.IsDecorator)
 		assert.NotNil(t, descriptor.Constructor)
 		assert.NotNil(t, descriptor.ConstructorType)
 	})
@@ -136,7 +135,6 @@ func TestNewDescriptor(t *testing.T) {
 		assert.NotNil(t, descriptor)
 		assert.Equal(t, reflect.TypeOf("not a function"), descriptor.ConstructorType)
 		assert.Equal(t, Singleton, descriptor.Lifetime)
-		assert.False(t, descriptor.IsDecorator)
 	})
 
 	t.Run("constructor with no return", func(t *testing.T) {
@@ -229,50 +227,6 @@ func TestNewDescriptor(t *testing.T) {
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "argument must be a pointer to an interface")
 		assert.Nil(t, descriptor)
-	})
-}
-
-// Test IsProvider
-func TestIsProvider(t *testing.T) {
-	t.Run("regular descriptor is provider", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewDescriptorTestService, Singleton)
-		require.NoError(t, err)
-		assert.True(t, descriptor.IsProvider())
-	})
-
-	t.Run("decorator is not provider", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewDescriptorTestService, Singleton)
-		require.NoError(t, err)
-		descriptor.IsDecorator = true
-		assert.False(t, descriptor.IsProvider())
-	})
-}
-
-// Test GetTargetType
-func TestGetTargetType(t *testing.T) {
-	t.Run("provider returns Type", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewDescriptorTestService, Singleton)
-		require.NoError(t, err)
-		targetType := descriptor.GetTargetType()
-		assert.Equal(t, descriptor.Type, targetType)
-	})
-
-	t.Run("decorator without DecoratedType returns Type", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewDescriptorTestService, Singleton)
-		require.NoError(t, err)
-		descriptor.IsDecorator = true
-		targetType := descriptor.GetTargetType()
-		assert.Equal(t, descriptor.Type, targetType)
-	})
-
-	t.Run("decorator with DecoratedType returns DecoratedType", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewDescriptorTestService, Singleton)
-		require.NoError(t, err)
-		descriptor.IsDecorator = true
-		decoratedType := reflect.TypeOf((*DescriptorTestInterface)(nil)).Elem()
-		descriptor.DecoratedType = decoratedType
-		targetType := descriptor.GetTargetType()
-		assert.Equal(t, decoratedType, targetType)
 	})
 }
 

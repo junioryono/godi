@@ -89,10 +89,6 @@ type collection struct {
 
 	// groups stores services that belong to groups
 	groups map[GroupKey][]*Descriptor
-
-	// decorators stores decorator descriptors by type
-	// These are just Descriptors with IsDecorator=true
-	decorators map[reflect.Type][]*Descriptor
 }
 
 // TypeKey uniquely identifies a keyed service
@@ -116,9 +112,8 @@ type GroupKey struct {
 //	provider, err := collection.Build()
 func NewCollection() Collection {
 	return &collection{
-		services:   make(map[TypeKey]*Descriptor),
-		groups:     make(map[GroupKey][]*Descriptor),
-		decorators: make(map[reflect.Type][]*Descriptor),
+		services: make(map[TypeKey]*Descriptor),
+		groups:   make(map[GroupKey][]*Descriptor),
 	}
 }
 
@@ -158,15 +153,6 @@ func (sc *collection) BuildWithOptions(options *ProviderOptions) (Provider, erro
 }
 
 func (sc *collection) doBuild() (Provider, error) {
-	// Register internal services first
-	if err := sc.registerInternalServices(); err != nil {
-		return nil, &BuildError{
-			Phase:   "register-internal-services",
-			Details: "failed to register internal services",
-			Cause:   err,
-		}
-	}
-
 	// Get all descriptors before locking to avoid deadlock
 	allDescriptors := sc.ToSlice()
 
@@ -199,13 +185,11 @@ func (sc *collection) doBuild() (Provider, error) {
 			continue // Skip nil descriptors gracefully
 		}
 
-		if !descriptor.IsDecorator {
-			if err := g.AddProvider(descriptor); err != nil {
-				return nil, &BuildError{
-					Phase:   "graph",
-					Details: fmt.Sprintf("failed to add provider %v", formatType(descriptor.Type)),
-					Cause:   err,
-				}
+		if err := g.AddProvider(descriptor); err != nil {
+			return nil, &BuildError{
+				Phase:   "graph",
+				Details: fmt.Sprintf("failed to add provider %v", formatType(descriptor.Type)),
+				Cause:   err,
 			}
 		}
 	}
@@ -215,7 +199,6 @@ func (sc *collection) doBuild() (Provider, error) {
 		id:          uuid.NewString(),
 		services:    sc.services,
 		groups:      sc.groups,
-		decorators:  sc.decorators,
 		graph:       g,
 		analyzer:    reflection.New(),
 		singletons:  make(map[instanceKey]any),
@@ -247,60 +230,6 @@ func (sc *collection) doBuild() (Provider, error) {
 	}
 
 	return p, nil
-}
-
-func (sc *collection) registerInternalServices() error {
-	contextDescriptor, err := newDescriptor(context.Background(), Scoped)
-	if err != nil {
-		return &BuildError{
-			Phase:   "descriptor-creation",
-			Details: "failed to create context descriptor",
-			Cause:   err,
-		}
-	}
-	sc.services[TypeKey{Type: reflect.TypeOf((*context.Context)(nil)).Elem()}] = contextDescriptor
-
-	providerDescriptor, err := newDescriptor(func(ctx context.Context) (Provider, error) {
-		provider, ok := FromContext(ctx)
-		if !ok {
-			return nil, &ResolutionError{
-				ServiceType: reflect.TypeOf((*Provider)(nil)).Elem(),
-				Cause:       fmt.Errorf("no provider found in context"),
-			}
-		}
-
-		return provider, nil
-	}, Scoped)
-	if err != nil {
-		return &BuildError{
-			Phase:   "descriptor-creation",
-			Details: "failed to create provider descriptor",
-			Cause:   err,
-		}
-	}
-	sc.services[TypeKey{Type: reflect.TypeOf((*Provider)(nil)).Elem()}] = providerDescriptor
-
-	scopeDescriptor, err := newDescriptor(func(ctx context.Context) (Scope, error) {
-		scope, ok := FromContext(ctx)
-		if !ok {
-			return nil, &ResolutionError{
-				ServiceType: reflect.TypeOf((*Scope)(nil)).Elem(),
-				Cause:       fmt.Errorf("no scope found in context"),
-			}
-		}
-
-		return scope, nil
-	}, Scoped)
-	if err != nil {
-		return &BuildError{
-			Phase:   "descriptor-creation",
-			Details: "failed to create scope descriptor",
-			Cause:   err,
-		}
-	}
-	sc.services[TypeKey{Type: reflect.TypeOf((*Scope)(nil)).Elem()}] = scopeDescriptor
-
-	return nil
 }
 
 // AddModules applies one or more module configurations to the service collection.
@@ -442,16 +371,6 @@ func (r *collection) ToSlice() []*Descriptor {
 		}
 	}
 
-	// Add decorators
-	for _, decoratorList := range r.decorators {
-		for _, decorator := range decoratorList {
-			if decorator != nil && !seen[decorator] {
-				descriptors = append(descriptors, decorator)
-				seen[decorator] = true
-			}
-		}
-	}
-
 	return descriptors
 }
 
@@ -479,17 +398,17 @@ func (r *collection) Count() int {
 		}
 	}
 
-	// Count decorators
-	for _, decoratorList := range r.decorators {
-		for _, decorator := range decoratorList {
-			if decorator != nil {
-				seen[decorator] = true
-			}
-		}
-	}
-
 	return len(seen)
 }
+
+var (
+	// Reserved types that are handled specially by the framework
+	reservedTypes = map[reflect.Type]struct{}{
+		reflect.TypeOf((*context.Context)(nil)).Elem(): {},
+		reflect.TypeOf((*Provider)(nil)).Elem():        {},
+		reflect.TypeOf((*Scope)(nil)).Elem():           {},
+	}
+)
 
 // addService registers a new service with the specified lifetime and options.
 // It performs validation, creates descriptors, handles multi-return constructors,
@@ -519,6 +438,14 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 			ServiceType: descriptor.Type,
 			Operation:   "validate descriptor",
 			Cause:       validationErr,
+		}
+	}
+
+	// Check if the service type is reserved
+	if _, isReserved := reservedTypes[descriptor.Type]; isReserved {
+		return &ValidationError{
+			ServiceType: descriptor.Type,
+			Cause:       fmt.Errorf("service type %s is reserved and cannot be registered", formatType(descriptor.Type)),
 		}
 	}
 
@@ -575,7 +502,6 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 					Dependencies:    descriptor.Dependencies,
 					Group:           descriptor.Group,
 					As:              descriptor.As,
-					IsDecorator:     false,
 					IsInstance:      false,
 					ReturnIndex:     ret.Index,
 					IsMultiReturn:   true,
@@ -630,7 +556,6 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 				Dependencies:    descriptor.Dependencies,
 				Group:           descriptor.Group,
 				As:              options.As,
-				IsDecorator:     false,
 				IsInstance:      descriptor.IsInstance,
 				Instance:        descriptor.Instance,
 				ReturnIndex:     descriptor.ReturnIndex,
@@ -664,12 +589,6 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 // Decorators are registered separately, regular services are registered by type and key,
 // and grouped services are registered in their respective groups.
 func (r *collection) registerDescriptor(descriptor *Descriptor) error {
-	// If it's a decorator, register it as such
-	if descriptor.IsDecorator {
-		r.decorators[descriptor.Type] = append(r.decorators[descriptor.Type], descriptor)
-		return nil
-	}
-
 	// Register based on type of service
 	if descriptor.Key != nil || descriptor.Group == "" {
 		key := TypeKey{Type: descriptor.Type, Key: descriptor.Key}

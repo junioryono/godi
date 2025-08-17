@@ -48,9 +48,8 @@ type provider struct {
 	id string
 
 	// Service registry (immutable after build)
-	services   map[TypeKey]*Descriptor
-	groups     map[GroupKey][]*Descriptor
-	decorators map[reflect.Type][]*Descriptor
+	services map[TypeKey]*Descriptor
+	groups   map[GroupKey][]*Descriptor
 
 	// Dependency graph (immutable after build)
 	graph *graph.DependencyGraph
@@ -434,6 +433,7 @@ func extractParameterTypes(info *reflection.ConstructorInfo) []reflect.Type {
 	for i, param := range info.Parameters {
 		types[i] = param.Type
 	}
+
 	return types
 }
 
@@ -454,7 +454,6 @@ func Resolve[T any](provider Provider) (T, error) {
 	}
 
 	serviceType := reflect.TypeOf((*T)(nil)).Elem()
-
 	service, err := provider.Get(serviceType)
 	if err != nil {
 		return zero, err
@@ -506,7 +505,6 @@ func ResolveKeyed[T any](provider Provider, key any) (T, error) {
 	}
 
 	serviceType := reflect.TypeOf((*T)(nil)).Elem()
-
 	service, err := provider.GetKeyed(serviceType, key)
 	if err != nil {
 		return zero, err
@@ -558,7 +556,6 @@ func ResolveGroup[T any](provider Provider, group string) ([]T, error) {
 	}
 
 	serviceType := reflect.TypeOf((*T)(nil)).Elem()
-
 	services, err := provider.GetGroup(serviceType, group)
 	if err != nil {
 		return nil, err
