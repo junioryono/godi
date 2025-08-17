@@ -200,7 +200,6 @@ func (sc *collection) doBuild() (Provider, error) {
 		singletons:  make(map[instanceKey]any),
 		disposables: make([]Disposable, 0),
 		scopes:      make(map[*scope]struct{}),
-		built:       true,
 	}
 
 	// Phase 5: Create root scope
