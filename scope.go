@@ -448,8 +448,8 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 				primaryService = value
 			}
 
-			descriptor := s.rootProvider.findDescriptor(reg.Type, reg.Key)
-			if descriptor == nil {
+			regDescriptor := s.rootProvider.findDescriptor(reg.Type, reg.Key)
+			if regDescriptor == nil {
 				return nil, &ResolutionError{
 					ServiceType: reg.Type,
 					ServiceKey:  reg.Key,
@@ -464,7 +464,7 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 			}
 
 			// Store based on lifetime
-			switch descriptor.Lifetime {
+			switch regDescriptor.Lifetime {
 			case Singleton:
 				s.rootProvider.setSingleton(key, value)
 			case Scoped:
