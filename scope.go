@@ -376,14 +376,18 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 			}
 		}
 
+		key := instanceKey{
+			Type:  descriptor.Type,
+			Key:   descriptor.Key,
+			Group: descriptor.Group,
+		}
+
 		// Cache the instance based on lifetime
 		switch descriptor.Lifetime {
 		case Singleton:
-			s.rootProvider.setSingleton(instanceKey{Type: descriptor.Type, Key: descriptor.Key, Group: descriptor.Group}, instance)
+			s.rootProvider.setSingleton(key, instance)
 		case Scoped:
-			s.setInstance(instanceKey{Type: descriptor.Type, Key: descriptor.Key, Group: descriptor.Group}, instance)
-		case Transient:
-			// Transient instances are not cached
+			s.setInstance(key, instance)
 		}
 
 		return instance, nil
@@ -451,14 +455,18 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 				}
 			}
 
+			key := instanceKey{
+				Type:  reg.Type,
+				Key:   reg.Key,
+				Group: reg.Group,
+			}
+
 			// Store based on lifetime
 			switch descriptor.Lifetime {
 			case Singleton:
-				s.rootProvider.setSingleton(instanceKey{Type: reg.Type, Key: reg.Key, Group: reg.Group}, value)
+				s.rootProvider.setSingleton(key, value)
 			case Scoped:
-				s.setInstance(instanceKey{Type: reg.Type, Key: reg.Key, Group: reg.Group}, value)
-			case Transient:
-				// Transient instances are not cached
+				s.setInstance(key, value)
 			}
 		}
 
@@ -503,8 +511,6 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 				s.rootProvider.setSingleton(key, value)
 			case Scoped:
 				s.setInstance(key, value)
-			case Transient:
-				// Transient instances are not cached
 			}
 		}
 
@@ -512,15 +518,25 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 	}
 
 	instance := results[0].Interface()
+	if instance == nil {
+		return nil, &ValidationError{
+			ServiceType: descriptor.Type,
+			Cause:       fmt.Errorf("constructor returned nil instance"),
+		}
+	}
+
+	key := instanceKey{
+		Type:  descriptor.Type,
+		Key:   descriptor.Key,
+		Group: descriptor.Group,
+	}
 
 	// Cache the instance based on lifetime
 	switch descriptor.Lifetime {
 	case Singleton:
-		s.rootProvider.setSingleton(instanceKey{Type: descriptor.Type, Key: descriptor.Key, Group: descriptor.Group}, instance)
+		s.rootProvider.setSingleton(key, instance)
 	case Scoped:
-		s.setInstance(instanceKey{Type: descriptor.Type, Key: descriptor.Key, Group: descriptor.Group}, instance)
-	case Transient:
-		// Transient instances are not cached
+		s.setInstance(key, instance)
 	}
 
 	return instance, nil
