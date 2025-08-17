@@ -62,7 +62,6 @@ Why godi?
    howto/keyed-services.md
    howto/service-groups.md
    howto/modules.md
-   howto/decorators.md
    howto/parameter-objects.md
    howto/advanced-patterns.md
    howto/disposal.md

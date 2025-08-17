@@ -333,7 +333,6 @@ cache, _ := godi.ResolveKeyed[Cache](provider, string(CacheTypeRedis))
 Don't use keyed services for:
 
 - Simple feature toggles (use configuration instead)
-- Services that should be composed (use decorators)
 - When you need ALL implementations (use service groups)
 
 ## Summary

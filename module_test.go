@@ -263,30 +263,6 @@ func TestAddTransientModule(t *testing.T) {
 	})
 }
 
-// Test AddDecorator ModuleOption
-func TestAddDecoratorModule(t *testing.T) {
-	decorator := func(service *ModuleTestService) *ModuleTestService {
-		service.Name = "decorated-" + service.Name
-		return service
-	}
-
-	t.Run("basic decorator", func(t *testing.T) {
-		option := AddDecorator(decorator)
-
-		collection := NewCollection()
-		err := option(collection)
-		assert.NoError(t, err) // Current implementation returns nil
-	})
-
-	t.Run("decorator with options", func(t *testing.T) {
-		option := AddDecorator(decorator, Name("primary-decorator"))
-
-		collection := NewCollection()
-		err := option(collection)
-		assert.NoError(t, err)
-	})
-}
-
 // Test Name option
 func TestNameOption(t *testing.T) {
 	t.Run("basic name", func(t *testing.T) {

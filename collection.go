@@ -56,10 +56,6 @@ type Collection interface {
 	// A new instance is created every time the service is resolved.
 	AddTransient(service any, opts ...AddOption) error
 
-	// Decorate registers a decorator for a service type.
-	// Decorators wrap existing services to modify their behavior.
-	Decorate(decorator any, opts ...AddOption) error
-
 	// HasService checks if a service exists for the type.
 	HasService(serviceType reflect.Type) bool
 
@@ -80,7 +76,7 @@ type Collection interface {
 	Count() int
 }
 
-// Collection is the core service registry that manages services and decorators.
+// Collection is the core service registry that manages services.
 type collection struct {
 	mu sync.RWMutex
 
@@ -260,19 +256,6 @@ func (sc *collection) AddScoped(service any, opts ...AddOption) error {
 // AddTransient adds a transient service to the collection.
 func (sc *collection) AddTransient(service any, opts ...AddOption) error {
 	return sc.addService(service, Transient, opts...)
-}
-
-// Decorate registers a decorator for a service type.
-func (sc *collection) Decorate(decorator any, opts ...AddOption) error {
-	if decorator == nil {
-		return &ValidationError{
-			ServiceType: nil,
-			Cause:       ErrDecoratorNil,
-		}
-	}
-
-	// TODO: Implement decorator registration
-	return nil
 }
 
 // HasService checks if a service exists for the type
@@ -586,7 +569,7 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 }
 
 // registerDescriptor registers a descriptor in the appropriate collections based on its type.
-// Decorators are registered separately, regular services are registered by type and key,
+// Regular services are registered by type and key,
 // and grouped services are registered in their respective groups.
 func (r *collection) registerDescriptor(descriptor *Descriptor) error {
 	// Register based on type of service

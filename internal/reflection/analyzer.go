@@ -70,7 +70,7 @@ type TagInfo struct {
 	Ignore   bool
 }
 
-// Dependency represents a single dependency of a provider or decorator
+// Dependency represents a single dependency of a service.
 type Dependency struct {
 	// Type of the dependency
 	Type reflect.Type
