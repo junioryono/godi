@@ -1501,15 +1501,30 @@ func TestComplexValidationScenarios(t *testing.T) {
 		require.NoError(t, err)
 		c.services[TypeKey{Type: d2.Type}] = d2
 
-		// Service3: Transient, depends on Scoped (OK)
-		d3, err := newDescriptor(func(s2 *Service2) *Service3 {
-			return &Service3{S2: s2}
-		}, Transient)
+		err = c.validateLifetimes()
+		assert.NoError(t, err)
+
+		// Service3: Transient, depends on Singleton (OK)
+		d3, err := newDescriptor(func(s1 *Service1) *Service2 {
+			return &Service2{S1: s1}
+		}, Transient, Name("service3"))
 		require.NoError(t, err)
-		c.services[TypeKey{Type: d3.Type}] = d3
+		c.services[TypeKey{Type: d3.Type, Key: d3.Key}] = d3
 
 		err = c.validateLifetimes()
 		assert.NoError(t, err)
+
+		// Service3: Transient, depends on Scoped (NOT OK)
+		d4, err := newDescriptor(func(s2 *Service2) *Service3 {
+			return &Service3{S2: s2}
+		}, Transient)
+		require.NoError(t, err)
+		c.services[TypeKey{Type: d4.Type}] = d4
+
+		err = c.validateLifetimes()
+		assert.Error(t, err)
+		var lifetimeConflictErr *LifetimeConflictError
+		assert.ErrorAs(t, err, &lifetimeConflictErr)
 
 		// Now change Service3 to Singleton - should fail
 		d3.Lifetime = Singleton
