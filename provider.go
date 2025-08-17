@@ -331,7 +331,7 @@ func (p *provider) createAllSingletons() error {
 			continue
 		}
 
-		instance, err := p.rootScope.createInstance(descriptor)
+		_, err := p.rootScope.createInstance(descriptor)
 		if err != nil {
 			return &ResolutionError{
 				ServiceType: descriptor.Type,
@@ -339,9 +339,6 @@ func (p *provider) createAllSingletons() error {
 				Cause:       err,
 			}
 		}
-
-		// Store the singleton
-		p.setSingleton(key, instance)
 	}
 
 	return nil
