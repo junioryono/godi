@@ -90,9 +90,9 @@ func TestNewModule(t *testing.T) {
 		assert.Equal(t, 3, collection.Count(), "Should have 3 services: 1 default and 2 keyed")
 
 		// Verify the services are registered correctly
-		assert.True(t, collection.HasService(reflect.TypeOf((*ModuleTestService)(nil))))
-		assert.True(t, collection.HasKeyedService(reflect.TypeOf((*ModuleTestService)(nil)), "scoped-service"))
-		assert.True(t, collection.HasKeyedService(reflect.TypeOf((*ModuleTestService)(nil)), "transient-service"))
+		assert.True(t, collection.Contains(reflect.TypeOf((*ModuleTestService)(nil))))
+		assert.True(t, collection.ContainsKeyed(reflect.TypeOf((*ModuleTestService)(nil)), "scoped-service"))
+		assert.True(t, collection.ContainsKeyed(reflect.TypeOf((*ModuleTestService)(nil)), "transient-service"))
 	})
 
 	t.Run("module with multiple services using groups", func(t *testing.T) {
@@ -184,7 +184,7 @@ func TestAddSingletonModule(t *testing.T) {
 		err := option(collection)
 		assert.NoError(t, err)
 		assert.Equal(t, 1, collection.Count())
-		assert.True(t, collection.HasService(reflect.TypeOf((*ModuleTestService)(nil))))
+		assert.True(t, collection.Contains(reflect.TypeOf((*ModuleTestService)(nil))))
 	})
 
 	t.Run("singleton with options", func(t *testing.T) {
@@ -193,7 +193,7 @@ func TestAddSingletonModule(t *testing.T) {
 		collection := NewCollection()
 		err := option(collection)
 		assert.NoError(t, err)
-		assert.True(t, collection.HasKeyedService(reflect.TypeOf((*ModuleTestService)(nil)), "primary"))
+		assert.True(t, collection.ContainsKeyed(reflect.TypeOf((*ModuleTestService)(nil)), "primary"))
 	})
 
 	t.Run("singleton with group", func(t *testing.T) {
@@ -213,7 +213,7 @@ func TestAddSingletonModule(t *testing.T) {
 		collection := NewCollection()
 		err := option(collection)
 		assert.NoError(t, err)
-		assert.True(t, collection.HasService(reflect.TypeOf((*ModuleTestInterface)(nil)).Elem()))
+		assert.True(t, collection.Contains(reflect.TypeOf((*ModuleTestInterface)(nil)).Elem()))
 	})
 }
 
@@ -226,7 +226,7 @@ func TestAddScopedModule(t *testing.T) {
 		err := option(collection)
 		assert.NoError(t, err)
 		assert.Equal(t, 1, collection.Count())
-		assert.True(t, collection.HasService(reflect.TypeOf((*ModuleTestService)(nil))))
+		assert.True(t, collection.Contains(reflect.TypeOf((*ModuleTestService)(nil))))
 	})
 
 	t.Run("scoped with name", func(t *testing.T) {
@@ -235,7 +235,7 @@ func TestAddScopedModule(t *testing.T) {
 		collection := NewCollection()
 		err := option(collection)
 		assert.NoError(t, err)
-		assert.True(t, collection.HasKeyedService(reflect.TypeOf((*ModuleTestService)(nil)), "scoped"))
+		assert.True(t, collection.ContainsKeyed(reflect.TypeOf((*ModuleTestService)(nil)), "scoped"))
 	})
 }
 
@@ -248,7 +248,7 @@ func TestAddTransientModule(t *testing.T) {
 		err := option(collection)
 		assert.NoError(t, err)
 		assert.Equal(t, 1, collection.Count())
-		assert.True(t, collection.HasService(reflect.TypeOf((*ModuleTestService)(nil))))
+		assert.True(t, collection.Contains(reflect.TypeOf((*ModuleTestService)(nil))))
 	})
 
 	t.Run("transient with group", func(t *testing.T) {
@@ -534,9 +534,9 @@ func TestComplexModules(t *testing.T) {
 		assert.Equal(t, 3, collection.Count())
 
 		// Verify all three loggers are registered
-		assert.True(t, collection.HasService(reflect.TypeOf((*Logger)(nil))))
-		assert.True(t, collection.HasKeyedService(reflect.TypeOf((*Logger)(nil)), "debug"))
-		assert.True(t, collection.HasKeyedService(reflect.TypeOf((*Logger)(nil)), "audit"))
+		assert.True(t, collection.Contains(reflect.TypeOf((*Logger)(nil))))
+		assert.True(t, collection.ContainsKeyed(reflect.TypeOf((*Logger)(nil)), "debug"))
+		assert.True(t, collection.ContainsKeyed(reflect.TypeOf((*Logger)(nil)), "audit"))
 	})
 }
 
