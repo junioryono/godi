@@ -1,64 +1,97 @@
 # API Reference
 
-Quick reference for all godi types and functions.
+Complete reference for all godi types and functions.
 
-## Core Types
-
-### Collection
+## Collection
 
 Container for service registrations.
 
-```go
-// Create
-collection := godi.NewCollection()
+### Creating a Collection
 
-// Register services
-collection.AddSingleton(constructor, options...)
-collection.AddScoped(constructor, options...)
-collection.AddTransient(constructor, options...)
+```go
+collection := godi.NewCollection()
+```
+
+### Registering Services
+
+```go
+// Register with lifetime
+err := collection.AddSingleton(constructor, options...)
+err := collection.AddScoped(constructor, options...)
+err := collection.AddTransient(constructor, options...)
 
 // Add modules
-err := collection.AddModules(module1, module2)
+err := collection.AddModules(module1, module2, ...)
+```
 
-// Build provider
+### Building Provider
+
+```go
+// Build with defaults
 provider, err := collection.Build()
-provider, err := collection.BuildWithOptions(options)
 
-// Query methods
+// Build with options
+options := &godi.ProviderOptions{
+    BuildTimeout: 30 * time.Second,
+}
+provider, err := collection.BuildWithOptions(options)
+```
+
+### Query Methods
+
+```go
+// Check if service exists
+exists := collection.Contains(reflect.TypeOf((*T)(nil)).Elem())
+exists := collection.ContainsKeyed(type, key)
+
+// Get count
 count := collection.Count()
-exists := collection.HasService(reflect.TypeOf((*T)(nil)).Elem())
-exists := collection.HasKeyedService(type, key)
+
+// Get all descriptors
+descriptors := collection.ToSlice()
 
 // Remove services
 collection.Remove(reflect.TypeOf((*T)(nil)).Elem())
 collection.RemoveKeyed(type, key)
-
-// Get all descriptors
-descriptors := collection.ToSlice()
 ```
 
-### Provider
+## Provider
 
-Resolves services and creates scopes.
+Main dependency injection container.
+
+### Resolution Methods (Generic)
 
 ```go
-// Generic helpers (recommended)
+// Resolve by type
 service, err := godi.Resolve[T](provider)
-service, err := godi.ResolveKeyed[T](provider, key)
+service, err := godi.Resolve[T](scope)
+
+// Resolve by key
+service, err := godi.ResolveKeyed[T](provider, "key")
+
+// Resolve group
 services, err := godi.ResolveGroup[T](provider, "group")
 
 // Must variants (panic on error)
 service := godi.MustResolve[T](provider)
-service := godi.MustResolveKeyed[T](provider, key)
+service := godi.MustResolveKeyed[T](provider, "key")
 services := godi.MustResolveGroup[T](provider, "group")
+```
 
-// Direct resolution (use generic helpers instead)
+### Resolution Methods (Reflection)
+
+```go
+// Not recommended - use generic methods above
 service, err := provider.Get(reflect.TypeOf((*T)(nil)).Elem())
 service, err := provider.GetKeyed(type, key)
 services, err := provider.GetGroup(type, "group")
+```
 
-// Create scopes
-scope, err := provider.CreateScope(context)
+### Scope Management
+
+```go
+// Create scope
+scope, err := provider.CreateScope(context.Background())
 
 // Provider info
 id := provider.ID()
@@ -67,14 +100,13 @@ id := provider.ID()
 err := provider.Close()
 ```
 
-### Scope
+## Scope
 
 Isolated service lifetime boundary.
 
 ```go
 // Scope implements Provider interface
 service, err := godi.Resolve[T](scope)
-service, err := scope.Get(reflect.TypeOf((*T)(nil)).Elem())
 
 // Get context and provider
 ctx := scope.Context()
@@ -92,19 +124,23 @@ scope, ok := godi.FromContext(ctx)
 
 ## Modules
 
-Organize service registrations.
+Organize related services.
+
+### Creating Modules
 
 ```go
-// Create module
 var MyModule = godi.NewModule("name",
-    godi.AddSingleton(instance),
     godi.AddSingleton(constructor),
     godi.AddScoped(constructor),
-    OtherModule, // Include other modules
+    godi.AddTransient(constructor),
+    OtherModule,  // Include other modules
 )
+```
 
-// Module builder functions
-godi.AddSingleton(instance, opts...)
+### Module Builders
+
+```go
+// These return ModuleOption for use in NewModule
 godi.AddSingleton(constructor, opts...)
 godi.AddScoped(constructor, opts...)
 godi.AddTransient(constructor, opts...)
@@ -112,25 +148,46 @@ godi.AddTransient(constructor, opts...)
 
 ## Registration Options
 
-### Lifetime Options
+### Name Option
+
+Register named/keyed services:
 
 ```go
-// Named services
 godi.AddSingleton(NewService, godi.Name("primary"))
+
+// Resolve with key
 service, _ := godi.ResolveKeyed[Service](provider, "primary")
+```
 
-// Service groups
+### Group Option
+
+Add services to groups:
+
+```go
 godi.AddSingleton(NewValidator, godi.Group("validators"))
+
+// Resolve group
 validators, _ := godi.ResolveGroup[Validator](provider, "validators")
+```
 
-// Register as interface
+### As Option
+
+Register as interface:
+
+```go
 godi.AddSingleton(NewRedisCache, godi.As(new(Cache)))
-cache, _ := godi.Resolve[Cache](provider)
 
-// Combine options
+// Resolve as interface
+cache, _ := godi.Resolve[Cache](provider)
+```
+
+### Combining Options
+
+```go
 godi.AddSingleton(NewService,
     godi.Name("primary"),
-    godi.As(new(IService)))
+    godi.As(new(IService)),
+)
 ```
 
 ## Parameter Objects
@@ -141,15 +198,21 @@ godi.AddSingleton(NewService,
 type ServiceParams struct {
     godi.In
 
-    DB       Database
-    Logger   Logger
-    Cache    Cache    `optional:"true"`
-    Primary  Database `name:"primary"`
-    Handlers []Handler `group:"handlers"`
+    // Required dependency
+    DB Database
+
+    // Optional dependency
+    Cache Cache `optional:"true"`
+
+    // Named dependency
+    Primary Database `name:"primary"`
+
+    // Group dependency
+    Validators []Validator `group:"validators"`
 }
 
 func NewService(params ServiceParams) *Service {
-    // Use params.DB, params.Logger, etc.
+    // Use params.DB, params.Cache, etc.
 }
 ```
 
@@ -159,9 +222,14 @@ func NewService(params ServiceParams) *Service {
 type ServiceBundle struct {
     godi.Out
 
-    UserService  UserService
-    OrderService OrderService  `name:"orders"`
-    AuthHandler  http.Handler  `group:"handlers"`
+    // Register as UserService
+    UserService UserService
+
+    // Register with name
+    OrderService OrderService `name:"orders"`
+
+    // Add to group
+    AuthHandler http.Handler `group:"handlers"`
 }
 
 func NewServices(db Database) ServiceBundle {
@@ -175,133 +243,155 @@ func NewServices(db Database) ServiceBundle {
 
 ## Disposal Interface
 
-Services can implement this for cleanup:
-
 ```go
-// Disposable interface for resources that need cleanup
+// Implement for automatic cleanup
 type Disposable interface {
     Close() error
 }
 
-// Services implementing Disposable are automatically
-// cleaned up when their scope/provider is closed
+// Called automatically when scope/provider closes
 ```
 
 ## Provider Options
 
-Configure provider behavior:
-
 ```go
+type ProviderOptions struct {
+    // Timeout for building provider
+    BuildTimeout time.Duration
+}
+
 options := &godi.ProviderOptions{
-    // Build timeout
     BuildTimeout: 30 * time.Second,
 }
 
 provider, err := collection.BuildWithOptions(options)
 ```
 
-## Service Lifetimes
+## Lifetimes
 
 ```go
 const (
-    Singleton Lifetime = iota // One instance forever
-    Scoped                    // One instance per scope
-    Transient                 // New instance every time
+    Singleton Lifetime = iota  // One instance forever
+    Scoped                     // One instance per scope
+    Transient                  // New instance every time
 )
 ```
 
 ## Error Types
 
 ```go
-// Typed errors for rich context
+// Resolution error
 type ResolutionError struct {
     ServiceType reflect.Type
     ServiceKey  any
     Cause       error
 }
 
+// Circular dependency
 type CircularDependencyError struct {
     Node graph.NodeKey
 }
 
+// Lifetime conflict
 type LifetimeConflictError struct {
     ServiceType reflect.Type
     Current     Lifetime
     Requested   Lifetime
 }
 
+// Validation error
 type ValidationError struct {
     ServiceType reflect.Type
     Cause       error
 }
 
-// Error checking
-var resErr *godi.ResolutionError
-if errors.As(err, &resErr) {
-    // Handle resolution error
+// Build error
+type BuildError struct {
+    Phase   string
+    Details string
+    Cause   error
 }
 
-// Common sentinel errors
-var (
-    ErrServiceNotFound         // Service not registered
-    ErrServiceTypeNil          // Service type is nil
-    ErrServiceKeyNil           // Service key is nil
-    ErrProviderDisposed        // Provider has been disposed
-    ErrScopeDisposed           // Scope has been disposed
-    ErrConstructorNil          // Constructor is nil
-    ErrConstructorNoReturn     // Constructor has no returns
-    ErrConstructorReturnedNil  // Constructor returned nil
-    ErrSingletonNotInitialized // Singleton not created at build
-)
+// Disposal error
+type DisposalError struct {
+    Context string
+    Errors  []error
+}
 ```
 
-## Generic Helpers
-
-Type-safe resolution helpers:
+## Sentinel Errors
 
 ```go
-// Resolve by type
-service, err := godi.Resolve[*UserService](provider)
-
-// Resolve by key
-service, err := godi.ResolveKeyed[Database](provider, "primary")
-
-// From scope
-service, err := godi.Resolve[*UserService](scope)
+var (
+    ErrServiceNotFound         // Service not registered
+    ErrServiceTypeNil          // nil type passed
+    ErrServiceKeyNil           // nil key passed
+    ErrProviderDisposed        // Provider closed
+    ErrScopeDisposed           // Scope closed
+    ErrConstructorNil          // nil constructor
+    ErrConstructorNoReturn     // No return values
+    ErrConstructorReturnedNil  // Returned nil
+    ErrGroupNameEmpty          // Empty group name
+    ErrSingletonNotInitialized // Singleton not created
+)
 ```
 
 ## Complete Example
 
 ```go
-// Define module
-var AppModule = godi.NewModule("app",
-    // Singletons
-    godi.AddSingleton(NewConfig),
-    godi.AddSingleton(NewLogger),
-    godi.AddSingleton(NewDatabase, godi.Name("primary")),
+package main
 
-    // Scoped
-    godi.AddScoped(NewUserRepository),
-    godi.AddScoped(NewUserService),
-
-    // Groups
-    godi.AddSingleton(NewEmailValidator, godi.Group("validators")),
-    godi.AddSingleton(NewPhoneValidator, godi.Group("validators")),
+import (
+    "context"
+    "github.com/junioryono/godi/v4"
 )
 
-// Use it
-func main() {
-    services := godi.NewCollection()
-    services.AddModules(AppModule)
+// Services
+type Logger struct{}
+func NewLogger() *Logger { return &Logger{} }
 
-    provider, err := services.Build()
+type Database struct{ logger *Logger }
+func NewDatabase(logger *Logger) *Database {
+    return &Database{logger: logger}
+}
+
+type UserService struct{ db *Database }
+func NewUserService(db *Database) *UserService {
+    return &UserService{db: db}
+}
+
+func main() {
+    // Create module
+    appModule := godi.NewModule("app",
+        godi.AddSingleton(NewLogger),
+        godi.AddSingleton(NewDatabase),
+        godi.AddScoped(NewUserService),
+    )
+
+    // Build provider
+    collection := godi.NewCollection()
+    collection.AddModules(appModule)
+
+    provider, err := collection.Build()
     if err != nil {
-        log.Fatal(err)
+        panic(err)
     }
     defer provider.Close()
 
-    // Resolve and use
-    userService, _ := godi.Resolve[*UserService](provider)
-    userService.DoWork()
+    // Create scope
+    scope, err := provider.CreateScope(context.Background())
+    if err != nil {
+        panic(err)
+    }
+    defer scope.Close()
+
+    // Resolve service
+    service, err := godi.Resolve[*UserService](scope)
+    if err != nil {
+        panic(err)
+    }
+
+    // Use service
+    service.DoWork()
 }
 ```

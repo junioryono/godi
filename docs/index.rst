@@ -1,70 +1,63 @@
 godi Documentation
 ==================
 
-**godi** brings type-safe dependency injection to Go with zero magic. 
-Start simple, scale seamlessly.
+**godi** - Simple, powerful dependency injection for Go. No magic, just functions.
 
-Quick Start
------------
+Quick Example
+-------------
 
 .. code-block:: go
 
-   // 1. Register your services
-   services := godi.NewCollection()
-   services.AddSingleton(NewLogger)
-   services.AddScoped(NewUserService)
-   services.AddTransient(NewStringFormatterService)
-
-   // 2. Build the container
-   provider, _ := services.Build()
+   // Define your service
+   type Greeter struct {
+       name string
+   }
+   
+   func NewGreeter() *Greeter {
+       return &Greeter{name: "World"}
+   }
+   
+   // Set up DI
+   collection := godi.NewCollection()
+   collection.AddSingleton(NewGreeter)
+   
+   provider, _ := collection.Build()
    defer provider.Close()
+   
+   // Use it
+   greeter, _ := godi.Resolve[*Greeter](provider)
+   fmt.Println(greeter.Greet()) // Hello, World!
 
-   // 3. Use your services
-   userService, _ := godi.Resolve[*UserService](provider)
-
-That's it! No annotations, no reflection magic, just functions.
+That's it! Start simple, add features as you need them.
 
 Why godi?
 ---------
 
-- ✅ **Never update constructors everywhere** - Change once, godi handles the rest
-- ✅ **Perfect for web apps** - Request isolation with scopes
-- ✅ **Testing made easy** - Swap implementations instantly
-- ✅ **Start simple** - Use only what you need
-- ✅ **Type-safe** - Compile-time checking with generics
-
-.. toctree::
-   :maxdepth: 2
-   :caption: Get Started
-   :hidden:
-
-   overview/install.md
-   tutorials/quick-start.md
-   tutorials/getting-started.md
-   overview/why-di.md
+- ✅ **Simple** - Just functions, no annotations or code generation
+- ✅ **Type-safe** - Full compile-time checking with generics
+- ✅ **Testable** - Swap implementations instantly with modules
+- ✅ **Scalable** - From simple CLIs to complex web applications
+- ✅ **Fast** - Minimal overhead, production-ready
 
 .. toctree::
    :maxdepth: 2
    :caption: Learn
    :hidden:
 
-   overview/concepts.md
-   tutorials/simple-vs-modules.md
-   tutorials/web-application.md
-   tutorials/testing.md
+   getting-started.md
+   core-concepts.md
 
 .. toctree::
    :maxdepth: 2
-   :caption: How-to Guides
+   :caption: Guides
    :hidden:
 
-   howto/use-scopes.md
-   howto/keyed-services.md
-   howto/service-groups.md
-   howto/modules.md
-   howto/parameter-objects.md
-   howto/advanced-patterns.md
-   howto/disposal.md
+   guides/web-apps-http.md
+   guides/web-apps-gin.md
+   guides/web-apps-mux.md
+   guides/testing.md
+   guides/modules.md
+   guides/advanced.md
 
 .. toctree::
    :maxdepth: 2
@@ -73,14 +66,5 @@ Why godi?
 
    reference/api.md
    reference/errors.md
-   reference/options.md
+   reference/faq.md
    reference/changelog.md
-
-.. toctree::
-   :maxdepth: 2
-   :caption: Conceptual Guides
-   :hidden:
-
-   guides/best-practices.md
-   guides/troubleshooting.md
-   overview/comparison.md
