@@ -73,7 +73,6 @@ type provider struct {
 	scopesMu sync.Mutex
 
 	// State
-	built    bool
 	disposed int32 // atomic
 }
 
