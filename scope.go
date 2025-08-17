@@ -162,7 +162,9 @@ func (s *scope) CreateScope(ctx context.Context) (Scope, error) {
 		resolving:   make(map[instanceKey]struct{}),
 		children:    make(map[*scope]struct{}),
 	}
+
 	ctx = context.WithValue(ctx, scopeContextKey{}, child)
+	child.context = ctx
 
 	// Track child
 	s.childrenMu.Lock()
@@ -491,10 +493,15 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 //
 // Example:
 //
-//	func handler(ctx context.Context) {
-//	    if scope, ok := godi.FromContext(ctx); ok {
-//	        service, _ := godi.Resolve[*Service](scope)
+//	func UserHandler(ctx context.Context) {
+//	    scope, ok := godi.FromContext(ctx)
+//	    if !ok {
+//	        // Handle error - no scope found
+//	        return
 //	    }
+//
+//	    // Use the scope to resolve services
+//	    service, _ := godi.Resolve[*Service](scope)
 //	}
 func FromContext(ctx context.Context) (Scope, bool) {
 	if ctx == nil {

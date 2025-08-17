@@ -245,7 +245,7 @@ func (e ConstructorInvocationError) Unwrap() error {
 
 // BuildError wraps errors that occur during provider building
 type BuildError struct {
-	Phase   string // "validation", "graph", "singleton-creation"
+	Phase   string // "validation", "graph", "singleton-creation", etc.
 	Details string
 	Cause   error
 }
