@@ -301,9 +301,6 @@ func (p *provider) createAllSingletons() error {
 		}
 	}
 
-	// Track which constructors have been invoked for multi-return
-	invokedConstructors := make(map[uintptr][]reflect.Value)
-
 	// Create instances in dependency order
 	for _, node := range sorted {
 		if node == nil || node.Provider == nil {
@@ -334,82 +331,12 @@ func (p *provider) createAllSingletons() error {
 			continue
 		}
 
-		// Handle instance descriptors specially for singletons
-		var instance any
-
-		switch {
-		case descriptor.IsInstance:
-			// For instances, use the stored value directly
-			instance = descriptor.Instance
-		case descriptor.IsMultiReturn:
-			// For multi-return constructors, check if we've already invoked this constructor
-			constructorPtr := descriptor.Constructor.Pointer()
-
-			if results, invoked := invokedConstructors[constructorPtr]; invoked {
-				// Use cached results
-				if descriptor.ReturnIndex >= 0 && descriptor.ReturnIndex < len(results) {
-					instance = results[descriptor.ReturnIndex].Interface()
-				} else {
-					return &ConstructorInvocationError{
-						Constructor: descriptor.ConstructorType,
-						Parameters:  nil,
-						Cause:       fmt.Errorf("invalid return index %d for cached multi-return constructor", descriptor.ReturnIndex),
-					}
-				}
-			} else {
-				// Invoke the constructor and cache all results
-				info, err := p.analyzer.Analyze(descriptor.Constructor.Interface())
-				if err != nil {
-					return &ReflectionAnalysisError{
-						Constructor: descriptor.Constructor.Interface(),
-						Operation:   "analyze",
-						Cause:       err,
-					}
-				}
-
-				invoker := reflection.NewConstructorInvoker(p.analyzer)
-				results, err := invoker.Invoke(info, p.rootScope)
-				if err != nil {
-					return &ConstructorInvocationError{
-						Constructor: descriptor.ConstructorType,
-						Parameters:  extractParameterTypes(info),
-						Cause:       err,
-					}
-				}
-
-				// Cache the results
-				invokedConstructors[constructorPtr] = results
-
-				// Get the specific instance for this descriptor
-				if descriptor.ReturnIndex >= 0 && descriptor.ReturnIndex < len(results) {
-					instance = results[descriptor.ReturnIndex].Interface()
-				} else {
-					return &ConstructorInvocationError{
-						Constructor: descriptor.ConstructorType,
-						Parameters:  nil,
-						Cause:       fmt.Errorf("invalid return index %d for multi-return constructor with %d returns", descriptor.ReturnIndex, len(results)),
-					}
-				}
-			}
-		default:
-			// Create the instance through constructor
-			var err error
-			instance, err = p.rootScope.createInstance(descriptor)
-			if err != nil {
-				return &ResolutionError{
-					ServiceType: descriptor.Type,
-					ServiceKey:  descriptor.Key,
-					Cause:       err,
-				}
-			}
-		}
-
-		// Validate instance is not nil
-		if instance == nil {
+		instance, err := p.rootScope.createInstance(descriptor)
+		if err != nil {
 			return &ResolutionError{
 				ServiceType: descriptor.Type,
 				ServiceKey:  descriptor.Key,
-				Cause:       ErrConstructorReturnedNil,
+				Cause:       err,
 			}
 		}
 

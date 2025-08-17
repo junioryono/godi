@@ -477,19 +477,18 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 			for i, ret := range nonErrorReturns {
 				// Create a descriptor for each return type
 				typeDescriptor := &Descriptor{
-					Type:            ret.Type,
-					Lifetime:        descriptor.Lifetime,
-					Constructor:     descriptor.Constructor,
-					ConstructorType: descriptor.ConstructorType,
-					Dependencies:    descriptor.Dependencies,
-					Group:           descriptor.Group,
-					As:              descriptor.As,
-					IsInstance:      false,
-					ReturnIndex:     ret.Index,
-					IsMultiReturn:   true,
-					isFunc:          descriptor.isFunc,
-					isParamObject:   descriptor.isParamObject,
-					paramFields:     descriptor.paramFields,
+					Type:             ret.Type,
+					Lifetime:         descriptor.Lifetime,
+					Constructor:      descriptor.Constructor,
+					ConstructorType:  descriptor.ConstructorType,
+					Dependencies:     descriptor.Dependencies,
+					Group:            descriptor.Group,
+					As:               descriptor.As,
+					IsInstance:       false,
+					MultiReturnIndex: ret.Index,
+					isFunc:           descriptor.isFunc,
+					isParamObject:    descriptor.isParamObject,
+					paramFields:      descriptor.paramFields,
 				}
 
 				// Apply name/key only to the first return if specified
@@ -530,23 +529,22 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 
 			// Create a new descriptor for the interface type
 			interfaceDescriptor := &Descriptor{
-				Type:            interfaceType,
-				Key:             descriptor.Key,
-				Lifetime:        descriptor.Lifetime,
-				Constructor:     descriptor.Constructor,
-				ConstructorType: descriptor.ConstructorType,
-				Dependencies:    descriptor.Dependencies,
-				Group:           descriptor.Group,
-				As:              options.As,
-				IsInstance:      descriptor.IsInstance,
-				Instance:        descriptor.Instance,
-				ReturnIndex:     descriptor.ReturnIndex,
-				IsMultiReturn:   descriptor.IsMultiReturn,
-				isFunc:          descriptor.isFunc,
-				isResultObject:  descriptor.isResultObject,
-				resultFields:    descriptor.resultFields,
-				isParamObject:   descriptor.isParamObject,
-				paramFields:     descriptor.paramFields,
+				Type:             interfaceType,
+				Key:              descriptor.Key,
+				Lifetime:         descriptor.Lifetime,
+				Constructor:      descriptor.Constructor,
+				ConstructorType:  descriptor.ConstructorType,
+				Dependencies:     descriptor.Dependencies,
+				Group:            descriptor.Group,
+				As:               options.As,
+				IsInstance:       descriptor.IsInstance,
+				Instance:         descriptor.Instance,
+				MultiReturnIndex: descriptor.MultiReturnIndex,
+				isFunc:           descriptor.isFunc,
+				isResultObject:   descriptor.isResultObject,
+				resultFields:     descriptor.resultFields,
+				isParamObject:    descriptor.isParamObject,
+				paramFields:      descriptor.paramFields,
 			}
 
 			// Register the interface descriptor
