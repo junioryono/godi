@@ -7,21 +7,21 @@ import (
 	"github.com/junioryono/godi/v4/internal/reflection"
 )
 
-// Descriptor represents both service providers and decorators
+// Descriptor represents services
 type Descriptor struct {
-	// Type is the service type this descriptor produces or decorates
+	// Type is the service type this descriptor produces
 	Type reflect.Type
 
-	// Key is optional - for named/keyed services or decorators
+	// Key is optional - for named/keyed services
 	Key any
 
 	// Group this provider belongs to
 	Group string
 
-	// Lifetime determines instance caching behavior (ignored for decorators)
+	// Lifetime determines instance caching behavior
 	Lifetime Lifetime
 
-	// Constructor is the reflected function value (provider or decorator function)
+	// Constructor is the reflected function value
 	Constructor reflect.Value
 
 	// ConstructorType is the type of the constructor function
@@ -33,10 +33,6 @@ type Descriptor struct {
 	// As is an optional list of interface types this service can be registered as
 	// This is typically used for interface-based services
 	As []any
-
-	// DecoratedType is the type being decorated (only for decorators)
-	// This is typically the same as Type but kept separate for clarity
-	DecoratedType reflect.Type
 
 	// IsInstance indicates if this descriptor holds an instance value
 	IsInstance bool

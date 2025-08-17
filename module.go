@@ -71,13 +71,6 @@ func AddTransient(service any, opts ...AddOption) ModuleOption {
 	}
 }
 
-// AddDecorator creates a ModuleBuilder for adding a decorator to a service.
-func AddDecorator(decorator any, opts ...AddOption) ModuleOption {
-	return func(s Collection) error {
-		return s.Decorate(decorator, opts...)
-	}
-}
-
 // An AddOption modifies the default behavior of AddSingleton, AddScoped, and AddTransient.
 type AddOption interface {
 	applyAddOption(*addOptions)

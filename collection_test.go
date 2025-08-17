@@ -292,54 +292,6 @@ func TestAddTransient(t *testing.T) {
 	})
 }
 
-// Test Decorate
-func TestDecorate(t *testing.T) {
-	t.Run("basic decorator", func(t *testing.T) {
-		collection := NewCollection()
-
-		// Add a service first
-		err := collection.AddSingleton(NewTestService)
-		assert.NoError(t, err)
-
-		// Add a decorator (currently returns nil - implementation needed)
-		decorator := func(service *TestService) *TestService {
-			service.Name = "decorated"
-			return service
-		}
-
-		err = collection.Decorate(decorator)
-		// Current implementation returns nil
-		assert.NoError(t, err)
-	})
-
-	t.Run("nil decorator", func(t *testing.T) {
-		collection := NewCollection()
-
-		err := collection.Decorate(nil)
-		assert.Error(t, err)
-		// The error is wrapped in ValidationError
-		var valErr *ValidationError
-		assert.True(t, errors.As(err, &valErr))
-	})
-
-	t.Run("decorator with options", func(t *testing.T) {
-		collection := NewCollection()
-
-		// Add a service first
-		err := collection.AddSingleton(NewTestService)
-		assert.NoError(t, err)
-
-		// Add a decorator with options
-		decorator := func(service *TestService) *TestService {
-			service.Name = "decorated-with-options"
-			return service
-		}
-
-		err = collection.Decorate(decorator, As(TestInterface(nil)))
-		assert.NoError(t, err)
-	})
-}
-
 // Test HasService
 func TestHasService(t *testing.T) {
 	collection := NewCollection()

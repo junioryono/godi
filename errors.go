@@ -34,9 +34,6 @@ var (
 	ErrConstructorNoReturn    = errors.New("constructor must return at least one value")
 	ErrConstructorReturnedNil = errors.New("constructor returned nil")
 
-	// Decorator errors.
-	ErrDecoratorNil = errors.New("decorator cannot be nil")
-
 	// Validation errors.
 	ErrGroupNameEmpty          = errors.New("group name cannot be empty")
 	ErrSingletonNotInitialized = errors.New("singleton not initialized at build time")
@@ -135,7 +132,7 @@ func (e TimeoutError) Is(target error) bool {
 // RegistrationError wraps errors during service registration.
 type RegistrationError struct {
 	ServiceType reflect.Type
-	Operation   string // "provide", "decorate", etc.
+	Operation   string // "register", "create-descriptor", "validate-descriptor", etc.
 	Cause       error
 }
 

@@ -97,16 +97,17 @@ Organize service registrations.
 ```go
 // Create module
 var MyModule = godi.NewModule("name",
+    godi.AddSingleton(instance),
     godi.AddSingleton(constructor),
     godi.AddScoped(constructor),
     OtherModule, // Include other modules
 )
 
 // Module builder functions
+godi.AddSingleton(instance, opts...)
 godi.AddSingleton(constructor, opts...)
 godi.AddScoped(constructor, opts...)
 godi.AddTransient(constructor, opts...)
-godi.AddDecorator(decorator, opts...)
 ```
 
 ## Registration Options
@@ -130,20 +131,6 @@ cache, _ := godi.Resolve[Cache](provider)
 godi.AddSingleton(NewService,
     godi.Name("primary"),
     godi.As(new(IService)))
-```
-
-### Decorators
-
-Wrap services with additional behavior.
-
-```go
-// Define decorator
-func LoggingDecorator(service Service, logger Logger) Service {
-    return &loggingService{inner: service, logger: logger}
-}
-
-// Register
-collection.Decorate(LoggingDecorator)
 ```
 
 ## Parameter Objects
@@ -300,9 +287,6 @@ var AppModule = godi.NewModule("app",
     // Groups
     godi.AddSingleton(NewEmailValidator, godi.Group("validators")),
     godi.AddSingleton(NewPhoneValidator, godi.Group("validators")),
-
-    // Decorators
-    godi.AddDecorator(LoggingDecorator),
 )
 
 // Use it
