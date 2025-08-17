@@ -464,11 +464,12 @@ func TestToSlice(t *testing.T) {
 		// Count different types
 		var regular, keyed, grouped int
 		for _, d := range descriptors {
-			if d.Group != "" {
+			switch {
+			case d.Group != "":
 				grouped++
-			} else if d.Key != nil {
+			case d.Key != nil:
 				keyed++
-			} else {
+			default:
 				regular++
 			}
 		}
