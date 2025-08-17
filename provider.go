@@ -8,7 +8,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/junioryono/godi/v4/internal/graph"
 	"github.com/junioryono/godi/v4/internal/reflection"
 )
@@ -154,18 +153,7 @@ func (p *provider) CreateScope(ctx context.Context) (Scope, error) {
 
 	// Create scope with cancellable context
 	scopeCtx, cancel := context.WithCancel(ctx)
-
-	s := &scope{
-		id:          uuid.NewString(),
-		provider:    p,
-		parent:      nil,
-		context:     scopeCtx,
-		cancel:      cancel,
-		instances:   make(map[instanceKey]any),
-		disposables: make([]Disposable, 0),
-		resolving:   make(map[instanceKey]struct{}),
-		children:    make(map[*scope]struct{}),
-	}
+	s := newScope(p, nil, scopeCtx, cancel)
 
 	// Track scope
 	p.scopesMu.Lock()

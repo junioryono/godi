@@ -48,6 +48,24 @@ type scope struct {
 	disposed int32 // atomic
 }
 
+func newScope(provider *provider, parent *scope, ctx context.Context, cancel context.CancelFunc) *scope {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	return &scope{
+		id:          uuid.NewString(),
+		provider:    provider,
+		parent:      parent,
+		context:     ctx,
+		cancel:      cancel,
+		instances:   make(map[instanceKey]any),
+		disposables: make([]Disposable, 0),
+		resolving:   make(map[instanceKey]struct{}),
+		children:    make(map[*scope]struct{}),
+	}
+}
+
 // Provider returns the parent provider that created this scope.
 // The provider contains the service registry and dependency graph.
 func (s *scope) Provider() Provider {
@@ -150,19 +168,7 @@ func (s *scope) CreateScope(ctx context.Context) (Scope, error) {
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
-
-	child := &scope{
-		id:          uuid.NewString(),
-		provider:    s.provider,
-		parent:      s,
-		context:     ctx,
-		cancel:      cancel,
-		instances:   make(map[instanceKey]any),
-		disposables: make([]Disposable, 0),
-		resolving:   make(map[instanceKey]struct{}),
-		children:    make(map[*scope]struct{}),
-	}
-
+	child := newScope(s.provider, s, ctx, cancel)
 	ctx = context.WithValue(ctx, scopeContextKey{}, child)
 	child.context = ctx
 

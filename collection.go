@@ -226,18 +226,7 @@ func (sc *collection) doBuild() (Provider, error) {
 
 	// Phase 5: Create root scope
 	rootCtx := context.Background()
-	p.rootScope = &scope{
-		id:          uuid.NewString(),
-		provider:    p,
-		context:     rootCtx,
-		instances:   make(map[instanceKey]any),
-		disposables: make([]Disposable, 0),
-		resolving:   make(map[instanceKey]struct{}),
-		children:    make(map[*scope]struct{}),
-	}
-
-	// Register built-in services for root scope
-	// p.rootScope.registerBuiltinServices()
+	p.rootScope = newScope(p, nil, rootCtx, nil)
 
 	// Phase 6: Create singletons
 	if err := p.createAllSingletons(); err != nil {
@@ -261,7 +250,7 @@ func (sc *collection) doBuild() (Provider, error) {
 }
 
 func (sc *collection) registerInternalServices() error {
-	contextDescriptor, err := newDescriptor(context.Background(), Singleton)
+	contextDescriptor, err := newDescriptor(context.Background(), Scoped)
 	if err != nil {
 		return &BuildError{
 			Phase:   "descriptor-creation",
