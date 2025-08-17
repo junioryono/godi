@@ -40,16 +40,19 @@ func (sl Lifetime) String() string {
 }
 
 // IsValid checks if the service lifetime is valid.
+// Returns true if the lifetime is Singleton, Scoped, or Transient.
 func (sl Lifetime) IsValid() bool {
 	return sl >= Singleton && sl <= Transient
 }
 
-// MarshalText implements encoding.TextMarshaler.
+// MarshalText implements encoding.TextMarshaler interface.
+// Converts the lifetime to its string representation for text-based serialization.
 func (sl Lifetime) MarshalText() ([]byte, error) {
 	return []byte(sl.String()), nil
 }
 
-// UnmarshalText implements encoding.TextUnmarshaler.
+// UnmarshalText implements encoding.TextUnmarshaler interface.
+// Parses a string representation back into a Lifetime value.
 func (sl *Lifetime) UnmarshalText(text []byte) error {
 	switch string(text) {
 	case "Singleton", "singleton":
@@ -64,12 +67,14 @@ func (sl *Lifetime) UnmarshalText(text []byte) error {
 	return nil
 }
 
-// MarshalJSON implements json.Marshaler.
+// MarshalJSON implements json.Marshaler interface.
+// Serializes the lifetime as a JSON string.
 func (sl Lifetime) MarshalJSON() ([]byte, error) {
 	return json.Marshal(sl.String())
 }
 
-// UnmarshalJSON implements json.Unmarshaler.
+// UnmarshalJSON implements json.Unmarshaler interface.
+// Deserializes a JSON string back into a Lifetime value.
 func (sl *Lifetime) UnmarshalJSON(data []byte) error {
 	var s string
 	if err := json.Unmarshal(data, &s); err != nil {

@@ -48,17 +48,20 @@ type scope struct {
 	disposed int32 // atomic
 }
 
-// Provider returns the parent provider
+// Provider returns the parent provider that created this scope.
+// The provider contains the service registry and dependency graph.
 func (s *scope) Provider() Provider {
 	return s.provider
 }
 
-// Context returns the scope's context
+// Context returns the context associated with this scope.
+// The context is used for cancellation and can carry request-scoped values.
 func (s *scope) Context() context.Context {
 	return s.context
 }
 
-// ID returns the unique ID of this scope
+// ID returns the unique identifier for this scope.
+// This ID is a UUID generated when the scope is created.
 func (s *scope) ID() string {
 	return s.id
 }
@@ -249,7 +252,8 @@ func (s *scope) Close() error {
 	return nil
 }
 
-// getInstance retrieves a cached instance from this scope
+// getInstance retrieves a cached instance from this scope in a thread-safe manner.
+// Returns the instance and true if found, or nil and false if not cached.
 func (s *scope) getInstance(key instanceKey) (any, bool) {
 	s.instancesMu.RLock()
 	instance, ok := s.instances[key]
@@ -257,7 +261,9 @@ func (s *scope) getInstance(key instanceKey) (any, bool) {
 	return instance, ok
 }
 
-// setInstance caches an instance in this scope
+// setInstance caches an instance in this scope in a thread-safe manner.
+// It also tracks the instance if it implements the Disposable interface
+// for proper cleanup when the scope is closed.
 func (s *scope) setInstance(key instanceKey, instance any) {
 	s.instancesMu.Lock()
 	s.instances[key] = instance
@@ -271,7 +277,9 @@ func (s *scope) setInstance(key instanceKey, instance any) {
 	}
 }
 
-// checkCircular checks for circular dependencies
+// checkCircular checks for circular dependencies during resolution.
+// Returns an error if the service is already being resolved in the current
+// resolution chain, indicating a circular dependency.
 func (s *scope) checkCircular(key instanceKey) error {
 	s.resolvingMu.Lock()
 	_, ok := s.resolving[key]
@@ -289,21 +297,25 @@ func (s *scope) checkCircular(key instanceKey) error {
 	return nil
 }
 
-// startResolving marks a service as being resolved
+// startResolving marks a service as being resolved to track circular dependencies.
+// This should be called before attempting to create a service instance.
 func (s *scope) startResolving(key instanceKey) {
 	s.resolvingMu.Lock()
 	s.resolving[key] = struct{}{}
 	s.resolvingMu.Unlock()
 }
 
-// stopResolving marks a service as no longer being resolved
+// stopResolving marks a service as no longer being resolved.
+// This should be called after a service instance has been created or resolution fails.
 func (s *scope) stopResolving(key instanceKey) {
 	s.resolvingMu.Lock()
 	delete(s.resolving, key)
 	s.resolvingMu.Unlock()
 }
 
-// resolve performs the actual service resolution
+// resolve performs the actual service resolution using the appropriate lifetime strategy.
+// It handles singleton caching, scoped caching, and transient creation, while also
+// detecting circular dependencies during resolution.
 func (s *scope) resolve(key instanceKey, descriptor *Descriptor) (any, error) {
 	// Find descriptor if not provided
 	if descriptor == nil {
@@ -376,7 +388,9 @@ func (s *scope) resolve(key instanceKey, descriptor *Descriptor) (any, error) {
 	}
 }
 
-// createInstance creates a new instance of a service
+// createInstance creates a new instance of a service using its constructor.
+// It handles regular constructors, result objects (Out structs), multi-return
+// constructors, and instance descriptors.
 func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 	if descriptor == nil {
 		return nil, &ValidationError{

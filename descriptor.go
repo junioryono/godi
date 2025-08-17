@@ -221,14 +221,16 @@ func newDescriptor(constructor any, lifetime Lifetime, opts ...AddOption) (*Desc
 	return descriptor, nil
 }
 
-// IsProvider returns true if this descriptor is a provider (not a decorator)
+// IsProvider returns true if this descriptor is a provider (not a decorator).
+// Providers create service instances, while decorators modify existing services.
 func (d *Descriptor) IsProvider() bool {
 	return !d.IsDecorator
 }
 
-// GetTargetType returns the type this descriptor targets
-// For providers, this is the type they provide
-// For decorators, this is the type they decorate
+// GetTargetType returns the type this descriptor targets.
+// For providers, this returns the type they provide.
+// For decorators, this returns the type they decorate.
+// This distinction is important for dependency graph construction.
 func (d *Descriptor) GetTargetType() reflect.Type {
 	if d.IsDecorator && d.DecoratedType != nil {
 		return d.DecoratedType
@@ -237,31 +239,37 @@ func (d *Descriptor) GetTargetType() reflect.Type {
 	return d.Type
 }
 
-// GetType returns the service type this descriptor produces
-// Implements the Provider interface from the graph package
+// GetType returns the service type this descriptor produces.
+// This method implements the Provider interface from the graph package,
+// enabling the descriptor to participate in dependency resolution.
 func (d *Descriptor) GetType() reflect.Type {
 	return d.Type
 }
 
-// GetKey returns the optional key for named/keyed services
-// Implements the Provider interface from the graph package
+// GetKey returns the optional key for named/keyed services.
+// Returns nil for non-keyed services. This method implements the Provider
+// interface from the graph package for keyed service resolution.
 func (d *Descriptor) GetKey() any {
 	return d.Key
 }
 
-// GetGroup returns the groups this provider belongs to
-// Implements the Provider interface from the graph package
+// GetGroup returns the group this provider belongs to.
+// Returns empty string if not part of a group. This method implements
+// the Provider interface from the graph package for group-based resolution.
 func (d *Descriptor) GetGroup() string {
 	return d.Group
 }
 
-// GetDependencies returns the analyzed dependencies
-// Implements the Provider interface from the graph package
+// GetDependencies returns the analyzed dependencies for this descriptor.
+// These dependencies must be resolved before this service can be created.
+// This method implements the Provider interface from the graph package.
 func (d *Descriptor) GetDependencies() []*reflection.Dependency {
 	return d.Dependencies
 }
 
-// Validate validates a descriptor
+// Validate validates the descriptor's configuration.
+// It checks that the descriptor has a valid type, constructor, and lifetime,
+// and ensures that key and group are not both set simultaneously.
 func (d *Descriptor) Validate() error {
 	if d.Type == nil {
 		return &ValidationError{
