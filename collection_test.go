@@ -107,7 +107,7 @@ func NewTooMany() (*TestService, *TestServiceWithDep, error) {
 }
 
 // Constructor with multiple non-error returns (now valid with multi-return support)
-func NewInvalidSecondReturn() (*TestService, string) {
+func NewInvalidSecondReturn() (service *TestService, config string) {
 	return &TestService{Name: "multi"}, "config"
 }
 

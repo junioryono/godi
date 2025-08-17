@@ -134,13 +134,14 @@ func (a *Analyzer) Analyze(constructor any) (*ConstructorInfo, error) {
 
 	// This ensures different functions with the same signature are cached separately
 	var cacheKey uintptr
-	if typ.Kind() == reflect.Func && val.CanAddr() {
+	switch {
+	case typ.Kind() == reflect.Func && val.CanAddr():
 		// For functions, use the function pointer as the cache key
 		cacheKey = val.Pointer()
-	} else if typ.Kind() == reflect.Func {
+	case typ.Kind() == reflect.Func:
 		// For non-addressable functions, use the pointer from Value
 		cacheKey = val.Pointer()
-	} else {
+	default:
 		// For non-functions, we can still use the type's address as a fallback
 		// Note: This won't differentiate between different instances of the same type
 		cacheKey = reflect.ValueOf(typ).Pointer()
@@ -294,7 +295,8 @@ func (a *Analyzer) analyzeReturns(info *ConstructorInfo) error {
 		isError := implementsError(retType)
 
 		// Check if this is the last return and it's an error
-		if isError && i == fnType.NumOut()-1 {
+		switch {
+		case isError && i == fnType.NumOut()-1:
 			info.HasErrorReturn = true
 			// Still add it to Returns for completeness, but mark as error
 			info.Returns = append(info.Returns, ReturnInfo{
@@ -302,15 +304,7 @@ func (a *Analyzer) analyzeReturns(info *ConstructorInfo) error {
 				Index:   i,
 				IsError: true,
 			})
-		} else if isError {
-			// Error in non-last position is treated as a regular type
-			// This allows for advanced use cases while maintaining backward compatibility
-			info.Returns = append(info.Returns, ReturnInfo{
-				Type:    retType,
-				Index:   i,
-				IsError: false, // Treat as regular type if not in last position
-			})
-		} else {
+		default:
 			// Regular non-error return
 			info.Returns = append(info.Returns, ReturnInfo{
 				Type:    retType,

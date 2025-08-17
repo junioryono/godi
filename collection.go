@@ -449,11 +449,11 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 	}
 
 	// Validate the descriptor
-	if err := descriptor.Validate(); err != nil {
+	if validationErr := descriptor.Validate(); validationErr != nil {
 		return &RegistrationError{
 			ServiceType: descriptor.Type,
 			Operation:   "validate descriptor",
-			Cause:       err,
+			Cause:       validationErr,
 		}
 	}
 
@@ -469,11 +469,11 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 	}
 
 	// Validate options
-	if err := options.Validate(); err != nil {
+	if optErr := options.Validate(); optErr != nil {
 		return &RegistrationError{
 			ServiceType: descriptor.Type,
 			Operation:   "validate options",
-			Cause:       err,
+			Cause:       optErr,
 		}
 	}
 

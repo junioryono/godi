@@ -182,12 +182,6 @@ func newDescriptor(constructor any, lifetime Lifetime, opts ...AddOption) (*Desc
 		descriptor.Key = options.Name
 	}
 
-	// Handle As option - this allows the service to be registered under interface types
-	if len(options.As) > 0 {
-		// For As option, we'll need to handle this at the collection level
-		// since it affects how the service is registered
-	}
-
 	// Cache analysis results for performance
 	descriptor.isFunc = info.IsFunc
 	descriptor.isResultObject = info.IsResultObject

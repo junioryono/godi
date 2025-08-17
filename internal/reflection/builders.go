@@ -66,7 +66,7 @@ func (b *ParamObjectBuilder) BuildParamObject(
 		}
 
 		// Resolve dependency for this field
-		fieldValue, err := b.resolveFieldDependency(field, tagInfo, resolver)
+		fieldValue, err := b.resolveFieldDependency(&field, tagInfo, resolver)
 		if err != nil {
 			if !tagInfo.Optional {
 				return reflect.Value{}, fmt.Errorf("failed to resolve field %s: %w", field.Name, err)
@@ -91,7 +91,7 @@ func (b *ParamObjectBuilder) BuildParamObject(
 
 // resolveFieldDependency resolves a single field's dependency.
 func (b *ParamObjectBuilder) resolveFieldDependency(
-	field reflect.StructField,
+	field *reflect.StructField,
 	tagInfo TagInfo,
 	resolver DependencyResolver,
 ) (reflect.Value, error) {
@@ -302,7 +302,7 @@ func (ci *ConstructorInvoker) buildArguments(
 	// Regular parameters - resolve each one
 	args := make([]reflect.Value, len(info.Parameters))
 	for i, param := range info.Parameters {
-		value, err := ci.resolveParameter(param, resolver)
+		value, err := ci.resolveParameter(&param, resolver)
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve parameter %d: %w", i, err)
 		}
@@ -314,7 +314,7 @@ func (ci *ConstructorInvoker) buildArguments(
 
 // resolveParameter resolves a single parameter.
 func (ci *ConstructorInvoker) resolveParameter(
-	param ParameterInfo,
+	param *ParameterInfo,
 	resolver DependencyResolver,
 ) (any, error) {
 	// Handle group parameters

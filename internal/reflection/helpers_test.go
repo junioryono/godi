@@ -339,7 +339,7 @@ func TestValidator_EdgeCases(t *testing.T) {
 	// Test with Out struct that has no exported fields
 	type EmptyOut struct {
 		reflection.Out
-		unexported string
+		_ string // unexported field for testing
 	}
 
 	emptyOutConstructor := func() EmptyOut {
