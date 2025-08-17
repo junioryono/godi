@@ -40,22 +40,19 @@ func NewDescriptorNoReturn() {
 }
 
 // Multiple return constructors for testing
-func NewMultipleReturns() (*DescriptorTestService, *DescriptorTestInterface) {
+func NewMultipleReturns() (*DescriptorTestService, DescriptorTestInterface) {
 	svc := &DescriptorTestService{Value: "multi"}
-	var iface DescriptorTestInterface = svc
-	return svc, &iface
+	return svc, svc
 }
 
-func NewTripleReturns() (*DescriptorTestService, *DescriptorTestInterface, string) {
+func NewTripleReturns() (*DescriptorTestService, DescriptorTestInterface, string) {
 	svc := &DescriptorTestService{Value: "triple"}
-	var iface DescriptorTestInterface = svc
-	return svc, &iface, "config"
+	return svc, svc, "config"
 }
 
-func NewMultipleReturnsWithError() (*DescriptorTestService, *DescriptorTestInterface, string, error) {
+func NewMultipleReturnsWithError() (*DescriptorTestService, DescriptorTestInterface, string, error) {
 	svc := &DescriptorTestService{Value: "multi-error"}
-	var iface DescriptorTestInterface = svc
-	return svc, &iface, "config", nil
+	return svc, svc, "config", nil
 }
 
 // Parameter object constructor

@@ -64,11 +64,12 @@ func (tf *TypeFormatter) formatFunc(t reflect.Type) string {
 	paramStr := strings.Join(params, ", ")
 	returnStr := strings.Join(returns, ", ")
 
-	if len(returns) == 0 {
+	switch len(returns) {
+	case 0:
 		return fmt.Sprintf("func(%s)", paramStr)
-	} else if len(returns) == 1 {
+	case 1:
 		return fmt.Sprintf("func(%s) %s", paramStr, returnStr)
-	} else {
+	default:
 		return fmt.Sprintf("func(%s) (%s)", paramStr, returnStr)
 	}
 }

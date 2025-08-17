@@ -596,9 +596,9 @@ func contains(s, substr string) bool {
 
 // Additional test types for edge cases
 type ComplexService struct {
-	unexported string // Should be ignored
-	Database   *Database
-	Logger     Logger `optional:"true"`
+	Database *Database
+	Logger   Logger `optional:"true"`
+	_        string // unexported field for testing
 }
 
 type CircularA struct {
@@ -618,7 +618,7 @@ type FullParamObject struct {
 	Named       *Database `name:"backup"`
 	Grouped     []func()  `group:"handlers"`
 	Ignored     string    `inject:"-"`
-	unexported  string    // Should be ignored
+	_           string    // unexported field for testing
 	Combination *Database `name:"special" optional:"true"`
 }
 

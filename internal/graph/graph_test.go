@@ -83,7 +83,7 @@ func TestDependencyGraph_ConcurrentOperations(t *testing.T) {
 			g.GetLeaves()
 
 			// Try topological sort
-			if _, err := g.TopologicalSort(); err != nil {
+			if _, err := g.TopologicalSort(); err != nil { //nolint:staticcheck // error expected in concurrent test
 				// This might fail if graph is being modified
 				// Don't treat as error in concurrent test
 			}

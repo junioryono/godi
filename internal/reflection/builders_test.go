@@ -13,13 +13,13 @@ import (
 type TestOutStruct struct {
 	reflection.Out
 
-	Service1   *Database
-	Service2   Logger    `name:"logger2"`
-	Service3   *Database `group:"databases"`
-	Service4   func()    `group:"handlers"`
-	Ignored    string    `inject:"-"`
-	unexported string
-	NilField   *Database
+	Service1 *Database
+	Service2 Logger    `name:"logger2"`
+	Service3 *Database `group:"databases"`
+	Service4 func()    `group:"handlers"`
+	Ignored  string    `inject:"-"`
+	_        string    // unexported field for testing
+	NilField *Database
 }
 
 // Test ResultObjectProcessor

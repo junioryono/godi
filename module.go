@@ -90,8 +90,8 @@ type addOptions struct {
 }
 
 func (o *addOptions) Validate() error {
-	if len(o.Group) > 0 {
-		if len(o.Name) > 0 {
+	if o.Group != "" {
+		if o.Name != "" {
 			return &ValidationError{
 				ServiceType: nil,
 				Cause:       fmt.Errorf("cannot use both godi.Name and godi.Group: name:%q provided with group:%q", o.Name, o.Group),

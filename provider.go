@@ -290,15 +290,6 @@ func (p *provider) findGroupDescriptors(serviceType reflect.Type, group string) 
 	return p.groups[groupKey]
 }
 
-// getDecorators returns decorators for a service type
-func (p *provider) getDecorators(serviceType reflect.Type) []*Descriptor {
-	if serviceType == nil {
-		return nil
-	}
-
-	return p.decorators[serviceType]
-}
-
 // createAllSingletons creates all singleton instances at build time with enhanced error handling
 func (p *provider) createAllSingletons() error {
 	// Get topological sort from dependency graph
@@ -348,10 +339,11 @@ func (p *provider) createAllSingletons() error {
 		// Handle instance descriptors specially for singletons
 		var instance any
 
-		if descriptor.IsInstance {
+		switch {
+		case descriptor.IsInstance:
 			// For instances, use the stored value directly
 			instance = descriptor.Instance
-		} else if descriptor.IsMultiReturn {
+		case descriptor.IsMultiReturn:
 			// For multi-return constructors, check if we've already invoked this constructor
 			constructorPtr := descriptor.Constructor.Pointer()
 
@@ -401,7 +393,7 @@ func (p *provider) createAllSingletons() error {
 					}
 				}
 			}
-		} else {
+		default:
 			// Create the instance through constructor
 			var err error
 			instance, err = p.rootScope.createInstance(descriptor)

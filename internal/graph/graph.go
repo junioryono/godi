@@ -649,7 +649,7 @@ func (g *DependencyGraph) CalculateDepths() {
 
 // String returns a string representation of the node key
 func (k NodeKey) String() string {
-	var str = fmt.Sprintf("%v", k.Type)
+	var str = k.Type.String()
 	if k.Key != nil {
 		str += fmt.Sprintf(":%v", k.Key)
 	}
