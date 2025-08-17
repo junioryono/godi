@@ -1821,8 +1821,8 @@ func TestBuiltinServices(t *testing.T) {
 		}
 
 		// Verify it's the same context
-		if val := svc.ctx.Value("test-key"); val != "test-value" {
-			t.Fatalf("Expected context value 'test-value', got %v", val)
+		if val := svc.ctx.Value(testKey); val != "value" {
+			t.Fatalf("Expected context value 'value', got %v", val)
 		}
 	})
 
@@ -1964,7 +1964,7 @@ func TestBuiltinServices(t *testing.T) {
 		if svc.ctx == nil {
 			t.Fatal("Context was not injected")
 		}
-		if val := svc.ctx.Value("key"); val != "value" {
+		if val := svc.ctx.Value(testKey); val != "value" {
 			t.Fatalf("Expected context value 'value', got %v", val)
 		}
 
