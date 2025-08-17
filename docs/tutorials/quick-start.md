@@ -133,10 +133,14 @@ var WebModule = godi.NewModule("web",
 )
 
 // HTTP handler
-func handleRequest(provider godi.ServiceProvider) http.HandlerFunc {
+func handleRequest(provider godi.Provider) http.HandlerFunc {
     return func(w http.ResponseWriter, r *http.Request) {
         // Create scope for this request
-        scope := provider.CreateScope(r.Context())
+        scope, err := provider.CreateScope(r.Context())
+        if err != nil {
+            http.Error(w, "Scope error", http.StatusInternalServerError)
+            return
+        }
         defer scope.Close()
 
         // Get service for this request
@@ -309,8 +313,9 @@ func NewValidationService(in struct {
 ```go
 // 1. Create modules (group related services)
 var MyModule = godi.NewModule("name",
-    godi.AddSingleton(NewService),  // One instance
-    godi.AddScoped(NewService),      // Per-request instance
+    godi.AddSingleton(NewService),   // One instance forever
+    godi.AddScoped(NewService),       // One per scope/request
+    godi.AddTransient(NewService),    // New every time
 )
 
 // 2. Include other modules
@@ -329,7 +334,7 @@ defer provider.Close()
 service, _ := godi.Resolve[*MyService](provider)
 
 // 5. For web requests
-scope := provider.CreateScope(ctx)
+scope, _ := provider.CreateScope(ctx)
 defer scope.Close()
 service, _ := godi.Resolve[*MyService](scope)
 ```

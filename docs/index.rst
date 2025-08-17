@@ -63,8 +63,8 @@ Why godi?
    howto/modules.md
    howto/decorators.md
    howto/parameter-objects.md
-   howto/disposal.md
    howto/advanced-patterns.md
+   howto/disposal.md
 
 .. toctree::
    :maxdepth: 2
@@ -81,8 +81,6 @@ Why godi?
    :caption: Conceptual Guides
    :hidden:
 
-   guides/architecture.md
    guides/best-practices.md
-   guides/performance.md
    guides/troubleshooting.md
    overview/comparison.md
