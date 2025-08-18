@@ -47,9 +47,6 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "previous_tag=$PREVIOUS_TAG" >> $GITHUB_OUTPUT
 
-          # Update version.json
-          echo "{\"version\": \"$VERSION\"}" > version.json
-
           # Initialize changelog if it doesn't exist
           if [ ! -f docs/reference/changelog.md ]; then
             mkdir -p docs/reference
@@ -157,11 +154,10 @@ jobs:
 
       - name: Commit and push changes
         run: |
-          git add docs/reference/changelog.md version.json
+          git add docs/reference/changelog.md
           git commit -m "chore(release): ${{ steps.changelog.outputs.current_tag }} [skip ci]
 
-          - Update changelog
-          - Bump version"
+          - Update changelog"
 
           git push origin HEAD:main
 
