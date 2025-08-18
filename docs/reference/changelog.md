@@ -1,3 +1,7 @@
+# Changelog
+
+All notable changes to godi are documented here. This project follows [Semantic Versioning](https://semver.org/) and uses [Conventional Commits](https://www.conventionalcommits.org/) for automatic versioning.
+
 ## [1.6.1](https://github.com/junioryono/godi/compare/v4.0.0...v1.6.1) (2025-08-18)
 
 ## [4.0.0](https://github.com/junioryono/godi/compare/v3.0.1...v4.0.0) (2025-08-18)
