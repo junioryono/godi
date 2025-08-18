@@ -3,8 +3,65 @@
 All notable changes to godi are documented here. This project follows [Semantic Versioning](https://semver.org/) and uses [Conventional Commits](https://www.conventionalcommits.org/) for automatic versioning.
 
 
-## [4.0.0](https://github.com/junioryono/godi/compare/v3.0.1...v4.0.0) (2025-08-18)
+## [4.0.0](https://github.com/junioryono/godi/compare/v3.0.0...v4.0.0) (2025-08-18)
 
+
+### ⚠ BREAKING CHANGES
+
+* Module path updated from v3 to v4
+* Complete architectural refactor of the dependency injection system
+* Service registration now happens through Collection interface instead of ServiceProvider
+* Provider interface is now immutable after build
+* Scope extends Provider interface for unified API
+* Removed Decorator functionality
+* Changed HasService to Contains and HasKeyedService to ContainsKeyed
+* Transient services can no longer depend on scoped services
+
+Migration Guide:
+- Update import paths to use `/v4`
+- Replace ServiceProvider with Collection for service registration
+- Use Collection.Build() to create an immutable Provider
+- Update all resolution calls to use Provider interface
+- Replace HasService/HasKeyedService calls with Contains/ContainsKeyed
+
+### Features
+
+* refactor entire DI system with new Collection and Provider architecture
+* add immutable Provider pattern with build-time validation
+* implement new reflection system for improved performance
+* add support for instance registration without constructors
+* allow multiple return values from constructors
+* add comprehensive error wrapping and typed errors
+* implement dependency graph with cycle detection
+* add newScope method for scope creation
+* register internal services when building collection
+
+
+### Bug Fixes
+
+* do not allow transient instances to depend on scoped instances
+* fix not being able to get scope from context
+* cache instances that do not have a constructor
+* fix lifetime tests and validation
+* fix security issues in dependency resolution
+* fix graph dependency resolution issues
+* fix scope context test
+* fix all tests after refactoring
+
+
+### Performance Improvements
+
+* refactor reflection system for better performance
+* refactor instance caching mechanisms
+
+
+### Code Refactoring
+
+* rename HasService to Contains and HasKeyedService to ContainsKeyed
+* remove decorator functionality
+* clean up createInstance method
+* restructure error handling with typed errors
+* update to v4 module path
 
 ## [3.0.0](https://github.com/junioryono/godi/compare/v2.1.0...v3.0.0) (2025-07-28)
 
