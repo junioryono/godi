@@ -73,6 +73,8 @@ jobs:
           create-summary: "true"
           skip-commit: "false"
           skip-tag: "true"
+          skip-bump: "true"
+          fallback-version: "${{ steps.tag_info.outputs.version }}"
 
       - name: Fix changelog and commit
         if: steps.changelog.outputs.skipped == 'false'
