@@ -30,7 +30,6 @@ jobs:
         with:
           go-version: 1.25.x
 
-      # Configure git to use GitHub Actions bot
       - name: Configure Git
         run: |
           git config user.name 'github-actions[bot]'
@@ -39,23 +38,27 @@ jobs:
       - name: Check for conventional commits
         id: check_commits
         run: |
-          # Get commits since last tag
-          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          # Get the tag that triggered this workflow
+          CURRENT_TAG=${GITHUB_REF#refs/tags/}
+          echo "Current tag: $CURRENT_TAG"
+
+          # Get the previous tag (excluding the current one)
+          LAST_TAG=$(git describe --tags --abbrev=0 ${CURRENT_TAG}^ 2>/dev/null || echo "")
 
           if [ -z "$LAST_TAG" ]; then
-              echo "No previous tag found, checking all commits"
-              COMMITS=$(git log --pretty=format:"%s")
+              echo "No previous tag found, checking all commits up to $CURRENT_TAG"
+              COMMITS=$(git log ${CURRENT_TAG} --pretty=format:"%s")
           else
-              echo "Checking commits since $LAST_TAG"
-              COMMITS=$(git log ${LAST_TAG}..HEAD --pretty=format:"%s")
+              echo "Checking commits from $LAST_TAG to $CURRENT_TAG"
+              COMMITS=$(git log ${LAST_TAG}..${CURRENT_TAG} --pretty=format:"%s")
           fi
 
           # Check if any commits are releasable (feat, fix, or breaking change)
           RELEASABLE=false
           while IFS= read -r commit; do
               if [[ "$commit" =~ ^(feat|fix)(\(.+\))?!?:|BREAKING\ CHANGE: ]] || [[ "$commit" =~ ^[a-z]+(\(.+\))?!: ]]; then
-              RELEASABLE=true
-              break
+                  RELEASABLE=true
+                  break
               fi
           done <<< "$COMMITS"
 
@@ -73,7 +76,6 @@ jobs:
           github-token: ${{ secrets.RELEASE_TOKEN }}
           git-message: |
             chore(release): {tag} [skip ci]
-
             - Update changelog
             - Bump version
           preset: "conventionalcommits"
@@ -85,7 +87,7 @@ jobs:
           skip-version-file: "false"
           skip-git-pull: "false"
           create-summary: "true"
-          skip-commit: "true"
+          skip-commit: "false"
           skip-tag: "true"
 
       - name: Fix changelog and commit
