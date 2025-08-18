@@ -35,42 +35,26 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
 
-      - name: Check for conventional commits
-        id: check_commits
+      - name: Get tag info
+        id: tag_info
         run: |
           # Get the tag that triggered this workflow
           CURRENT_TAG=${GITHUB_REF#refs/tags/}
           echo "Current tag: $CURRENT_TAG"
+          echo "current_tag=$CURRENT_TAG" >> $GITHUB_OUTPUT
 
           # Get the previous tag (excluding the current one)
           LAST_TAG=$(git describe --tags --abbrev=0 ${CURRENT_TAG}^ 2>/dev/null || echo "")
+          echo "previous_tag=$LAST_TAG" >> $GITHUB_OUTPUT
 
           if [ -z "$LAST_TAG" ]; then
-              echo "No previous tag found, checking all commits up to $CURRENT_TAG"
-              COMMITS=$(git log ${CURRENT_TAG} --pretty=format:"%s")
+              echo "No previous tag found"
           else
-              echo "Checking commits from $LAST_TAG to $CURRENT_TAG"
-              COMMITS=$(git log ${LAST_TAG}..${CURRENT_TAG} --pretty=format:"%s")
-          fi
-
-          # Check if any commits are releasable (feat, fix, or breaking change)
-          RELEASABLE=false
-          while IFS= read -r commit; do
-              if [[ "$commit" =~ ^(feat|fix)(\(.+\))?!?:|BREAKING\ CHANGE: ]] || [[ "$commit" =~ ^[a-z]+(\(.+\))?!: ]]; then
-                  RELEASABLE=true
-                  break
-              fi
-          done <<< "$COMMITS"
-
-          echo "releasable=$RELEASABLE" >> $GITHUB_OUTPUT
-
-          if [ "$RELEASABLE" = "false" ]; then
-              echo "No releasable changes found. Skipping release."
+              echo "Previous tag: $LAST_TAG"
           fi
 
       - name: Conventional Changelog Action
         id: changelog
-        if: steps.check_commits.outputs.releasable == 'true'
         uses: TriPSs/conventional-changelog-action@v6.0.0
         with:
           github-token: ${{ secrets.RELEASE_TOKEN }}
@@ -83,7 +67,7 @@ jobs:
           release-count: 0
           output-file: "docs/reference/changelog.md"
           version-file: "version.json"
-          skip-on-empty: "true"
+          skip-on-empty: "false" # Changed to false - always generate
           skip-version-file: "false"
           skip-git-pull: "false"
           create-summary: "true"
@@ -91,9 +75,7 @@ jobs:
           skip-tag: "true"
 
       - name: Fix changelog and commit
-        if: |
-          steps.check_commits.outputs.releasable == 'true' && 
-          steps.changelog.outputs.skipped == 'false'
+        if: steps.changelog.outputs.skipped == 'false'
         run: |
           # Add main heading if it doesn't exist
           if ! grep -q "^# Changelog" docs/reference/changelog.md; then
@@ -117,25 +99,18 @@ jobs:
           - Update changelog
           - Bump version"
 
-          # Create and push tag
-          git tag ${{ steps.changelog.outputs.tag }}
-          git push origin HEAD:main --tags
+          # Push changes
+          git push origin HEAD:main
 
       - name: Create Release
-        if: |
-          steps.check_commits.outputs.releasable == 'true' && 
-          steps.changelog.outputs.skipped == 'false'
         uses: ncipollo/release-action@v1
         with:
-          tag: ${{ steps.changelog.outputs.tag }}
-          name: ${{ steps.changelog.outputs.tag }}
+          tag: ${{ steps.tag_info.outputs.current_tag }}
+          name: ${{ steps.tag_info.outputs.current_tag }}
           body: ${{ steps.changelog.outputs.clean_changelog }}
           token: ${{ secrets.RELEASE_TOKEN }}
 
       - name: Create release branch
-        if: |
-          steps.check_commits.outputs.releasable == 'true' && 
-          steps.changelog.outputs.skipped == 'false'
         run: |
-          git checkout -b release/${{ steps.changelog.outputs.tag }}
-          git push origin release/${{ steps.changelog.outputs.tag }}
+          git checkout -b release/${{ steps.tag_info.outputs.current_tag }}
+          git push origin release/${{ steps.tag_info.outputs.current_tag }}
