@@ -35,83 +35,142 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
 
-      - name: Get tag info
-        id: tag_info
-        run: |
-          # Get the tag that triggered this workflow
-          CURRENT_TAG=${GITHUB_REF#refs/tags/}
-          echo "Current tag: $CURRENT_TAG"
-          echo "current_tag=$CURRENT_TAG" >> $GITHUB_OUTPUT
-
-          # Get the previous tag (excluding the current one)
-          LAST_TAG=$(git describe --tags --abbrev=0 ${CURRENT_TAG}^ 2>/dev/null || echo "")
-          echo "previous_tag=$LAST_TAG" >> $GITHUB_OUTPUT
-
-          if [ -z "$LAST_TAG" ]; then
-              echo "No previous tag found"
-          else
-              echo "Previous tag: $LAST_TAG"
-          fi
-
-      - name: Conventional Changelog Action
+      - name: Generate Changelog and Update Version
         id: changelog
-        uses: TriPSs/conventional-changelog-action@v6.0.0
-        with:
-          github-token: ${{ secrets.RELEASE_TOKEN }}
-          git-message: |
-            chore(release): {tag} [skip ci]
-            - Update changelog
-            - Bump version
-          preset: "conventionalcommits"
-          tag-prefix: "v"
-          release-count: 0
-          output-file: "docs/reference/changelog.md"
-          skip-on-empty: "false"
-          skip-version-file: "false"
-          skip-git-pull: "true"
-          create-summary: "true"
-          skip-commit: "false"
-          skip-tag: "true"
-          skip-bump: "true"
-          fallback-version: "${{ steps.tag_info.outputs.version }}"
-
-      - name: Fix changelog and commit
-        if: steps.changelog.outputs.skipped == 'false'
         run: |
-          # Add main heading if it doesn't exist
-          if ! grep -q "^# Changelog" docs/reference/changelog.md; then
-              {
-              echo "# Changelog"
-              echo ""
-              echo "All notable changes to godi are documented here. This project follows [Semantic Versioning](https://semver.org/) and uses [Conventional Commits](https://www.conventionalcommits.org/) for automatic versioning."
-              echo ""
-              cat docs/reference/changelog.md
-              } > docs/reference/changelog.md.tmp
-              mv docs/reference/changelog.md.tmp docs/reference/changelog.md
+          # Get current and previous tags
+          CURRENT_TAG=${GITHUB_REF#refs/tags/}
+          VERSION=${CURRENT_TAG#v}
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 ${CURRENT_TAG}^ 2>/dev/null || echo "")
+
+          echo "current_tag=$CURRENT_TAG" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "previous_tag=$PREVIOUS_TAG" >> $GITHUB_OUTPUT
+
+          # Update version.json
+          echo "{\"version\": \"$VERSION\"}" > version.json
+
+          # Initialize changelog if it doesn't exist
+          if [ ! -f docs/reference/changelog.md ]; then
+            mkdir -p docs/reference
+            echo "# Changelog" > docs/reference/changelog.md
+            echo "" >> docs/reference/changelog.md
+            echo "All notable changes to godi are documented here. This project follows [Semantic Versioning](https://semver.org/) and uses [Conventional Commits](https://www.conventionalcommits.org/) for automatic versioning." >> docs/reference/changelog.md
+            echo "" >> docs/reference/changelog.md
           fi
 
-          # Replace h1 version headers with h2
-          sed -i 's/^# \[\([0-9]\)/## [\1/g' docs/reference/changelog.md
+          # Create new changelog entry
+          NEW_ENTRY="docs/reference/new_entry.md"
+          echo "## [$VERSION](https://github.com/junioryono/godi/compare/$PREVIOUS_TAG...$CURRENT_TAG) ($(date +%Y-%m-%d))" > $NEW_ENTRY
+          echo "" >> $NEW_ENTRY
+          echo "" >> $NEW_ENTRY
 
-          # Commit all changes
+          # Collect commits by type
+          if [ -n "$PREVIOUS_TAG" ]; then
+            COMMITS=$(git log $PREVIOUS_TAG..$CURRENT_TAG --pretty=format:"%s|%h")
+          else
+            COMMITS=$(git log $CURRENT_TAG --pretty=format:"%s|%h")
+          fi
+
+          # Parse breaking changes
+          BREAKING=""
+          while IFS='|' read -r msg hash; do
+            if [[ "$msg" =~ ^[a-z]+(\(.+\))?!: ]] || [[ "$msg" =~ BREAKING.CHANGE ]]; then
+              # Extract the actual message after the type
+              CLEAN_MSG=$(echo "$msg" | sed -E 's/^[a-z]+(\(.+\))?!?: ?//')
+              BREAKING="${BREAKING}* ${CLEAN_MSG}\n"
+            fi
+          done <<< "$COMMITS"
+
+          if [ -n "$BREAKING" ]; then
+            echo "### ⚠ BREAKING CHANGES" >> $NEW_ENTRY
+            echo "" >> $NEW_ENTRY
+            echo -e "$BREAKING" >> $NEW_ENTRY
+            echo "" >> $NEW_ENTRY
+          fi
+
+          # Parse features
+          FEATURES=""
+          while IFS='|' read -r msg hash; do
+            if [[ "$msg" =~ ^feat(\(.+\))?: ]]; then
+              # Extract scope and message
+              if [[ "$msg" =~ ^feat\(([^)]+)\):\ (.+) ]]; then
+                SCOPE="${BASH_REMATCH[1]}"
+                CLEAN_MSG="${BASH_REMATCH[2]}"
+                FEATURES="${FEATURES}* **${SCOPE}:** ${CLEAN_MSG} ([${hash}](https://github.com/junioryono/godi/commit/${hash}))\n"
+              elif [[ "$msg" =~ ^feat:\ (.+) ]]; then
+                CLEAN_MSG="${BASH_REMATCH[1]}"
+                FEATURES="${FEATURES}* ${CLEAN_MSG} ([${hash}](https://github.com/junioryono/godi/commit/${hash}))\n"
+              fi
+            fi
+          done <<< "$COMMITS"
+
+          if [ -n "$FEATURES" ]; then
+            echo "### Features" >> $NEW_ENTRY
+            echo "" >> $NEW_ENTRY
+            echo -e "$FEATURES" >> $NEW_ENTRY
+            echo "" >> $NEW_ENTRY
+          fi
+
+          # Parse bug fixes
+          FIXES=""
+          while IFS='|' read -r msg hash; do
+            if [[ "$msg" =~ ^fix(\(.+\))?: ]]; then
+              # Extract scope and message
+              if [[ "$msg" =~ ^fix\(([^)]+)\):\ (.+) ]]; then
+                SCOPE="${BASH_REMATCH[1]}"
+                CLEAN_MSG="${BASH_REMATCH[2]}"
+                FIXES="${FIXES}* **${SCOPE}:** ${CLEAN_MSG} ([${hash}](https://github.com/junioryono/godi/commit/${hash}))\n"
+              elif [[ "$msg" =~ ^fix:\ (.+) ]]; then
+                CLEAN_MSG="${BASH_REMATCH[1]}"
+                FIXES="${FIXES}* ${CLEAN_MSG} ([${hash}](https://github.com/junioryono/godi/commit/${hash}))\n"
+              fi
+            fi
+          done <<< "$COMMITS"
+
+          if [ -n "$FIXES" ]; then
+            echo "### Bug Fixes" >> $NEW_ENTRY
+            echo "" >> $NEW_ENTRY
+            echo -e "$FIXES" >> $NEW_ENTRY
+          fi
+
+          # Merge new entry with existing changelog
+          # Keep the header (first 4 lines)
+          head -n 4 docs/reference/changelog.md > docs/reference/changelog_new.md
+          echo "" >> docs/reference/changelog_new.md
+          cat $NEW_ENTRY >> docs/reference/changelog_new.md
+          # Add the rest of the old changelog (skip the first 4 lines)
+          tail -n +5 docs/reference/changelog.md >> docs/reference/changelog_new.md
+
+          mv docs/reference/changelog_new.md docs/reference/changelog.md
+          rm $NEW_ENTRY
+
+          # Create release notes for GitHub release
+          if [ -n "$PREVIOUS_TAG" ]; then
+            git log $PREVIOUS_TAG..$CURRENT_TAG --pretty=format:"* %s" > release_notes.md
+          else
+            git log $CURRENT_TAG --pretty=format:"* %s" > release_notes.md
+          fi
+
+      - name: Commit and push changes
+        run: |
           git add docs/reference/changelog.md version.json
-          git commit -m "chore(release): ${{ steps.changelog.outputs.tag }} [skip ci]
+          git commit -m "chore(release): ${{ steps.changelog.outputs.current_tag }} [skip ci]
 
           - Update changelog
           - Bump version"
 
-          # Push changes
           git push origin HEAD:main
 
       - name: Create Release
         uses: ncipollo/release-action@v1
         with:
-          tag: ${{ steps.tag_info.outputs.current_tag }}
-          name: ${{ steps.tag_info.outputs.current_tag }}
-          body: ${{ steps.changelog.outputs.clean_changelog }}
+          tag: ${{ steps.changelog.outputs.current_tag }}
+          name: ${{ steps.changelog.outputs.current_tag }}
+          bodyFile: release_notes.md
           token: ${{ secrets.RELEASE_TOKEN }}
 
       - name: Create release branch
         run: |
-          git checkout -b release/${{ steps.tag_info.outputs.current_tag }}
-          git push origin release/${{ steps.tag_info.outputs.current_tag }}
+          git checkout -b release/${{ steps.changelog.outputs.current_tag }}
+          git push origin release/${{ steps.changelog.outputs.current_tag }}
