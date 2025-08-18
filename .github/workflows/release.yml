@@ -66,7 +66,6 @@ jobs:
           tag-prefix: "v"
           release-count: 0
           output-file: "docs/reference/changelog.md"
-          version-file: "version.json"
           skip-on-empty: "false"
           skip-version-file: "false"
           skip-git-pull: "true"
