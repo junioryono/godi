@@ -67,9 +67,9 @@ jobs:
           release-count: 0
           output-file: "docs/reference/changelog.md"
           version-file: "version.json"
-          skip-on-empty: "false" # Changed to false - always generate
+          skip-on-empty: "false"
           skip-version-file: "false"
-          skip-git-pull: "false"
+          skip-git-pull: "true"
           create-summary: "true"
           skip-commit: "false"
           skip-tag: "true"
