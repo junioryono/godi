@@ -75,9 +75,10 @@ jobs:
           # Parse breaking changes
           BREAKING=""
           while IFS='|' read -r msg hash; do
-            if [[ "$msg" =~ ^[a-z]+(\(.+\))?!: ]] || [[ "$msg" =~ BREAKING.CHANGE ]]; then
+            # Check for breaking changes (commits with ! or BREAKING CHANGE)
+            if echo "$msg" | grep -qE '^[a-z]+(\([^)]+\))?!:' || echo "$msg" | grep -q 'BREAKING.CHANGE'; then
               # Extract the actual message after the type
-              CLEAN_MSG=$(echo "$msg" | sed -E 's/^[a-z]+(\(.+\))?!?: ?//')
+              CLEAN_MSG=$(echo "$msg" | sed -E 's/^[a-z]+(\([^)]+\))?!?: ?//')
               BREAKING="${BREAKING}* ${CLEAN_MSG}\n"
             fi
           done <<< "$COMMITS"
@@ -92,14 +93,15 @@ jobs:
           # Parse features
           FEATURES=""
           while IFS='|' read -r msg hash; do
-            if [[ "$msg" =~ ^feat(\(.+\))?: ]]; then
+            # Check for feature commits
+            if echo "$msg" | grep -qE '^feat(\([^)]+\))?:'; then
               # Extract scope and message
-              if [[ "$msg" =~ ^feat\(([^)]+)\):\ (.+) ]]; then
-                SCOPE="${BASH_REMATCH[1]}"
-                CLEAN_MSG="${BASH_REMATCH[2]}"
+              if echo "$msg" | grep -qE '^feat\([^)]+\):'; then
+                SCOPE=$(echo "$msg" | sed -E 's/^feat\(([^)]+)\):.*/\1/')
+                CLEAN_MSG=$(echo "$msg" | sed -E 's/^feat\([^)]+\): ?//')
                 FEATURES="${FEATURES}* **${SCOPE}:** ${CLEAN_MSG} ([${hash}](https://github.com/junioryono/godi/commit/${hash}))\n"
-              elif [[ "$msg" =~ ^feat:\ (.+) ]]; then
-                CLEAN_MSG="${BASH_REMATCH[1]}"
+              else
+                CLEAN_MSG=$(echo "$msg" | sed -E 's/^feat: ?//')
                 FEATURES="${FEATURES}* ${CLEAN_MSG} ([${hash}](https://github.com/junioryono/godi/commit/${hash}))\n"
               fi
             fi
@@ -115,14 +117,15 @@ jobs:
           # Parse bug fixes
           FIXES=""
           while IFS='|' read -r msg hash; do
-            if [[ "$msg" =~ ^fix(\(.+\))?: ]]; then
+            # Check for fix commits
+            if echo "$msg" | grep -qE '^fix(\([^)]+\))?:'; then
               # Extract scope and message
-              if [[ "$msg" =~ ^fix\(([^)]+)\):\ (.+) ]]; then
-                SCOPE="${BASH_REMATCH[1]}"
-                CLEAN_MSG="${BASH_REMATCH[2]}"
+              if echo "$msg" | grep -qE '^fix\([^)]+\):'; then
+                SCOPE=$(echo "$msg" | sed -E 's/^fix\(([^)]+)\):.*/\1/')
+                CLEAN_MSG=$(echo "$msg" | sed -E 's/^fix\([^)]+\): ?//')
                 FIXES="${FIXES}* **${SCOPE}:** ${CLEAN_MSG} ([${hash}](https://github.com/junioryono/godi/commit/${hash}))\n"
-              elif [[ "$msg" =~ ^fix:\ (.+) ]]; then
-                CLEAN_MSG="${BASH_REMATCH[1]}"
+              else
+                CLEAN_MSG=$(echo "$msg" | sed -E 's/^fix: ?//')
                 FIXES="${FIXES}* ${CLEAN_MSG} ([${hash}](https://github.com/junioryono/godi/commit/${hash}))\n"
               fi
             fi
