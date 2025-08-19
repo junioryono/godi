@@ -38,7 +38,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest' && matrix.go == '1.21'
         uses: codecov/codecov-action@v5
         with:
-          file: ./coverage.txt
+          files: ./coverage.txt
           flags: unittests
           name: codecov-umbrella
           fail_ci_if_error: false
@@ -58,7 +58,7 @@ jobs:
           cache: true
 
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v8
         with:
           version: latest
 
