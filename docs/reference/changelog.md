@@ -3,6 +3,14 @@
 All notable changes to godi are documented here. This project follows [Semantic Versioning](https://semver.org/) and uses [Conventional Commits](https://www.conventionalcommits.org/) for automatic versioning.
 
 
+## [4.0.1](https://github.com/junioryono/godi/compare/v4.0.0...v4.0.1) (2025-08-19)
+
+
+### Bug Fixes
+
+* ensure transient disposable services are disposed on scope close ([d002fb2](https://github.com/junioryono/godi/commit/d002fb2))
+
+
 ## [4.0.0](https://github.com/junioryono/godi/compare/v3.0.0...v4.0.0) (2025-08-18)
 
 
