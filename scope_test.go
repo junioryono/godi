@@ -355,7 +355,32 @@ func TestNestedScopes(t *testing.T) {
 
 // Test Scope Close
 func TestScopeClose(t *testing.T) {
-	t.Run("close scope with disposable services", func(t *testing.T) {
+	t.Run("close scope with disposable singleton service", func(t *testing.T) {
+		collection := NewCollection()
+		err := collection.AddSingleton(NewDisposableTestService)
+		require.NoError(t, err)
+
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		scope, err := provider.CreateScope(context.Background())
+		require.NoError(t, err)
+
+		service, err := scope.Get(reflect.TypeOf((*DisposableTestService)(nil)))
+		require.NoError(t, err)
+		disposable := service.(*DisposableTestService)
+		assert.False(t, disposable.Closed)
+
+		// Close scope
+		err = scope.Close()
+		assert.NoError(t, err)
+
+		// Disposable should not be closed because it's a singleton
+		assert.False(t, disposable.Closed)
+	})
+
+	t.Run("close scope with disposable scoped service", func(t *testing.T) {
 		collection := NewCollection()
 		err := collection.AddScoped(NewDisposableTestService)
 		require.NoError(t, err)
@@ -378,6 +403,37 @@ func TestScopeClose(t *testing.T) {
 
 		// Disposable should be closed
 		assert.True(t, disposable.Closed)
+	})
+
+	t.Run("close scope with disposable transient service", func(t *testing.T) {
+		collection := NewCollection()
+		err := collection.AddTransient(NewDisposableTestService)
+		require.NoError(t, err)
+
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		scope, err := provider.CreateScope(context.Background())
+		require.NoError(t, err)
+
+		service1, err := scope.Get(reflect.TypeOf((*DisposableTestService)(nil)))
+		require.NoError(t, err)
+		disposable1 := service1.(*DisposableTestService)
+		assert.False(t, disposable1.Closed)
+
+		service2, err := scope.Get(reflect.TypeOf((*DisposableTestService)(nil)))
+		require.NoError(t, err)
+		assert.NotSame(t, service1, service2)
+		disposable2 := service2.(*DisposableTestService)
+
+		// Close scope
+		err = scope.Close()
+		assert.NoError(t, err)
+
+		// Disposable should be closed
+		assert.True(t, disposable1.Closed)
+		assert.True(t, disposable2.Closed)
 	})
 
 	t.Run("close scope multiple times", func(t *testing.T) {
