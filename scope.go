@@ -272,16 +272,21 @@ func (s *scope) getInstance(key instanceKey) (any, bool) {
 // setInstance caches an instance in this scope in a thread-safe manner.
 // It also tracks the instance if it implements the Disposable interface
 // for proper cleanup when the scope is closed.
-func (s *scope) setInstance(key instanceKey, instance any) {
-	s.instancesMu.Lock()
-	s.instances[key] = instance
-	s.instancesMu.Unlock()
-
-	// Track if disposable
-	if d, ok := instance.(Disposable); ok {
-		s.disposablesMu.Lock()
-		s.disposables = append(s.disposables, d)
-		s.disposablesMu.Unlock()
+func (s *scope) setInstance(descriptor *Descriptor, key instanceKey, instance any) {
+	switch descriptor.Lifetime {
+	case Singleton:
+		s.rootProvider.setSingleton(key, instance)
+	case Scoped:
+		s.instancesMu.Lock()
+		s.instances[key] = instance
+		s.instancesMu.Unlock()
+		fallthrough
+	case Transient:
+		if d, ok := instance.(Disposable); ok {
+			s.disposablesMu.Lock()
+			s.disposables = append(s.disposables, d)
+			s.disposablesMu.Unlock()
+		}
 	}
 }
 
@@ -384,14 +389,7 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 			Group: descriptor.Group,
 		}
 
-		// Cache the instance based on lifetime
-		switch descriptor.Lifetime {
-		case Singleton:
-			s.rootProvider.setSingleton(key, instance)
-		case Scoped:
-			s.setInstance(key, instance)
-		}
-
+		s.setInstance(descriptor, key, instance)
 		return instance, nil
 	}
 
@@ -463,13 +461,7 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 				Group: reg.Group,
 			}
 
-			// Store based on lifetime
-			switch regDescriptor.Lifetime {
-			case Singleton:
-				s.rootProvider.setSingleton(key, value)
-			case Scoped:
-				s.setInstance(key, value)
-			}
+			s.setInstance(regDescriptor, key, value)
 		}
 
 		if primaryService == nil {
@@ -507,13 +499,7 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 				Group: serviceDescriptor.Group,
 			}
 
-			// Save based on lifetime
-			switch serviceDescriptor.Lifetime {
-			case Singleton:
-				s.rootProvider.setSingleton(key, value)
-			case Scoped:
-				s.setInstance(key, value)
-			}
+			s.setInstance(serviceDescriptor, key, value)
 		}
 
 		return results[descriptor.MultiReturnIndex].Interface(), nil
@@ -533,14 +519,7 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 		Group: descriptor.Group,
 	}
 
-	// Cache the instance based on lifetime
-	switch descriptor.Lifetime {
-	case Singleton:
-		s.rootProvider.setSingleton(key, instance)
-	case Scoped:
-		s.setInstance(key, instance)
-	}
-
+	s.setInstance(descriptor, key, instance)
 	return instance, nil
 }
 
