@@ -1,80 +1,77 @@
+version: "2"
 run:
-  timeout: 5m
-  go: "1.24.3"
-
+  go: 1.25.0
 linters:
   enable:
-    - gofmt
-    - govet
-    - errcheck
-    - staticcheck
-    - unused
-    - gosimple
-    - ineffassign
-    - typecheck
+    - copyloopvar
     - gocritic
     - gocyclo
-    - copyloopvar
   disable:
     - exhaustive
-    - nestif
     - gochecknoglobals
     - gochecknoinits
-
-linters-settings:
-  funlen:
-    lines: 100
-    statements: 50
-  govet:
-    enable:
-      - shadow
-  gocyclo:
-    min-complexity: 30
-  gocritic:
-    enabled-tags:
-      - diagnostic
-      - experimental
-      - opinionated
-      - performance
-      - style
-  gomodguard:
-    blocked:
-      modules:
-        - github.com/pkg/errors:
-            recommendations:
-              - errors
-              - fmt
-            reason: "use standard library errors package"
-
+    - nestif
+  settings:
+    funlen:
+      lines: 100
+      statements: 50
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - experimental
+        - opinionated
+        - performance
+        - style
+    gocyclo:
+      min-complexity: 30
+    gomodguard:
+      blocked:
+        modules:
+          - github.com/pkg/errors:
+              recommendations:
+                - errors
+                - fmt
+              reason: use standard library errors package
+    govet:
+      enable:
+        - shadow
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - errcheck
+          - funlen
+          - gochecknoglobals
+          - goconst
+          - gocyclo
+          - gosec
+        path: _test\.go
+      - linters:
+          - unused
+        path: vendor/
+      - linters:
+          - unused
+        text: is unused
+        source: ^\s*\w+\s+interface\s*{
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
 issues:
-  exclude-rules:
-    # Exclude some linters from running on tests files
-    - path: _test\.go
-      linters:
-        - gocyclo
-        - errcheck
-        - gosec
-        - funlen
-        - goconst
-        - gochecknoglobals
-
-    # Exclude known issues in dig dependency
-    - path: vendor/
-      linters:
-        - typecheck
-        - unused
-
-    # Allow unused parameters in interfaces
-    - linters:
-        - unused
-      text: "is unused"
-      source: "^\\s*\\w+\\s+interface\\s*{"
-
-  # Maximum issues count per one linter. Set to 0 to disable
   max-issues-per-linter: 0
-
-  # Maximum count of issues with the same text. Set to 0 to disable
   max-same-issues: 0
-
-  # Show only new issues
   new: false
+formatters:
+  enable:
+    - gofmt
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
