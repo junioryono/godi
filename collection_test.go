@@ -772,7 +772,7 @@ func TestCollectionConcurrency(t *testing.T) {
 	require.NoError(t, err)
 
 	var wg sync.WaitGroup
-	errors := make(chan error, 100)
+	errs := make(chan error, 100)
 
 	// Concurrent adds with different keys
 	for i := 0; i < 10; i++ {
@@ -782,7 +782,7 @@ func TestCollectionConcurrency(t *testing.T) {
 			key := fmt.Sprintf("service-%d", id)
 			err := collection.AddSingleton(NewTestService, Name(key))
 			if err != nil {
-				errors <- err
+				errs <- err
 			}
 		}(i)
 	}
@@ -811,10 +811,10 @@ func TestCollectionConcurrency(t *testing.T) {
 	}
 
 	wg.Wait()
-	close(errors)
+	close(errs)
 
 	// Check for errors
-	for err := range errors {
+	for err := range errs {
 		assert.NoError(t, err)
 	}
 }

@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/junioryono/godi/v4/internal/reflection"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Test types for ResultObjectProcessor
@@ -86,29 +88,26 @@ func TestResultObjectProcessor(t *testing.T) {
 
 			registrations, err := processor.ProcessResultObject(val, typ)
 
-			if (err != nil) != tt.wantErr {
-				t.Errorf("ProcessResultObject() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-
-			if !tt.wantErr && len(registrations) != tt.wantCount {
-				t.Errorf("ProcessResultObject() returned %d registrations, want %d", len(registrations), tt.wantCount)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				assert.Len(t, registrations, tt.wantCount, "Unexpected number of registrations")
 			}
 
 			// Verify registration details for valid cases
 			if !tt.wantErr && len(registrations) > 0 {
 				// Check that ignored and unexported fields are not included
 				for _, reg := range registrations {
-					if reg.Name == "Ignored" || reg.Name == "unexported" {
-						t.Errorf("Found ignored or unexported field in registrations: %s", reg.Name)
-					}
+					assert.NotEqual(t, "Ignored", reg.Name, "Ignored field should not be in registrations")
+					assert.NotEqual(t, "unexported", reg.Name, "Unexported field should not be in registrations")
 
 					// Check key and group are properly set
-					if reg.Name == "Service2" && reg.Key != "logger2" {
-						t.Errorf("Service2 should have key 'logger2', got %v", reg.Key)
+					if reg.Name == "Service2" {
+						assert.Equal(t, "logger2", reg.Key, "Service2 should have key 'logger2'")
 					}
-					if reg.Name == "Service3" && reg.Group != "databases" {
-						t.Errorf("Service3 should have group 'databases', got %s", reg.Group)
+					if reg.Name == "Service3" {
+						assert.Equal(t, "databases", reg.Group, "Service3 should have group 'databases'")
 					}
 				}
 			}
@@ -199,13 +198,10 @@ func TestConstructorInvoker(t *testing.T) {
 			},
 			wantErr: false,
 			validate: func(t *testing.T, results []reflect.Value) {
-				if len(results) != 1 {
-					t.Errorf("Expected 1 result, got %d", len(results))
-					return
-				}
-				db := results[0].Interface().(*Database)
-				if db.ConnectionString != "connection-string" {
-					t.Errorf("Expected connection string 'connection-string', got %s", db.ConnectionString)
+				assert.Len(t, results, 1, "Expected 1 result")
+				if len(results) > 0 {
+					db := results[0].Interface().(*Database)
+					assert.Equal(t, "connection-string", db.ConnectionString)
 				}
 			},
 		},
@@ -217,16 +213,11 @@ func TestConstructorInvoker(t *testing.T) {
 			},
 			wantErr: false,
 			validate: func(t *testing.T, results []reflect.Value) {
-				if len(results) != 1 {
-					t.Errorf("Expected 1 result, got %d", len(results))
-					return
-				}
-				svc := results[0].Interface().(*UserService)
-				if svc.DB != db {
-					t.Error("Database not properly injected")
-				}
-				if svc.Logger != logger {
-					t.Error("Logger not properly injected")
+				assert.Len(t, results, 1, "Expected 1 result")
+				if len(results) > 0 {
+					svc := results[0].Interface().(*UserService)
+					assert.Equal(t, db, svc.DB, "Database not properly injected")
+					assert.Equal(t, logger, svc.Logger, "Logger not properly injected")
 				}
 			},
 		},
@@ -238,12 +229,9 @@ func TestConstructorInvoker(t *testing.T) {
 			},
 			wantErr: false,
 			validate: func(t *testing.T, results []reflect.Value) {
-				if len(results) != 2 {
-					t.Errorf("Expected 2 results, got %d", len(results))
-					return
-				}
-				if !results[1].IsNil() {
-					t.Error("Expected error to be nil")
+				assert.Len(t, results, 2, "Expected 2 results")
+				if len(results) > 1 {
+					assert.True(t, results[1].IsNil(), "Expected error to be nil")
 				}
 			},
 		},
@@ -263,13 +251,10 @@ func TestConstructorInvoker(t *testing.T) {
 			},
 			wantErr: false,
 			validate: func(t *testing.T, results []reflect.Value) {
-				if len(results) != 1 {
-					t.Errorf("Expected 1 result, got %d", len(results))
-					return
-				}
-				svc := results[0].Interface().(*UserService)
-				if svc.DB == nil {
-					t.Error("Database should not be nil")
+				assert.Len(t, results, 1, "Expected 1 result")
+				if len(results) > 0 {
+					svc := results[0].Interface().(*UserService)
+					assert.NotNil(t, svc.DB, "Database should not be nil")
 				}
 			},
 		},
@@ -279,13 +264,10 @@ func TestConstructorInvoker(t *testing.T) {
 			setupResolver: func(r *TestResolver) {},
 			wantErr:       false,
 			validate: func(t *testing.T, results []reflect.Value) {
-				if len(results) != 1 {
-					t.Errorf("Expected 1 result, got %d", len(results))
-					return
-				}
-				db := results[0].Interface().(*Database)
-				if db.ConnectionString != "static" {
-					t.Errorf("Expected 'static', got %s", db.ConnectionString)
+				assert.Len(t, results, 1, "Expected 1 result")
+				if len(results) > 0 {
+					db := results[0].Interface().(*Database)
+					assert.Equal(t, "static", db.ConnectionString)
 				}
 			},
 		},
@@ -320,20 +302,18 @@ func TestConstructorInvoker(t *testing.T) {
 
 			// Analyze constructor
 			info, err := analyzer.Analyze(tt.constructor)
-			if err != nil {
-				t.Fatalf("Failed to analyze constructor: %v", err)
-			}
+			require.NoError(t, err, "Failed to analyze constructor")
 
 			// Invoke constructor
 			results, err := invoker.Invoke(info, testResolver)
 
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Invoke() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-
-			if !tt.wantErr && tt.validate != nil {
-				tt.validate(t, results)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				if tt.validate != nil {
+					tt.validate(t, results)
+				}
 			}
 		})
 	}
@@ -356,64 +336,54 @@ func TestConstructorInvoker_ResolveParameter(t *testing.T) {
 	resolver.keyedValues["backup"] = db2
 	resolver.groups["handlers"] = []any{handler1, handler2}
 
-	// Test constructor with groups
-	type GroupParams struct {
-		reflection.In
-		Handlers []func() `group:"handlers"`
-	}
+	t.Run("constructor with groups", func(t *testing.T) {
+		// Test constructor with groups
+		type GroupParams struct {
+			reflection.In
+			Handlers []func() `group:"handlers"`
+		}
 
-	constructor := func(params GroupParams) int {
-		return len(params.Handlers)
-	}
+		constructor := func(params GroupParams) int {
+			return len(params.Handlers)
+		}
 
-	info, err := analyzer.Analyze(constructor)
-	if err != nil {
-		t.Fatalf("Failed to analyze constructor: %v", err)
-	}
+		info, err := analyzer.Analyze(constructor)
+		require.NoError(t, err, "Failed to analyze constructor")
 
-	results, err := invoker.Invoke(info, resolver)
-	if err != nil {
-		t.Fatalf("Failed to invoke: %v", err)
-	}
+		results, err := invoker.Invoke(info, resolver)
+		require.NoError(t, err, "Failed to invoke")
 
-	if len(results) != 1 {
-		t.Errorf("Expected 1 result, got %d", len(results))
-	}
+		assert.Len(t, results, 1, "Expected 1 result")
+		if len(results) > 0 {
+			count := results[0].Interface().(int)
+			assert.Equal(t, 2, count, "Expected 2 handlers")
+		}
+	})
 
-	count := results[0].Interface().(int)
-	if count != 2 {
-		t.Errorf("Expected 2 handlers, got %d", count)
-	}
+	t.Run("constructor with keyed dependency", func(t *testing.T) {
+		// Test constructor with keyed dependency
+		type KeyedParams struct {
+			reflection.In
+			MainDB   *Database
+			BackupDB *Database `name:"backup"`
+		}
 
-	// Test constructor with keyed dependency
-	type KeyedParams struct {
-		reflection.In
-		MainDB   *Database
-		BackupDB *Database `name:"backup"`
-	}
+		keyedConstructor := func(params KeyedParams) bool {
+			return params.MainDB != params.BackupDB
+		}
 
-	keyedConstructor := func(params KeyedParams) bool {
-		return params.MainDB != params.BackupDB
-	}
+		info, err := analyzer.Analyze(keyedConstructor)
+		require.NoError(t, err, "Failed to analyze keyed constructor")
 
-	info2, err := analyzer.Analyze(keyedConstructor)
-	if err != nil {
-		t.Fatalf("Failed to analyze keyed constructor: %v", err)
-	}
+		results, err := invoker.Invoke(info, resolver)
+		require.NoError(t, err, "Failed to invoke keyed constructor")
 
-	results2, err := invoker.Invoke(info2, resolver)
-	if err != nil {
-		t.Fatalf("Failed to invoke keyed constructor: %v", err)
-	}
-
-	if len(results2) != 1 {
-		t.Errorf("Expected 1 result, got %d", len(results2))
-	}
-
-	different := results2[0].Interface().(bool)
-	if !different {
-		t.Error("MainDB and BackupDB should be different instances")
-	}
+		assert.Len(t, results, 1, "Expected 1 result")
+		if len(results) > 0 {
+			different := results[0].Interface().(bool)
+			assert.True(t, different, "MainDB and BackupDB should be different instances")
+		}
+	})
 }
 
 // Test edge cases in BuildParamObject
@@ -465,15 +435,13 @@ func TestParamObjectBuilder_EdgeCases(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := builder.BuildParamObject(tt.paramType, tt.resolver)
 
-			if (err != nil) != tt.wantErr {
-				t.Errorf("BuildParamObject() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-
-			if err != nil && tt.errMsg != "" {
-				if !contains(err.Error(), tt.errMsg) {
-					t.Errorf("Error message should contain %q, got %q", tt.errMsg, err.Error())
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.errMsg != "" {
+					assert.Contains(t, err.Error(), tt.errMsg)
 				}
+			} else {
+				assert.NoError(t, err)
 			}
 		})
 	}
@@ -494,34 +462,28 @@ func TestParamObjectBuilder_PointerTypes(t *testing.T) {
 		DB *Database
 	}
 
-	nonPtrType := reflect.TypeOf(NonPointerParams{})
-	val1, err := builder.BuildParamObject(nonPtrType, resolver)
-	if err != nil {
-		t.Fatalf("Failed with non-pointer type: %v", err)
-	}
+	t.Run("non-pointer type", func(t *testing.T) {
+		nonPtrType := reflect.TypeOf(NonPointerParams{})
+		val, err := builder.BuildParamObject(nonPtrType, resolver)
+		require.NoError(t, err, "Failed with non-pointer type")
 
-	if val1.Kind() == reflect.Pointer {
-		params := val1.Elem().Interface().(NonPointerParams)
-		if params.DB != db {
-			t.Error("DB not properly set in non-pointer params")
+		if val.Kind() == reflect.Pointer {
+			params := val.Elem().Interface().(NonPointerParams)
+			assert.Equal(t, db, params.DB, "DB not properly set in non-pointer params")
+		} else {
+			params := val.Interface().(NonPointerParams)
+			assert.Equal(t, db, params.DB, "DB not properly set in non-pointer params")
 		}
-	} else {
-		params := val1.Interface().(NonPointerParams)
-		if params.DB != db {
-			t.Error("DB not properly set in non-pointer params")
-		}
-	}
+	})
 
-	// Test with pointer struct type
-	ptrType := reflect.TypeOf(&NonPointerParams{})
-	val2, err := builder.BuildParamObject(ptrType, resolver)
-	if err != nil {
-		t.Fatalf("Failed with pointer type: %v", err)
-	}
+	t.Run("pointer type", func(t *testing.T) {
+		// Test with pointer struct type
+		ptrType := reflect.TypeOf(&NonPointerParams{})
+		val, err := builder.BuildParamObject(ptrType, resolver)
+		require.NoError(t, err, "Failed with pointer type")
 
-	if val2.Kind() != reflect.Pointer {
-		t.Error("Expected pointer result for pointer type")
-	}
+		assert.Equal(t, reflect.Pointer, val.Kind(), "Expected pointer result for pointer type")
+	})
 }
 
 // Test ParamObjectBuilder with more error scenarios
@@ -541,9 +503,7 @@ func TestParamObjectBuilder_MoreErrorScenarios(t *testing.T) {
 
 		paramType := reflect.TypeOf(GroupParams{})
 		_, err := builder.BuildParamObject(paramType, resolver)
-		if err == nil {
-			t.Error("Expected error when group resolution fails")
-		}
+		assert.Error(t, err, "Expected error when group resolution fails")
 	})
 
 	t.Run("Named field resolution error", func(t *testing.T) {
@@ -559,9 +519,7 @@ func TestParamObjectBuilder_MoreErrorScenarios(t *testing.T) {
 
 		paramType := reflect.TypeOf(NamedParams{})
 		_, err := builder.BuildParamObject(paramType, resolver)
-		if err == nil {
-			t.Error("Expected error when named field resolution fails")
-		}
+		assert.Error(t, err, "Expected error when named field resolution fails")
 	})
 
 	t.Run("Mixed optional and required fields", func(t *testing.T) {
@@ -580,9 +538,7 @@ func TestParamObjectBuilder_MoreErrorScenarios(t *testing.T) {
 
 		paramType := reflect.TypeOf(MixedParams{})
 		_, err := builder.BuildParamObject(paramType, failingResolver)
-		if err == nil {
-			t.Error("Expected error when required field resolution fails")
-		}
+		assert.Error(t, err, "Expected error when required field resolution fails")
 
 		// Now test with only optional fields failing
 		resolver2 := NewTestResolver()
@@ -591,20 +547,13 @@ func TestParamObjectBuilder_MoreErrorScenarios(t *testing.T) {
 		// Don't provide Logger and handlers - they're optional
 
 		result, err := builder.BuildParamObject(paramType, resolver2)
-		if err != nil {
-			t.Errorf("Should succeed when only optional fields are missing: %v", err)
-		}
+		require.NoError(t, err, "Should succeed when only optional fields are missing")
 
 		params := result.Interface().(MixedParams)
-		if params.Required1 == nil || params.Required2 == nil {
-			t.Error("Required fields should be set")
-		}
-		if params.Optional1 != nil {
-			t.Error("Optional1 should be nil when not resolved")
-		}
-		if len(params.Optional2) > 0 {
-			t.Error("Optional2 should be nil or empty when not resolved")
-		}
+		assert.NotNil(t, params.Required1, "Required1 field should be set")
+		assert.NotNil(t, params.Required2, "Required2 field should be set")
+		assert.Nil(t, params.Optional1, "Optional1 should be nil when not resolved")
+		assert.Empty(t, params.Optional2, "Optional2 should be empty when not resolved")
 	})
 }
 
@@ -622,15 +571,11 @@ func TestConstructorInvoker_MoreParamObjectEdgeCases(t *testing.T) {
 		constructor := func(params BadParams) int { return 0 }
 
 		info, err := analyzer.Analyze(constructor)
-		if err != nil {
-			t.Fatalf("Failed to analyze: %v", err)
-		}
+		require.NoError(t, err, "Failed to analyze")
 
 		resolver := NewTestResolver()
 		_, err = invoker.Invoke(info, resolver)
-		if err == nil {
-			t.Error("Expected error when building invalid param object")
-		}
+		assert.Error(t, err, "Expected error when building invalid param object")
 	})
 
 	t.Run("Regular parameters with groups", func(t *testing.T) {
@@ -666,18 +611,13 @@ func TestConstructorInvoker_MoreParamObjectEdgeCases(t *testing.T) {
 		}
 
 		results, err := invoker.Invoke(info, resolver)
-		if err != nil {
-			t.Fatalf("Failed to invoke: %v", err)
-		}
+		require.NoError(t, err, "Failed to invoke")
 
-		if len(results) != 1 {
-			t.Errorf("Expected 1 result, got %d", len(results))
-		}
-
-		// The function returns the count of handlers
-		count := results[0].Interface().(int)
-		if count != 2 {
-			t.Errorf("Expected 2 handlers, got %d", count)
+		assert.Len(t, results, 1, "Expected 1 result")
+		if len(results) > 0 {
+			// The function returns the count of handlers
+			count := results[0].Interface().(int)
+			assert.Equal(t, 2, count, "Expected 2 handlers")
 		}
 	})
 
@@ -707,13 +647,12 @@ func TestConstructorInvoker_MoreParamObjectEdgeCases(t *testing.T) {
 		resolver.keyedValues["backup"] = &Database{ConnectionString: "backup-db"}
 
 		results, err := invoker.Invoke(info, resolver)
-		if err != nil {
-			t.Fatalf("Failed to invoke: %v", err)
-		}
+		require.NoError(t, err, "Failed to invoke")
 
-		connStr := results[0].Interface().(string)
-		if connStr != "backup-db" {
-			t.Errorf("Expected 'backup-db', got %s", connStr)
+		assert.Len(t, results, 1, "Expected 1 result")
+		if len(results) > 0 {
+			connStr := results[0].Interface().(string)
+			assert.Equal(t, "backup-db", connStr)
 		}
 	})
 }
@@ -734,17 +673,12 @@ func TestResultObjectProcessor_AdditionalEdgeCases(t *testing.T) {
 		typ := reflect.TypeOf(EmbeddedOut{})
 
 		registrations, err := processor.ProcessResultObject(val, typ)
-		if err != nil {
-			t.Fatalf("ProcessResultObject failed: %v", err)
-		}
+		require.NoError(t, err, "ProcessResultObject failed")
 
 		// Should only have the Service field, not the embedded Out fields
-		if len(registrations) != 1 {
-			t.Errorf("Expected 1 registration, got %d", len(registrations))
-		}
-
-		if registrations[0].Name != "Service" {
-			t.Errorf("Expected Service field, got %s", registrations[0].Name)
+		assert.Len(t, registrations, 1, "Expected 1 registration")
+		if len(registrations) > 0 {
+			assert.Equal(t, "Service", registrations[0].Name, "Expected Service field")
 		}
 	})
 
@@ -768,22 +702,16 @@ func TestResultObjectProcessor_AdditionalEdgeCases(t *testing.T) {
 		typ := reflect.TypeOf(out)
 
 		registrations, err := processor.ProcessResultObject(val, typ)
-		if err != nil {
-			t.Fatalf("ProcessResultObject failed: %v", err)
-		}
+		require.NoError(t, err, "ProcessResultObject failed")
 
 		// Should include ValidPtr, ZeroValue, and EmptySlice (even if empty)
 		// NilPtr should be skipped
 		expectedCount := 3
-		if len(registrations) != expectedCount {
-			t.Errorf("Expected %d registrations, got %d", expectedCount, len(registrations))
-		}
+		assert.Len(t, registrations, expectedCount, "Unexpected number of registrations")
 
 		// Verify NilPtr is not included
 		for _, reg := range registrations {
-			if reg.Name == "NilPtr" {
-				t.Error("Nil pointer field should not be included in registrations")
-			}
+			assert.NotEqual(t, "NilPtr", reg.Name, "Nil pointer field should not be included in registrations")
 		}
 	})
 }

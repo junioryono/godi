@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/junioryono/godi/v4/internal/reflection"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Test types
@@ -89,111 +91,61 @@ func TestAnalyzer_SimpleConstructor(t *testing.T) {
 	analyzer := reflection.New()
 
 	info, err := analyzer.Analyze(NewDatabase)
-	if err != nil {
-		t.Fatalf("Failed to analyze constructor: %v", err)
-	}
+	require.NoError(t, err, "Failed to analyze constructor")
 
-	if !info.IsFunc {
-		t.Error("Expected IsFunc to be true")
-	}
-
-	if info.IsParamObject {
-		t.Error("Expected IsParamObject to be false")
-	}
-
-	if info.IsResultObject {
-		t.Error("Expected IsResultObject to be false")
-	}
+	assert.True(t, info.IsFunc, "Expected IsFunc to be true")
+	assert.False(t, info.IsParamObject, "Expected IsParamObject to be false")
+	assert.False(t, info.IsResultObject, "Expected IsResultObject to be false")
 
 	// Check parameters
-	if len(info.Parameters) != 1 {
-		t.Errorf("Expected 1 parameter, got %d", len(info.Parameters))
-	}
-
-	if info.Parameters[0].Type != reflect.TypeOf("") {
-		t.Error("Expected string parameter type")
-	}
+	assert.Len(t, info.Parameters, 1, "Expected 1 parameter")
+	assert.Equal(t, reflect.TypeOf(""), info.Parameters[0].Type, "Expected string parameter type")
 
 	// Check returns
-	if len(info.Returns) != 1 {
-		t.Errorf("Expected 1 return value, got %d", len(info.Returns))
-	}
-
-	if info.Returns[0].Type != reflect.TypeOf((*Database)(nil)) {
-		t.Error("Expected *Database return type")
-	}
+	assert.Len(t, info.Returns, 1, "Expected 1 return value")
+	assert.Equal(t, reflect.TypeOf((*Database)(nil)), info.Returns[0].Type, "Expected *Database return type")
 }
 
 func TestAnalyzer_ConstructorWithMultipleParams(t *testing.T) {
 	analyzer := reflection.New()
 
 	info, err := analyzer.Analyze(NewUserService)
-	if err != nil {
-		t.Fatalf("Failed to analyze constructor: %v", err)
-	}
+	require.NoError(t, err, "Failed to analyze constructor")
 
 	// Check parameters
-	if len(info.Parameters) != 2 {
-		t.Errorf("Expected 2 parameters, got %d", len(info.Parameters))
-	}
-
-	if info.Parameters[0].Type != reflect.TypeOf((*Database)(nil)) {
-		t.Error("Expected first parameter to be *Database")
-	}
-
-	if info.Parameters[1].Type != reflect.TypeOf((*Logger)(nil)).Elem() {
-		t.Error("Expected second parameter to be Logger interface")
-	}
+	assert.Len(t, info.Parameters, 2, "Expected 2 parameters")
+	assert.Equal(t, reflect.TypeOf((*Database)(nil)), info.Parameters[0].Type, "Expected first parameter to be *Database")
+	assert.Equal(t, reflect.TypeOf((*Logger)(nil)).Elem(), info.Parameters[1].Type, "Expected second parameter to be Logger interface")
 
 	// Check dependencies
 	deps, err := analyzer.GetDependencies(NewUserService)
-	if err != nil {
-		t.Fatalf("Failed to get dependencies: %v", err)
-	}
-
-	if len(deps) != 2 {
-		t.Errorf("Expected 2 dependencies, got %d", len(deps))
-	}
+	require.NoError(t, err, "Failed to get dependencies")
+	assert.Len(t, deps, 2, "Expected 2 dependencies")
 }
 
 func TestAnalyzer_ConstructorWithError(t *testing.T) {
 	analyzer := reflection.New()
 
 	info, err := analyzer.Analyze(NewUserServiceWithError)
-	if err != nil {
-		t.Fatalf("Failed to analyze constructor: %v", err)
-	}
+	require.NoError(t, err, "Failed to analyze constructor")
 
-	if !info.HasErrorReturn {
-		t.Error("Expected HasErrorReturn to be true")
-	}
+	assert.True(t, info.HasErrorReturn, "Expected HasErrorReturn to be true")
 
 	// Check returns
-	if len(info.Returns) != 2 {
-		t.Errorf("Expected 2 return values, got %d", len(info.Returns))
-	}
-
-	if !info.Returns[1].IsError {
-		t.Error("Expected second return to be error")
-	}
+	assert.Len(t, info.Returns, 2, "Expected 2 return values")
+	assert.True(t, info.Returns[1].IsError, "Expected second return to be error")
 }
 
 func TestAnalyzer_ParamObject(t *testing.T) {
 	analyzer := reflection.New()
 
 	info, err := analyzer.Analyze(NewServiceWithParams)
-	if err != nil {
-		t.Fatalf("Failed to analyze constructor with param object: %v", err)
-	}
+	require.NoError(t, err, "Failed to analyze constructor with param object")
 
-	if !info.IsParamObject {
-		t.Error("Expected IsParamObject to be true")
-	}
+	assert.True(t, info.IsParamObject, "Expected IsParamObject to be true")
 
 	// Check extracted parameters from struct fields
-	if len(info.Parameters) != 4 {
-		t.Errorf("Expected 4 parameters from struct fields, got %d", len(info.Parameters))
-	}
+	assert.Len(t, info.Parameters, 4, "Expected 4 parameters from struct fields")
 
 	// Find and check each field
 	var dbParam, loggerParam, cacheParam, handlersParam *reflection.ParameterInfo
@@ -213,57 +165,33 @@ func TestAnalyzer_ParamObject(t *testing.T) {
 	}
 
 	// Check Database field
-	if dbParam == nil {
-		t.Fatal("Database field not found")
-	}
-	if dbParam.Optional {
-		t.Error("Database should not be optional")
-	}
+	require.NotNil(t, dbParam, "Database field not found")
+	assert.False(t, dbParam.Optional, "Database should not be optional")
 
 	// Check Logger field
-	if loggerParam == nil {
-		t.Fatal("Logger field not found")
-	}
-	if !loggerParam.Optional {
-		t.Error("Logger should be optional")
-	}
+	require.NotNil(t, loggerParam, "Logger field not found")
+	assert.True(t, loggerParam.Optional, "Logger should be optional")
 
 	// Check Cache field
-	if cacheParam == nil {
-		t.Fatal("Cache field not found")
-	}
-	if cacheParam.Key != "cache" {
-		t.Errorf("Cache should have key 'cache', got %v", cacheParam.Key)
-	}
+	require.NotNil(t, cacheParam, "Cache field not found")
+	assert.Equal(t, "cache", cacheParam.Key, "Cache should have key 'cache'")
 
 	// Check Handlers field
-	if handlersParam == nil {
-		t.Fatal("Handlers field not found")
-	}
-	if handlersParam.Group != "handlers" {
-		t.Errorf("Handlers should have group 'handlers', got %s", handlersParam.Group)
-	}
-	if !handlersParam.IsSlice {
-		t.Error("Handlers should be a slice")
-	}
+	require.NotNil(t, handlersParam, "Handlers field not found")
+	assert.Equal(t, "handlers", handlersParam.Group, "Handlers should have group 'handlers'")
+	assert.True(t, handlersParam.IsSlice, "Handlers should be a slice")
 }
 
 func TestAnalyzer_ResultObject(t *testing.T) {
 	analyzer := reflection.New()
 
 	info, err := analyzer.Analyze(NewServices)
-	if err != nil {
-		t.Fatalf("Failed to analyze constructor with result object: %v", err)
-	}
+	require.NoError(t, err, "Failed to analyze constructor with result object")
 
-	if !info.IsResultObject {
-		t.Error("Expected IsResultObject to be true")
-	}
+	assert.True(t, info.IsResultObject, "Expected IsResultObject to be true")
 
 	// Check extracted returns from struct fields
-	if len(info.Returns) != 3 {
-		t.Errorf("Expected 3 returns from struct fields, got %d", len(info.Returns))
-	}
+	assert.Len(t, info.Returns, 3, "Expected 3 returns from struct fields")
 
 	// Find and check each field
 	var userSvc, adminSvc, handler *reflection.ReturnInfo
@@ -281,45 +209,26 @@ func TestAnalyzer_ResultObject(t *testing.T) {
 	}
 
 	// Check UserSvc field
-	if userSvc == nil {
-		t.Fatal("UserSvc field not found")
-	}
-	if userSvc.Key != nil {
-		t.Errorf("UserSvc should not have a key, got %v", userSvc.Key)
-	}
+	require.NotNil(t, userSvc, "UserSvc field not found")
+	assert.Nil(t, userSvc.Key, "UserSvc should not have a key")
 
 	// Check AdminSvc field
-	if adminSvc == nil {
-		t.Fatal("AdminSvc field not found")
-	}
-	if adminSvc.Key != "admin" {
-		t.Errorf("AdminSvc should have key 'admin', got %v", adminSvc.Key)
-	}
+	require.NotNil(t, adminSvc, "AdminSvc field not found")
+	assert.Equal(t, "admin", adminSvc.Key, "AdminSvc should have key 'admin'")
 
 	// Check Handler field
-	if handler == nil {
-		t.Fatal("Handler field not found")
-	}
-	if handler.Group != "handlers" {
-		t.Errorf("Handler should have group 'handlers', got %s", handler.Group)
-	}
+	require.NotNil(t, handler, "Handler field not found")
+	assert.Equal(t, "handlers", handler.Group, "Handler should have group 'handlers'")
 }
 
 func TestAnalyzer_ResultObjectWithError(t *testing.T) {
 	analyzer := reflection.New()
 
 	info, err := analyzer.Analyze(NewServicesWithError)
-	if err != nil {
-		t.Fatalf("Failed to analyze constructor: %v", err)
-	}
+	require.NoError(t, err, "Failed to analyze constructor")
 
-	if !info.IsResultObject {
-		t.Error("Expected IsResultObject to be true")
-	}
-
-	if !info.HasErrorReturn {
-		t.Error("Expected HasErrorReturn to be true")
-	}
+	assert.True(t, info.IsResultObject, "Expected IsResultObject to be true")
+	assert.True(t, info.HasErrorReturn, "Expected HasErrorReturn to be true")
 }
 
 func TestAnalyzer_NonFunction(t *testing.T) {
@@ -328,22 +237,13 @@ func TestAnalyzer_NonFunction(t *testing.T) {
 	// Analyze a non-function value
 	db := &Database{ConnectionString: "test"}
 	info, err := analyzer.Analyze(db)
-	if err != nil {
-		t.Fatalf("Failed to analyze non-function: %v", err)
-	}
+	require.NoError(t, err, "Failed to analyze non-function")
 
-	if info.IsFunc {
-		t.Error("Expected IsFunc to be false for non-function")
-	}
+	assert.False(t, info.IsFunc, "Expected IsFunc to be false for non-function")
 
 	serviceType, err := analyzer.GetServiceType(db)
-	if err != nil {
-		t.Fatalf("Failed to get service type: %v", err)
-	}
-
-	if serviceType != reflect.TypeOf(db) {
-		t.Errorf("Expected service type %v, got %v", reflect.TypeOf(db), serviceType)
-	}
+	require.NoError(t, err, "Failed to get service type")
+	assert.Equal(t, reflect.TypeOf(db), serviceType, "Expected service type to match")
 }
 
 func TestAnalyzer_GetServiceType(t *testing.T) {
@@ -380,12 +280,11 @@ func TestAnalyzer_GetServiceType(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			gotType, err := analyzer.GetServiceType(tt.constructor)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("GetServiceType() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if !tt.wantErr && gotType != tt.wantType {
-				t.Errorf("GetServiceType() = %v, want %v", gotType, tt.wantType)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.wantType, gotType)
 			}
 		})
 	}
@@ -396,13 +295,9 @@ func TestAnalyzer_GetResultTypes(t *testing.T) {
 
 	// Test result object with multiple types
 	types, err := analyzer.GetResultTypes(NewServices)
-	if err != nil {
-		t.Fatalf("Failed to get result types: %v", err)
-	}
+	require.NoError(t, err, "Failed to get result types")
 
-	if len(types) != 3 {
-		t.Errorf("Expected 3 result types, got %d", len(types))
-	}
+	assert.Len(t, types, 3, "Expected 3 result types")
 
 	// Check that UserService and func() types are included
 	hasUserService := false
@@ -417,12 +312,8 @@ func TestAnalyzer_GetResultTypes(t *testing.T) {
 		}
 	}
 
-	if !hasUserService {
-		t.Error("Expected *UserService in result types")
-	}
-	if !hasFunc {
-		t.Error("Expected func() in result types")
-	}
+	assert.True(t, hasUserService, "Expected *UserService in result types")
+	assert.True(t, hasFunc, "Expected func() in result types")
 }
 
 func TestAnalyzer_Caching(t *testing.T) {
@@ -430,40 +321,26 @@ func TestAnalyzer_Caching(t *testing.T) {
 
 	// Analyze the same constructor twice
 	info1, err := analyzer.Analyze(NewDatabase)
-	if err != nil {
-		t.Fatalf("First analysis failed: %v", err)
-	}
+	require.NoError(t, err, "First analysis failed")
 
 	info2, err := analyzer.Analyze(NewDatabase)
-	if err != nil {
-		t.Fatalf("Second analysis failed: %v", err)
-	}
+	require.NoError(t, err, "Second analysis failed")
 
 	// Should return the same cached instance
-	if info1 != info2 {
-		t.Error("Expected cached result to be returned")
-	}
+	assert.Same(t, info1, info2, "Expected cached result to be returned")
 
 	// Check cache size
-	if analyzer.CacheSize() < 1 {
-		t.Error("Cache should contain at least one entry")
-	}
+	assert.GreaterOrEqual(t, analyzer.CacheSize(), 1, "Cache should contain at least one entry")
 
 	// Clear cache and reanalyze
 	analyzer.Clear()
-	if analyzer.CacheSize() != 0 {
-		t.Error("Cache should be empty after clear")
-	}
+	assert.Equal(t, 0, analyzer.CacheSize(), "Cache should be empty after clear")
 
 	info3, err := analyzer.Analyze(NewDatabase)
-	if err != nil {
-		t.Fatalf("Third analysis failed: %v", err)
-	}
+	require.NoError(t, err, "Third analysis failed")
 
 	// Should be a different instance after cache clear
-	if info1 == info3 {
-		t.Error("Expected new analysis after cache clear")
-	}
+	assert.NotSame(t, info1, info3, "Expected new analysis after cache clear")
 }
 
 func TestValidator(t *testing.T) {
@@ -525,19 +402,16 @@ func TestValidator(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			info, err := analyzer.Analyze(tt.constructor)
-			if err != nil {
-				t.Fatalf("Analysis failed: %v", err)
-			}
+			require.NoError(t, err, "Analysis failed")
 
 			err = validator.Validate(info)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
-			}
-
-			if err != nil && tt.errContains != "" {
-				if !contains(err.Error(), tt.errContains) {
-					t.Errorf("Error should contain %q, got %q", tt.errContains, err.Error())
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.errContains != "" {
+					assert.Contains(t, err.Error(), tt.errContains)
 				}
+			} else {
+				assert.NoError(t, err)
 			}
 		})
 	}
@@ -581,17 +455,9 @@ func TestTypeFormatter(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := formatter.FormatType(tt.typ)
-			if got != tt.expected {
-				t.Errorf("FormatType() = %q, want %q", got, tt.expected)
-			}
+			assert.Equal(t, tt.expected, got)
 		})
 	}
-}
-
-// Helper function
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && s[:len(substr)] == substr ||
-		len(s) >= len(substr) && contains(s[1:], substr)
 }
 
 // Additional test types for edge cases
@@ -642,9 +508,7 @@ func TestAnalyzer_EdgeCases(t *testing.T) {
 			constructor: &Database{ConnectionString: "test"},
 			wantErr:     false,
 			validate: func(t *testing.T, info *reflection.ConstructorInfo) {
-				if info.IsFunc {
-					t.Error("Expected IsFunc to be false for non-function")
-				}
+				assert.False(t, info.IsFunc, "Expected IsFunc to be false for non-function")
 			},
 		},
 		{
@@ -652,9 +516,7 @@ func TestAnalyzer_EdgeCases(t *testing.T) {
 			constructor: func() *Database { return nil },
 			wantErr:     false,
 			validate: func(t *testing.T, info *reflection.ConstructorInfo) {
-				if len(info.Parameters) != 0 {
-					t.Errorf("Expected 0 parameters, got %d", len(info.Parameters))
-				}
+				assert.Len(t, info.Parameters, 0, "Expected 0 parameters")
 			},
 		},
 		{
@@ -662,9 +524,7 @@ func TestAnalyzer_EdgeCases(t *testing.T) {
 			constructor: func(db *Database) {},
 			wantErr:     false,
 			validate: func(t *testing.T, info *reflection.ConstructorInfo) {
-				if len(info.Returns) != 0 {
-					t.Errorf("Expected 0 returns, got %d", len(info.Returns))
-				}
+				assert.Len(t, info.Returns, 0, "Expected 0 returns")
 			},
 		},
 		{
@@ -672,12 +532,8 @@ func TestAnalyzer_EdgeCases(t *testing.T) {
 			constructor: func(dbs ...*Database) *UserService { return nil },
 			wantErr:     false,
 			validate: func(t *testing.T, info *reflection.ConstructorInfo) {
-				if len(info.Parameters) != 1 {
-					t.Errorf("Expected 1 parameter for variadic, got %d", len(info.Parameters))
-				}
-				if info.Parameters[0].Type.Kind() != reflect.Slice {
-					t.Error("Variadic parameter should be slice type")
-				}
+				assert.Len(t, info.Parameters, 1, "Expected 1 parameter for variadic")
+				assert.Equal(t, reflect.Slice, info.Parameters[0].Type.Kind(), "Variadic parameter should be slice type")
 			},
 		},
 	}
@@ -686,12 +542,13 @@ func TestAnalyzer_EdgeCases(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			info, err := analyzer.Analyze(tt.constructor)
 
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Analyze() error = %v, wantErr %v", err, tt.wantErr)
-			}
-
-			if !tt.wantErr && tt.validate != nil {
-				tt.validate(t, info)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				if tt.validate != nil {
+					tt.validate(t, info)
+				}
 			}
 		})
 	}
@@ -702,7 +559,7 @@ func TestAnalyzer_ConcurrentAnalysis(t *testing.T) {
 	analyzer := reflection.New()
 
 	var wg sync.WaitGroup
-	ers := make(chan error, 100)
+	errs := make(chan error, 100)
 
 	// Analyze the same constructor concurrently
 	for i := 0; i < 50; i++ {
@@ -712,12 +569,12 @@ func TestAnalyzer_ConcurrentAnalysis(t *testing.T) {
 
 			info, err := analyzer.Analyze(NewDatabase)
 			if err != nil {
-				ers <- err
+				errs <- err
 				return
 			}
 
 			if info == nil {
-				ers <- errors.New("info is nil")
+				errs <- errors.New("info is nil")
 			}
 		}()
 	}
@@ -739,47 +596,43 @@ func TestAnalyzer_ConcurrentAnalysis(t *testing.T) {
 
 				info, err := analyzer.Analyze(c)
 				if err != nil {
-					ers <- err
+					errs <- err
 					return
 				}
 
 				// Also get dependencies to test that path
 				_, err = analyzer.GetDependencies(c)
 				if err != nil {
-					ers <- err
+					errs <- err
 				}
 
 				// And service type
 				_, err = analyzer.GetServiceType(c)
 				if err != nil && info.IsFunc { // Non-functions might not have service type
-					ers <- err
+					errs <- err
 				}
 			}(constructor)
 		}
 	}
 
 	wg.Wait()
-	close(ers)
+	close(errs)
 
-	for err := range ers {
-		t.Errorf("Concurrent analysis error: %v", err)
+	for err := range errs {
+		assert.NoError(t, err, "Concurrent analysis error")
 	}
 
 	// Verify cache is working
 	// We have exactly 5 unique constructors being analyzed
 	expectedCacheSize := len(constructors) // 5 constructors
-	if analyzer.CacheSize() != expectedCacheSize {
-		t.Errorf("Expected cache size %d, got %d", expectedCacheSize, analyzer.CacheSize())
-	}
+	assert.Equal(t, expectedCacheSize, analyzer.CacheSize(), "Expected cache size to match")
 
 	// Additional verification: ensure NewDatabase was only cached once
 	// by checking that multiple calls return the same cached instance
 	info1, _ := analyzer.Analyze(NewDatabase)
 	info2, _ := analyzer.Analyze(NewDatabase)
 
-	if info1 != info2 {
-		t.Error("Expected same cached instance for NewDatabase")
-	}
+	assert.Same(t, info1, info2, "Expected same cached instance for NewDatabase")
 }
 
 // Test complex parameter object with all features
@@ -791,19 +644,13 @@ func TestAnalyzer_ComplexParamObject(t *testing.T) {
 	}
 
 	info, err := analyzer.Analyze(constructor)
-	if err != nil {
-		t.Fatalf("Failed to analyze complex param object: %v", err)
-	}
+	require.NoError(t, err, "Failed to analyze complex param object")
 
-	if !info.IsParamObject {
-		t.Fatal("Should detect as param object")
-	}
+	assert.True(t, info.IsParamObject, "Should detect as param object")
 
 	// Count non-ignored, exported fields
 	expectedParams := 5 // Required, Optional, Named, Grouped, Combination
-	if len(info.Parameters) != expectedParams {
-		t.Errorf("Expected %d parameters, got %d", expectedParams, len(info.Parameters))
-	}
+	assert.Len(t, info.Parameters, expectedParams, "Expected parameters count")
 
 	// Verify each field's properties
 	fieldMap := make(map[string]reflection.ParameterInfo)
@@ -812,68 +659,40 @@ func TestAnalyzer_ComplexParamObject(t *testing.T) {
 	}
 
 	// Check Required field
-	if req, ok := fieldMap["Required"]; ok {
-		if req.Optional {
-			t.Error("Required field should not be optional")
-		}
-		if req.Key != nil {
-			t.Error("Required field should not have a key")
-		}
-	} else {
-		t.Error("Required field not found")
-	}
+	req, ok := fieldMap["Required"]
+	assert.True(t, ok, "Required field not found")
+	assert.False(t, req.Optional, "Required field should not be optional")
+	assert.Nil(t, req.Key, "Required field should not have a key")
 
 	// Check Optional field
-	if opt, ok := fieldMap["Optional"]; ok {
-		if !opt.Optional {
-			t.Error("Optional field should be optional")
-		}
-	} else {
-		t.Error("Optional field not found")
-	}
+	opt, ok := fieldMap["Optional"]
+	assert.True(t, ok, "Optional field not found")
+	assert.True(t, opt.Optional, "Optional field should be optional")
 
 	// Check Named field
-	if named, ok := fieldMap["Named"]; ok {
-		if named.Key != "backup" {
-			t.Errorf("Named field should have key 'backup', got %v", named.Key)
-		}
-	} else {
-		t.Error("Named field not found")
-	}
+	named, ok := fieldMap["Named"]
+	assert.True(t, ok, "Named field not found")
+	assert.Equal(t, "backup", named.Key, "Named field should have key 'backup'")
 
 	// Check Grouped field
-	if grouped, ok := fieldMap["Grouped"]; ok {
-		if grouped.Group != "handlers" {
-			t.Errorf("Grouped field should have group 'handlers', got %s", grouped.Group)
-		}
-		if !grouped.IsSlice {
-			t.Error("Grouped field should be a slice")
-		}
-	} else {
-		t.Error("Grouped field not found")
-	}
+	grouped, ok := fieldMap["Grouped"]
+	assert.True(t, ok, "Grouped field not found")
+	assert.Equal(t, "handlers", grouped.Group, "Grouped field should have group 'handlers'")
+	assert.True(t, grouped.IsSlice, "Grouped field should be a slice")
 
 	// Check Ignored field is not present
-	if _, ok := fieldMap["Ignored"]; ok {
-		t.Error("Ignored field should not be in parameters")
-	}
+	_, ok = fieldMap["Ignored"]
+	assert.False(t, ok, "Ignored field should not be in parameters")
 
 	// Check unexported field is not present
-	if _, ok := fieldMap["unexported"]; ok {
-		t.Error("Unexported field should not be in parameters")
-	}
+	_, ok = fieldMap["unexported"]
+	assert.False(t, ok, "Unexported field should not be in parameters")
 
 	// Check Combination field
-	if combo, ok := fieldMap["Combination"]; ok {
-		if combo.Key != "special" {
-			t.Errorf("Combination field should have key 'special', got %v", combo.Key)
-		}
-		if !combo.Optional {
-			t.Error("Combination field should be optional")
-		}
-	} else {
-		t.Error("Combination field not found")
-	}
+	combo, ok := fieldMap["Combination"]
+	assert.True(t, ok, "Combination field not found")
+	assert.Equal(t, "special", combo.Key, "Combination field should have key 'special'")
+	assert.True(t, combo.Optional, "Combination field should be optional")
 }
 
 // Test multiple return types support
@@ -952,40 +771,30 @@ func TestAnalyzer_MultipleReturns(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			info, err := analyzer.Analyze(tt.constructor)
-			if err != nil {
-				t.Fatalf("Failed to analyze constructor: %v", err)
-			}
+			require.NoError(t, err, "Failed to analyze constructor")
 
 			// Check HasErrorReturn flag
-			if info.HasErrorReturn != tt.hasError {
-				t.Errorf("Expected HasErrorReturn=%v, got %v", tt.hasError, info.HasErrorReturn)
-			}
+			assert.Equal(t, tt.hasError, info.HasErrorReturn, "HasErrorReturn mismatch")
 
 			// Get result types
 			types, err := analyzer.GetResultTypes(tt.constructor)
-			if err != nil {
-				t.Fatalf("Failed to get result types: %v", err)
-			}
+			require.NoError(t, err, "Failed to get result types")
 
 			// Check number of types (excluding error)
-			if len(types) != len(tt.expectedTypes) {
-				t.Errorf("Expected %d types, got %d", len(tt.expectedTypes), len(types))
-			}
+			assert.Len(t, types, len(tt.expectedTypes), "Unexpected number of types")
 
 			// Check each type
 			for i, expectedType := range tt.expectedTypes {
-				if i < len(types) && types[i] != expectedType {
-					t.Errorf("Type %d: expected %v, got %v", i, expectedType, types[i])
+				if i < len(types) {
+					assert.Equal(t, expectedType, types[i], "Type mismatch at index %d", i)
 				}
 			}
 
 			// Verify error position if present
 			if tt.hasError && tt.errorPosition >= 0 {
+				assert.GreaterOrEqual(t, len(info.Returns), tt.errorPosition+1, "Returns slice too short")
 				if tt.errorPosition < len(info.Returns) {
-					ret := info.Returns[tt.errorPosition]
-					if !ret.IsError {
-						t.Errorf("Expected return at position %d to be error", tt.errorPosition)
-					}
+					assert.True(t, info.Returns[tt.errorPosition].IsError, "Expected error at position %d", tt.errorPosition)
 				}
 			}
 		})
@@ -1008,9 +817,7 @@ func TestParamObjectBuilder_ErrorCases(t *testing.T) {
 		reflect.TypeOf(42), // int, not struct
 		failingResolver,
 	)
-	if err == nil {
-		t.Error("Expected error for non-struct type")
-	}
+	assert.Error(t, err, "Expected error for non-struct type")
 
 	// Test with struct containing required field that fails to resolve
 	paramType := reflect.TypeOf(struct {
@@ -1019,9 +826,7 @@ func TestParamObjectBuilder_ErrorCases(t *testing.T) {
 	}{})
 
 	_, err = builder.BuildParamObject(paramType, failingResolver)
-	if err == nil {
-		t.Error("Expected error for failed required dependency")
-	}
+	assert.Error(t, err, "Expected error for failed required dependency")
 
 	// Test with optional field that fails to resolve (should succeed)
 	optionalType := reflect.TypeOf(struct {
@@ -1030,9 +835,7 @@ func TestParamObjectBuilder_ErrorCases(t *testing.T) {
 	}{})
 
 	_, err = builder.BuildParamObject(optionalType, failingResolver)
-	if err != nil {
-		t.Errorf("Should succeed with failed optional dependency: %v", err)
-	}
+	assert.NoError(t, err, "Should succeed with failed optional dependency")
 }
 
 // Test TypeFormatter with complex types
@@ -1089,9 +892,7 @@ func TestTypeFormatter_ComplexTypes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := formatter.FormatType(tt.typ)
-			if result != tt.expected {
-				t.Errorf("FormatType() = %q, want %q", result, tt.expected)
-			}
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }
@@ -1111,29 +912,19 @@ func TestAnalyzer_DifferentFunctionsWithSameSignature(t *testing.T) {
 
 	// Analyze both constructors
 	info1, err := analyzer.Analyze(constructor1)
-	if err != nil {
-		t.Fatalf("Failed to analyze constructor1: %v", err)
-	}
+	require.NoError(t, err, "Failed to analyze constructor1")
 
 	info2, err := analyzer.Analyze(constructor2)
-	if err != nil {
-		t.Fatalf("Failed to analyze constructor2: %v", err)
-	}
+	require.NoError(t, err, "Failed to analyze constructor2")
 
 	// They should have the same type but different values
-	if info1.Type != info2.Type {
-		t.Error("Expected same type for both constructors")
-	}
+	assert.Equal(t, info1.Type, info2.Type, "Expected same type for both constructors")
 
 	// But they should be different ConstructorInfo instances
-	if info1 == info2 {
-		t.Error("Expected different ConstructorInfo instances for different functions")
-	}
+	assert.NotSame(t, info1, info2, "Expected different ConstructorInfo instances for different functions")
 
 	// Most importantly, their Value fields should be different
-	if info1.Value.Pointer() == info2.Value.Pointer() {
-		t.Error("Expected different function pointers in Value field")
-	}
+	assert.NotEqual(t, info1.Value.Pointer(), info2.Value.Pointer(), "Expected different function pointers in Value field")
 
 	// Test that calling them produces different results
 	results1 := info1.Value.Call([]reflect.Value{})
@@ -1142,13 +933,8 @@ func TestAnalyzer_DifferentFunctionsWithSameSignature(t *testing.T) {
 	db1 := results1[0].Interface().(*Database)
 	db2 := results2[0].Interface().(*Database)
 
-	if db1.ConnectionString != "db1" {
-		t.Errorf("Expected 'db1', got %s", db1.ConnectionString)
-	}
-
-	if db2.ConnectionString != "db2" {
-		t.Errorf("Expected 'db2', got %s", db2.ConnectionString)
-	}
+	assert.Equal(t, "db1", db1.ConnectionString)
+	assert.Equal(t, "db2", db2.ConnectionString)
 }
 
 // Test that the same function analyzed multiple times returns cached result
@@ -1161,24 +947,16 @@ func TestAnalyzer_SameFunctionCached(t *testing.T) {
 
 	// Analyze the same constructor multiple times
 	info1, err := analyzer.Analyze(constructor)
-	if err != nil {
-		t.Fatalf("Failed to analyze constructor: %v", err)
-	}
+	require.NoError(t, err, "Failed to analyze constructor")
 
 	info2, err := analyzer.Analyze(constructor)
-	if err != nil {
-		t.Fatalf("Failed to analyze constructor again: %v", err)
-	}
+	require.NoError(t, err, "Failed to analyze constructor again")
 
 	// Should return the exact same cached instance
-	if info1 != info2 {
-		t.Error("Expected same cached ConstructorInfo instance")
-	}
+	assert.Same(t, info1, info2, "Expected same cached ConstructorInfo instance")
 
 	// Value pointers should be identical
-	if info1.Value.Pointer() != info2.Value.Pointer() {
-		t.Error("Expected same function pointer in cached result")
-	}
+	assert.Equal(t, info1.Value.Pointer(), info2.Value.Pointer(), "Expected same function pointer in cached result")
 }
 
 // Test with multiple functions having different signatures
@@ -1200,51 +978,32 @@ func TestAnalyzer_DifferentSignatures(t *testing.T) {
 
 	// Analyze all constructors
 	info1, err := analyzer.Analyze(constructor1)
-	if err != nil {
-		t.Fatalf("Failed to analyze constructor1: %v", err)
-	}
+	require.NoError(t, err, "Failed to analyze constructor1")
 
 	info2, err := analyzer.Analyze(constructor2)
-	if err != nil {
-		t.Fatalf("Failed to analyze constructor2: %v", err)
-	}
+	require.NoError(t, err, "Failed to analyze constructor2")
 
 	info3, err := analyzer.Analyze(constructor3)
-	if err != nil {
-		t.Fatalf("Failed to analyze constructor3: %v", err)
-	}
+	require.NoError(t, err, "Failed to analyze constructor3")
 
 	// All should be different
-	if info1 == info2 || info1 == info3 || info2 == info3 {
-		t.Error("Expected different ConstructorInfo for different signatures")
-	}
+	assert.NotSame(t, info1, info2, "Expected different ConstructorInfo for different signatures")
+	assert.NotSame(t, info1, info3, "Expected different ConstructorInfo for different signatures")
+	assert.NotSame(t, info2, info3, "Expected different ConstructorInfo for different signatures")
 
 	// Types should be different
-	if info1.Type == info2.Type || info1.Type == info3.Type || info2.Type == info3.Type {
-		t.Error("Expected different types for different signatures")
-	}
+	assert.NotEqual(t, info1.Type, info2.Type, "Expected different types for different signatures")
+	assert.NotEqual(t, info1.Type, info3.Type, "Expected different types for different signatures")
+	assert.NotEqual(t, info2.Type, info3.Type, "Expected different types for different signatures")
 
 	// Verify parameter counts
-	if len(info1.Parameters) != 0 {
-		t.Errorf("Expected 0 parameters for constructor1, got %d", len(info1.Parameters))
-	}
-
-	if len(info2.Parameters) != 1 {
-		t.Errorf("Expected 1 parameter for constructor2, got %d", len(info2.Parameters))
-	}
+	assert.Len(t, info1.Parameters, 0, "Expected 0 parameters for constructor1")
+	assert.Len(t, info2.Parameters, 1, "Expected 1 parameter for constructor2")
 
 	// Verify return counts
-	if len(info1.Returns) != 1 {
-		t.Errorf("Expected 1 return for constructor1, got %d", len(info1.Returns))
-	}
-
-	if len(info3.Returns) != 2 {
-		t.Errorf("Expected 2 returns for constructor3, got %d", len(info3.Returns))
-	}
-
-	if !info3.HasErrorReturn {
-		t.Error("Expected constructor3 to have error return")
-	}
+	assert.Len(t, info1.Returns, 1, "Expected 1 return for constructor1")
+	assert.Len(t, info3.Returns, 2, "Expected 2 returns for constructor3")
+	assert.True(t, info3.HasErrorReturn, "Expected constructor3 to have error return")
 }
 
 // Test that cache size reflects unique functions
@@ -1275,9 +1034,7 @@ func TestAnalyzer_CacheSizeWithDuplicateFunctions(t *testing.T) {
 	}
 
 	// Cache should have exactly 3 entries (one per unique function)
-	if analyzer.CacheSize() != 3 {
-		t.Errorf("Expected cache size 3, got %d", analyzer.CacheSize())
-	}
+	assert.Equal(t, 3, analyzer.CacheSize(), "Expected cache size 3")
 
 	// Analyze the same constructors again
 	analyzer.Analyze(constructor1)
@@ -1285,9 +1042,7 @@ func TestAnalyzer_CacheSizeWithDuplicateFunctions(t *testing.T) {
 	analyzer.Analyze(constructor3)
 
 	// Cache size should still be 3
-	if analyzer.CacheSize() != 3 {
-		t.Errorf("Expected cache size to remain 3, got %d", analyzer.CacheSize())
-	}
+	assert.Equal(t, 3, analyzer.CacheSize(), "Expected cache size to remain 3")
 }
 
 // Test with methods (bound to receivers)
@@ -1303,48 +1058,19 @@ func TestAnalyzer_Methods(t *testing.T) {
 	method2 := logger2.Log
 
 	info1, err := analyzer.Analyze(method1)
-	if err != nil {
-		t.Fatalf("Failed to analyze method1: %v", err)
-	}
+	require.NoError(t, err, "Failed to analyze method1")
 
 	info2, err := analyzer.Analyze(method2)
-	if err != nil {
-		t.Fatalf("Failed to analyze method2: %v", err)
-	}
+	require.NoError(t, err, "Failed to analyze method2")
 
 	// Methods from different instances might or might not share the same
 	// underlying implementation depending on Go's optimization.
 	// What we can test is that they have the same type signature
-	if info1.Type != info2.Type {
-		t.Error("Expected same type for methods from same type")
-	}
+	assert.Equal(t, info1.Type, info2.Type, "Expected same type for methods from same type")
 
 	// Both should be recognized as functions
-	if !info1.IsFunc || !info2.IsFunc {
-		t.Error("Expected methods to be recognized as functions")
-	}
-}
-
-// Benchmark to ensure caching performance isn't degraded
-func BenchmarkAnalyzer_SameSignatureDifferentFunctions(b *testing.B) {
-	analyzer := reflection.New()
-
-	// Create many functions with the same signature
-	constructors := make([]func() *Database, 100)
-	for i := 0; i < 100; i++ {
-		idx := i
-		constructors[i] = func() *Database {
-			return &Database{ConnectionString: fmt.Sprintf("db%d", idx)}
-		}
-	}
-
-	b.ResetTimer()
-
-	for i := 0; i < b.N; i++ {
-		// Analyze a random constructor
-		idx := i % len(constructors)
-		analyzer.Analyze(constructors[idx])
-	}
+	assert.True(t, info1.IsFunc, "Expected method1 to be recognized as function")
+	assert.True(t, info2.IsFunc, "Expected method2 to be recognized as function")
 }
 
 // Test edge case: nil function
@@ -1354,9 +1080,7 @@ func TestAnalyzer_NilFunction(t *testing.T) {
 	var nilFunc func() *Database
 
 	_, err := analyzer.Analyze(nilFunc)
-	if err == nil {
-		t.Error("Expected error when analyzing nil function")
-	}
+	assert.Error(t, err, "Expected error when analyzing nil function")
 }
 
 // Test that Clear actually clears the cache properly
@@ -1383,22 +1107,12 @@ func TestAnalyzer_ClearWithSameSignature(t *testing.T) {
 	info2b, _ := analyzer.Analyze(constructor2)
 
 	// After clear, we should get new ConstructorInfo instances
-	if info1a == info1b {
-		t.Error("Expected new ConstructorInfo for constructor1 after clear")
-	}
-
-	if info2a == info2b {
-		t.Error("Expected new ConstructorInfo for constructor2 after clear")
-	}
+	assert.NotSame(t, info1a, info1b, "Expected new ConstructorInfo for constructor1 after clear")
+	assert.NotSame(t, info2a, info2b, "Expected new ConstructorInfo for constructor2 after clear")
 
 	// But the function pointers should still be correct
-	if info1b.Value.Pointer() != reflect.ValueOf(constructor1).Pointer() {
-		t.Error("Wrong function pointer for constructor1 after clear")
-	}
-
-	if info2b.Value.Pointer() != reflect.ValueOf(constructor2).Pointer() {
-		t.Error("Wrong function pointer for constructor2 after clear")
-	}
+	assert.Equal(t, reflect.ValueOf(constructor1).Pointer(), info1b.Value.Pointer(), "Wrong function pointer for constructor1 after clear")
+	assert.Equal(t, reflect.ValueOf(constructor2).Pointer(), info2b.Value.Pointer(), "Wrong function pointer for constructor2 after clear")
 }
 
 // Test GetDependencies edge cases
@@ -1407,20 +1121,13 @@ func TestAnalyzer_GetDependencies(t *testing.T) {
 
 	t.Run("with nil constructor", func(t *testing.T) {
 		_, err := analyzer.GetDependencies(nil)
-		if err == nil {
-			t.Error("Expected error for nil constructor")
-		}
+		assert.Error(t, err, "Expected error for nil constructor")
 	})
 
 	t.Run("with valid constructor", func(t *testing.T) {
 		deps, err := analyzer.GetDependencies(NewUserService)
-		if err != nil {
-			t.Fatalf("GetDependencies failed: %v", err)
-		}
-
-		if len(deps) != 2 {
-			t.Errorf("Expected 2 dependencies, got %d", len(deps))
-		}
+		require.NoError(t, err, "GetDependencies failed")
+		assert.Len(t, deps, 2, "Expected 2 dependencies")
 	})
 }
 
@@ -1432,16 +1139,12 @@ func TestAnalyzer_GetServiceTypeEdgeCases(t *testing.T) {
 		noReturnFunc := func(db *Database) {}
 
 		_, err := analyzer.GetServiceType(noReturnFunc)
-		if err == nil {
-			t.Error("Expected error for constructor with no return values")
-		}
+		assert.Error(t, err, "Expected error for constructor with no return values")
 	})
 
 	t.Run("nil constructor", func(t *testing.T) {
 		_, err := analyzer.GetServiceType(nil)
-		if err == nil {
-			t.Error("Expected error for nil constructor")
-		}
+		assert.Error(t, err, "Expected error for nil constructor")
 	})
 
 	t.Run("function that only returns error", func(t *testing.T) {
@@ -1450,9 +1153,7 @@ func TestAnalyzer_GetServiceTypeEdgeCases(t *testing.T) {
 		}
 
 		_, err := analyzer.GetServiceType(errorOnlyFunc)
-		if err == nil {
-			t.Error("Expected error for function that only returns error")
-		}
+		assert.Error(t, err, "Expected error for function that only returns error")
 	})
 }
 
@@ -1462,9 +1163,7 @@ func TestAnalyzer_GetResultTypesEdgeCases(t *testing.T) {
 
 	t.Run("nil constructor", func(t *testing.T) {
 		_, err := analyzer.GetResultTypes(nil)
-		if err == nil {
-			t.Error("Expected error for nil constructor")
-		}
+		assert.Error(t, err, "Expected error for nil constructor")
 	})
 
 	t.Run("result object with error", func(t *testing.T) {
@@ -1478,14 +1177,10 @@ func TestAnalyzer_GetResultTypesEdgeCases(t *testing.T) {
 		}
 
 		types, err := analyzer.GetResultTypes(resultFunc)
-		if err != nil {
-			t.Fatalf("GetResultTypes failed: %v", err)
-		}
+		require.NoError(t, err, "GetResultTypes failed")
 
 		// Should include the service type but not error
-		if len(types) != 1 {
-			t.Errorf("Expected 1 type, got %d", len(types))
-		}
+		assert.Len(t, types, 1, "Expected 1 type")
 	})
 
 	t.Run("non-result object", func(t *testing.T) {
@@ -1494,17 +1189,10 @@ func TestAnalyzer_GetResultTypesEdgeCases(t *testing.T) {
 		}
 
 		types, err := analyzer.GetResultTypes(simpleFunc)
-		if err != nil {
-			t.Fatalf("GetResultTypes failed: %v", err)
-		}
+		require.NoError(t, err, "GetResultTypes failed")
 
-		if len(types) != 1 {
-			t.Errorf("Expected 1 type, got %d", len(types))
-		}
-
-		if types[0] != reflect.TypeOf((*Database)(nil)) {
-			t.Error("Wrong type returned")
-		}
+		assert.Len(t, types, 1, "Expected 1 type")
+		assert.Equal(t, reflect.TypeOf((*Database)(nil)), types[0], "Wrong type returned")
 	})
 }
 
@@ -1521,39 +1209,10 @@ func TestAnalyzer_NonInOutTypes(t *testing.T) {
 	}
 
 	info, err := analyzer.Analyze(notInOutFunc)
-	if err != nil {
-		t.Fatalf("Failed to analyze: %v", err)
-	}
+	require.NoError(t, err, "Failed to analyze")
 
 	// Should not be detected as param object
-	if info.IsParamObject {
-		t.Error("Function with non-In parameter should not be detected as param object")
-	}
-}
-
-// Benchmark cache performance
-func BenchmarkAnalyzer_CacheHit(b *testing.B) {
-	analyzer := reflection.New()
-
-	// Pre-cache
-	analyzer.Analyze(NewDatabase)
-
-	b.ResetTimer()
-
-	for i := 0; i < b.N; i++ {
-		analyzer.Analyze(NewDatabase)
-	}
-}
-
-func BenchmarkAnalyzer_CacheMiss(b *testing.B) {
-	analyzer := reflection.New()
-
-	b.ResetTimer()
-
-	for i := 0; i < b.N; i++ {
-		analyzer.Clear() // Force cache miss
-		analyzer.Analyze(NewDatabase)
-	}
+	assert.False(t, info.IsParamObject, "Function with non-In parameter should not be detected as param object")
 }
 
 // Mock resolver for testing
@@ -1603,41 +1262,76 @@ func TestAnalyzer_Closures(t *testing.T) {
 	constructor3 := makeConstructor("db3")
 
 	info1, err := analyzer.Analyze(constructor1)
-	if err != nil {
-		t.Fatalf("Failed to analyze constructor1: %v", err)
-	}
+	require.NoError(t, err, "Failed to analyze constructor1")
 
 	info2, err := analyzer.Analyze(constructor2)
-	if err != nil {
-		t.Fatalf("Failed to analyze constructor2: %v", err)
-	}
+	require.NoError(t, err, "Failed to analyze constructor2")
 
 	info3, err := analyzer.Analyze(constructor3)
-	if err != nil {
-		t.Fatalf("Failed to analyze constructor3: %v", err)
-	}
+	require.NoError(t, err, "Failed to analyze constructor3")
 
 	// Each closure should have its own ConstructorInfo
-	if info1 == info2 || info1 == info3 || info2 == info3 {
-		t.Error("Expected different ConstructorInfo for different closures")
-	}
+	assert.NotSame(t, info1, info2, "Expected different ConstructorInfo for different closures")
+	assert.NotSame(t, info1, info3, "Expected different ConstructorInfo for different closures")
+	assert.NotSame(t, info2, info3, "Expected different ConstructorInfo for different closures")
 
 	// Verify each produces the correct result
 	results1 := info1.Value.Call([]reflect.Value{})
 	db1 := results1[0].Interface().(*Database)
-	if db1.ConnectionString != "db1" {
-		t.Errorf("Constructor 1: expected db1, got %s", db1.ConnectionString)
-	}
+	assert.Equal(t, "db1", db1.ConnectionString, "Constructor 1 result mismatch")
 
 	results2 := info2.Value.Call([]reflect.Value{})
 	db2 := results2[0].Interface().(*Database)
-	if db2.ConnectionString != "db2" {
-		t.Errorf("Constructor 2: expected db2, got %s", db2.ConnectionString)
-	}
+	assert.Equal(t, "db2", db2.ConnectionString, "Constructor 2 result mismatch")
 
 	results3 := info3.Value.Call([]reflect.Value{})
 	db3 := results3[0].Interface().(*Database)
-	if db3.ConnectionString != "db3" {
-		t.Errorf("Constructor 3: expected db3, got %s", db3.ConnectionString)
+	assert.Equal(t, "db3", db3.ConnectionString, "Constructor 3 result mismatch")
+}
+
+// Benchmark to ensure caching performance isn't degraded
+func BenchmarkAnalyzer_SameSignatureDifferentFunctions(b *testing.B) {
+	analyzer := reflection.New()
+
+	// Create many functions with the same signature
+	constructors := make([]func() *Database, 100)
+	for i := 0; i < 100; i++ {
+		idx := i
+		constructors[i] = func() *Database {
+			return &Database{ConnectionString: fmt.Sprintf("db%d", idx)}
+		}
+	}
+
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		// Analyze a random constructor
+		idx := i % len(constructors)
+		analyzer.Analyze(constructors[idx])
+	}
+}
+
+// Benchmark cache performance
+func BenchmarkAnalyzer_CacheHit(b *testing.B) {
+	analyzer := reflection.New()
+
+	// Pre-cache
+	analyzer.Analyze(NewDatabase)
+
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		analyzer.Analyze(NewDatabase)
+	}
+}
+
+func BenchmarkAnalyzer_CacheMiss(b *testing.B) {
+	analyzer := reflection.New()
+
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		analyzer.Clear() // Force cache miss
+		analyzer.Analyze(NewDatabase)
 	}
 }

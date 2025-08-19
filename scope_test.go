@@ -634,7 +634,7 @@ func TestProviderConcurrency(t *testing.T) {
 	defer provider.Close()
 
 	var wg sync.WaitGroup
-	errors := make(chan error, 100)
+	errs := make(chan error, 100)
 
 	// Concurrent gets
 	for i := 0; i < 10; i++ {
@@ -643,7 +643,7 @@ func TestProviderConcurrency(t *testing.T) {
 			defer wg.Done()
 			_, err := provider.Get(reflect.TypeOf((*ProviderTestService)(nil)))
 			if err != nil {
-				errors <- err
+				errs <- err
 			}
 		}()
 	}
@@ -655,22 +655,22 @@ func TestProviderConcurrency(t *testing.T) {
 			defer wg.Done()
 			scope, err := provider.CreateScope(context.Background())
 			if err != nil {
-				errors <- err
+				errs <- err
 				return
 			}
 			defer scope.Close()
 
 			_, err = scope.Get(reflect.TypeOf((*ScopedTestService)(nil)))
 			if err != nil {
-				errors <- err
+				errs <- err
 			}
 		}()
 	}
 
 	wg.Wait()
-	close(errors)
+	close(errs)
 
-	for err := range errors {
+	for err := range errs {
 		assert.NoError(t, err)
 	}
 }
@@ -1793,9 +1793,7 @@ func TestBuiltinServices(t *testing.T) {
 		})
 
 		provider, err := collection.Build()
-		if err != nil {
-			t.Fatalf("Failed to build provider: %v", err)
-		}
+		assert.NoError(t, err, "Build should not fail")
 		defer provider.Close()
 
 		// Create a scope with custom context
@@ -1803,27 +1801,17 @@ func TestBuiltinServices(t *testing.T) {
 		const testKey contextKey = "test"
 		customCtx := context.WithValue(context.Background(), testKey, "value")
 		scope, err := provider.CreateScope(customCtx)
-		if err != nil {
-			t.Fatalf("Failed to create scope: %v", err)
-		}
+		assert.NoError(t, err, "CreateScope should not fail")
 		defer scope.Close()
 
 		// Resolve the service
 		serviceType := reflect.TypeOf((*ServiceWithContext)(nil))
 		service, err := scope.Get(serviceType)
-		if err != nil {
-			t.Fatalf("Failed to resolve service: %v", err)
-		}
+		assert.NoError(t, err, "Get should not fail")
 
 		svc := service.(*ServiceWithContext)
-		if svc.ctx == nil {
-			t.Fatal("Context was not injected")
-		}
-
-		// Verify it's the same context
-		if val := svc.ctx.Value(testKey); val != "value" {
-			t.Fatalf("Expected context value 'value', got %v", val)
-		}
+		assert.NotNil(t, svc.ctx, "Context should not be nil")
+		assert.Equal(t, "value", svc.ctx.Value(testKey), "Context value should match expected")
 	})
 
 	t.Run("scope injection", func(t *testing.T) {
@@ -1839,33 +1827,21 @@ func TestBuiltinServices(t *testing.T) {
 		})
 
 		provider, err := collection.Build()
-		if err != nil {
-			t.Fatalf("Failed to build provider: %v", err)
-		}
+		assert.NoError(t, err, "Build should not fail")
 		defer provider.Close()
 
 		scope, err := provider.CreateScope(context.Background())
-		if err != nil {
-			t.Fatalf("Failed to create scope: %v", err)
-		}
+		assert.NoError(t, err, "CreateScope should not fail")
 		defer scope.Close()
 
 		// Resolve the service
 		serviceType := reflect.TypeOf((*ServiceWithScope)(nil))
 		service, err := scope.Get(serviceType)
-		if err != nil {
-			t.Fatalf("Failed to resolve service: %v", err)
-		}
+		assert.NoError(t, err, "Get should not fail")
 
 		svc := service.(*ServiceWithScope)
-		if svc.scope == nil {
-			t.Fatal("Scope was not injected")
-		}
-
-		// Verify it's the same scope
-		if svc.scope.ID() != scope.ID() {
-			t.Fatalf("Injected scope ID %v doesn't match expected %v", svc.scope.ID(), scope.ID())
-		}
+		assert.NotNil(t, svc.scope, "Scope should not be nil")
+		assert.Equal(t, scope.ID(), svc.scope.ID(), "Scope ID should match the created scope ID")
 	})
 
 	t.Run("provider injection", func(t *testing.T) {
@@ -1881,33 +1857,21 @@ func TestBuiltinServices(t *testing.T) {
 		})
 
 		provider, err := collection.Build()
-		if err != nil {
-			t.Fatalf("Failed to build provider: %v", err)
-		}
+		assert.NoError(t, err, "Build should not fail")
 		defer provider.Close()
 
 		scope, err := provider.CreateScope(context.Background())
-		if err != nil {
-			t.Fatalf("Failed to create scope: %v", err)
-		}
+		assert.NoError(t, err, "CreateScope should not fail")
 		defer scope.Close()
 
 		// Resolve the service
 		serviceType := reflect.TypeOf((*ServiceWithProvider)(nil))
 		service, err := scope.Get(serviceType)
-		if err != nil {
-			t.Fatalf("Failed to resolve service: %v", err)
-		}
+		assert.NoError(t, err, "Get should not fail")
 
 		svc := service.(*ServiceWithProvider)
-		if svc.provider == nil {
-			t.Fatal("Provider was not injected")
-		}
-
-		// Verify it's the same provider
-		if svc.provider.ID() != provider.ID() {
-			t.Fatalf("Injected provider ID %v doesn't match expected %v", svc.provider.ID(), provider.ID())
-		}
+		assert.NotNil(t, svc.provider, "Provider should not be nil")
+		assert.Equal(t, provider.ID(), svc.provider.ID(), "Provider ID should match the created provider ID")
 	})
 
 	t.Run("combined injection with In struct", func(t *testing.T) {
@@ -1937,50 +1901,28 @@ func TestBuiltinServices(t *testing.T) {
 		})
 
 		provider, err := collection.Build()
-		if err != nil {
-			t.Fatalf("Failed to build provider: %v", err)
-		}
+		assert.NoError(t, err, "Build should not fail")
 		defer provider.Close()
 
 		type contextKey string
 		const testKey contextKey = "test"
 		customCtx := context.WithValue(context.Background(), testKey, "value")
 		scope, err := provider.CreateScope(customCtx)
-		if err != nil {
-			t.Fatalf("Failed to create scope: %v", err)
-		}
+		assert.NoError(t, err, "CreateScope should not fail")
 		defer scope.Close()
 
 		// Resolve the service
 		serviceType := reflect.TypeOf((*ComplexService)(nil))
 		service, err := scope.Get(serviceType)
-		if err != nil {
-			t.Fatalf("Failed to resolve service: %v", err)
-		}
+		assert.NoError(t, err, "Get should not fail")
 
 		svc := service.(*ComplexService)
-
-		// Verify all injections
-		if svc.ctx == nil {
-			t.Fatal("Context was not injected")
-		}
-		if val := svc.ctx.Value(testKey); val != "value" {
-			t.Fatalf("Expected context value 'value', got %v", val)
-		}
-
-		if svc.scope == nil {
-			t.Fatal("Scope was not injected")
-		}
-		if svc.scope.ID() != scope.ID() {
-			t.Fatalf("Injected scope ID doesn't match")
-		}
-
-		if svc.provider == nil {
-			t.Fatal("Provider was not injected")
-		}
-		if svc.provider.ID() != provider.ID() {
-			t.Fatalf("Injected provider ID doesn't match")
-		}
+		assert.NotNil(t, svc.ctx, "Context should not be nil")
+		assert.Equal(t, "value", svc.ctx.Value(testKey), "Context value should match expected")
+		assert.NotNil(t, svc.scope, "Scope should not be nil")
+		assert.Equal(t, scope.ID(), svc.scope.ID(), "Scope ID should match the created scope ID")
+		assert.NotNil(t, svc.provider, "Provider should not be nil")
+		assert.Equal(t, provider.ID(), svc.provider.ID(), "Provider ID should match the created provider ID")
 	})
 
 	t.Run("child scope inherits provider", func(t *testing.T) {
@@ -1995,41 +1937,27 @@ func TestBuiltinServices(t *testing.T) {
 		})
 
 		provider, err := collection.Build()
-		if err != nil {
-			t.Fatalf("Failed to build provider: %v", err)
-		}
+		assert.NoError(t, err, "Build should not fail")
 		defer provider.Close()
 
 		// Create parent scope
 		parentScope, err := provider.CreateScope(context.Background())
-		if err != nil {
-			t.Fatalf("Failed to create parent scope: %v", err)
-		}
+		assert.NoError(t, err, "CreateScope should not fail")
 		defer parentScope.Close()
 
 		// Create child scope
 		childScope, err := parentScope.CreateScope(context.Background())
-		if err != nil {
-			t.Fatalf("Failed to create child scope: %v", err)
-		}
+		assert.NoError(t, err, "CreateScope should not fail")
 		defer childScope.Close()
 
 		// Resolve from child scope
 		serviceType := reflect.TypeOf((*ServiceWithProvider)(nil))
 		service, err := childScope.Get(serviceType)
-		if err != nil {
-			t.Fatalf("Failed to resolve service: %v", err)
-		}
+		assert.NoError(t, err, "Get should not fail")
 
 		svc := service.(*ServiceWithProvider)
-		if svc.provider == nil {
-			t.Fatal("Provider was not injected in child scope")
-		}
-
-		// Provider should be the same across all scopes
-		if svc.provider.ID() != provider.ID() {
-			t.Fatalf("Child scope has different provider ID")
-		}
+		assert.NotNil(t, svc.provider, "Provider should not be nil")
+		assert.Equal(t, provider.ID(), svc.provider.ID(), "Provider ID should match the created provider ID")
 	})
 }
 
@@ -2431,7 +2359,7 @@ func TestMixedLifetimeGroups(t *testing.T) {
 		defer provider.Close()
 
 		var wg sync.WaitGroup
-		errors := make(chan error, 20)
+		errs := make(chan error, 20)
 		results := make(chan []*MixedService, 20)
 
 		// Concurrent resolution from provider
@@ -2441,7 +2369,7 @@ func TestMixedLifetimeGroups(t *testing.T) {
 				defer wg.Done()
 				services, err := ResolveGroup[*MixedService](provider, "concurrent")
 				if err != nil {
-					errors <- err
+					errs <- err
 					return
 				}
 				results <- services
@@ -2455,14 +2383,14 @@ func TestMixedLifetimeGroups(t *testing.T) {
 				defer wg.Done()
 				scope, err := provider.CreateScope(context.Background())
 				if err != nil {
-					errors <- err
+					errs <- err
 					return
 				}
 				defer scope.Close()
 
 				services, err := ResolveGroup[*MixedService](scope, "concurrent")
 				if err != nil {
-					errors <- err
+					errs <- err
 					return
 				}
 				results <- services
@@ -2470,11 +2398,11 @@ func TestMixedLifetimeGroups(t *testing.T) {
 		}
 
 		wg.Wait()
-		close(errors)
+		close(errs)
 		close(results)
 
 		// Check for errors
-		for err := range errors {
+		for err := range errs {
 			assert.NoError(t, err)
 		}
 

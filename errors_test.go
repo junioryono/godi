@@ -5,17 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestLifetimeError(t *testing.T) {
 	err := LifetimeError{Value: "invalid"}
 	expected := "invalid service lifetime: invalid"
-	if err.Error() != expected {
-		t.Errorf("Expected %q, got %q", expected, err.Error())
-	}
+	assert.Equal(t, expected, err.Error(), "LifetimeError should return correct error message")
 }
 
 func TestLifetimeConflictError(t *testing.T) {
@@ -27,12 +26,8 @@ func TestLifetimeConflictError(t *testing.T) {
 	}
 
 	errStr := err.Error()
-	if !strings.Contains(errStr, "already registered as Singleton") {
-		t.Errorf("Error should mention current lifetime: %s", errStr)
-	}
-	if !strings.Contains(errStr, "cannot register as Scoped") {
-		t.Errorf("Error should mention requested lifetime: %s", errStr)
-	}
+	assert.Contains(t, errStr, "already registered as Singleton", "Error should mention current lifetime")
+	assert.Contains(t, errStr, "cannot register as Scoped", "Error should mention requested lifetime")
 }
 
 func TestAlreadyRegisteredError(t *testing.T) {
@@ -40,9 +35,7 @@ func TestAlreadyRegisteredError(t *testing.T) {
 	err := AlreadyRegisteredError{ServiceType: serviceType}
 
 	errStr := err.Error()
-	if !strings.Contains(errStr, "already registered") {
-		t.Errorf("Error should mention already registered: %s", errStr)
-	}
+	assert.Contains(t, errStr, "already registered", "Error should mention already registered")
 }
 
 func TestResolutionError(t *testing.T) {
@@ -56,16 +49,9 @@ func TestResolutionError(t *testing.T) {
 		}
 
 		errStr := err.Error()
-		if !strings.Contains(errStr, "unable to resolve") {
-			t.Errorf("Error should mention resolution failure: %s", errStr)
-		}
-		if strings.Contains(errStr, "key=") {
-			t.Errorf("Error should not mention key when nil: %s", errStr)
-		}
-
-		if err.Unwrap() != cause {
-			t.Error("Unwrap should return the cause")
-		}
+		assert.Contains(t, errStr, "unable to resolve", "Error should mention resolution failure")
+		assert.NotContains(t, errStr, "key=", "Error should not mention key when nil")
+		assert.ErrorIs(t, err, cause, "Unwrap should return the cause")
 	})
 
 	t.Run("with key", func(t *testing.T) {
@@ -78,9 +64,9 @@ func TestResolutionError(t *testing.T) {
 		}
 
 		errStr := err.Error()
-		if !strings.Contains(errStr, "key=primary") {
-			t.Errorf("Error should mention key: %s", errStr)
-		}
+		assert.Contains(t, errStr, "key=primary", "Error should mention key")
+		assert.Contains(t, errStr, "unable to resolve", "Error should mention resolution failure")
+		assert.ErrorIs(t, err, cause, "Unwrap should return the cause")
 	})
 }
 
@@ -92,17 +78,9 @@ func TestTimeoutError(t *testing.T) {
 	}
 
 	errStr := err.Error()
-	if !strings.Contains(errStr, "timed out") {
-		t.Errorf("Error should mention timeout: %s", errStr)
-	}
-	if !strings.Contains(errStr, "5s") {
-		t.Errorf("Error should include timeout duration: %s", errStr)
-	}
-
-	// Test Is method
-	if !err.Is(context.DeadlineExceeded) {
-		t.Error("TimeoutError should match context.DeadlineExceeded")
-	}
+	assert.Contains(t, errStr, "timed out", "Error should mention timeout")
+	assert.Contains(t, errStr, "5s", "Error should include timeout duration")
+	assert.ErrorIs(t, err, context.DeadlineExceeded, "TimeoutError should match context.DeadlineExceeded")
 }
 
 func TestRegistrationError(t *testing.T) {
@@ -115,13 +93,9 @@ func TestRegistrationError(t *testing.T) {
 	}
 
 	errStr := err.Error()
-	if !strings.Contains(errStr, "failed to provide") {
-		t.Errorf("Error should mention operation: %s", errStr)
-	}
-
-	if err.Unwrap() != cause {
-		t.Error("Unwrap should return the cause")
-	}
+	assert.Contains(t, errStr, "failed to provide", "Error should mention operation")
+	assert.Contains(t, errStr, "testService", "Error should mention service type")
+	assert.ErrorIs(t, err, cause, "Unwrap should return the cause")
 }
 
 func TestValidationError(t *testing.T) {
@@ -134,13 +108,8 @@ func TestValidationError(t *testing.T) {
 		}
 
 		errStr := err.Error()
-		if !strings.Contains(errStr, "testService") {
-			t.Errorf("Error should mention service type: %s", errStr)
-		}
-
-		if err.Unwrap() != cause {
-			t.Error("Unwrap should return the cause")
-		}
+		assert.Contains(t, errStr, "testService", "Error should mention service type")
+		assert.ErrorIs(t, err, cause, "Unwrap should return the cause")
 	})
 
 	t.Run("without service type", func(t *testing.T) {
@@ -150,9 +119,8 @@ func TestValidationError(t *testing.T) {
 			Cause:       cause,
 		}
 
-		if err.Error() != cause.Error() {
-			t.Errorf("Error should use cause directly when no service type: %s", err.Error())
-		}
+		assert.Equal(t, cause.Error(), err.Error(), "Error should use cause directly when no service type")
+		assert.ErrorIs(t, err, cause, "Unwrap should return the cause")
 	})
 }
 
@@ -164,13 +132,8 @@ func TestModuleError(t *testing.T) {
 	}
 
 	errStr := err.Error()
-	if !strings.Contains(errStr, "module \"TestModule\"") {
-		t.Errorf("Error should mention module name: %s", errStr)
-	}
-
-	if err.Unwrap() != cause {
-		t.Error("Unwrap should return the cause")
-	}
+	assert.Contains(t, errStr, "module \"TestModule\"", "Error should mention module name")
+	assert.ErrorIs(t, err, cause, "Unwrap should return the cause")
 }
 
 func TestTypeMismatchError(t *testing.T) {
@@ -183,15 +146,12 @@ func TestTypeMismatchError(t *testing.T) {
 	}
 
 	errStr := err.Error()
-	if !strings.Contains(errStr, "type assertion") {
-		t.Errorf("Error should mention context: %s", errStr)
-	}
-	if !strings.Contains(errStr, "expected") {
-		t.Errorf("Error should mention expected type: %s", errStr)
-	}
-	if !strings.Contains(errStr, "got") {
-		t.Errorf("Error should mention actual type: %s", errStr)
-	}
+	assert.Contains(t, errStr, "type assertion", "Error should mention context")
+	assert.Contains(t, errStr, "expected", "Error should mention expected type")
+	assert.Contains(t, errStr, "got", "Error should mention actual type")
+	assert.Contains(t, errStr, "*testService", "Error should mention expected type *testService")
+	assert.Contains(t, errStr, "string", "Error should mention actual type string")
+	assert.Equal(t, "type assertion: expected *testService, got string", errStr, "Error should format correctly")
 }
 
 func TestReflectionAnalysisError(t *testing.T) {
@@ -204,13 +164,10 @@ func TestReflectionAnalysisError(t *testing.T) {
 	}
 
 	errStr := err.Error()
-	if !strings.Contains(errStr, "reflection analyze failed") {
-		t.Errorf("Error should mention reflection operation: %s", errStr)
-	}
-
-	if err.Unwrap() != cause {
-		t.Error("Unwrap should return the cause")
-	}
+	assert.Contains(t, errStr, "reflection analyze failed", "Error should mention reflection operation")
+	assert.Contains(t, errStr, "constructor", "Error should mention constructor type")
+	assert.Contains(t, errStr, "testService", "Error should mention testService constructor")
+	assert.ErrorIs(t, err, cause, "Unwrap should return the cause")
 }
 
 func TestGraphOperationError(t *testing.T) {
@@ -225,16 +182,10 @@ func TestGraphOperationError(t *testing.T) {
 		}
 
 		errStr := err.Error()
-		if !strings.Contains(errStr, "graph add failed") {
-			t.Errorf("Error should mention graph operation: %s", errStr)
-		}
-		if strings.Contains(errStr, "[") && strings.Contains(errStr, "]") {
-			t.Errorf("Error should not include brackets when no key: %s", errStr)
-		}
-
-		if err.Unwrap() != cause {
-			t.Error("Unwrap should return the cause")
-		}
+		assert.Contains(t, errStr, "graph add failed for *testService: cycle detected", "Error should mention graph operation and cause")
+		assert.NotContains(t, errStr, "[", "Error should not include brackets when no key")
+		assert.NotContains(t, errStr, "]", "Error should not include brackets when no key")
+		assert.ErrorIs(t, err, cause, "Unwrap should return the cause")
 	})
 
 	t.Run("with key", func(t *testing.T) {
@@ -248,9 +199,8 @@ func TestGraphOperationError(t *testing.T) {
 		}
 
 		errStr := err.Error()
-		if !strings.Contains(errStr, "[primary]") {
-			t.Errorf("Error should include key in brackets: %s", errStr)
-		}
+		assert.Contains(t, errStr, "graph add failed for *testService[primary]: node exists", "Error should mention graph operation, key, and cause")
+		assert.ErrorIs(t, err, cause, "Unwrap should return the cause")
 	})
 }
 
@@ -266,16 +216,10 @@ func TestConstructorInvocationError(t *testing.T) {
 	}
 
 	errStr := err.Error()
-	if !strings.Contains(errStr, "failed to invoke") {
-		t.Errorf("Error should mention invocation failure: %s", errStr)
-	}
-	if !strings.Contains(errStr, "with parameters") {
-		t.Errorf("Error should mention parameters: %s", errStr)
-	}
-
-	if err.Unwrap() != cause {
-		t.Error("Unwrap should return the cause")
-	}
+	assert.Contains(t, errStr, "failed to invoke", "Error should mention invocation failure")
+	assert.Contains(t, errStr, "with parameters", "Error should mention parameters")
+	assert.Contains(t, errStr, "*testService", "Error should mention parameter type *testService")
+	assert.ErrorIs(t, err, cause, "Unwrap should return the cause")
 }
 
 func TestBuildError(t *testing.T) {
@@ -287,16 +231,9 @@ func TestBuildError(t *testing.T) {
 	}
 
 	errStr := err.Error()
-	if !strings.Contains(errStr, "build failed during validation phase") {
-		t.Errorf("Error should mention build phase: %s", errStr)
-	}
-	if !strings.Contains(errStr, "circular dependency detected") {
-		t.Errorf("Error should include details: %s", errStr)
-	}
-
-	if err.Unwrap() != cause {
-		t.Error("Unwrap should return the cause")
-	}
+	assert.Contains(t, errStr, "build failed during validation phase", "Error should mention build phase")
+	assert.Contains(t, errStr, "circular dependency detected", "Error should include details")
+	assert.ErrorIs(t, err, cause, "Unwrap should return the cause")
 }
 
 func TestDisposalError(t *testing.T) {
@@ -307,12 +244,10 @@ func TestDisposalError(t *testing.T) {
 		}
 
 		errStr := err.Error()
-		if !strings.Contains(errStr, "provider disposal failed") {
-			t.Errorf("Error should mention disposal context: %s", errStr)
-		}
-		if strings.Contains(errStr, "errors:") {
-			t.Errorf("Single error should not use plural format: %s", errStr)
-		}
+		assert.Contains(t, errStr, "provider disposal failed", "Error should mention disposal context")
+		assert.NotContains(t, errStr, "errors:", "Single error should not use plural format")
+		assert.Len(t, err.Errors, 1, "DisposalError should contain exactly one error")
+		assert.Equal(t, "close failed", err.Errors[0].Error(), "DisposalError should contain the correct error message")
 	})
 
 	t.Run("multiple errors", func(t *testing.T) {
@@ -325,12 +260,12 @@ func TestDisposalError(t *testing.T) {
 		}
 
 		errStr := err.Error()
-		if !strings.Contains(errStr, "scope disposal failed with 2 errors:") {
-			t.Errorf("Error should mention error count: %s", errStr)
-		}
-		if !strings.Contains(errStr, "1.") || !strings.Contains(errStr, "2.") {
-			t.Errorf("Error should enumerate errors: %s", errStr)
-		}
+		assert.Contains(t, errStr, "scope disposal failed with 2 errors:", "Error should mention error count")
+		assert.Contains(t, errStr, "1. service1 close failed", "Error should enumerate first error")
+		assert.Contains(t, errStr, "2. service2 close failed", "Error should enumerate second error")
+		assert.Len(t, err.Errors, 2, "DisposalError should contain exactly two errors")
+		assert.Equal(t, "service1 close failed", err.Errors[0].Error(), "First error should match")
+		assert.Equal(t, "service2 close failed", err.Errors[1].Error(), "Second error should match")
 	})
 }
 
@@ -385,9 +320,7 @@ func TestFormatType(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := formatType(tt.typ)
-			if !strings.Contains(result, tt.contains) {
-				t.Errorf("formatType(%v) = %q, want to contain %q", tt.typ, result, tt.contains)
-			}
+			assert.Contains(t, result, tt.contains, "formatType should contain expected substring")
 		})
 	}
 }
@@ -408,8 +341,6 @@ func TestErrorWrapping(t *testing.T) {
 	}
 
 	for _, wrapper := range wrappers {
-		if !errors.Is(wrapper, baseErr) {
-			t.Errorf("%T should wrap base error", wrapper)
-		}
+		assert.ErrorIs(t, wrapper, baseErr, "%T should wrap base error", wrapper)
 	}
 }
