@@ -1757,6 +1757,11 @@ func TestMultiReturnScopedLifetime(t *testing.T) {
 	logger1, err := scope1.Get(reflect.TypeOf((*IntegrationLogger)(nil)))
 	require.NoError(t, err)
 
+	logger1.(*IntegrationLogger).Level = "debug" // Modify logger in scope1
+	logger1, err = scope1.Get(reflect.TypeOf((*IntegrationLogger)(nil)))
+	require.NoError(t, err)
+	assert.Equal(t, "debug", logger1.(*IntegrationLogger).Level)
+
 	// Get services from scope2
 	db2, err := scope2.Get(reflect.TypeOf((*IntegrationDatabase)(nil)))
 	require.NoError(t, err)
@@ -1764,6 +1769,7 @@ func TestMultiReturnScopedLifetime(t *testing.T) {
 	require.NoError(t, err)
 	logger2, err := scope2.Get(reflect.TypeOf((*IntegrationLogger)(nil)))
 	require.NoError(t, err)
+	assert.Equal(t, "info", logger2.(*IntegrationLogger).Level) // Should be unchanged
 
 	// Services from different scopes should be different instances
 	assert.NotSame(t, db1, db2)
