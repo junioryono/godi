@@ -2,9 +2,10 @@ package godi
 
 import (
 	"context"
-	"errors"
 	"reflect"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // Test types for provider tests
@@ -30,40 +31,29 @@ func TestResolve(t *testing.T) {
 		})
 
 		provider, err := collection.Build()
-		if err != nil {
-			t.Fatalf("Build failed: %v", err)
-		}
+		assert.NoError(t, err, "Build should not fail")
 		defer provider.Close()
 
 		service, err := Resolve[*testService](provider)
-		if err != nil {
-			t.Fatalf("Resolve failed: %v", err)
-		}
-
-		if service.ID != "test" || service.Value != 42 {
-			t.Errorf("Unexpected service values: %+v", service)
-		}
+		assert.NoError(t, err, "Resolve should not fail")
+		assert.NotNil(t, service, "Service should not be nil")
+		assert.Equal(t, "test", service.ID, "Service ID should match")
+		assert.Equal(t, 42, service.Value, "Service Value should match")
 	})
 
 	t.Run("nil provider", func(t *testing.T) {
 		_, err := Resolve[*testService](nil)
-		if err != ErrProviderNil {
-			t.Errorf("Expected ErrProviderNil, got %v", err)
-		}
+		assert.ErrorIs(t, err, ErrProviderNil, "Expected ErrProviderNil for nil provider")
 	})
 
 	t.Run("service not found", func(t *testing.T) {
 		collection := NewCollection()
 		provider, err := collection.Build()
-		if err != nil {
-			t.Fatalf("Build failed: %v", err)
-		}
+		assert.NoError(t, err, "Build should not fail")
 		defer provider.Close()
 
 		_, err = Resolve[*testService](provider)
-		if err == nil {
-			t.Error("Expected error for unregistered service")
-		}
+		assert.Error(t, err, "Expected error for unregistered service")
 	})
 
 	t.Run("type mismatch", func(t *testing.T) {
@@ -73,16 +63,12 @@ func TestResolve(t *testing.T) {
 		})
 
 		provider, err := collection.Build()
-		if err != nil {
-			t.Fatalf("Build failed: %v", err)
-		}
+		assert.NoError(t, err, "Build should not fail")
 		defer provider.Close()
 
 		// Try to resolve as testService but string was registered
 		_, err = Resolve[*testService](provider)
-		if err == nil {
-			t.Error("Expected type mismatch error")
-		}
+		assert.Error(t, err, "Expected type mismatch error")
 	})
 }
 
@@ -94,22 +80,18 @@ func TestMustResolve(t *testing.T) {
 		})
 
 		provider, err := collection.Build()
-		if err != nil {
-			t.Fatalf("Build failed: %v", err)
-		}
+		assert.NoError(t, err, "Build should not fail")
 		defer provider.Close()
 
 		service := MustResolve[*testService](provider)
-		if service.ID != "test" || service.Value != 42 {
-			t.Errorf("Unexpected service values: %+v", service)
-		}
+		assert.Equal(t, "test", service.ID, "Service ID should match")
+		assert.Equal(t, 42, service.Value, "Service Value should match")
 	})
 
 	t.Run("panics on error", func(t *testing.T) {
 		defer func() {
-			if r := recover(); r == nil {
-				t.Error("Expected panic but didn't get one")
-			}
+			err := recover()
+			assert.NotNil(t, err, "Expected panic but didn't get one")
 		}()
 
 		MustResolve[*testService](nil)
@@ -124,40 +106,29 @@ func TestResolveKeyed(t *testing.T) {
 		}, Name("primary"))
 
 		provider, err := collection.Build()
-		if err != nil {
-			t.Fatalf("Build failed: %v", err)
-		}
+		assert.NoError(t, err, "Build should not fail")
 		defer provider.Close()
 
 		service, err := ResolveKeyed[*testService](provider, "primary")
-		if err != nil {
-			t.Fatalf("ResolveKeyed failed: %v", err)
-		}
-
-		if service.ID != "keyed" || service.Value != 100 {
-			t.Errorf("Unexpected service values: %+v", service)
-		}
+		assert.NoError(t, err, "ResolveKeyed should not fail")
+		assert.NotNil(t, service, "Service should not be nil")
+		assert.Equal(t, "keyed", service.ID, "Service ID should match")
+		assert.Equal(t, 100, service.Value, "Service Value should match")
 	})
 
 	t.Run("nil provider", func(t *testing.T) {
 		_, err := ResolveKeyed[*testService](nil, "key")
-		if err != ErrProviderNil {
-			t.Errorf("Expected ErrProviderNil, got %v", err)
-		}
+		assert.ErrorIs(t, err, ErrProviderNil, "Expected ErrProviderNil for nil provider")
 	})
 
 	t.Run("nil key", func(t *testing.T) {
 		collection := NewCollection()
 		provider, err := collection.Build()
-		if err != nil {
-			t.Fatalf("Build failed: %v", err)
-		}
+		assert.NoError(t, err, "Build should not fail")
 		defer provider.Close()
 
 		_, err = ResolveKeyed[*testService](provider, nil)
-		if err != ErrServiceKeyNil {
-			t.Errorf("Expected ErrServiceKeyNil, got %v", err)
-		}
+		assert.ErrorIs(t, err, ErrServiceKeyNil, "Expected ErrServiceKeyNil for nil key")
 	})
 
 	t.Run("key not found", func(t *testing.T) {
@@ -167,15 +138,11 @@ func TestResolveKeyed(t *testing.T) {
 		}, Name("primary"))
 
 		provider, err := collection.Build()
-		if err != nil {
-			t.Fatalf("Build failed: %v", err)
-		}
+		assert.NoError(t, err, "Build should not fail")
 		defer provider.Close()
 
 		_, err = ResolveKeyed[*testService](provider, "nonexistent")
-		if err == nil {
-			t.Error("Expected error for non-existent key")
-		}
+		assert.Error(t, err, "Expected error for non-existent key")
 	})
 
 	t.Run("type mismatch", func(t *testing.T) {
@@ -185,15 +152,11 @@ func TestResolveKeyed(t *testing.T) {
 		}, Name("key"))
 
 		provider, err := collection.Build()
-		if err != nil {
-			t.Fatalf("Build failed: %v", err)
-		}
+		assert.NoError(t, err, "Build should not fail")
 		defer provider.Close()
 
 		_, err = ResolveKeyed[*testService](provider, "key")
-		if err == nil {
-			t.Error("Expected type mismatch error")
-		}
+		assert.Error(t, err, "Expected type mismatch error")
 	})
 }
 
@@ -205,22 +168,18 @@ func TestMustResolveKeyed(t *testing.T) {
 		}, Name("primary"))
 
 		provider, err := collection.Build()
-		if err != nil {
-			t.Fatalf("Build failed: %v", err)
-		}
+		assert.NoError(t, err, "Build should not fail")
 		defer provider.Close()
 
 		service := MustResolveKeyed[*testService](provider, "primary")
-		if service.ID != "keyed" || service.Value != 100 {
-			t.Errorf("Unexpected service values: %+v", service)
-		}
+		assert.Equal(t, "keyed", service.ID, "Service ID should match")
+		assert.Equal(t, 100, service.Value, "Service Value should match")
 	})
 
 	t.Run("panics on error", func(t *testing.T) {
 		defer func() {
-			if r := recover(); r == nil {
-				t.Error("Expected panic but didn't get one")
-			}
+			err := recover()
+			assert.NotNil(t, err, "Expected panic but didn't get one")
 		}()
 
 		MustResolveKeyed[*testService](nil, "key")
@@ -238,62 +197,44 @@ func TestResolveGroup(t *testing.T) {
 		}, Group("handlers"))
 
 		provider, err := collection.Build()
-		if err != nil {
-			t.Fatalf("Build failed: %v", err)
-		}
+		assert.NoError(t, err, "Build should not fail")
 		defer provider.Close()
 
 		services, err := ResolveGroup[*testService](provider, "handlers")
-		if err != nil {
-			t.Fatalf("ResolveGroup failed: %v", err)
-		}
-
-		if len(services) != 2 {
-			t.Errorf("Expected 2 services, got %d", len(services))
-		}
+		assert.NoError(t, err, "ResolveGroup should not fail")
+		assert.Len(t, services, 2, "Expected 2 services in group")
+		assert.Equal(t, "svc1", services[0].ID, "First service ID should match")
+		assert.Equal(t, 1, services[0].Value, "First service Value should match")
+		assert.Equal(t, "svc2", services[1].ID, "Second service ID should match")
+		assert.Equal(t, 2, services[1].Value, "Second service Value should match")
 	})
 
 	t.Run("nil provider", func(t *testing.T) {
 		_, err := ResolveGroup[*testService](nil, "group")
-		if err != ErrProviderNil {
-			t.Errorf("Expected ErrProviderNil, got %v", err)
-		}
+		assert.ErrorIs(t, err, ErrProviderNil, "Expected ErrProviderNil for nil provider")
 	})
 
 	t.Run("empty group name", func(t *testing.T) {
 		collection := NewCollection()
 		provider, err := collection.Build()
-		if err != nil {
-			t.Fatalf("Build failed: %v", err)
-		}
+		assert.NoError(t, err, "Build should not fail")
 		defer provider.Close()
 
 		_, err = ResolveGroup[*testService](provider, "")
-		if err == nil {
-			t.Error("Expected error for empty group name")
-		}
-
-		var valErr *ValidationError
-		if !errors.As(err, &valErr) {
-			t.Errorf("Expected ValidationError, got %T", err)
-		}
+		assert.Error(t, err, "Expected error for empty group name")
+		assert.ErrorIs(t, err, ErrGroupNameEmpty, "Expected ErrGroupNameEmpty for empty group name")
+		assert.IsType(t, &ValidationError{}, err, "Expected ValidationError for empty group name")
 	})
 
 	t.Run("group not found", func(t *testing.T) {
 		collection := NewCollection()
 		provider, err := collection.Build()
-		if err != nil {
-			t.Fatalf("Build failed: %v", err)
-		}
+		assert.NoError(t, err, "Build should not fail")
 		defer provider.Close()
 
 		services, err := ResolveGroup[*testService](provider, "nonexistent")
-		if err != nil {
-			t.Errorf("Expected no error for non-existent group, got %v", err)
-		}
-		if len(services) != 0 {
-			t.Errorf("Expected empty slice for non-existent group, got %d services", len(services))
-		}
+		assert.NoError(t, err, "ResolveGroup should not fail for non-existent group")
+		assert.Len(t, services, 0, "Expected empty services for non-existent group")
 	})
 
 	t.Run("type mismatch in group", func(t *testing.T) {
@@ -303,19 +244,13 @@ func TestResolveGroup(t *testing.T) {
 		}, Group("handlers"))
 
 		provider, err := collection.Build()
-		if err != nil {
-			t.Fatalf("Build failed: %v", err)
-		}
+		assert.NoError(t, err, "Build should not fail")
 		defer provider.Close()
 
 		// Since group returns empty when no matching type found, not an error
 		services, err := ResolveGroup[*testService](provider, "handlers")
-		if err != nil {
-			t.Errorf("Unexpected error: %v", err)
-		}
-		if len(services) != 0 {
-			t.Error("Expected empty services for type mismatch")
-		}
+		assert.NoError(t, err, "ResolveGroup should not fail for type mismatch")
+		assert.Len(t, services, 0, "Expected empty services for type mismatch")
 	})
 }
 
@@ -327,22 +262,19 @@ func TestMustResolveGroup(t *testing.T) {
 		}, Group("handlers"))
 
 		provider, err := collection.Build()
-		if err != nil {
-			t.Fatalf("Build failed: %v", err)
-		}
+		assert.NoError(t, err, "Build should not fail")
 		defer provider.Close()
 
 		services := MustResolveGroup[*testService](provider, "handlers")
-		if len(services) != 1 {
-			t.Errorf("Expected 1 service, got %d", len(services))
-		}
+		assert.Len(t, services, 1, "Expected 1 service in group")
+		assert.Equal(t, "svc1", services[0].ID, "Service ID should match")
+		assert.Equal(t, 1, services[0].Value, "Service Value should match")
 	})
 
 	t.Run("panics on error", func(t *testing.T) {
 		defer func() {
-			if r := recover(); r == nil {
-				t.Error("Expected panic but didn't get one")
-			}
+			err := recover()
+			assert.NotNil(t, err, "Expected panic but didn't get one")
 		}()
 
 		MustResolveGroup[*testService](nil, "group")
@@ -352,21 +284,15 @@ func TestMustResolveGroup(t *testing.T) {
 func TestProvider_ID(t *testing.T) {
 	collection := NewCollection()
 	provider, err := collection.Build()
-	if err != nil {
-		t.Fatalf("Build failed: %v", err)
-	}
+	assert.NoError(t, err, "Build should not fail")
 	defer provider.Close()
 
 	id := provider.ID()
-	if id == "" {
-		t.Error("Expected non-empty ID")
-	}
+	assert.NotEmpty(t, id, "Expected non-empty ID")
 
 	// ID should remain constant
 	id2 := provider.ID()
-	if id != id2 {
-		t.Errorf("ID changed: %s != %s", id, id2)
-	}
+	assert.Equal(t, id, id2, "Expected ID to remain constant")
 }
 
 func TestFromContext(t *testing.T) {
@@ -377,35 +303,24 @@ func TestFromContext(t *testing.T) {
 		})
 
 		provider, err := collection.Build()
-		if err != nil {
-			t.Fatalf("Build failed: %v", err)
-		}
+		assert.NoError(t, err, "Build should not fail")
 		defer provider.Close()
 
 		ctx := context.Background()
 		scope, err := provider.CreateScope(ctx)
-		if err != nil {
-			t.Fatalf("CreateScope failed: %v", err)
-		}
+		assert.NoError(t, err, "CreateScope should not fail")
 		defer scope.Close()
 
 		scope, err = FromContext(scope.Context())
-		if err != nil {
-			t.Fatalf("FromContext failed: %v", err)
-		}
-
-		if scope == nil {
-			t.Error("Expected non-nil scope from context")
-		}
+		assert.NoError(t, err, "FromContext should not fail")
+		assert.NotNil(t, scope, "Expected non-nil scope from context")
 	})
 }
 
 func TestExtractParameterTypes(t *testing.T) {
 	t.Run("nil info", func(t *testing.T) {
 		types := extractParameterTypes(nil)
-		if types != nil {
-			t.Errorf("Expected nil for nil info, got %v", types)
-		}
+		assert.Nil(t, types, "Expected nil for nil info")
 	})
 
 	t.Run("with parameters through multi-return", func(t *testing.T) {
@@ -426,19 +341,16 @@ func TestExtractParameterTypes(t *testing.T) {
 
 		// Build will internally use extractParameterTypes for multi-return singletons
 		provider, err := collection.Build()
-		if err != nil {
-			t.Fatalf("Build failed: %v", err)
-		}
+		assert.NoError(t, err, "Build should not fail")
 		defer provider.Close()
 
 		// Verify the service was created correctly
 		service, err := Resolve[*testServiceWithDep](provider)
-		if err != nil {
-			t.Fatalf("Resolve failed: %v", err)
-		}
-		if service.Service == nil || service.Dep == nil {
-			t.Error("Dependencies were not properly injected")
-		}
+		assert.NoError(t, err, "Resolve should not fail")
+		assert.NotNil(t, service, "Service should not be nil")
+		assert.Equal(t, "base", service.Service.ID, "Service ID should match")
+		assert.Equal(t, 1, service.Service.Value, "Service Value should match")
+		assert.Equal(t, "dep", service.Dep.Name, "Dependency Name should match")
 	})
 }
 
@@ -452,126 +364,89 @@ func TestMultiReturnConstructor(t *testing.T) {
 	})
 
 	provider, err := collection.Build()
-	if err != nil {
-		t.Fatalf("Build failed: %v", err)
-	}
+	assert.NoError(t, err, "Build should not fail")
 	defer provider.Close()
 
 	service, err := Resolve[*testService](provider)
-	if err != nil {
-		t.Fatalf("Resolve failed: %v", err)
-	}
-
-	if service.ID != "multi" || service.Value != 300 {
-		t.Errorf("Unexpected service values: %+v", service)
-	}
+	assert.NoError(t, err, "Resolve should not fail")
+	assert.NotNil(t, service, "Service should not be nil")
+	assert.Equal(t, "multi", service.ID, "Service ID should match")
+	assert.Equal(t, 300, service.Value, "Service Value should match")
 
 	dep, err := Resolve[*testDependency](provider)
-	if err != nil {
-		t.Fatalf("Resolve dependency failed: %v", err)
-	}
-
-	if dep.Name != "dep" {
-		t.Errorf("Unexpected dependency name: %s", dep.Name)
-	}
+	assert.NoError(t, err, "Resolve dependency should not fail")
+	assert.NotNil(t, dep, "Dependency should not be nil")
+	assert.Equal(t, "dep", dep.Name, "Dependency Name should match")
 }
 
 func TestProviderGetMethods(t *testing.T) {
 	t.Run("Get with nil type", func(t *testing.T) {
 		collection := NewCollection()
 		provider, err := collection.Build()
-		if err != nil {
-			t.Fatalf("Build failed: %v", err)
-		}
+		assert.NoError(t, err, "Build should not fail")
 		defer provider.Close()
 
 		_, err = provider.Get(nil)
-		if err != ErrServiceTypeNil {
-			t.Errorf("Expected ErrServiceTypeNil, got %v", err)
-		}
+		assert.ErrorIs(t, err, ErrServiceTypeNil, "Expected ErrServiceTypeNil for nil type")
 	})
 
 	t.Run("GetKeyed with nil type", func(t *testing.T) {
 		collection := NewCollection()
 		provider, err := collection.Build()
-		if err != nil {
-			t.Fatalf("Build failed: %v", err)
-		}
+		assert.NoError(t, err, "Build should not fail")
 		defer provider.Close()
 
 		_, err = provider.GetKeyed(nil, "key")
-		if err != ErrServiceTypeNil {
-			t.Errorf("Expected ErrServiceTypeNil, got %v", err)
-		}
+		assert.ErrorIs(t, err, ErrServiceTypeNil, "Expected ErrServiceTypeNil for nil type")
 	})
 
 	t.Run("GetGroup with nil type", func(t *testing.T) {
 		collection := NewCollection()
 		provider, err := collection.Build()
-		if err != nil {
-			t.Fatalf("Build failed: %v", err)
-		}
+		assert.NoError(t, err, "Build should not fail")
 		defer provider.Close()
 
 		_, err = provider.GetGroup(nil, "group")
-		if err != ErrServiceTypeNil {
-			t.Errorf("Expected ErrServiceTypeNil, got %v", err)
-		}
+		assert.ErrorIs(t, err, ErrServiceTypeNil, "Expected ErrServiceTypeNil for nil type")
 	})
 
 	t.Run("Get after disposal", func(t *testing.T) {
 		collection := NewCollection()
 		provider, err := collection.Build()
-		if err != nil {
-			t.Fatalf("Build failed: %v", err)
-		}
+		assert.NoError(t, err, "Build should not fail")
 		provider.Close()
 
 		_, err = provider.Get(reflect.TypeOf((*testService)(nil)))
-		if err != ErrProviderDisposed {
-			t.Errorf("Expected ErrProviderDisposed, got %v", err)
-		}
+		assert.ErrorIs(t, err, ErrProviderDisposed, "Expected ErrProviderDisposed after Close")
 	})
 
 	t.Run("GetKeyed after disposal", func(t *testing.T) {
 		collection := NewCollection()
 		provider, err := collection.Build()
-		if err != nil {
-			t.Fatalf("Build failed: %v", err)
-		}
+		assert.NoError(t, err, "Build should not fail")
 		provider.Close()
 
 		_, err = provider.GetKeyed(reflect.TypeOf((*testService)(nil)), "key")
-		if err != ErrProviderDisposed {
-			t.Errorf("Expected ErrProviderDisposed, got %v", err)
-		}
+		assert.ErrorIs(t, err, ErrProviderDisposed, "Expected ErrProviderDisposed after Close")
 	})
 
 	t.Run("GetGroup after disposal", func(t *testing.T) {
 		collection := NewCollection()
 		provider, err := collection.Build()
-		if err != nil {
-			t.Fatalf("Build failed: %v", err)
-		}
+		assert.NoError(t, err, "Build should not fail")
 		provider.Close()
 
 		_, err = provider.GetGroup(reflect.TypeOf((*testService)(nil)), "group")
-		if err != ErrProviderDisposed {
-			t.Errorf("Expected ErrProviderDisposed, got %v", err)
-		}
+		assert.ErrorIs(t, err, ErrProviderDisposed, "Expected ErrProviderDisposed after Close")
 	})
 
 	t.Run("CreateScope after disposal", func(t *testing.T) {
 		collection := NewCollection()
 		provider, err := collection.Build()
-		if err != nil {
-			t.Fatalf("Build failed: %v", err)
-		}
+		assert.NoError(t, err, "Build should not fail")
 		provider.Close()
 
 		_, err = provider.CreateScope(context.Background())
-		if err != ErrProviderDisposed {
-			t.Errorf("Expected ErrProviderDisposed, got %v", err)
-		}
+		assert.ErrorIs(t, err, ErrProviderDisposed, "Expected ErrProviderDisposed after Close")
 	})
 }

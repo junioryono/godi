@@ -11,6 +11,7 @@ import (
 	"github.com/junioryono/godi/v4"
 	"github.com/junioryono/godi/v4/internal/graph"
 	"github.com/junioryono/godi/v4/internal/reflection"
+	"github.com/stretchr/testify/assert"
 )
 
 // Test concurrent graph operations
@@ -94,18 +95,14 @@ func TestDependencyGraph_ConcurrentOperations(t *testing.T) {
 	close(errors)
 
 	for err := range errors {
-		t.Error(err)
+		assert.NoError(t, err, "Concurrent operation error")
 	}
 
 	// Final verification
-	if g.Size() != 10 {
-		t.Errorf("Expected 10 nodes, got %d", g.Size())
-	}
+	assert.Equal(t, 10, g.Size(), "Expected 10 nodes in graph after concurrent operations")
 
 	// Should be acyclic (linear chain)
-	if !g.IsAcyclic() {
-		t.Error("Graph should be acyclic")
-	}
+	assert.True(t, g.IsAcyclic(), "Graph should be acyclic")
 }
 
 // Test complex cycle detection scenarios
@@ -212,14 +209,10 @@ func TestDependencyGraph_ComplexCycles(t *testing.T) {
 			g, err := tt.setupGraph()
 
 			if tt.expectCycle {
-				if err == nil {
-					t.Error("Expected cycle error, got nil")
-				}
+				assert.Error(t, err, "Expected cycle error")
 
 				cErr, ok := err.(*graph.CircularDependencyError)
-				if !ok {
-					t.Errorf("Expected CircularDependencyError, got %T: %v", err, err)
-				}
+				assert.True(t, ok, "Expected CircularDependencyError, got %T: %v", err, err)
 
 				t.Logf("Cycle path: %v", cErr.Path)
 
@@ -232,18 +225,11 @@ func TestDependencyGraph_ComplexCycles(t *testing.T) {
 							break
 						}
 					}
-					if !found {
-						t.Errorf("Expected %s in cycle path", expected)
-					}
+					assert.True(t, found, "Expected %s in cycle path", expected)
 				}
 			} else {
-				if err != nil {
-					t.Errorf("Unexpected error: %v", err)
-				}
-
-				if !g.IsAcyclic() {
-					t.Error("Graph should be acyclic")
-				}
+				assert.NoError(t, err, "Unexpected error")
+				assert.True(t, g.IsAcyclic(), "Graph should be acyclic")
 			}
 		})
 	}
@@ -311,9 +297,8 @@ func TestDependencyGraph_DepthCalculation(t *testing.T) {
 	}
 
 	for _, p := range providers {
-		if err := g.AddProvider(p); err != nil {
-			t.Fatalf("Failed to add provider: %v", err)
-		}
+		err := g.AddProvider(p)
+		assert.NoError(t, err, "Failed to add provider: %v", p.Type)
 	}
 
 	g.CalculateDepths()
@@ -333,13 +318,9 @@ func TestDependencyGraph_DepthCalculation(t *testing.T) {
 
 	for name, expectedDepth := range expectations {
 		node := g.GetNode(types[name], nil, "")
-		if node == nil {
-			t.Errorf("Node %s not found", name)
-			continue
-		}
-
-		if node.Depth != expectedDepth {
-			t.Errorf("Node %s: expected depth %d, got %d", name, expectedDepth, node.Depth)
+		assert.NotNil(t, node, "Node %s not found", name)
+		if node != nil {
+			assert.Equal(t, expectedDepth, node.Depth, "Node %s: expected depth %d, got %d", name, expectedDepth, node.Depth)
 		}
 	}
 }
@@ -383,22 +364,19 @@ func TestDependencyGraph_TransitiveDependenciesWithKeys(t *testing.T) {
 	}
 
 	for _, p := range providers {
-		if err := g.AddProvider(p); err != nil {
-			t.Fatalf("Failed to add provider: %v", err)
-		}
+		err := g.AddProvider(p)
+		assert.NoError(t, err, "Failed to add provider: %v", p.Type)
 	}
 
 	// Get transitive dependencies of primary service
 	deps := g.GetTransitiveDependencies(serviceType, "primary", "")
 
-	if len(deps) != 2 {
-		t.Errorf("Expected 2 transitive dependencies, got %d", len(deps))
-	}
+	assert.Len(t, deps, 2, "Expected 2 transitive dependencies")
 
 	// Verify we only get primary chain, not backup
 	for _, dep := range deps {
-		if dep.Key != nil && dep.Key != "primary" {
-			t.Errorf("Should only have primary dependencies, got key %v", dep.Key)
+		if dep.Key != nil {
+			assert.Equal(t, "primary", dep.Key, "Should only have primary dependencies, got key %v", dep.Key)
 		}
 	}
 }
@@ -428,28 +406,20 @@ func TestDependencyGraph_RemovalConsistency(t *testing.T) {
 	}
 
 	// Verify initial state
-	if g.Size() != 3 {
-		t.Errorf("Expected 3 nodes, got %d", g.Size())
-	}
+	assert.Equal(t, 3, g.Size(), "Expected 3 nodes")
 
 	// Remove middle node
 	g.RemoveProvider(type2, nil, "")
 
-	if g.Size() != 2 {
-		t.Errorf("Expected 2 nodes after removal, got %d", g.Size())
-	}
+	assert.Equal(t, 2, g.Size(), "Expected 2 nodes after removal")
 
 	// Service3's dependencies should be updated
 	deps := g.GetDependencies(type3, nil, "")
-	if len(deps) != 0 {
-		t.Errorf("Service3 should have no dependencies after Service2 removal, got %d", len(deps))
-	}
+	assert.Empty(t, deps, "Service3 should have no dependencies after Service2 removal")
 
 	// Service1 should have no dependents
 	dependents := g.GetDependents(type1, nil, "")
-	if len(dependents) != 0 {
-		t.Errorf("Service1 should have no dependents after Service2 removal, got %d", len(dependents))
-	}
+	assert.Empty(t, dependents, "Service1 should have no dependents after Service2 removal")
 }
 
 // Benchmark topological sort performance
@@ -481,9 +451,7 @@ func BenchmarkDependencyGraph_TopologicalSort(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		_, err := g.TopologicalSort()
-		if err != nil {
-			b.Fatal(err)
-		}
+		assert.NoError(b, err)
 	}
 }
 
@@ -512,17 +480,13 @@ func TestDependencyGraph_Clear(t *testing.T) {
 	})
 
 	// Verify graph has nodes
-	if g.Size() != 3 {
-		t.Errorf("Expected 3 nodes, got %d", g.Size())
-	}
+	assert.Equal(t, 3, g.Size(), "Expected 3 nodes")
 
 	// Clear the graph
 	g.Clear()
 
 	// Verify graph is empty
-	if g.Size() != 0 {
-		t.Errorf("Expected 0 nodes after clear, got %d", g.Size())
-	}
+	assert.Equal(t, 0, g.Size(), "Expected 0 nodes after clear")
 
 	// Verify we can still add nodes after clearing
 	g.AddProvider(&godi.Descriptor{
@@ -530,9 +494,7 @@ func TestDependencyGraph_Clear(t *testing.T) {
 		Dependencies: nil,
 	})
 
-	if g.Size() != 1 {
-		t.Errorf("Expected 1 node after adding to cleared graph, got %d", g.Size())
-	}
+	assert.Equal(t, 1, g.Size(), "Expected 1 node after adding to cleared graph")
 }
 
 // Test HasNode function
@@ -543,9 +505,7 @@ func TestDependencyGraph_HasNode(t *testing.T) {
 	testType := reflect.TypeOf(HasNodeTest{})
 
 	// Check node doesn't exist initially
-	if g.HasNode(testType, nil, "") {
-		t.Error("HasNode should return false for non-existent node")
-	}
+	assert.False(t, g.HasNode(testType, nil, ""), "HasNode should return false for non-existent node")
 
 	// Add the node
 	g.AddProvider(&godi.Descriptor{
@@ -554,14 +514,10 @@ func TestDependencyGraph_HasNode(t *testing.T) {
 	})
 
 	// Check node exists
-	if !g.HasNode(testType, nil, "") {
-		t.Error("HasNode should return true for existing node")
-	}
+	assert.True(t, g.HasNode(testType, nil, ""), "HasNode should return true for existing node")
 
 	// Check with key
-	if g.HasNode(testType, "some-key", "") {
-		t.Error("HasNode should return false for non-existent keyed node")
-	}
+	assert.False(t, g.HasNode(testType, "some-key", ""), "HasNode should return false for non-existent keyed node")
 
 	// Add keyed node
 	g.AddProvider(&godi.Descriptor{
@@ -571,9 +527,7 @@ func TestDependencyGraph_HasNode(t *testing.T) {
 	})
 
 	// Check keyed node exists
-	if !g.HasNode(testType, "test-key", "") {
-		t.Error("HasNode should return true for existing keyed node")
-	}
+	assert.True(t, g.HasNode(testType, "test-key", ""), "HasNode should return true for existing keyed node")
 }
 
 // Test NodeKey and Node String methods
@@ -587,9 +541,7 @@ func TestDependencyGraph_StringMethods(t *testing.T) {
 	}
 
 	str := nodeKey.String()
-	if !strings.Contains(str, "StringTest") {
-		t.Errorf("NodeKey.String() should contain type name, got: %s", str)
-	}
+	assert.Contains(t, str, "StringTest", "NodeKey.String() should contain type name")
 
 	// Test NodeKey.String() with key
 	nodeKeyWithKey := graph.NodeKey{
@@ -598,9 +550,8 @@ func TestDependencyGraph_StringMethods(t *testing.T) {
 	}
 
 	strWithKey := nodeKeyWithKey.String()
-	if !strings.Contains(strWithKey, "StringTest") || !strings.Contains(strWithKey, "test-key") {
-		t.Errorf("NodeKey.String() should contain type name and key, got: %s", strWithKey)
-	}
+	assert.Contains(t, strWithKey, "StringTest", "NodeKey.String() should contain type name")
+	assert.Contains(t, strWithKey, "test-key", "NodeKey.String() should contain key")
 
 	// Test Node.String()
 	node := &graph.Node{
@@ -611,18 +562,10 @@ func TestDependencyGraph_StringMethods(t *testing.T) {
 	}
 
 	nodeStr := node.String()
-	if !strings.Contains(nodeStr, "StringTest") {
-		t.Errorf("Node.String() should contain type name, got: %s", nodeStr)
-	}
-	if !strings.Contains(nodeStr, "in:2") {
-		t.Errorf("Node.String() should contain InDegree, got: %s", nodeStr)
-	}
-	if !strings.Contains(nodeStr, "out:3") {
-		t.Errorf("Node.String() should contain OutDegree, got: %s", nodeStr)
-	}
-	if !strings.Contains(nodeStr, "depth:5") {
-		t.Errorf("Node.String() should contain Depth, got: %s", nodeStr)
-	}
+	assert.Contains(t, nodeStr, "StringTest", "Node.String() should contain type name")
+	assert.Contains(t, nodeStr, "in:2", "Node.String() should contain InDegree")
+	assert.Contains(t, nodeStr, "out:3", "Node.String() should contain OutDegree")
+	assert.Contains(t, nodeStr, "depth:5", "Node.String() should contain Depth")
 }
 
 // Test CircularDependencyError.Error()
@@ -637,12 +580,8 @@ func TestCircularDependencyError(t *testing.T) {
 	}
 
 	errStr1 := err1.Error()
-	if !strings.Contains(errStr1, "circular dependency detected") {
-		t.Errorf("Error should mention circular dependency, got: %s", errStr1)
-	}
-	if !strings.Contains(errStr1, "ErrorTest") {
-		t.Errorf("Error should contain node type, got: %s", errStr1)
-	}
+	assert.Contains(t, errStr1, "circular dependency detected", "Error should mention circular dependency")
+	assert.Contains(t, errStr1, "ErrorTest", "Error should contain node type")
 
 	// Test with path
 	err2 := graph.CircularDependencyError{
@@ -655,9 +594,7 @@ func TestCircularDependencyError(t *testing.T) {
 	}
 
 	errStr2 := err2.Error()
-	if !strings.Contains(errStr2, "->") {
-		t.Errorf("Error with path should contain arrow notation, got: %s", errStr2)
-	}
+	assert.Contains(t, errStr2, "->", "Error with path should contain arrow notation")
 }
 
 // Test edge cases for GetDependencies and GetDependents
@@ -669,21 +606,15 @@ func TestDependencyGraph_GetMethods_NonExistent(t *testing.T) {
 
 	// GetDependencies on non-existent node should return nil
 	deps := g.GetDependencies(nonExistentType, nil, "")
-	if deps != nil {
-		t.Error("GetDependencies should return nil for non-existent node")
-	}
+	assert.Nil(t, deps, "GetDependencies should return nil for non-existent node")
 
 	// GetDependents on non-existent node should return nil
 	dependents := g.GetDependents(nonExistentType, nil, "")
-	if dependents != nil {
-		t.Error("GetDependents should return nil for non-existent node")
-	}
+	assert.Nil(t, dependents, "GetDependents should return nil for non-existent node")
 
 	// GetNode on non-existent node should return nil
 	node := g.GetNode(nonExistentType, nil, "")
-	if node != nil {
-		t.Error("GetNode should return nil for non-existent node")
-	}
+	assert.Nil(t, node, "GetNode should return nil for non-existent node")
 }
 
 // Test nil provider handling
@@ -691,13 +622,8 @@ func TestDependencyGraph_AddProvider_Nil(t *testing.T) {
 	g := graph.NewDependencyGraph()
 
 	err := g.AddProvider(nil)
-	if err == nil {
-		t.Error("AddProvider should return error for nil provider")
-	}
-
-	if !strings.Contains(err.Error(), "nil") {
-		t.Errorf("Error should mention nil provider, got: %v", err)
-	}
+	assert.Error(t, err, "AddProvider should return error for nil provider")
+	assert.Contains(t, err.Error(), "nil", "Error should mention nil provider")
 }
 
 // Test removing non-existent provider
@@ -707,12 +633,12 @@ func TestDependencyGraph_RemoveProvider_NonExistent(t *testing.T) {
 	type NonExistent struct{}
 
 	// Should not panic when removing non-existent provider
-	g.RemoveProvider(reflect.TypeOf(NonExistent{}), nil, "")
+	assert.NotPanics(t, func() {
+		g.RemoveProvider(reflect.TypeOf(NonExistent{}), nil, "")
+	}, "Should not panic when removing non-existent provider")
 
 	// Graph should still be empty
-	if g.Size() != 0 {
-		t.Errorf("Expected 0 nodes after removing non-existent provider, got %d", g.Size())
-	}
+	assert.Equal(t, 0, g.Size(), "Expected 0 nodes after removing non-existent provider")
 }
 
 // Test cache invalidation
@@ -744,17 +670,13 @@ func TestDependencyGraph_CacheInvalidation(t *testing.T) {
 	// Sort again (cache should be invalidated)
 	sorted2, _ := g.TopologicalSort()
 
-	if len(sorted1) == len(sorted2) {
-		t.Error("Cache should have been invalidated after adding provider")
-	}
+	assert.NotEqual(t, len(sorted1), len(sorted2), "Cache should have been invalidated after adding provider")
 
 	// Multiple sorts without changes should return consistent results
 	sorted3, _ := g.TopologicalSort()
 	sorted4, _ := g.TopologicalSort()
 
-	if len(sorted3) != len(sorted4) {
-		t.Error("Cached results should be consistent")
-	}
+	assert.Equal(t, len(sorted3), len(sorted4), "Cached results should be consistent")
 }
 
 // Test complex scenarios for better coverage
@@ -790,9 +712,7 @@ func TestDependencyGraph_ComplexScenarios(t *testing.T) {
 		deps := g.GetTransitiveDependencies(typeA, nil, "")
 
 		// Should have B and C
-		if len(deps) != 2 {
-			t.Errorf("Expected 2 transitive dependencies, got %d", len(deps))
-		}
+		assert.Len(t, deps, 2, "Expected 2 transitive dependencies")
 	})
 
 	t.Run("TopologicalSort with insufficient nodes", func(t *testing.T) {
@@ -814,14 +734,10 @@ func TestDependencyGraph_ComplexScenarios(t *testing.T) {
 		sorted, err := g.TopologicalSort()
 
 		// Should succeed - missing providers are OK in the graph
-		if err != nil {
-			t.Errorf("TopologicalSort should handle missing providers: %v", err)
-		}
+		assert.NoError(t, err, "TopologicalSort should handle missing providers")
 
 		// Should have both nodes
-		if len(sorted) != 2 {
-			t.Errorf("Expected 2 nodes in sorted result, got %d", len(sorted))
-		}
+		assert.Len(t, sorted, 2, "Expected 2 nodes in sorted result")
 	})
 
 	t.Run("Complex cycle path finding", func(t *testing.T) {
@@ -859,19 +775,13 @@ func TestDependencyGraph_ComplexScenarios(t *testing.T) {
 			Dependencies: []*reflection.Dependency{{Type: typeB}},
 		})
 
-		if err == nil {
-			t.Error("Expected cycle error")
-		}
+		assert.Error(t, err, "Expected cycle error")
 
 		cErr, ok := err.(*graph.CircularDependencyError)
-		if !ok {
-			t.Errorf("Expected CircularDependencyError, got %T", err)
-		}
+		assert.True(t, ok, "Expected CircularDependencyError, got %T", err)
 
 		// Path should contain the cycle
-		if len(cErr.Path) < 2 {
-			t.Errorf("Cycle path should have at least 2 nodes, got %d", len(cErr.Path))
-		}
+		assert.GreaterOrEqual(t, len(cErr.Path), 2, "Cycle path should have at least 2 nodes")
 	})
 
 	t.Run("DetectCycles with cached results", func(t *testing.T) {
@@ -892,15 +802,11 @@ func TestDependencyGraph_ComplexScenarios(t *testing.T) {
 
 		// First call - should build cache
 		err1 := g.DetectCycles()
-		if err1 != nil {
-			t.Errorf("No cycles should be detected: %v", err1)
-		}
+		assert.NoError(t, err1, "No cycles should be detected")
 
 		// Second call - should use cache
 		err2 := g.DetectCycles()
-		if err2 != nil {
-			t.Errorf("No cycles should be detected (cached): %v", err2)
-		}
+		assert.NoError(t, err2, "No cycles should be detected (cached)")
 	})
 
 	t.Run("RemoveProvider with complex dependencies", func(t *testing.T) {
@@ -945,20 +851,14 @@ func TestDependencyGraph_ComplexScenarios(t *testing.T) {
 
 		// B and C should have no dependencies now
 		bDeps := g.GetDependencies(typeB, nil, "")
-		if len(bDeps) != 0 {
-			t.Errorf("B should have no dependencies after A removal, got %d", len(bDeps))
-		}
+		assert.Empty(t, bDeps, "B should have no dependencies after A removal")
 
 		cDeps := g.GetDependencies(typeC, nil, "")
-		if len(cDeps) != 0 {
-			t.Errorf("C should have no dependencies after A removal, got %d", len(cDeps))
-		}
+		assert.Empty(t, cDeps, "C should have no dependencies after A removal")
 
 		// D should still depend on B and C
 		dDeps := g.GetDependencies(typeD, nil, "")
-		if len(dDeps) != 2 {
-			t.Errorf("D should still have 2 dependencies, got %d", len(dDeps))
-		}
+		assert.Len(t, dDeps, 2, "D should still have 2 dependencies")
 	})
 }
 
@@ -1112,14 +1012,10 @@ func TestTopologicalSort_DependencyOrder(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			g, err := tt.setupGraph()
-			if err != nil {
-				t.Fatalf("Failed to setup graph: %v", err)
-			}
+			assert.NoError(t, err, "Failed to setup graph")
 
 			sorted, err := g.TopologicalSort()
-			if err != nil {
-				t.Fatalf("TopologicalSort failed: %v", err)
-			}
+			assert.NoError(t, err, "TopologicalSort should not fail")
 
 			// Extract type names from sorted nodes
 			actualOrder := make([]string, len(sorted))
@@ -1147,10 +1043,11 @@ func TestTopologicalSort_DependencyOrder(t *testing.T) {
 				noDepsIdx := slices.Index(actualOrder, "ServiceNoDeps")
 				oneDepIdx := slices.Index(actualOrder, "ServiceWithOneDep")
 
-				if noDepsIdx == -1 || oneDepIdx == -1 {
-					t.Errorf("Missing expected types in result")
-				} else if noDepsIdx >= oneDepIdx {
-					t.Errorf("ServiceNoDeps (index %d) should come before ServiceWithOneDep (index %d)",
+				assert.NotEqual(t, -1, noDepsIdx, "Missing ServiceNoDeps in result")
+				assert.NotEqual(t, -1, oneDepIdx, "Missing ServiceWithOneDep in result")
+				if noDepsIdx != -1 && oneDepIdx != -1 {
+					assert.Less(t, noDepsIdx, oneDepIdx,
+						"ServiceNoDeps (index %d) should come before ServiceWithOneDep (index %d)",
 						noDepsIdx, oneDepIdx)
 				}
 			}
@@ -1161,40 +1058,34 @@ func TestTopologicalSort_DependencyOrder(t *testing.T) {
 				oneDepIdx := slices.Index(actualOrder, "ServiceWithOneDep")
 				twoDepsIdx := slices.Index(actualOrder, "ServiceWithTwoDeps")
 
-				if noDepsIdx == -1 || oneDepIdx == -1 || twoDepsIdx == -1 {
-					t.Errorf("Missing expected types in result")
-				} else {
-					if noDepsIdx >= oneDepIdx {
-						t.Errorf("ServiceNoDeps (index %d) should come before ServiceWithOneDep (index %d)",
-							noDepsIdx, oneDepIdx)
-					}
-					if noDepsIdx >= twoDepsIdx {
-						t.Errorf("ServiceNoDeps (index %d) should come before ServiceWithTwoDeps (index %d)",
-							noDepsIdx, twoDepsIdx)
-					}
-					if oneDepIdx >= twoDepsIdx {
-						t.Errorf("ServiceWithOneDep (index %d) should come before ServiceWithTwoDeps (index %d)",
-							oneDepIdx, twoDepsIdx)
-					}
+				assert.NotEqual(t, -1, noDepsIdx, "Missing ServiceNoDeps in result")
+				assert.NotEqual(t, -1, oneDepIdx, "Missing ServiceWithOneDep in result")
+				assert.NotEqual(t, -1, twoDepsIdx, "Missing ServiceWithTwoDeps in result")
+
+				if noDepsIdx != -1 && oneDepIdx != -1 && twoDepsIdx != -1 {
+					assert.Less(t, noDepsIdx, oneDepIdx,
+						"ServiceNoDeps (index %d) should come before ServiceWithOneDep (index %d)",
+						noDepsIdx, oneDepIdx)
+					assert.Less(t, noDepsIdx, twoDepsIdx,
+						"ServiceNoDeps (index %d) should come before ServiceWithTwoDeps (index %d)",
+						noDepsIdx, twoDepsIdx)
+					assert.Less(t, oneDepIdx, twoDepsIdx,
+						"ServiceWithOneDep (index %d) should come before ServiceWithTwoDeps (index %d)",
+						oneDepIdx, twoDepsIdx)
 				}
 			}
 
 			if tt.name == "diamond_dependency" {
 				// A must come first, D must come last
+				assert.GreaterOrEqual(t, len(actualOrder), 4, "Expected at least 4 nodes")
 				if len(actualOrder) >= 4 {
-					if actualOrder[0] != "A" {
-						t.Errorf("A should be first, but got %s", actualOrder[0])
-					}
-					if actualOrder[3] != "D" {
-						t.Errorf("D should be last, but got %s", actualOrder[3])
-					}
+					assert.Equal(t, "A", actualOrder[0], "A should be first")
+					assert.Equal(t, "D", actualOrder[3], "D should be last")
 
 					// B and C should be in positions 1 and 2 (any order)
 					hasB := actualOrder[1] == "B" || actualOrder[2] == "B"
 					hasC := actualOrder[1] == "C" || actualOrder[2] == "C"
-					if !hasB || !hasC {
-						t.Errorf("B and C should be in middle positions, got %v", actualOrder)
-					}
+					assert.True(t, hasB && hasC, "B and C should be in middle positions, got %v", actualOrder)
 				}
 			}
 		})
@@ -1217,9 +1108,7 @@ func TestTopologicalSort_ForDependencyInjection(t *testing.T) {
 		Dependencies: nil,
 		Lifetime:     godi.Singleton,
 	})
-	if err != nil {
-		t.Fatalf("Failed to add ResolutionTestService: %v", err)
-	}
+	assert.NoError(t, err, "Failed to add ResolutionTestService")
 
 	// Add ResolutionServiceWithDep (depends on ResolutionTestService)
 	err = g.AddProvider(&godi.Descriptor{
@@ -1229,15 +1118,11 @@ func TestTopologicalSort_ForDependencyInjection(t *testing.T) {
 		},
 		Lifetime: godi.Singleton,
 	})
-	if err != nil {
-		t.Fatalf("Failed to add ResolutionServiceWithDep: %v", err)
-	}
+	assert.NoError(t, err, "Failed to add ResolutionServiceWithDep")
 
 	// Get topological sort
 	sorted, err := g.TopologicalSort()
-	if err != nil {
-		t.Fatalf("TopologicalSort failed: %v", err)
-	}
+	assert.NoError(t, err, "TopologicalSort should not fail")
 
 	// Log the order
 	t.Logf("Topological sort order:")
@@ -1246,17 +1131,11 @@ func TestTopologicalSort_ForDependencyInjection(t *testing.T) {
 	}
 
 	// Verify order: ResolutionTestService MUST come before ResolutionServiceWithDep
-	if len(sorted) != 2 {
-		t.Fatalf("Expected 2 nodes, got %d", len(sorted))
-	}
+	assert.Len(t, sorted, 2, "Expected 2 nodes in sorted result")
 
 	// The first node should be ResolutionTestService (no dependencies)
-	if sorted[0].Key.Type != typeTestService {
-		t.Errorf("First node should be ResolutionTestService (no deps), got %v", sorted[0].Key.Type)
-	}
+	assert.Equal(t, typeTestService, sorted[0].Key.Type, "First node should be ResolutionTestService (no deps)")
 
 	// The second node should be ResolutionServiceWithDep (depends on first)
-	if sorted[1].Key.Type != typeServiceWithDep {
-		t.Errorf("Second node should be ResolutionServiceWithDep (has deps), got %v", sorted[1].Key.Type)
-	}
+	assert.Equal(t, typeServiceWithDep, sorted[1].Key.Type, "Second node should be ResolutionServiceWithDep (has deps)")
 }

@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/junioryono/godi/v4/internal/reflection"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Test FormatConstructor
@@ -44,21 +46,15 @@ func TestTypeFormatter_FormatConstructor(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.constructor == nil {
 				result := formatter.FormatConstructor(nil)
-				if result != tt.expected {
-					t.Errorf("FormatConstructor(nil) = %q, want %q", result, tt.expected)
-				}
+				assert.Equal(t, tt.expected, result)
 				return
 			}
 
 			info, err := analyzer.Analyze(tt.constructor)
-			if err != nil {
-				t.Fatalf("Failed to analyze constructor: %v", err)
-			}
+			require.NoError(t, err, "Failed to analyze constructor")
 
 			result := formatter.FormatConstructor(info)
-			if result != tt.expected {
-				t.Errorf("FormatConstructor() = %q, want %q", result, tt.expected)
-			}
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }
@@ -103,9 +99,7 @@ func TestDependencyMatcher(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				got := matcher.MatchType(tt.providerType, tt.depType)
-				if got != tt.want {
-					t.Errorf("MatchType() = %v, want %v", got, tt.want)
-				}
+				assert.Equal(t, tt.want, got)
 			})
 		}
 	})
@@ -152,9 +146,7 @@ func TestDependencyMatcher(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				got := matcher.MatchKey(tt.providerKey, tt.depKey)
-				if got != tt.want {
-					t.Errorf("MatchKey() = %v, want %v", got, tt.want)
-				}
+				assert.Equal(t, tt.want, got)
 			})
 		}
 	})
@@ -201,9 +193,7 @@ func TestDependencyMatcher(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				got := matcher.MatchGroup(tt.providerGroups, tt.depGroup)
-				if got != tt.want {
-					t.Errorf("MatchGroup() = %v, want %v", got, tt.want)
-				}
+				assert.Equal(t, tt.want, got)
 			})
 		}
 	})
@@ -242,9 +232,7 @@ func TestDependencyMatcher(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				got := matcher.FormatDependencyError(tt.depType, tt.key, tt.group)
-				if got != tt.expected {
-					t.Errorf("FormatDependencyError() = %q, want %q", got, tt.expected)
-				}
+				assert.Equal(t, tt.expected, got)
 			})
 		}
 	})
@@ -324,9 +312,7 @@ func TestTypeFormatter_EdgeCases(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := formatter.FormatType(tt.typ)
-			if got != tt.expected {
-				t.Errorf("FormatType() = %q, want %q", got, tt.expected)
-			}
+			assert.Equal(t, tt.expected, got)
 		})
 	}
 }
@@ -336,145 +322,132 @@ func TestValidator_EdgeCases(t *testing.T) {
 	analyzer := reflection.New()
 	validator := reflection.NewValidator(analyzer)
 
-	// Test with Out struct that has no exported fields
-	type EmptyOut struct {
-		reflection.Out
-		_ string // unexported field for testing
-	}
+	t.Run("Out struct with no exported fields", func(t *testing.T) {
+		// Test with Out struct that has no exported fields
+		type EmptyOut struct {
+			reflection.Out
+			_ string // unexported field for testing
+		}
 
-	emptyOutConstructor := func() EmptyOut {
-		return EmptyOut{}
-	}
+		emptyOutConstructor := func() EmptyOut {
+			return EmptyOut{}
+		}
 
-	info, err := analyzer.Analyze(emptyOutConstructor)
-	if err != nil {
-		t.Fatalf("Failed to analyze: %v", err)
-	}
+		info, err := analyzer.Analyze(emptyOutConstructor)
+		require.NoError(t, err, "Failed to analyze")
 
-	err = validator.Validate(info)
-	if err == nil {
-		t.Error("Expected error for Out struct with no exported fields")
-	}
+		err = validator.Validate(info)
+		assert.Error(t, err, "Expected error for Out struct with no exported fields")
+	})
 
-	// Test with multiple In parameters
-	type In1 struct {
-		reflection.In
-		DB *Database
-	}
+	t.Run("Multiple In parameters", func(t *testing.T) {
+		// Test with multiple In parameters
+		type In1 struct {
+			reflection.In
+			DB *Database
+		}
 
-	type In2 struct {
-		reflection.In
-		Logger Logger
-	}
+		type In2 struct {
+			reflection.In
+			Logger Logger
+		}
 
-	// This is invalid - can't have multiple In parameters
-	multiInConstructor := func(in1 In1, in2 In2) *UserService {
-		return &UserService{DB: in1.DB, Logger: in2.Logger}
-	}
+		// This is invalid - can't have multiple In parameters
+		multiInConstructor := func(in1 In1, in2 In2) *UserService {
+			return &UserService{DB: in1.DB, Logger: in2.Logger}
+		}
 
-	info2, err := analyzer.Analyze(multiInConstructor)
-	if err != nil {
-		t.Fatalf("Failed to analyze: %v", err)
-	}
+		info, err := analyzer.Analyze(multiInConstructor)
+		require.NoError(t, err, "Failed to analyze")
 
-	err = validator.Validate(info2)
-	if err == nil {
-		t.Error("Expected error for multiple In parameters")
-	}
+		err = validator.Validate(info)
+		assert.Error(t, err, "Expected error for multiple In parameters")
+	})
 
-	// Test group field that's not a slice
-	type InvalidGroupParam struct {
-		reflection.In
-		Handler string `group:"handlers"` // Invalid: group on non-slice
-	}
+	t.Run("Group field that's not a slice", func(t *testing.T) {
+		// Test group field that's not a slice
+		type InvalidGroupParam struct {
+			reflection.In
+			Handler string `group:"handlers"` // Invalid: group on non-slice
+		}
 
-	invalidGroupConstructor := func(params InvalidGroupParam) int {
-		return 0
-	}
+		invalidGroupConstructor := func(params InvalidGroupParam) int {
+			return 0
+		}
 
-	info3, err := analyzer.Analyze(invalidGroupConstructor)
-	if err != nil {
-		t.Fatalf("Failed to analyze: %v", err)
-	}
+		info, err := analyzer.Analyze(invalidGroupConstructor)
+		require.NoError(t, err, "Failed to analyze")
 
-	err = validator.Validate(info3)
-	if err == nil {
-		t.Error("Expected error for group field that's not a slice")
-	}
+		err = validator.Validate(info)
+		assert.Error(t, err, "Expected error for group field that's not a slice")
+	})
 
-	// Test duplicate field names in In struct
-	// Note: Go doesn't allow actual duplicate field names, so we test
-	// the validator's duplicate detection logic with a mock
-	mockInfo := &reflection.ConstructorInfo{
-		IsFunc:        true,
-		IsParamObject: true,
-		Parameters: []reflection.ParameterInfo{
-			{Name: "DB", Type: reflect.TypeOf((*Database)(nil))},
-			{Name: "DB", Type: reflect.TypeOf((*Database)(nil))}, // Duplicate
-		},
-		Returns: []reflection.ReturnInfo{
-			{Type: reflect.TypeOf(0)},
-		},
-		Type: reflect.TypeOf(func(struct{}) int { return 0 }),
-	}
+	t.Run("Duplicate field names in In struct", func(t *testing.T) {
+		// Test duplicate field names in In struct
+		// Note: Go doesn't allow actual duplicate field names, so we test
+		// the validator's duplicate detection logic with a mock
+		mockInfo := &reflection.ConstructorInfo{
+			IsFunc:        true,
+			IsParamObject: true,
+			Parameters: []reflection.ParameterInfo{
+				{Name: "DB", Type: reflect.TypeOf((*Database)(nil))},
+				{Name: "DB", Type: reflect.TypeOf((*Database)(nil))}, // Duplicate
+			},
+			Returns: []reflection.ReturnInfo{
+				{Type: reflect.TypeOf(0)},
+			},
+			Type: reflect.TypeOf(func(struct{}) int { return 0 }),
+		}
 
-	err = validator.Validate(mockInfo)
-	if err == nil {
-		t.Error("Expected error for duplicate field names")
-	}
+		err := validator.Validate(mockInfo)
+		assert.Error(t, err, "Expected error for duplicate field names")
+	})
 }
 
 // Test more scenarios for coverage
 func TestAnalyzer_AdditionalScenarios(t *testing.T) {
 	analyzer := reflection.New()
 
-	// Test GetServiceType with function that only returns error
-	errorOnlyFunc := func() error {
-		return nil
-	}
+	t.Run("GetServiceType with function that only returns error", func(t *testing.T) {
+		// Test GetServiceType with function that only returns error
+		errorOnlyFunc := func() error {
+			return nil
+		}
 
-	_, err := analyzer.GetServiceType(errorOnlyFunc)
-	if err == nil {
-		t.Error("Expected error for function that only returns error")
-	}
+		_, err := analyzer.GetServiceType(errorOnlyFunc)
+		assert.Error(t, err, "Expected error for function that only returns error")
+	})
 
-	// Test GetResultTypes with non-result object
-	simpleFunc := func() *Database {
-		return &Database{}
-	}
+	t.Run("GetResultTypes with non-result object", func(t *testing.T) {
+		// Test GetResultTypes with non-result object
+		simpleFunc := func() *Database {
+			return &Database{}
+		}
 
-	types, err := analyzer.GetResultTypes(simpleFunc)
-	if err != nil {
-		t.Fatalf("GetResultTypes failed: %v", err)
-	}
+		types, err := analyzer.GetResultTypes(simpleFunc)
+		require.NoError(t, err, "GetResultTypes failed")
 
-	if len(types) != 1 {
-		t.Errorf("Expected 1 type, got %d", len(types))
-	}
+		assert.Len(t, types, 1, "Expected 1 type")
+		assert.Equal(t, reflect.TypeOf((*Database)(nil)), types[0], "Wrong type returned")
+	})
 
-	if types[0] != reflect.TypeOf((*Database)(nil)) {
-		t.Error("Wrong type returned")
-	}
+	t.Run("Type that doesn't embed In/Out", func(t *testing.T) {
+		// Test with a type that doesn't embed In/Out
+		// This verifies the analyzer correctly identifies non-In/Out types
+		type NotInOut struct {
+			Field string
+		}
 
-	// Test with a type that doesn't embed In/Out
-	// This verifies the analyzer correctly identifies non-In/Out types
-	type NotInOut struct {
-		Field string
-	}
+		notInOutFunc := func(n NotInOut) int {
+			return 0
+		}
 
-	notInOutFunc := func(n NotInOut) int {
-		return 0
-	}
+		info, err := analyzer.Analyze(notInOutFunc)
+		require.NoError(t, err, "Failed to analyze")
 
-	info, err := analyzer.Analyze(notInOutFunc)
-	if err != nil {
-		t.Fatalf("Failed to analyze: %v", err)
-	}
-
-	// Should not be detected as param object
-	if info.IsParamObject {
-		t.Error("Function with non-In parameter should not be detected as param object")
-	}
+		// Should not be detected as param object
+		assert.False(t, info.IsParamObject, "Function with non-In parameter should not be detected as param object")
+	})
 }
 
 // Test more ParamObjectBuilder scenarios
@@ -512,67 +485,55 @@ func TestParamObjectBuilder_MoreScenarios(t *testing.T) {
 	resolver.keyedValues["special"] = specialDB
 	resolver.groups["handlers"] = handlers
 
-	paramType := reflect.TypeOf(ComplexParams{})
-	result, err := builder.BuildParamObject(paramType, resolver)
-	if err != nil {
-		t.Fatalf("BuildParamObject failed: %v", err)
-	}
+	t.Run("BuildParamObject with all field types", func(t *testing.T) {
+		paramType := reflect.TypeOf(ComplexParams{})
+		result, err := builder.BuildParamObject(paramType, resolver)
+		require.NoError(t, err, "BuildParamObject failed")
 
-	params := result.Interface().(ComplexParams)
+		params := result.Interface().(ComplexParams)
 
-	// Verify all fields
-	if params.Required != mainDB {
-		t.Error("Required field not set correctly")
-	}
+		// Verify all fields
+		assert.Equal(t, mainDB, params.Required, "Required field not set correctly")
+		assert.Equal(t, logger, params.Optional, "Optional field not set correctly")
+		assert.Equal(t, backupDB, params.Named, "Named field not set correctly")
+		assert.Len(t, params.Grouped, 2, "Expected 2 handlers")
+		assert.Empty(t, params.Ignored, "Ignored field should not be set")
+		assert.Equal(t, specialDB, params.Combination, "Combination field not set correctly")
+	})
 
-	if params.Optional != logger {
-		t.Error("Optional field not set correctly")
-	}
+	t.Run("Failed required dependency", func(t *testing.T) {
+		// Test with failed optional dependency
+		failResolver := NewTestResolver()
+		failResolver.shouldFail = true
+		failResolver.failError = errors.New("optional dep failed")
 
-	if params.Named != backupDB {
-		t.Error("Named field not set correctly")
-	}
+		paramType := reflect.TypeOf(ComplexParams{})
 
-	if len(params.Grouped) != 2 {
-		t.Errorf("Expected 2 handlers, got %d", len(params.Grouped))
-	}
+		// Should fail when required dependencies can't be resolved
+		_, err := builder.BuildParamObject(paramType, failResolver)
+		assert.Error(t, err, "Should fail when required dependencies can't be resolved")
+	})
 
-	if params.Ignored != "" {
-		t.Error("Ignored field should not be set")
-	}
+	t.Run("Only optional fields failing", func(t *testing.T) {
+		// Test with only optional fields failing
+		type OnlyOptional struct {
+			reflection.In
+			Optional1 *Database `optional:"true"`
+			Optional2 Logger    `optional:"true"`
+		}
 
-	if params.Combination != specialDB {
-		t.Error("Combination field not set correctly")
-	}
+		failResolver := NewTestResolver()
+		failResolver.shouldFail = true
+		failResolver.failError = errors.New("optional dep failed")
 
-	// Test with failed optional dependency
-	failResolver := NewTestResolver()
-	failResolver.shouldFail = true
-	failResolver.failError = errors.New("optional dep failed")
+		optType := reflect.TypeOf(OnlyOptional{})
+		result, err := builder.BuildParamObject(optType, failResolver)
+		assert.NoError(t, err, "Should succeed with only optional fields failing")
 
-	// Should fail when required dependencies can't be resolved
-	_, err = builder.BuildParamObject(paramType, failResolver)
-	if err == nil {
-		t.Error("Should fail when required dependencies can't be resolved")
-	}
-
-	// Test with only optional fields failing
-	type OnlyOptional struct {
-		reflection.In
-		Optional1 *Database `optional:"true"`
-		Optional2 Logger    `optional:"true"`
-	}
-
-	optType := reflect.TypeOf(OnlyOptional{})
-	result3, err := builder.BuildParamObject(optType, failResolver)
-	if err != nil {
-		t.Errorf("Should succeed with only optional fields failing: %v", err)
-	}
-
-	optParams := result3.Interface().(OnlyOptional)
-	if optParams.Optional1 != nil || optParams.Optional2 != nil {
-		t.Error("Optional fields should be nil when resolution fails")
-	}
+		optParams := result.Interface().(OnlyOptional)
+		assert.Nil(t, optParams.Optional1, "Optional field should be nil when resolution fails")
+		assert.Nil(t, optParams.Optional2, "Optional field should be nil when resolution fails")
+	})
 }
 
 // Test TypeFormatter with more complex scenarios
@@ -584,9 +545,7 @@ func TestTypeFormatter_MoreComplexScenarios(t *testing.T) {
 		complexType := reflect.TypeOf([]map[string][]int{})
 		result := formatter.FormatType(complexType)
 		expected := "[]map[string][]int"
-		if result != expected {
-			t.Errorf("FormatType() = %q, want %q", result, expected)
-		}
+		assert.Equal(t, expected, result)
 
 		// Test with function returning multiple complex types
 		funcType := reflect.TypeOf(func() (map[string]*Database, []Logger, error) {
@@ -594,9 +553,7 @@ func TestTypeFormatter_MoreComplexScenarios(t *testing.T) {
 		})
 		result = formatter.FormatType(funcType)
 		expected = "func() (map[string]*Database, []Logger, error)"
-		if result != expected {
-			t.Errorf("FormatType() = %q, want %q", result, expected)
-		}
+		assert.Equal(t, expected, result)
 	})
 
 	t.Run("FormatConstructor with param object having all tag types", func(t *testing.T) {
@@ -614,21 +571,13 @@ func TestTypeFormatter_MoreComplexScenarios(t *testing.T) {
 
 		analyzer := reflection.New()
 		info, err := analyzer.Analyze(constructor)
-		if err != nil {
-			t.Fatalf("Failed to analyze: %v", err)
-		}
+		require.NoError(t, err, "Failed to analyze")
 
 		result := formatter.FormatConstructor(info)
 		// Should contain all the field annotations
-		if !contains(result, "optional") {
-			t.Error("FormatConstructor should include optional tag")
-		}
-		if !contains(result, "name:") {
-			t.Error("FormatConstructor should include name tag")
-		}
-		if !contains(result, "group:") {
-			t.Error("FormatConstructor should include group tag")
-		}
+		assert.Contains(t, result, "optional", "FormatConstructor should include optional tag")
+		assert.Contains(t, result, "name:", "FormatConstructor should include name tag")
+		assert.Contains(t, result, "group:", "FormatConstructor should include group tag")
 	})
 }
 
@@ -647,14 +596,10 @@ func TestValidator_ComprehensiveScenarios(t *testing.T) {
 		}
 
 		info, err := analyzer.Analyze(constructor)
-		if err != nil {
-			t.Fatalf("Failed to analyze: %v", err)
-		}
+		require.NoError(t, err, "Failed to analyze")
 
 		err = validator.Validate(info)
-		if err == nil {
-			t.Error("Expected error for Out struct with no exported fields")
-		}
+		assert.Error(t, err, "Expected error for Out struct with no exported fields")
 	})
 
 	t.Run("Valid Out struct with multiple return scenarios", func(t *testing.T) {
@@ -669,33 +614,30 @@ func TestValidator_ComprehensiveScenarios(t *testing.T) {
 			return ValidOut{}
 		}
 
-		info1, _ := analyzer.Analyze(constructor1)
-		err := validator.Validate(info1)
-		if err != nil {
-			t.Errorf("Valid Out struct should pass validation: %v", err)
-		}
+		info1, err := analyzer.Analyze(constructor1)
+		require.NoError(t, err)
+		err = validator.Validate(info1)
+		assert.NoError(t, err, "Valid Out struct should pass validation")
 
 		// Test with Out and error
 		constructor2 := func() (ValidOut, error) {
 			return ValidOut{}, nil
 		}
 
-		info2, _ := analyzer.Analyze(constructor2)
+		info2, err := analyzer.Analyze(constructor2)
+		require.NoError(t, err)
 		err = validator.Validate(info2)
-		if err != nil {
-			t.Errorf("Valid Out struct with error should pass validation: %v", err)
-		}
+		assert.NoError(t, err, "Valid Out struct with error should pass validation")
 
 		// Test with Out and non-error second return
 		constructor3 := func() (ValidOut, string) {
 			return ValidOut{}, ""
 		}
 
-		info3, _ := analyzer.Analyze(constructor3)
+		info3, err := analyzer.Analyze(constructor3)
+		require.NoError(t, err)
 		err = validator.Validate(info3)
-		if err == nil {
-			t.Error("Out struct with non-error second return should fail validation")
-		}
+		assert.Error(t, err, "Out struct with non-error second return should fail validation")
 	})
 
 	t.Run("Too many returns for Out struct", func(t *testing.T) {
@@ -708,15 +650,13 @@ func TestValidator_ComprehensiveScenarios(t *testing.T) {
 		mockInfo := &reflection.ConstructorInfo{
 			IsFunc:         true,
 			IsResultObject: true,
-			Type:           reflect.TypeOf(func() (SimpleOut, error, string) { return SimpleOut{}, nil, "" }),
+			Type:           reflect.TypeOf(func() (SimpleOut, string, error) { return SimpleOut{}, "", nil }),
 			Returns: []reflection.ReturnInfo{
 				{Type: reflect.TypeOf(SimpleOut{})},
 			},
 		}
 
 		err := validator.Validate(mockInfo)
-		if err == nil {
-			t.Error("Expected error for Out struct with more than 2 returns")
-		}
+		assert.Error(t, err, "Expected error for Out struct with more than 2 returns")
 	})
 }
