@@ -35,7 +35,7 @@ jobs:
         run: go test -v -race -coverprofile coverage.txt -covermode atomic ./...
 
       - name: Upload coverage to Codecov
-        if: matrix.os == 'ubuntu-latest' && matrix.go == '1.21'
+        if: matrix.os == 'ubuntu-latest' && matrix.go == ${{ env.GO_VERSION }}
         uses: codecov/codecov-action@v5
         with:
           files: ./coverage.txt
