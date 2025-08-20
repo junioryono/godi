@@ -157,25 +157,38 @@ import (
 )
 
 // Group related services
-var CoreModule = godi.NewModule("core",
-    godi.AddSingleton(NewLogger),
-    godi.AddSingleton(NewDatabase),
+var InfrastructureModule = godi.NewModule("infrastructure",
+    godi.AddSingleton(NewPostgresDBConnectionPool),
+    godi.AddSingleton(NewRedisClient),
 )
 
-var UserModule = godi.NewModule("user",
-    CoreModule,  // Include dependencies
+var RepositoryModule = godi.NewModule("repository",
+    godi.AddScoped(NewUserRepository),
+    godi.AddScoped(NewMatchRepository),
+)
+
+var ServiceModule = godi.NewModule("service",
     godi.AddScoped(NewUserService),
 )
 
 func main() {
     collection := godi.NewCollection()
-    collection.AddModules(UserModule)  // Clean!
 
-    provider, _ := collection.Build()
+    // Add modules to collection
+    collection.AddModules(
+        InfrastructureModule,
+        RepositoryModule,
+        ServiceModule,
+    )
+
+    // Build root provider
+    provider, err := collection.Build()
+    if err != nil {
+        panic(err)
+    }
     defer provider.Close()
 
-    // Use as before
-    userService, _ := godi.Resolve[*UserService](provider)
+    userService := godi.MustResolve[UserService](provider)
     users := userService.GetUsers()
 }
 ```
@@ -196,7 +209,8 @@ func handleRequest(provider godi.Provider) http.HandlerFunc {
         defer scope.Close()
 
         // Each request gets its own instances of scoped services
-        userService, _ := godi.Resolve[*UserService](scope)
+        // Any changes to the service will not effect other scope's instances
+        userService := godi.MustResolve[UserService](scope)
 
         users := userService.GetUsers()
         json.NewEncoder(w).Encode(users)
@@ -212,10 +226,10 @@ With godi, testing becomes trivial:
 func TestUserService(t *testing.T) {
     // Create test module with mocks
     testModule := godi.NewModule("test",
-        godi.AddSingleton(func() *Logger {
+        godi.AddSingleton(func() Logger {
             return &MockLogger{}  // Use a mock
         }),
-        godi.AddSingleton(func() *Database {
+        godi.AddSingleton(func() Database {
             return &MockDatabase{  // Use a mock
                 users: []string{"test-user"},
             }
@@ -230,7 +244,7 @@ func TestUserService(t *testing.T) {
     defer provider.Close()
 
     // Test with mocks - no real database needed!
-    service, _ := godi.Resolve[*UserService](provider)
+    service := godi.MustResolve[UserService](provider)
     users := service.GetUsers()
 
     assert.Equal(t, []string{"test-user"}, users)
@@ -241,10 +255,10 @@ func TestUserService(t *testing.T) {
 
 Now that you have the basics:
 
-1. **[Core Concepts](core-concepts.md)** - Understand services, lifetimes, and scopes (10 min)
-2. **[Web Applications](guides/web-apps.md)** - Build REST APIs with request isolation
-3. **[Testing Guide](guides/testing.md)** - Write better tests with mocks
-4. **[Modules Guide](guides/modules.md)** - Organize larger applications
+1. **[Core Concepts](https://godi.readthedocs.io/en/latest/core-concepts.html)** - Understand services, lifetimes, and scopes (10 min)
+2. **[Web Applications](https://godi.readthedocs.io/en/latest/guides/web-apps-http.html)** - Build REST APIs with request isolation
+3. **[Testing Guide](https://godi.readthedocs.io/en/latest/guides/testing.html)** - Write better tests with mocks
+4. **[Modules Guide](https://godi.readthedocs.io/en/latest/guides/modules.html)** - Organize larger applications
 
 ## Quick Tips
 
