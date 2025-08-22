@@ -35,7 +35,7 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
 
-      - name: Generate Changelog and Update Version
+      - name: Generate Release Notes
         id: changelog
         run: |
           # Get current and previous tags
@@ -47,20 +47,10 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "previous_tag=$PREVIOUS_TAG" >> $GITHUB_OUTPUT
 
-          # Initialize changelog if it doesn't exist
-          if [ ! -f docs/reference/changelog.md ]; then
-            mkdir -p docs/reference
-            echo "# Changelog" > docs/reference/changelog.md
-            echo "" >> docs/reference/changelog.md
-            echo "All notable changes to godi are documented here. This project follows [Semantic Versioning](https://semver.org/) and uses [Conventional Commits](https://www.conventionalcommits.org/) for automatic versioning." >> docs/reference/changelog.md
-            echo "" >> docs/reference/changelog.md
-          fi
-
-          # Create new changelog entry
-          NEW_ENTRY="docs/reference/new_entry.md"
-          echo "## [$VERSION](https://github.com/junioryono/godi/compare/$PREVIOUS_TAG...$CURRENT_TAG) ($(date +%Y-%m-%d))" > $NEW_ENTRY
-          echo "" >> $NEW_ENTRY
-          echo "" >> $NEW_ENTRY
+          # Create release notes for GitHub release
+          RELEASE_NOTES="release_notes.md"
+          echo "# Release $VERSION" > $RELEASE_NOTES
+          echo "" >> $RELEASE_NOTES
 
           # Collect commits by type
           if [ -n "$PREVIOUS_TAG" ]; then
@@ -81,10 +71,10 @@ jobs:
           done <<< "$COMMITS"
 
           if [ -n "$BREAKING" ]; then
-            echo "### ⚠ BREAKING CHANGES" >> $NEW_ENTRY
-            echo "" >> $NEW_ENTRY
-            echo -e "$BREAKING" >> $NEW_ENTRY
-            echo "" >> $NEW_ENTRY
+            echo "## ⚠ BREAKING CHANGES" >> $RELEASE_NOTES
+            echo "" >> $RELEASE_NOTES
+            echo -e "$BREAKING" >> $RELEASE_NOTES
+            echo "" >> $RELEASE_NOTES
           fi
 
           # Parse features
@@ -105,10 +95,10 @@ jobs:
           done <<< "$COMMITS"
 
           if [ -n "$FEATURES" ]; then
-            echo "### Features" >> $NEW_ENTRY
-            echo "" >> $NEW_ENTRY
-            echo -e "$FEATURES" >> $NEW_ENTRY
-            echo "" >> $NEW_ENTRY
+            echo "## Features" >> $RELEASE_NOTES
+            echo "" >> $RELEASE_NOTES
+            echo -e "$FEATURES" >> $RELEASE_NOTES
+            echo "" >> $RELEASE_NOTES
           fi
 
           # Parse bug fixes
@@ -129,37 +119,20 @@ jobs:
           done <<< "$COMMITS"
 
           if [ -n "$FIXES" ]; then
-            echo "### Bug Fixes" >> $NEW_ENTRY
-            echo "" >> $NEW_ENTRY
-            echo -e "$FIXES" >> $NEW_ENTRY
+            echo "## Bug Fixes" >> $RELEASE_NOTES
+            echo "" >> $RELEASE_NOTES
+            echo -e "$FIXES" >> $RELEASE_NOTES
           fi
 
-          # Merge new entry with existing changelog
-          # Keep the header (first 4 lines)
-          head -n 4 docs/reference/changelog.md > docs/reference/changelog_new.md
-          echo "" >> docs/reference/changelog_new.md
-          cat $NEW_ENTRY >> docs/reference/changelog_new.md
-          # Add the rest of the old changelog (skip the first 4 lines)
-          tail -n +5 docs/reference/changelog.md >> docs/reference/changelog_new.md
-
-          mv docs/reference/changelog_new.md docs/reference/changelog.md
-          rm $NEW_ENTRY
-
-          # Create release notes for GitHub release
+          # Add commit list
+          echo "" >> $RELEASE_NOTES
+          echo "## All Changes" >> $RELEASE_NOTES
+          echo "" >> $RELEASE_NOTES
           if [ -n "$PREVIOUS_TAG" ]; then
-            git log $PREVIOUS_TAG..$CURRENT_TAG --pretty=format:"* %s" > release_notes.md
+            git log $PREVIOUS_TAG..$CURRENT_TAG --pretty=format:"* %s" >> $RELEASE_NOTES
           else
-            git log $CURRENT_TAG --pretty=format:"* %s" > release_notes.md
+            git log $CURRENT_TAG --pretty=format:"* %s" >> $RELEASE_NOTES
           fi
-
-      - name: Commit and push changes
-        run: |
-          git add docs/reference/changelog.md
-          git commit -m "chore(release): ${{ steps.changelog.outputs.current_tag }} [skip ci]
-
-          - Update changelog"
-
-          git push origin HEAD:main
 
       - name: Create Release
         uses: ncipollo/release-action@v1
