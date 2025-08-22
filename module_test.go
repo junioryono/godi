@@ -208,7 +208,7 @@ func TestAddSingletonModule(t *testing.T) {
 	})
 
 	t.Run("singleton with interface", func(t *testing.T) {
-		option := AddSingleton(NewModuleTestService, As(new(ModuleTestInterface)))
+		option := AddSingleton(NewModuleTestService, As[ModuleTestInterface]())
 
 		collection := NewCollection()
 		err := option(collection)
@@ -323,7 +323,7 @@ func TestGroupOption(t *testing.T) {
 // Test As option
 func TestAsOption(t *testing.T) {
 	t.Run("single interface", func(t *testing.T) {
-		opt := As(new(ModuleTestInterface))
+		opt := As[ModuleTestInterface]()
 		assert.NotNil(t, opt)
 
 		options := &addOptions{}
@@ -337,30 +337,20 @@ func TestAsOption(t *testing.T) {
 		type Interface1 interface{ Method1() }
 		type Interface2 interface{ Method2() }
 
-		opt := As(new(Interface1), new(Interface2))
+		opt1 := As[Interface1]()
+		opt2 := As[Interface2]()
 		options := &addOptions{}
-		opt.applyAddOption(options)
+		opt1.applyAddOption(options)
+		opt2.applyAddOption(options)
 		assert.Len(t, options.As, 2)
 	})
 
 	t.Run("string representation", func(t *testing.T) {
-		opt := As(new(ModuleTestInterface))
+		opt := As[ModuleTestInterface]()
 		str := opt.(fmt.Stringer).String()
 		assert.Contains(t, str, "As(")
 		assert.Contains(t, str, "ModuleTestInterface")
 		assert.Contains(t, str, ")")
-	})
-
-	t.Run("multiple interfaces string", func(t *testing.T) {
-		type Interface1 interface{ Method1() }
-		type Interface2 interface{ Method2() }
-
-		opt := As(new(Interface1), new(Interface2))
-		str := opt.(fmt.Stringer).String()
-		assert.Contains(t, str, "As(")
-		assert.Contains(t, str, "Interface1")
-		assert.Contains(t, str, "Interface2")
-		assert.Contains(t, str, ", ")
 	})
 }
 
@@ -605,7 +595,7 @@ func BenchmarkAddOptions(b *testing.B) {
 
 	b.Run("As", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			opt := As(new(ModuleTestInterface))
+			opt := As[ModuleTestInterface]()
 			options := &addOptions{}
 			opt.applyAddOption(options)
 		}

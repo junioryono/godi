@@ -1404,7 +1404,7 @@ func TestInstanceRegistration(t *testing.T) {
 		service := &TestService{Name: "instance-service"}
 
 		// Register as interface
-		err := collection.AddSingleton(service, As(new(TestInterface)))
+		err := collection.AddSingleton(service, As[TestInterface]())
 		require.NoError(t, err)
 
 		provider, err := collection.Build()

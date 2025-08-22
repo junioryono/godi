@@ -230,8 +230,8 @@ func (o addGroupOption) applyAddOption(opt *addOptions) {
 //
 // This option cannot be provided for constructors which produce result
 // objects.
-func As(i ...any) AddOption {
-	return addAsOption(i)
+func As[T any]() AddOption {
+	return addAsOption{new(T)}
 }
 
 type addAsOption []any
