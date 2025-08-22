@@ -22,7 +22,6 @@ Requires Go 1.21+
 ### Core Architecture
 
 - **Three Service Lifetimes**: Singleton (application-wide), Scoped (per request/scope), and Transient (always new)
-- **Type-Safe Resolution**: Compile-time type safety using Go generics
 - **Automatic Dependency Graph**: Analyzes constructors and resolves entire dependency chains automatically
 - **Build-Time Validation**: Circular dependency detection and lifetime validation before runtime
 
@@ -70,12 +69,23 @@ userService := godi.MustResolve[UserService](provider)
 
 ## Documentation
 
-- [Getting Started Guide](docs/getting-started.md)
-- [API Documentation](https://pkg.go.dev/github.com/junioryono/godi/v4)
-- [Examples](examples/)
-- [Web Framework Integration](docs/guides/)
-- [Testing Guide](docs/guides/testing.md)
-- [Advanced Patterns](docs/guides/advanced.md)
+📚 **[Full Documentation](https://godi.readthedocs.io/en/latest/)**
+
+### Quick Links
+
+- [Installation](https://godi.readthedocs.io/en/latest/installation.html)
+- [Core Concepts](https://godi.readthedocs.io/en/latest/core-concepts.html)
+- [Service Lifetimes](https://godi.readthedocs.io/en/latest/service-lifetimes.html)
+- [Modules](https://godi.readthedocs.io/en/latest/modules.html)
+- [API Reference](https://pkg.go.dev/github.com/junioryono/godi/v4)
+
+### Advanced Topics
+
+- [Keyed Services](https://godi.readthedocs.io/en/latest/keyed-services.html)
+- [Service Groups](https://godi.readthedocs.io/en/latest/service-groups.html)
+- [Parameter Objects](https://godi.readthedocs.io/en/latest/parameter-objects.html)
+- [Interface Registration](https://godi.readthedocs.io/en/latest/interface-registration.html)
+- [Resource Management](https://godi.readthedocs.io/en/latest/resource-management.html)
 
 ## Contributing
 

@@ -7,7 +7,6 @@
 
 import os
 import json
-import sphinx_rtd_theme
 
 # -- Project information -----------------------------------------------------
 
@@ -58,7 +57,6 @@ html_static_path = ['_static']
 html_logo = "_static/logo.png"
 html_theme_options = {
     'logo_only': True,
-    'display_version': True,
     'prev_next_buttons_location': 'both',
     'style_external_links': False,
     'style_nav_header_background': '#2980B9',

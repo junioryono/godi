@@ -9,7 +9,7 @@ commonmark==0.9.1
 docutils==0.20.1
 idna==3.10
 imagesize==1.4.1
-myst-parser==4.0.1 
+myst-parser==3.0.1 
 packaging==25.0
 pyparsing==3.2.3
 pytz==2025.2
