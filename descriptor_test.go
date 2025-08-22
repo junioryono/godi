@@ -114,10 +114,9 @@ func TestNewDescriptor(t *testing.T) {
 	})
 
 	t.Run("constructor with As option", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewDescriptorTestService, Singleton, As(new(DescriptorTestInterface)))
+		descriptor, err := newDescriptor(NewDescriptorTestService, Singleton, As[DescriptorTestInterface]())
 		require.NoError(t, err)
 		assert.NotNil(t, descriptor)
-		// As option is handled at collection level, not descriptor level
 	})
 
 	t.Run("nil constructor", func(t *testing.T) {
@@ -207,23 +206,15 @@ func TestNewDescriptor(t *testing.T) {
 		assert.Nil(t, descriptor)
 	})
 
-	t.Run("invalid As with nil", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewDescriptorTestService, Singleton, As(nil))
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid godi.As(nil)")
-		assert.Nil(t, descriptor)
-	})
-
 	t.Run("invalid As with non-pointer", func(t *testing.T) {
-		var iface DescriptorTestInterface
-		descriptor, err := newDescriptor(NewDescriptorTestService, Singleton, As(iface))
+		descriptor, err := newDescriptor(NewDescriptorTestService, Singleton, As[*DescriptorTestInterface]())
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "argument must be a pointer to an interface")
 		assert.Nil(t, descriptor)
 	})
 
 	t.Run("invalid As with non-interface pointer", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewDescriptorTestService, Singleton, As(&DescriptorTestService{}))
+		descriptor, err := newDescriptor(NewDescriptorTestService, Singleton, As[*DescriptorTestService]())
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "argument must be a pointer to an interface")
 		assert.Nil(t, descriptor)
@@ -536,7 +527,7 @@ func BenchmarkNewDescriptor(b *testing.B) {
 
 	b.Run("constructor with options", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			_, _ = newDescriptor(NewDescriptorTestService, Singleton, Name("test"), As(new(DescriptorTestInterface)))
+			_, _ = newDescriptor(NewDescriptorTestService, Singleton, Name("test"), As[DescriptorTestInterface]())
 		}
 	})
 

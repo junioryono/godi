@@ -160,7 +160,7 @@ func TestAddSingleton(t *testing.T) {
 
 	t.Run("singleton with interface", func(t *testing.T) {
 		collection := NewCollection()
-		err := collection.AddSingleton(NewTestService, As(new(TestInterface)))
+		err := collection.AddSingleton(NewTestService, As[TestInterface]())
 		assert.NoError(t, err)
 		// When using As, it registers under the interface type, not the concrete type
 		assert.True(t, collection.Contains(reflect.TypeOf((*TestInterface)(nil)).Elem()))
@@ -832,31 +832,23 @@ func TestCollectionEdgeCases(t *testing.T) {
 		collection := NewCollection()
 
 		// TestService doesn't implement fmt.Stringer
-		err := collection.AddSingleton(NewTestService, As(new(fmt.Stringer)))
+		err := collection.AddSingleton(NewTestService, As[fmt.Stringer]())
 		assert.Error(t, err)
 		var typeMismatchErr *TypeMismatchError
 		assert.ErrorAs(t, err, &typeMismatchErr)
 		assert.Equal(t, "interface implementation", typeMismatchErr.Context)
 	})
 
-	t.Run("add service with nil in As", func(t *testing.T) {
-		collection := NewCollection()
-		err := collection.AddSingleton(NewTestService, As(nil))
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid godi.As(nil)")
-	})
-
 	t.Run("add service with non-pointer in As", func(t *testing.T) {
 		collection := NewCollection()
-		var iface TestInterface
-		err := collection.AddSingleton(NewTestService, As(iface))
+		err := collection.AddSingleton(NewTestService, As[*TestInterface]())
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "argument must be a pointer to an interface")
 	})
 
 	t.Run("add service with non-interface pointer in As", func(t *testing.T) {
 		collection := NewCollection()
-		err := collection.AddSingleton(NewTestService, As(&TestService{}))
+		err := collection.AddSingleton(NewTestService, As[*TestService]())
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "argument must be a pointer to an interface")
 	})
