@@ -1,312 +1,244 @@
 # Core Concepts
 
-Understanding these 5 concepts is all you need to master godi.
+Understanding these core concepts will help you use godi effectively.
 
-## 1. Services
+## Dependency Injection
 
-A **service** is any type that does work in your app. No special interfaces needed.
+Dependency injection (DI) is a pattern where objects receive their dependencies rather than creating them. godi automates this process:
 
 ```go
-// This is a service
-type EmailSender struct {
-    apiKey string
+// Without DI - tight coupling
+type Service struct {
+    logger *Logger
 }
 
-func NewEmailSender() *EmailSender {
-    return &EmailSender{apiKey: "secret"}
+func NewService() *Service {
+    return &Service{
+        logger: NewLogger(), // Creates its own dependency
+    }
 }
 
-// This is also a service
-type UserRepository struct {
-    db *sql.DB
+// With DI - loose coupling
+type Service struct {
+    logger Logger
 }
 
-func NewUserRepository(db *sql.DB) *UserRepository {
-    return &UserRepository{db: db}
+func NewService(logger Logger) *Service {
+    return &Service{
+        logger: logger, // Receives dependency
+    }
 }
 ```
 
-**Key Point**: If it does work, it's a service. That's it.
+## Services and Constructors
 
-## 2. Constructors
+### What is a Service?
 
-A **constructor** is a function that creates a service. godi calls these for you.
+A service is any type that provides functionality in your application:
 
 ```go
-// Simple constructor - no dependencies
-func NewLogger() *Logger {
-    return &Logger{}
+type Logger interface { Log(string) }
+type Database interface { Query(string) Result }
+type EmailSender interface { Send(Email) error }
+```
+
+### What is a Constructor?
+
+A constructor is a function that creates a service. godi calls these automatically:
+
+```go
+// Simple constructor
+func NewLogger() Logger {
+    return &logger{}
 }
 
-// Constructor with dependencies - godi provides them!
-func NewUserService(db *Database, logger *Logger) *UserService {
-    return &UserService{
-        db:     db,
+// Constructor with dependencies
+func NewEmailService(logger Logger, smtp SMTPClient) EmailService {
+    return &emailService{
         logger: logger,
+        smtp:   smtp,
     }
 }
 ```
 
-**The Magic**: When you ask for `UserService`, godi:
+## The Service Collection
 
-1. Sees it needs `Database` and `Logger`
-2. Creates those first (if needed)
-3. Passes them to `NewUserService`
-4. Returns your ready-to-use service
-
-You never manually wire dependencies!
-
-## 3. Lifetimes
-
-A **lifetime** controls when instances are created and how long they live.
-
-### Singleton - One Forever
-
-Created once, reused everywhere. Perfect for shared resources.
+The collection is where you register all your services:
 
 ```go
-collection.AddSingleton(NewDatabase)
+services := godi.NewCollection()
 
-// Everyone gets the same instance
-db1, _ := godi.Resolve[*Database](provider)
-db2, _ := godi.Resolve[*Database](provider)
-// db1 == db2 (same instance)
+// Register services
+services.AddSingleton(NewLogger)
+services.AddSingleton(NewDatabase)
+services.AddScoped(NewEmailService)
 ```
 
-**Use for**: Database connections, loggers, configuration, caches
+## The Provider
 
-### Scoped - One Per Request
-
-New instance for each scope. Perfect for web requests.
+The provider is built from the collection and manages service creation:
 
 ```go
-collection.AddScoped(NewShoppingCart)
+// Build provider from collection
+provider, err := services.Build()
+if err != nil {
+    // Handle build errors (circular dependencies, etc.)
+}
+defer provider.Close()
 
-// Different scopes get different instances
-scope1, _ := provider.CreateScope(ctx)
-cart1, _ := godi.Resolve[*ShoppingCart](scope1)
-
-scope2, _ := provider.CreateScope(ctx)
-cart2, _ := godi.Resolve[*ShoppingCart](scope2)
-// cart1 != cart2 (different instances)
+// Use provider to resolve services
+logger := godi.MustResolve[Logger](provider)
 ```
 
-**Use for**: Request handlers, transactions, user context
+## Service Lifetimes
 
-### Transient - Always New
+Every service has a lifetime that determines when it's created:
 
-New instance every time. Never cached.
+### Singleton
+
+Created once, shared everywhere:
 
 ```go
-collection.AddTransient(NewGuid)
-
-id1, _ := godi.Resolve[*Guid](provider)
-id2, _ := godi.Resolve[*Guid](provider)
-// id1 != id2 (always different)
+services.AddSingleton(NewDatabaseConnection)
+// Same instance returned every time
 ```
 
-**Use for**: Unique IDs, temporary objects
+### Scoped
 
-### Quick Reference
-
-| Lifetime  | When Created    | Use For           | Example                   |
-| --------- | --------------- | ----------------- | ------------------------- |
-| Singleton | Once at startup | Shared resources  | Database, Logger          |
-| Scoped    | Once per scope  | Request data      | Transaction, User context |
-| Transient | Every time      | Temporary objects | IDs, Builders             |
-
-## 4. Modules
-
-**Modules** group related services together. Think of them as packages of functionality.
+Created once per scope (e.g., per HTTP request):
 
 ```go
-// Group database-related services
-var DataModule = godi.NewModule("data",
-    godi.AddSingleton(NewDatabase),
-    godi.AddScoped(NewTransaction),
-    godi.AddScoped(NewUserRepository),
-)
-
-// Group authentication services
-var AuthModule = godi.NewModule("auth",
-    DataModule,  // Can depend on other modules!
-    godi.AddSingleton(NewTokenService),
-    godi.AddScoped(NewAuthService),
-)
-
-// Your app module combines everything
-var AppModule = godi.NewModule("app",
-    DataModule,
-    AuthModule,
-)
+services.AddScoped(NewRequestContext)
+// Different instance for each scope
 ```
 
-**Why use modules?**
+### Transient
 
-- **Organization**: Keep related things together
-- **Reusability**: Share modules between projects
-- **Testing**: Easy to swap modules for testing
-- **Clarity**: Dependencies are explicit
-
-## 5. Scopes
-
-A **scope** creates a boundary for scoped services. Essential for web applications!
+Created fresh every time:
 
 ```go
-func handleRequest(provider godi.Provider) http.HandlerFunc {
+services.AddTransient(NewTempFileHandler)
+// New instance on every resolution
+```
+
+## Dependency Resolution
+
+godi automatically builds a dependency graph and creates services in the correct order:
+
+```go
+// godi sees this dependency chain:
+// UserService → Database → Logger
+
+func NewLogger() Logger { }
+func NewDatabase(logger Logger) Database { }
+func NewUserService(db Database) UserService { }
+
+services.AddSingleton(NewLogger)
+services.AddSingleton(NewDatabase)
+services.AddSingleton(NewUserService)
+
+// godi creates them in order:
+// 1. Logger (no dependencies)
+// 2. Database (needs Logger)
+// 3. UserService (needs Database)
+```
+
+## Scopes
+
+Scopes provide isolation between different contexts (like HTTP requests):
+
+```go
+// In an HTTP handler
+func Handler(provider godi.Provider) http.HandlerFunc {
     return func(w http.ResponseWriter, r *http.Request) {
-        // Create scope for this request
+        // Create isolated scope for this request
         scope, _ := provider.CreateScope(r.Context())
-        defer scope.Close()  // Clean up when done
+        defer scope.Close()
 
-        // All scoped services in this request share instances
-        userService, _ := godi.Resolve[*UserService](scope)
-        cartService, _ := godi.Resolve[*CartService](scope)
-
-        // They might share the same transaction!
+        // Services resolved in this scope are isolated
+        service := godi.MustResolve[MyService](scope)
     }
 }
 ```
 
-**Real Example**: Database Transaction per Request
+## Type Safety with Generics
+
+godi uses Go generics for compile-time type safety:
 
 ```go
-// Transaction is scoped - one per request
-type Transaction struct {
-    tx *sql.Tx
-}
+// Type-safe resolution
+logger := godi.MustResolve[Logger](provider)
+db := godi.MustResolve[Database](provider)
 
-func NewTransaction(db *Database) *Transaction {
-    tx, _ := db.Begin()
-    return &Transaction{tx: tx}
-}
-
-// Repository uses the transaction
-type UserRepository struct {
-    tx *Transaction
-}
-
-func NewUserRepository(tx *Transaction) *UserRepository {
-    return &UserRepository{tx: tx}
-}
-
-// In a request:
-// 1. Scope is created
-// 2. Transaction is created (once for this scope)
-// 3. All repositories use the SAME transaction
-// 4. Scope closes, transaction commits/rollbacks
+// Compile error if type doesn't match
+// user := godi.MustResolve[string](provider) // Error!
 ```
 
-## Putting It All Together
+## Resource Cleanup
 
-Here's how these concepts work together:
+Services implementing `Disposable` are automatically cleaned up:
 
 ```go
-// 1. Define services (with constructors)
-type Logger struct{}
-func NewLogger() *Logger { return &Logger{} }
-
-type Database struct{ logger *Logger }
-func NewDatabase(logger *Logger) *Database {
-    return &Database{logger: logger}
+type FileHandler struct {
+    file *os.File
 }
 
-type UserService struct{ db *Database }
-func NewUserService(db *Database) *UserService {
-    return &UserService{db: db}
+func (f *FileHandler) Close() error {
+    return f.file.Close()
 }
 
-// 2. Create module (organizes services with lifetimes)
-var AppModule = godi.NewModule("app",
-    godi.AddSingleton(NewLogger),      // One logger
-    godi.AddSingleton(NewDatabase),    // One database
-    godi.AddScoped(NewUserService),    // New per request
-)
-
-// 3. Build provider
-collection := godi.NewCollection()
-collection.AddModules(AppModule)
-provider, _ := collection.Build()
-
-// 4. Use with scopes (for requests)
-scope, _ := provider.CreateScope(context.Background())
-defer scope.Close()
-
-service, _ := godi.Resolve[*UserService](scope)
-// godi automatically creates: Logger → Database → UserService
+// Automatically closed when scope/provider closes
 ```
 
-## Common Patterns
+## Complete Example
 
-### Pattern 1: Shared Infrastructure, Request-Specific Logic
+Putting it all together:
 
 ```go
-var AppModule = godi.NewModule("app",
-    // Shared across all requests
-    godi.AddSingleton(NewLogger),
-    godi.AddSingleton(NewDatabase),
-    godi.AddSingleton(NewCache),
+package main
 
-    // New for each request
-    godi.AddScoped(NewTransaction),
-    godi.AddScoped(NewUserContext),
-    godi.AddScoped(NewRequestHandler),
+import (
+    "fmt"
+    "github.com/junioryono/godi/v4"
 )
+
+// Define services
+type Config interface { GetDBURL() string }
+type Logger interface { Log(string) }
+type Database interface { Connect() error }
+type UserService interface { GetUser(int) string }
+
+// Constructors
+func NewConfig() Config { return &config{url: "localhost:5432"} }
+func NewLogger() Logger { return &logger{} }
+func NewDatabase(cfg Config, log Logger) Database {
+    return &database{url: cfg.GetDBURL(), logger: log}
+}
+func NewUserService(db Database, log Logger) UserService {
+    return &userService{db: db, logger: log}
+}
+
+func main() {
+    // Setup DI
+    services := godi.NewCollection()
+    services.AddSingleton(NewConfig)
+    services.AddSingleton(NewLogger)
+    services.AddSingleton(NewDatabase)
+    services.AddScoped(NewUserService)
+
+    // Build and use
+    provider, _ := services.Build()
+    defer provider.Close()
+
+    userService := godi.MustResolve[UserService](provider)
+    fmt.Println(userService.GetUser(1))
+}
 ```
 
-### Pattern 2: Test Modules
+## Next Steps
 
-```go
-var TestModule = godi.NewModule("test",
-    godi.AddSingleton(func() *Database {
-        return &MockDatabase{}  // Mock for testing
-    }),
-    godi.AddScoped(NewUserService),  // Real service, mock database
-)
-```
+Now that you understand the core concepts:
 
-### Pattern 3: Environment-Specific Modules
-
-```go
-var DevModule = godi.NewModule("dev",
-    godi.AddSingleton(func() *Database {
-        return NewSQLite(":memory:")
-    }),
-)
-
-var ProdModule = godi.NewModule("prod",
-    godi.AddSingleton(func() *Database {
-        return NewPostgres(os.Getenv("DATABASE_URL"))
-    }),
-)
-```
-
-## Quick Decision Guide
-
-**Which lifetime should I use?**
-
-- Stateless + thread-safe → Singleton
-- Request-specific data → Scoped
-- Must be unique → Transient
-
-**Should I use modules?**
-
-- Yes, always! Even for small apps. They keep things organized.
-
-**Do I need scopes?**
-
-- Building a web app? → Yes
-- Building a CLI tool? → Probably not
-- Running tests? → Sometimes (for isolation)
-
-## Summary
-
-That's all you need to know:
-
-1. **Services** - Your types that do work
-2. **Constructors** - Functions that create services
-3. **Lifetimes** - When instances are created (Singleton/Scoped/Transient)
-4. **Modules** - Groups of related services
-5. **Scopes** - Boundaries for scoped services (for web requests)
-
-godi handles the rest. No magic, just smart dependency management!
+- Learn about [Service Lifetimes](service-lifetimes.md) in detail
+- Explore [Service Registration](service-registration.md) options
+- Understand [Dependency Resolution](dependency-resolution.md)
