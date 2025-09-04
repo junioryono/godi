@@ -209,11 +209,12 @@ func (sc *collection) doBuild() (Provider, error) {
 	// Phase 6: Create singletons
 	if err := p.createAllSingletons(); err != nil {
 		// Clean up partially created provider
-		if err = p.Close(); err != nil {
+		closeErr := p.Close()
+		if closeErr != nil {
 			return nil, &BuildError{
 				Phase:   "cleanup",
 				Details: "failed to clean up partially created provider",
-				Cause:   err,
+				Cause:   closeErr,
 			}
 		}
 
@@ -462,8 +463,51 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 		}
 	}
 
+	// Handle result objects (Out structs)
+	// For result objects, we only register each field as a separate service
+	// They all share the same constructor and will be created together
+	if info.IsResultObject {
+		// No fields to register
+		if len(descriptor.resultFields) == 0 {
+			return nil
+		}
+
+		// Register each field as a separate service that points to the same constructor
+		for _, field := range descriptor.resultFields {
+			// Create a descriptor for each field type
+			fieldDescriptor := &Descriptor{
+				Type:            field.Type,
+				Key:             field.Key,
+				Lifetime:        descriptor.Lifetime,
+				Constructor:     descriptor.Constructor,
+				ConstructorType: descriptor.ConstructorType,
+				Dependencies:    descriptor.Dependencies,
+				Group:           field.Group,
+				As:              descriptor.As,
+				IsInstance:      false,
+				isFunc:          descriptor.isFunc,
+				isResultObject:  true,
+				resultFields:    descriptor.resultFields,
+				isParamObject:   descriptor.isParamObject,
+				paramFields:     descriptor.paramFields,
+			}
+
+			// Register the field descriptor
+			if err := r.registerDescriptor(fieldDescriptor); err != nil {
+				return &RegistrationError{
+					ServiceType: field.Type,
+					Operation:   "register result object field",
+					Cause:       err,
+				}
+			}
+		}
+
+		// Don't register the result object type itself
+		return nil
+	}
+
 	// Handle multiple return types (not Out structs)
-	if info.IsFunc && len(info.Returns) > 1 && !info.IsResultObject {
+	if info.IsFunc && len(info.Returns) > 1 {
 		// Filter out error returns to get actual service types
 		nonErrorReturns := make([]reflection.ReturnInfo, 0)
 		for _, ret := range info.Returns {
