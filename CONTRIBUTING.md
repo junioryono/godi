@@ -245,16 +245,3 @@ Fixes #23
 3. **Before Merge**:
    - Squash commits if requested
    - Ensure PR title follows conventional format (this becomes the merge commit)
-
-### What Happens After Merge
-
-When your PR is merged to `main`:
-
-1. CI runs all tests again
-2. If tests pass and commits include `feat`, `fix`, or breaking changes:
-   - Version is automatically bumped
-   - Changelog is automatically updated
-   - A new GitHub release is created
-   - A git tag is pushed
-
-Your contribution will be automatically included in the next release!
