@@ -22,7 +22,7 @@ func TestLifetimeConflictError(t *testing.T) {
 	dependencyType := reflect.TypeOf((*testDependency)(nil))
 	err := LifetimeConflictError{
 		ServiceType:        serviceType,
-		ServiceLifetime:   Singleton,
+		ServiceLifetime:    Singleton,
 		DependencyType:     dependencyType,
 		DependencyLifetime: Scoped,
 	}

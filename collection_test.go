@@ -1618,20 +1618,20 @@ func TestDoBuildErrorHandling(t *testing.T) {
 		// This test ensures that when createAllSingletons fails,
 		// the cleanup error is properly captured with the correct variable name
 		collection := NewCollection()
-		
+
 		// Create a constructor that will fail during singleton creation
 		failingConstructor := func() (*TestService, error) {
 			return nil, errors.New("singleton creation error")
 		}
-		
+
 		err := collection.AddSingleton(failingConstructor)
 		assert.NoError(t, err)
-		
+
 		// Build should fail
 		provider, err := collection.Build()
 		assert.Error(t, err)
 		assert.Nil(t, provider)
-		
+
 		// The error should contain information about the singleton creation failure
 		assert.Contains(t, err.Error(), "singleton")
 	})
@@ -1646,7 +1646,7 @@ func TestResultObjectRegistration(t *testing.T) {
 			Service2 *TestServiceWithDep
 			Service3 *TestDisposable `name:"disposable"`
 		}
-		
+
 		newComplexResult := func() ComplexResult {
 			svc := &TestService{Name: "complex"}
 			return ComplexResult{
@@ -1655,35 +1655,35 @@ func TestResultObjectRegistration(t *testing.T) {
 				Service3: &TestDisposable{},
 			}
 		}
-		
+
 		collection := NewCollection()
 		err := collection.AddSingleton(newComplexResult)
 		assert.NoError(t, err)
-		
+
 		// Verify fields are registered - this is what the current change ensures
 		assert.True(t, collection.Contains(reflect.TypeOf((*TestService)(nil))))
 		assert.True(t, collection.Contains(reflect.TypeOf((*TestServiceWithDep)(nil))))
 		assert.True(t, collection.ContainsKeyed(reflect.TypeOf((*TestDisposable)(nil)), "disposable"))
 	})
-	
+
 	t.Run("result object with no fields", func(t *testing.T) {
 		type EmptyResult struct {
 			Out
 		}
-		
+
 		newEmptyResult := func() EmptyResult {
 			return EmptyResult{}
 		}
-		
+
 		collection := NewCollection()
 		// Should not error, but won't register anything
 		err := collection.AddSingleton(newEmptyResult)
 		assert.NoError(t, err)
-		
+
 		// Nothing should be registered
 		assert.Equal(t, 0, collection.Count())
 	})
-	
+
 	t.Run("result object registration logic preserves type and key", func(t *testing.T) {
 		// This test ensures the logic change for result objects works correctly
 		type KeyedResult struct {
@@ -1691,18 +1691,18 @@ func TestResultObjectRegistration(t *testing.T) {
 			Service1 *TestService `name:"first"`
 			Service2 *TestService `name:"second"`
 		}
-		
+
 		newKeyedResult := func() KeyedResult {
 			return KeyedResult{
 				Service1: &TestService{Name: "first-service"},
 				Service2: &TestService{Name: "second-service"},
 			}
 		}
-		
+
 		collection := NewCollection()
 		err := collection.AddSingleton(newKeyedResult)
 		assert.NoError(t, err)
-		
+
 		// Verify both services are registered with their keys
 		assert.True(t, collection.ContainsKeyed(reflect.TypeOf((*TestService)(nil)), "first"))
 		assert.True(t, collection.ContainsKeyed(reflect.TypeOf((*TestService)(nil)), "second"))
