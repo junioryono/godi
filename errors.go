@@ -76,15 +76,15 @@ func (e LifetimeError) Error() string {
 // LifetimeConflictError indicates a service has an invalid dependency due to lifetime constraints.
 // For example, a Singleton service cannot depend on a Scoped service.
 type LifetimeConflictError struct {
-	ServiceType    reflect.Type
-	ServiceLifetime Lifetime
-	DependencyType  reflect.Type
+	ServiceType        reflect.Type
+	ServiceLifetime    Lifetime
+	DependencyType     reflect.Type
 	DependencyLifetime Lifetime
 }
 
 func (e LifetimeConflictError) Error() string {
-	return fmt.Sprintf("%s service %s cannot depend on %s service %s", 
-		e.ServiceLifetime, formatType(e.ServiceType), 
+	return fmt.Sprintf("%s service %s cannot depend on %s service %s",
+		e.ServiceLifetime, formatType(e.ServiceType),
 		e.DependencyLifetime, formatType(e.DependencyType))
 }
 
