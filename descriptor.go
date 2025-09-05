@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 
+	"github.com/google/uuid"
 	"github.com/junioryono/godi/v4/internal/reflection"
 )
 
@@ -90,32 +91,6 @@ func newDescriptor(service any, lifetime Lifetime, opts ...AddOption) (*Descript
 	// Check if it's an instance (not a function)
 	isInstance := constructorType.Kind() != reflect.Func
 
-	// For functions, validate return values
-	if !isInstance {
-		// Validate return values
-		numReturns := constructorType.NumOut()
-		if numReturns == 0 {
-			return nil, &ValidationError{
-				ServiceType: nil,
-				Cause:       ErrConstructorNoReturn,
-			}
-		}
-
-		// Check if the last return is an error (if any)
-		if numReturns > 0 {
-			errorType := reflect.TypeOf((*error)(nil)).Elem()
-
-			// If there's an error type in the returns, it must be the last one
-			for i := 0; i < numReturns-1; i++ {
-				if constructorType.Out(i).Implements(errorType) {
-					// Found error in non-last position - this is allowed but unusual
-					// The analyzer will handle this case by treating it as a regular type
-					break
-				}
-			}
-		}
-	}
-
 	// Create analyzer to analyze the constructor
 	analyzer := reflection.New()
 	info, err := analyzer.Analyze(service)
@@ -137,19 +112,8 @@ func newDescriptor(service any, lifetime Lifetime, opts ...AddOption) (*Descript
 		}
 	}
 
-	// Get the service type
-	var serviceType reflect.Type
-	if isInstance {
-		// For instances, the service type is the type of the instance
-		serviceType = constructorType
-	} else {
-		// For functions, the service type is the first return value
-		serviceType = constructorType.Out(0)
-	}
-
 	// Create descriptor
 	descriptor := &Descriptor{
-		Type:             serviceType,
 		Lifetime:         lifetime,
 		Constructor:      constructorValue,
 		ConstructorType:  constructorType,
@@ -163,6 +127,18 @@ func newDescriptor(service any, lifetime Lifetime, opts ...AddOption) (*Descript
 	// Store the instance if it's not a function
 	if isInstance {
 		descriptor.Instance = service
+		descriptor.Type = constructorType
+	} else {
+		numReturns := constructorType.NumOut()
+		if numReturns == 0 {
+			descriptor.Type = reflect.TypeOf((*struct{})(nil)).Elem()
+
+			if descriptor.Key == nil {
+				descriptor.Key = uuid.NewString()
+			}
+		} else {
+			descriptor.Type = constructorType.Out(0)
+		}
 	}
 
 	// Apply options

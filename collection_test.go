@@ -192,15 +192,13 @@ func TestAddSingleton(t *testing.T) {
 		assert.True(t, collection.ContainsKeyed(reflect.TypeOf(""), "str"))
 	})
 
-	t.Run("constructor with no return should fail", func(t *testing.T) {
+	t.Run("constructor with no return should not fail", func(t *testing.T) {
 		collection := NewCollection()
 		err := collection.AddSingleton(NewNothing)
-		assert.Error(t, err)
-		var regErr *RegistrationError
-		assert.ErrorAs(t, err, &regErr)
-		var valErr *ValidationError
-		assert.ErrorAs(t, regErr.Cause, &valErr)
-		assert.ErrorIs(t, valErr.Cause, ErrConstructorNoReturn)
+		assert.NoError(t, err)
+
+		err = collection.AddSingleton(NewNothing)
+		assert.NoError(t, err)
 	})
 
 	t.Run("constructor with multiple returns now valid", func(t *testing.T) {

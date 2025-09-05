@@ -28,13 +28,8 @@ var (
 	ErrProviderDisposed = errors.New("service provider has been disposed")
 	ErrScopeDisposed    = errors.New("scope has been disposed")
 
-	// Constructor/registration errors.
-	ErrConstructorNil         = errors.New("constructor cannot be nil")
-	ErrConstructorNotFunction = errors.New("constructor must be a function")
-	ErrConstructorNoReturn    = errors.New("constructor must return at least one value")
-	ErrConstructorReturnedNil = errors.New("constructor returned nil")
-
 	// Validation errors.
+	ErrConstructorNil          = errors.New("constructor cannot be nil")
 	ErrGroupNameEmpty          = errors.New("group name cannot be empty")
 	ErrSingletonNotInitialized = errors.New("singleton not initialized at build time")
 	ErrDescriptorNil           = errors.New("descriptor cannot be nil")
