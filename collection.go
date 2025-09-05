@@ -732,9 +732,10 @@ func (c *collection) validateLifetimes() error {
 
 			if depLifetime == Scoped {
 				return &LifetimeConflictError{
-					ServiceType: descriptor.Type,
-					Current:     descriptor.Lifetime,
-					Requested:   depLifetime,
+					ServiceType:        descriptor.Type,
+					ServiceLifetime:   descriptor.Lifetime,
+					DependencyType:     dep.Type,
+					DependencyLifetime: depLifetime,
 				}
 			}
 		}

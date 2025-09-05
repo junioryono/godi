@@ -73,15 +73,19 @@ func (e LifetimeError) Error() string {
 	return fmt.Sprintf("invalid service lifetime: %v", e.Value)
 }
 
-// LifetimeConflictError indicates a service is registered with conflicting lifetimes.
+// LifetimeConflictError indicates a service has an invalid dependency due to lifetime constraints.
+// For example, a Singleton service cannot depend on a Scoped service.
 type LifetimeConflictError struct {
-	ServiceType reflect.Type
-	Current     Lifetime
-	Requested   Lifetime
+	ServiceType    reflect.Type
+	ServiceLifetime Lifetime
+	DependencyType  reflect.Type
+	DependencyLifetime Lifetime
 }
 
 func (e LifetimeConflictError) Error() string {
-	return fmt.Sprintf("service %s already registered as %s, cannot register as %s", formatType(e.ServiceType), e.Current, e.Requested)
+	return fmt.Sprintf("%s service %s cannot depend on %s service %s", 
+		e.ServiceLifetime, formatType(e.ServiceType), 
+		e.DependencyLifetime, formatType(e.DependencyType))
 }
 
 // AlreadyRegisteredError indicates a service type is already registered.

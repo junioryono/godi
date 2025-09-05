@@ -19,15 +19,18 @@ func TestLifetimeError(t *testing.T) {
 
 func TestLifetimeConflictError(t *testing.T) {
 	serviceType := reflect.TypeOf((*testService)(nil))
+	dependencyType := reflect.TypeOf((*testDependency)(nil))
 	err := LifetimeConflictError{
-		ServiceType: serviceType,
-		Current:     Singleton,
-		Requested:   Scoped,
+		ServiceType:        serviceType,
+		ServiceLifetime:   Singleton,
+		DependencyType:     dependencyType,
+		DependencyLifetime: Scoped,
 	}
 
 	errStr := err.Error()
-	assert.Contains(t, errStr, "already registered as Singleton", "Error should mention current lifetime")
-	assert.Contains(t, errStr, "cannot register as Scoped", "Error should mention requested lifetime")
+	assert.Contains(t, errStr, "Singleton service", "Error should mention service lifetime")
+	assert.Contains(t, errStr, "Scoped service", "Error should mention dependency lifetime")
+	assert.Contains(t, errStr, "cannot depend on", "Error should explain the relationship")
 }
 
 func TestAlreadyRegisteredError(t *testing.T) {
