@@ -44,7 +44,7 @@ type scope struct {
 	disposed int32 // atomic
 }
 
-func newScope(rootProvider *provider, parent *scope, ctx context.Context, cancel context.CancelFunc) *scope {
+func newScope(rootProvider *provider, parent *scope, ctx context.Context, cancel context.CancelFunc) (*scope, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -61,7 +61,21 @@ func newScope(rootProvider *provider, parent *scope, ctx context.Context, cancel
 
 	ctx = context.WithValue(ctx, scopeContextKey{}, s)
 	s.context = ctx
-	return s
+
+	// Initialize scoped services with no returns (initialization functions)
+	// These need to be called when the scope is created
+	for _, descriptor := range rootProvider.voidReturnScopedDescriptors {
+		if _, err := s.createInstance(descriptor); err != nil {
+			return nil, &ResolutionError{
+				ServiceType: descriptor.Type,
+				ServiceKey:  descriptor.Key,
+				Cause:       fmt.Errorf("failed to initialize scoped service: %w", err),
+			}
+
+		}
+	}
+
+	return s, nil
 }
 
 // Provider returns the parent provider that created this scope.
@@ -166,7 +180,10 @@ func (s *scope) CreateScope(ctx context.Context) (Scope, error) {
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
-	child := newScope(s.rootProvider, s, ctx, cancel)
+	child, err := newScope(s.rootProvider, s, ctx, cancel)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create child scope: %w", err)
+	}
 
 	// Track child
 	s.childrenMu.Lock()
@@ -416,7 +433,17 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 		}
 	}
 
-	// Regular constructor - get first result
+	if descriptor.VoidReturn {
+		emptyStruct := struct{}{}
+		key := instanceKey{
+			Type:  descriptor.Type,
+			Key:   descriptor.Key,
+			Group: descriptor.Group,
+		}
+		s.setInstance(descriptor, key, emptyStruct)
+		return emptyStruct, nil
+	}
+
 	if len(results) == 0 {
 		return nil, &ConstructorInvocationError{
 			Constructor: descriptor.ConstructorType,

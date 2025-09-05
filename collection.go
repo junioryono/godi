@@ -192,19 +192,34 @@ func (sc *collection) doBuild() (Provider, error) {
 
 	// Phase 4: Create provider
 	p := &provider{
-		id:          uuid.NewString(),
-		services:    sc.services,
-		groups:      sc.groups,
-		graph:       g,
-		analyzer:    reflection.New(),
-		singletons:  make(map[instanceKey]any),
-		disposables: make([]Disposable, 0),
-		scopes:      make(map[*scope]struct{}),
+		id:                          uuid.NewString(),
+		services:                    sc.services,
+		groups:                      sc.groups,
+		graph:                       g,
+		analyzer:                    reflection.New(),
+		singletons:                  make(map[instanceKey]any),
+		voidReturnScopedDescriptors: make([]*Descriptor, 0),
+		disposables:                 make([]Disposable, 0),
+		scopes:                      make(map[*scope]struct{}),
+	}
+
+	for _, descriptor := range allDescriptors {
+		if descriptor != nil && descriptor.Lifetime == Scoped && descriptor.VoidReturn {
+			p.voidReturnScopedDescriptors = append(p.voidReturnScopedDescriptors, descriptor)
+		}
 	}
 
 	// Phase 5: Create root scope
+	var err error
 	rootCtx := context.Background()
-	p.rootScope = newScope(p, nil, rootCtx, nil)
+	p.rootScope, err = newScope(p, nil, rootCtx, nil)
+	if err != nil {
+		return nil, &BuildError{
+			Phase:   "scope-creation",
+			Details: "failed to create root scope",
+			Cause:   err,
+		}
+	}
 
 	// Phase 6: Create singletons
 	if err := p.createAllSingletons(); err != nil {
