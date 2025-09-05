@@ -138,11 +138,8 @@ func TestNewDescriptor(t *testing.T) {
 
 	t.Run("constructor with no return", func(t *testing.T) {
 		descriptor, err := newDescriptor(NewDescriptorNoReturn, Singleton)
-		assert.Error(t, err)
-		var valErr *ValidationError
-		assert.ErrorAs(t, err, &valErr)
-		assert.ErrorIs(t, valErr.Cause, ErrConstructorNoReturn)
-		assert.Nil(t, descriptor)
+		assert.NoError(t, err)
+		assert.NotNil(t, descriptor)
 	})
 
 	t.Run("constructor with multiple returns", func(t *testing.T) {
