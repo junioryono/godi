@@ -776,6 +776,339 @@ func TestProviderState(t *testing.T) {
 	})
 }
 
+func TestFunctionsWithNoReturns(t *testing.T) {
+	t.Run("function with no returns", func(t *testing.T) {
+		var initialized bool
+		initFunc := func() {
+			initialized = true
+		}
+
+		collection := NewCollection()
+		err := collection.AddSingleton(initFunc)
+		require.NoError(t, err, "failed to add initialization function")
+
+		provider, err := collection.Build()
+		require.NoError(t, err, "failed to build provider")
+		defer provider.Close()
+
+		// The function should have been called during build
+		assert.True(t, initialized, "initialization function should have been called during build")
+	})
+
+	t.Run("function with no returns using scoped lifetime", func(t *testing.T) {
+		callCount := 0
+		initFunc := func() {
+			callCount++
+		}
+
+		collection := NewCollection()
+		err := collection.AddScoped(initFunc)
+		require.NoError(t, err, "failed to add scoped initialization function")
+
+		provider, err := collection.Build()
+		require.NoError(t, err, "failed to build provider")
+		defer provider.Close()
+
+		// Create first scope
+		scope1, err := provider.CreateScope(context.Background())
+		require.NoError(t, err, "failed to create scope1")
+		defer scope1.Close()
+
+		// Create second scope
+		scope2, err := provider.CreateScope(context.Background())
+		require.NoError(t, err, "failed to create scope2")
+		defer scope2.Close()
+
+		// Each scope should call the function once
+		assert.Equal(t, 3, callCount, "scoped initialization function should be called once per scope. root scope counts as one")
+	})
+
+	t.Run("function with no returns using transient lifetime", func(t *testing.T) {
+		callCount := 0
+		initFunc := func() {
+			callCount++
+		}
+
+		collection := NewCollection()
+		err := collection.AddTransient(initFunc)
+		require.NoError(t, err, "failed to add transient initialization function")
+
+		provider, err := collection.Build()
+		require.NoError(t, err, "failed to build provider")
+		defer provider.Close()
+
+		// Transient functions with no returns should not be called
+		// during build since they have no service to resolve
+		assert.Equal(t, 0, callCount, "transient initialization function should not be called during build")
+	})
+}
+
+func TestFunctionsWithOnlyErrorReturns(t *testing.T) {
+	t.Run("function with only error return", func(t *testing.T) {
+		var validationRun bool
+		validateFunc := func() error {
+			validationRun = true
+			return nil
+		}
+
+		collection := NewCollection()
+		err := collection.AddSingleton(validateFunc)
+		require.NoError(t, err, "failed to add validation function")
+
+		provider, err := collection.Build()
+		require.NoError(t, err, "failed to build provider")
+		defer provider.Close()
+
+		// The function should have been called during build
+		assert.True(t, validationRun, "validation function should have been called during build")
+	})
+
+	t.Run("function with only error return that fails", func(t *testing.T) {
+		expectedError := errors.New("validation failed")
+		validateFunc := func() error {
+			return expectedError
+		}
+
+		collection := NewCollection()
+		err := collection.AddSingleton(validateFunc)
+		require.NoError(t, err, "failed to add validation function")
+
+		provider, err := collection.Build()
+		if err == nil {
+			provider.Close()
+			t.Fatal("expected build to fail with validation error")
+		}
+
+		// Check that the error is properly wrapped
+		assert.Error(t, err, "expected build to fail with validation error")
+		assert.True(t, errors.Is(err, expectedError), "expected error to be the original error")
+	})
+
+	t.Run("function with multiple error returns", func(t *testing.T) {
+		var checkRun bool
+		checkFunc := func() (error, error) {
+			checkRun = true
+			return nil, nil
+		}
+
+		collection := NewCollection()
+		err := collection.AddSingleton(checkFunc)
+		require.NoError(t, err, "failed to add check function")
+
+		provider, err := collection.Build()
+		require.NoError(t, err, "failed to build provider")
+		defer provider.Close()
+
+		// The function should have been called during build
+		assert.True(t, checkRun, "check function should have been called during build")
+	})
+
+	t.Run("scoped function with only error return", func(t *testing.T) {
+		callCount := 0
+		validateFunc := func() error {
+			callCount++
+			return nil
+		}
+
+		collection := NewCollection()
+		err := collection.AddScoped(validateFunc)
+		require.NoError(t, err, "failed to add scoped validation function")
+
+		provider, err := collection.Build()
+		require.NoError(t, err, "failed to build provider")
+		defer provider.Close()
+
+		// Create first scope
+		scope1, err := provider.CreateScope(context.Background())
+		require.NoError(t, err, "failed to create scope1")
+		defer scope1.Close()
+
+		// Create second scope
+		scope2, err := provider.CreateScope(context.Background())
+		require.NoError(t, err, "failed to create scope2")
+		defer scope2.Close()
+
+		// Each scope should call the function once
+		assert.Equal(t, 3, callCount, "scoped validation function should be called once per scope. root scope counts as one")
+	})
+}
+
+func TestFunctionsWithNoReturnsAndDependencies(t *testing.T) {
+	t.Run("function with dependencies and no returns", func(t *testing.T) {
+		type Config struct {
+			URL string
+		}
+
+		type Logger struct {
+			Messages []string
+		}
+
+		// Create config instance
+		config := &Config{URL: "https://example.com"}
+
+		// Create logger instance
+		logger := &Logger{Messages: []string{}}
+
+		// Initialization function that uses dependencies but returns nothing
+		var initCalled bool
+		initFunc := func(cfg *Config, log *Logger) {
+			initCalled = true
+			log.Messages = append(log.Messages, fmt.Sprintf("Initializing with URL: %s", cfg.URL))
+		}
+
+		collection := NewCollection()
+		err := collection.AddSingleton(func() *Config { return config })
+		require.NoError(t, err, "failed to add config")
+
+		err = collection.AddSingleton(func() *Logger { return logger })
+		require.NoError(t, err, "failed to add logger")
+
+		err = collection.AddSingleton(initFunc)
+		require.NoError(t, err, "failed to add initialization function")
+
+		provider, err := collection.Build()
+		require.NoError(t, err, "failed to build provider")
+		defer provider.Close()
+
+		// Verify initialization was called
+		assert.True(t, initCalled, "initialization function should have been called during build")
+
+		// Verify logger was modified
+		assert.Len(t, logger.Messages, 1, "expected 1 log message")
+		assert.Equal(t, "Initializing with URL: https://example.com", logger.Messages[0], "unexpected log message")
+	})
+
+	t.Run("function with dependencies and only error return", func(t *testing.T) {
+		type Database struct {
+			Connected bool
+		}
+
+		db := &Database{Connected: false}
+
+		// Validation function that uses dependencies and returns only error
+		validateFunc := func(db *Database) error {
+			if !db.Connected {
+				return errors.New("database not connected")
+			}
+
+			return nil
+		}
+
+		collection := NewCollection()
+		err := collection.AddSingleton(func() *Database { return db })
+		require.NoError(t, err, "failed to add database")
+
+		err = collection.AddSingleton(validateFunc)
+		require.NoError(t, err, "failed to add validation function")
+
+		provider, err := collection.Build()
+		if err == nil {
+			provider.Close()
+			t.Fatal("expected build to fail with database validation error")
+		}
+
+		// Check that the error is properly wrapped
+		assert.Error(t, err, "expected build to fail with database validation error")
+	})
+
+	t.Run("mixed registration with no-return functions", func(t *testing.T) {
+		type Service1 struct {
+			Name string
+		}
+
+		type Service2 struct {
+			Service1    *Service1
+			Initialized bool
+		}
+
+		var initOrder []string
+
+		// Regular constructor
+		service1Constructor := func() *Service1 {
+			initOrder = append(initOrder, "service1")
+			return &Service1{Name: "Service1"}
+		}
+
+		// Constructor with dependency
+		service2Constructor := func(s1 *Service1) *Service2 {
+			initOrder = append(initOrder, "service2")
+			return &Service2{Service1: s1, Initialized: false}
+		}
+
+		// No-return function with dependencies
+		initFunc := func(s2 *Service2) {
+			initOrder = append(initOrder, "init")
+			s2.Initialized = true
+		}
+
+		collection := NewCollection()
+		_ = collection.AddSingleton(service1Constructor)
+		_ = collection.AddSingleton(service2Constructor)
+		_ = collection.AddSingleton(initFunc)
+
+		provider, err := collection.Build()
+		require.NoError(t, err, "failed to build provider")
+		defer provider.Close()
+
+		// Verify initialization order
+		expectedOrder := []string{"service1", "service2", "init"}
+		assert.Equal(t, len(expectedOrder), len(initOrder), "unexpected number of initialization calls")
+
+		for i, expected := range expectedOrder {
+			assert.Equal(t, expected, initOrder[i], "unexpected initialization order at index %d", i)
+		}
+
+		// Verify Service2 was initialized
+		s2, err := provider.Get(reflect.TypeOf((*Service2)(nil)))
+		require.NoError(t, err, "failed to get Service2")
+
+		service2 := s2.(*Service2)
+		assert.True(t, service2.Initialized, "Service2 should be initialized by init function")
+	})
+
+	t.Run("scoped no-return function with dependencies", func(t *testing.T) {
+		type ScopedResource struct {
+			ID int
+		}
+
+		resourceID := 0
+		var initCalls []int
+
+		// Scoped no-return function with dependency
+		initFunc := func(r *ScopedResource) {
+			initCalls = append(initCalls, r.ID)
+		}
+
+		collection := NewCollection()
+		err := collection.AddScoped(func() *ScopedResource {
+			resourceID++
+			return &ScopedResource{ID: resourceID}
+		})
+		require.NoError(t, err, "failed to add scoped resource")
+
+		err = collection.AddScoped(initFunc)
+		require.NoError(t, err, "failed to add scoped init function")
+
+		provider, err := collection.Build()
+		require.NoError(t, err, "failed to build provider")
+		defer provider.Close()
+
+		// Create first scope
+		scope1, err := provider.CreateScope(context.Background())
+		require.NoError(t, err, "failed to create scope1")
+		defer scope1.Close()
+
+		// Create second scope
+		scope2, err := provider.CreateScope(context.Background())
+		require.NoError(t, err, "failed to create scope2")
+		defer scope2.Close()
+
+		// Verify both scopes initialized with different IDs
+		assert.Equal(t, 3, len(initCalls), "expected 3 init calls (1 root + 2 scopes)")
+		assert.Equal(t, []int{1, 2, 3}, initCalls, "unexpected init call IDs")
+	})
+}
+
 // Benchmark tests
 func BenchmarkProviderGet(b *testing.B) {
 	collection := NewCollection()

@@ -61,6 +61,9 @@ type provider struct {
 	singletons   map[instanceKey]any
 	singletonsMu sync.RWMutex
 
+	voidReturnScopedDescriptors   []*Descriptor
+	voidReturnScopedDescriptorsMu sync.RWMutex
+
 	// Track disposable instances for cleanup
 	disposables   []Disposable
 	disposablesMu sync.Mutex
@@ -151,7 +154,10 @@ func (p *provider) CreateScope(ctx context.Context) (Scope, error) {
 
 	// Create scope with cancellable context
 	ctx, cancel := context.WithCancel(ctx)
-	s := newScope(p, nil, ctx, cancel)
+	s, err := newScope(p, nil, ctx, cancel)
+	if err != nil {
+		return nil, err
+	}
 
 	// Track scope
 	p.scopesMu.Lock()
@@ -224,6 +230,10 @@ func (p *provider) Close() error {
 	p.singletonsMu.Lock()
 	p.singletons = nil
 	p.singletonsMu.Unlock()
+
+	p.voidReturnScopedDescriptorsMu.Lock()
+	p.voidReturnScopedDescriptors = nil
+	p.voidReturnScopedDescriptorsMu.Unlock()
 
 	if len(errors) > 0 {
 		return &DisposalError{

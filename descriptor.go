@@ -45,6 +45,9 @@ type Descriptor struct {
 	// -1 for single returns or Out structs, >= 0 for specific return index in multi-return
 	MultiReturnIndex int
 
+	// VoidReturn indicates if the constructor has no valid return values
+	VoidReturn bool
+
 	// Analysis results cached for performance
 	isFunc         bool
 	isResultObject bool
@@ -130,13 +133,28 @@ func newDescriptor(service any, lifetime Lifetime, opts ...AddOption) (*Descript
 		descriptor.Type = constructorType
 	} else {
 		numReturns := constructorType.NumOut()
-		if numReturns == 0 {
-			descriptor.Type = reflect.TypeOf((*struct{})(nil)).Elem()
 
+		descriptor.VoidReturn = numReturns == 0
+		if !descriptor.VoidReturn {
+			// Check if there are only errors in returns
+			areAllErrors := true
+			for i := range numReturns {
+				if !constructorType.Out(i).Implements(reflect.TypeOf((*error)(nil)).Elem()) {
+					areAllErrors = false
+					break
+				}
+			}
+
+			descriptor.VoidReturn = areAllErrors
+		}
+
+		if descriptor.VoidReturn {
+			descriptor.Type = reflect.TypeOf((*struct{})(nil)).Elem()
 			if descriptor.Key == nil {
 				descriptor.Key = uuid.NewString()
 			}
 		} else {
+			// Normal function with returns
 			descriptor.Type = constructorType.Out(0)
 		}
 	}
