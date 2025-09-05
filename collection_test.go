@@ -1192,8 +1192,8 @@ func TestValidateLifetimes(t *testing.T) {
 		assert.Error(t, err)
 		var lifetimeConflictErr *LifetimeConflictError
 		assert.ErrorAs(t, err, &lifetimeConflictErr)
-		assert.Equal(t, Singleton, lifetimeConflictErr.Current)
-		assert.Equal(t, Scoped, lifetimeConflictErr.Requested)
+		assert.Equal(t, Singleton, lifetimeConflictErr.ServiceLifetime)
+		assert.Equal(t, Scoped, lifetimeConflictErr.DependencyLifetime)
 	})
 
 	t.Run("singleton depending on transient", func(t *testing.T) {
@@ -1264,8 +1264,8 @@ func TestValidateLifetimes(t *testing.T) {
 		assert.Error(t, err)
 		var lifetimeConflictErr *LifetimeConflictError
 		assert.ErrorAs(t, err, &lifetimeConflictErr)
-		assert.Equal(t, Transient, lifetimeConflictErr.Current)
-		assert.Equal(t, Scoped, lifetimeConflictErr.Requested)
+		assert.Equal(t, Transient, lifetimeConflictErr.ServiceLifetime)
+		assert.Equal(t, Scoped, lifetimeConflictErr.DependencyLifetime)
 	})
 
 	t.Run("transient depending on singleton", func(t *testing.T) {
