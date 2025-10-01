@@ -576,6 +576,135 @@ func BenchmarkModule(b *testing.B) {
 	})
 }
 
+// Test Remove ModuleOption
+func TestRemoveModule(t *testing.T) {
+	t.Run("remove existing service", func(t *testing.T) {
+		collection := NewCollection()
+		serviceType := reflect.TypeOf((*ModuleTestService)(nil))
+
+		// Add a service first
+		err := collection.AddSingleton(NewModuleTestService)
+		assert.NoError(t, err)
+		assert.True(t, collection.Contains(serviceType))
+
+		// Remove it using the module option
+		option := Remove(serviceType)
+		err = option(collection)
+		assert.NoError(t, err)
+		assert.False(t, collection.Contains(serviceType))
+	})
+
+	t.Run("remove non-existent service", func(t *testing.T) {
+		collection := NewCollection()
+		serviceType := reflect.TypeOf((*ModuleTestService)(nil))
+
+		// Remove a service that doesn't exist (should not error)
+		option := Remove(serviceType)
+		err := option(collection)
+		assert.NoError(t, err)
+	})
+
+	t.Run("remove with nil type", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Should not panic with nil type
+		option := Remove(nil)
+		err := option(collection)
+		assert.NoError(t, err)
+	})
+
+	t.Run("remove in module", func(t *testing.T) {
+		collection := NewCollection()
+		serviceType := reflect.TypeOf((*ModuleTestService)(nil))
+
+		// Add service, then remove it in a module
+		err := collection.AddSingleton(NewModuleTestService)
+		assert.NoError(t, err)
+
+		module := NewModule("test",
+			Remove(serviceType),
+		)
+
+		err = module(collection)
+		assert.NoError(t, err)
+		assert.False(t, collection.Contains(serviceType))
+	})
+}
+
+// Test RemoveKeyed ModuleOption
+func TestRemoveKeyedModule(t *testing.T) {
+	t.Run("remove existing keyed service", func(t *testing.T) {
+		collection := NewCollection()
+		serviceType := reflect.TypeOf((*ModuleTestService)(nil))
+
+		// Add a keyed service first
+		err := collection.AddSingleton(NewModuleTestService, Name("test"))
+		assert.NoError(t, err)
+		assert.True(t, collection.ContainsKeyed(serviceType, "test"))
+
+		// Remove it using the module option
+		option := RemoveKeyed(serviceType, "test")
+		err = option(collection)
+		assert.NoError(t, err)
+		assert.False(t, collection.ContainsKeyed(serviceType, "test"))
+	})
+
+	t.Run("remove non-existent keyed service", func(t *testing.T) {
+		collection := NewCollection()
+		serviceType := reflect.TypeOf((*ModuleTestService)(nil))
+
+		// Remove a keyed service that doesn't exist (should not error)
+		option := RemoveKeyed(serviceType, "nonexistent")
+		err := option(collection)
+		assert.NoError(t, err)
+	})
+
+	t.Run("remove with nil type", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Should not panic with nil type
+		option := RemoveKeyed(nil, "key")
+		err := option(collection)
+		assert.NoError(t, err)
+	})
+
+	t.Run("remove in module", func(t *testing.T) {
+		collection := NewCollection()
+		serviceType := reflect.TypeOf((*ModuleTestService)(nil))
+
+		// Add keyed service, then remove it in a module
+		err := collection.AddSingleton(NewModuleTestService, Name("test"))
+		assert.NoError(t, err)
+
+		module := NewModule("test",
+			RemoveKeyed(serviceType, "test"),
+		)
+
+		err = module(collection)
+		assert.NoError(t, err)
+		assert.False(t, collection.ContainsKeyed(serviceType, "test"))
+	})
+
+	t.Run("preserve other keyed services", func(t *testing.T) {
+		collection := NewCollection()
+		serviceType := reflect.TypeOf((*ModuleTestService)(nil))
+
+		// Add multiple keyed services
+		err := collection.AddSingleton(NewModuleTestService, Name("key1"))
+		assert.NoError(t, err)
+		err = collection.AddSingleton(NewModuleTestService, Name("key2"))
+		assert.NoError(t, err)
+
+		// Remove only one
+		option := RemoveKeyed(serviceType, "key1")
+		err = option(collection)
+		assert.NoError(t, err)
+
+		assert.False(t, collection.ContainsKeyed(serviceType, "key1"))
+		assert.True(t, collection.ContainsKeyed(serviceType, "key2"))
+	})
+}
+
 func BenchmarkAddOptions(b *testing.B) {
 	b.Run("Name", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {

@@ -71,6 +71,22 @@ func AddTransient(service any, opts ...AddOption) ModuleOption {
 	}
 }
 
+// Remove creates a ModuleOption for removing all services of a given type.
+func Remove(serviceType reflect.Type) ModuleOption {
+	return func(s Collection) error {
+		s.Remove(serviceType)
+		return nil
+	}
+}
+
+// RemoveKeyed creates a ModuleOption for removing a specific keyed service.
+func RemoveKeyed(serviceType reflect.Type, key any) ModuleOption {
+	return func(s Collection) error {
+		s.RemoveKeyed(serviceType, key)
+		return nil
+	}
+}
+
 // An AddOption modifies the default behavior of AddSingleton, AddScoped, and AddTransient.
 type AddOption interface {
 	applyAddOption(*addOptions)
