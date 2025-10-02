@@ -588,7 +588,7 @@ func TestRemoveModule(t *testing.T) {
 		assert.True(t, collection.Contains(serviceType))
 
 		// Remove it using the module option
-		option := Remove(serviceType)
+		option := Remove[*ModuleTestService]()
 		err = option(collection)
 		assert.NoError(t, err)
 		assert.False(t, collection.Contains(serviceType))
@@ -596,19 +596,9 @@ func TestRemoveModule(t *testing.T) {
 
 	t.Run("remove non-existent service", func(t *testing.T) {
 		collection := NewCollection()
-		serviceType := reflect.TypeOf((*ModuleTestService)(nil))
 
 		// Remove a service that doesn't exist (should not error)
-		option := Remove(serviceType)
-		err := option(collection)
-		assert.NoError(t, err)
-	})
-
-	t.Run("remove with nil type", func(t *testing.T) {
-		collection := NewCollection()
-
-		// Should not panic with nil type
-		option := Remove(nil)
+		option := Remove[*ModuleTestService]()
 		err := option(collection)
 		assert.NoError(t, err)
 	})
@@ -622,7 +612,7 @@ func TestRemoveModule(t *testing.T) {
 		assert.NoError(t, err)
 
 		module := NewModule("test",
-			Remove(serviceType),
+			Remove[*ModuleTestService](),
 		)
 
 		err = module(collection)
@@ -643,7 +633,7 @@ func TestRemoveKeyedModule(t *testing.T) {
 		assert.True(t, collection.ContainsKeyed(serviceType, "test"))
 
 		// Remove it using the module option
-		option := RemoveKeyed(serviceType, "test")
+		option := RemoveKeyed[*ModuleTestService]("test")
 		err = option(collection)
 		assert.NoError(t, err)
 		assert.False(t, collection.ContainsKeyed(serviceType, "test"))
@@ -651,19 +641,9 @@ func TestRemoveKeyedModule(t *testing.T) {
 
 	t.Run("remove non-existent keyed service", func(t *testing.T) {
 		collection := NewCollection()
-		serviceType := reflect.TypeOf((*ModuleTestService)(nil))
 
 		// Remove a keyed service that doesn't exist (should not error)
-		option := RemoveKeyed(serviceType, "nonexistent")
-		err := option(collection)
-		assert.NoError(t, err)
-	})
-
-	t.Run("remove with nil type", func(t *testing.T) {
-		collection := NewCollection()
-
-		// Should not panic with nil type
-		option := RemoveKeyed(nil, "key")
+		option := RemoveKeyed[*ModuleTestService]("nonexistent")
 		err := option(collection)
 		assert.NoError(t, err)
 	})
@@ -677,7 +657,7 @@ func TestRemoveKeyedModule(t *testing.T) {
 		assert.NoError(t, err)
 
 		module := NewModule("test",
-			RemoveKeyed(serviceType, "test"),
+			RemoveKeyed[*ModuleTestService]("test"),
 		)
 
 		err = module(collection)
@@ -696,7 +676,7 @@ func TestRemoveKeyedModule(t *testing.T) {
 		assert.NoError(t, err)
 
 		// Remove only one
-		option := RemoveKeyed(serviceType, "key1")
+		option := RemoveKeyed[*ModuleTestService]("key1")
 		err = option(collection)
 		assert.NoError(t, err)
 

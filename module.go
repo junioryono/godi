@@ -72,16 +72,18 @@ func AddTransient(service any, opts ...AddOption) ModuleOption {
 }
 
 // Remove creates a ModuleOption for removing all services of a given type.
-func Remove(serviceType reflect.Type) ModuleOption {
+func Remove[T any]() ModuleOption {
 	return func(s Collection) error {
+		serviceType := reflect.TypeOf((*T)(nil)).Elem()
 		s.Remove(serviceType)
 		return nil
 	}
 }
 
 // RemoveKeyed creates a ModuleOption for removing a specific keyed service.
-func RemoveKeyed(serviceType reflect.Type, key any) ModuleOption {
+func RemoveKeyed[T any](key any) ModuleOption {
 	return func(s Collection) error {
+		serviceType := reflect.TypeOf((*T)(nil)).Elem()
 		s.RemoveKeyed(serviceType, key)
 		return nil
 	}
