@@ -263,6 +263,159 @@ func TestAddTransientModule(t *testing.T) {
 	})
 }
 
+// Test Remove ModuleOption
+func TestRemoveModuleOption(t *testing.T) {
+	t.Run("removes service by type", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Add a service
+		err := collection.AddSingleton(NewModuleTestService)
+		require.NoError(t, err)
+
+		serviceType := reflect.TypeOf((*ModuleTestService)(nil))
+		assert.True(t, collection.Contains(serviceType))
+
+		// Remove using generic function
+		err = collection.AddModules(Remove[*ModuleTestService]())
+		require.NoError(t, err)
+
+		assert.False(t, collection.Contains(serviceType))
+	})
+
+	t.Run("removes interface service", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Add a service as interface
+		err := collection.AddSingleton(NewModuleTestService, As[ModuleTestInterface]())
+		require.NoError(t, err)
+
+		interfaceType := reflect.TypeOf((*ModuleTestInterface)(nil)).Elem()
+		assert.True(t, collection.Contains(interfaceType))
+
+		// Remove using generic function
+		err = collection.AddModules(Remove[ModuleTestInterface]())
+		require.NoError(t, err)
+
+		assert.False(t, collection.Contains(interfaceType))
+	})
+
+	t.Run("remove and replace in same module", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Add initial service
+		err := collection.AddSingleton(func() *ModuleTestService {
+			return &ModuleTestService{Name: "original"}
+		})
+		require.NoError(t, err)
+
+		serviceType := reflect.TypeOf((*ModuleTestService)(nil))
+		assert.True(t, collection.Contains(serviceType))
+
+		// Remove and replace in one module
+		err = collection.AddModules(
+			Remove[*ModuleTestService](),
+			AddSingleton(func() *ModuleTestService {
+				return &ModuleTestService{Name: "replacement"}
+			}),
+		)
+		require.NoError(t, err)
+
+		assert.True(t, collection.Contains(serviceType))
+	})
+
+	t.Run("remove non-existent service is no-op", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Remove a service that was never added
+		err := collection.AddModules(Remove[*ModuleTestService]())
+		require.NoError(t, err)
+
+		assert.Equal(t, 0, collection.Count())
+	})
+}
+
+// Test RemoveKeyed ModuleOption
+func TestRemoveKeyedModuleOption(t *testing.T) {
+	t.Run("removes keyed service", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Add keyed services
+		err := collection.AddSingleton(NewModuleTestService, Name("primary"))
+		require.NoError(t, err)
+		err = collection.AddSingleton(NewModuleTestService, Name("secondary"))
+		require.NoError(t, err)
+
+		serviceType := reflect.TypeOf((*ModuleTestService)(nil))
+		assert.True(t, collection.ContainsKeyed(serviceType, "primary"))
+		assert.True(t, collection.ContainsKeyed(serviceType, "secondary"))
+
+		// Remove only the primary one
+		err = collection.AddModules(RemoveKeyed[*ModuleTestService]("primary"))
+		require.NoError(t, err)
+
+		assert.False(t, collection.ContainsKeyed(serviceType, "primary"))
+		assert.True(t, collection.ContainsKeyed(serviceType, "secondary"))
+	})
+
+	t.Run("remove and replace keyed service", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Add initial keyed service
+		err := collection.AddSingleton(func() *ModuleTestService {
+			return &ModuleTestService{Name: "original"}
+		}, Name("test"))
+		require.NoError(t, err)
+
+		serviceType := reflect.TypeOf((*ModuleTestService)(nil))
+		assert.True(t, collection.ContainsKeyed(serviceType, "test"))
+
+		// Remove and replace
+		err = collection.AddModules(
+			RemoveKeyed[*ModuleTestService]("test"),
+			AddSingleton(func() *ModuleTestService {
+				return &ModuleTestService{Name: "replacement"}
+			}, Name("test")),
+		)
+		require.NoError(t, err)
+
+		assert.True(t, collection.ContainsKeyed(serviceType, "test"))
+	})
+
+	t.Run("remove non-keyed service with nil key", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Add non-keyed service
+		err := collection.AddSingleton(NewModuleTestService)
+		require.NoError(t, err)
+
+		serviceType := reflect.TypeOf((*ModuleTestService)(nil))
+		assert.True(t, collection.Contains(serviceType))
+
+		// Remove with nil key (removes the non-keyed service)
+		err = collection.AddModules(RemoveKeyed[*ModuleTestService](nil))
+		require.NoError(t, err)
+
+		assert.False(t, collection.Contains(serviceType))
+	})
+
+	t.Run("remove non-existent keyed service is no-op", func(t *testing.T) {
+		collection := NewCollection()
+
+		// Add one keyed service
+		err := collection.AddSingleton(NewModuleTestService, Name("existing"))
+		require.NoError(t, err)
+
+		// Remove a different key
+		err = collection.AddModules(RemoveKeyed[*ModuleTestService]("nonexistent"))
+		require.NoError(t, err)
+
+		// Original service should still exist
+		serviceType := reflect.TypeOf((*ModuleTestService)(nil))
+		assert.True(t, collection.ContainsKeyed(serviceType, "existing"))
+		assert.Equal(t, 1, collection.Count())
+	})
+}
+
 // Test Name option
 func TestNameOption(t *testing.T) {
 	t.Run("basic name", func(t *testing.T) {
