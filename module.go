@@ -251,3 +251,38 @@ func (o addAsOption) String() string {
 func (o addAsOption) applyAddOption(opts *addOptions) {
 	opts.As = append(opts.As, o...)
 }
+
+// Remove creates a ModuleOption for removing all services of type T.
+// This is useful for testing scenarios where you need to replace a service
+// with a mock implementation.
+//
+// Example:
+//
+//	err := c.AddModules(
+//	    godi.Remove[posthog.Client](),
+//	    godi.AddSingleton(infrastructure.NewPostHogClientMock),
+//	    // ... other modules
+//	)
+func Remove[T any]() ModuleOption {
+	return func(c Collection) error {
+		c.Remove(reflect.TypeOf((*T)(nil)).Elem())
+		return nil
+	}
+}
+
+// RemoveKeyed creates a ModuleOption for removing a specific keyed service of type T.
+// This allows you to remove only services registered with a specific key.
+//
+// Example:
+//
+//	err := c.AddModules(
+//	    godi.RemoveKeyed[database.Connection]("primary"),
+//	    godi.AddSingleton(NewMockConnection, godi.Name("primary")),
+//	    // ... other modules
+//	)
+func RemoveKeyed[T any](key any) ModuleOption {
+	return func(c Collection) error {
+		c.RemoveKeyed(reflect.TypeOf((*T)(nil)).Elem(), key)
+		return nil
+	}
+}
