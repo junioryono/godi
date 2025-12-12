@@ -296,10 +296,10 @@ func (p *provider) findGroupDescriptors(serviceType reflect.Type, group string) 
 	return p.groups[groupKey]
 }
 
-// createAllSingletons creates all singleton instances at build time.
-// Services are created in topological order based on their dependencies to ensure
-// all required dependencies are available. Multi-return constructors are invoked only once.
-func (p *provider) createAllSingletons() error {
+// createAllSingletonsWithContext creates all singleton instances with context cancellation support.
+// The context is checked before each singleton creation, allowing for graceful cancellation
+// during the build process.
+func (p *provider) createAllSingletonsWithContext(ctx context.Context) error {
 	// Get topological sort from dependency graph
 	sorted, err := p.graph.TopologicalSort()
 	if err != nil {
@@ -313,6 +313,17 @@ func (p *provider) createAllSingletons() error {
 
 	// Create instances in dependency order
 	for _, node := range sorted {
+		// Check context before each singleton creation
+		select {
+		case <-ctx.Done():
+			return &BuildError{
+				Phase:   "singleton-creation",
+				Details: "build cancelled during singleton creation",
+				Cause:   ctx.Err(),
+			}
+		default:
+		}
+
 		if node == nil || node.Provider == nil {
 			continue
 		}

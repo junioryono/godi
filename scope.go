@@ -426,6 +426,16 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 	// Invoke constructor
 	results, err := invoker.Invoke(info, s)
 	if err != nil {
+		// Check if it's a panic error and wrap appropriately
+		var panicErr *reflection.PanicError
+		if errors.As(err, &panicErr) {
+			return nil, &ConstructorPanicError{
+				Constructor: descriptor.ConstructorType,
+				Panic:       panicErr.Panic,
+				Stack:       panicErr.Stack,
+			}
+		}
+
 		return nil, &ConstructorInvocationError{
 			Constructor: descriptor.ConstructorType,
 			Parameters:  extractParameterTypes(info),

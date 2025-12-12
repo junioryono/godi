@@ -48,6 +48,7 @@ var (
 	_ error = ReflectionAnalysisError{}
 	_ error = GraphOperationError{}
 	_ error = ConstructorInvocationError{}
+	_ error = ConstructorPanicError{}
 	_ error = BuildError{}
 	_ error = DisposalError{}
 	_ error = CircularDependencyError{}
@@ -78,9 +79,31 @@ type LifetimeConflictError struct {
 }
 
 func (e LifetimeConflictError) Error() string {
-	return fmt.Sprintf("%s service %s cannot depend on %s service %s",
-		e.ServiceLifetime, formatType(e.ServiceType),
-		e.DependencyLifetime, formatType(e.DependencyType))
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("lifetime conflict: %s (%s) cannot depend on %s (%s)\n\n",
+		formatType(e.ServiceType), e.ServiceLifetime,
+		formatType(e.DependencyType), e.DependencyLifetime))
+
+	// Explain the issue
+	switch e.ServiceLifetime {
+	case Singleton:
+		b.WriteString("Singleton services are created once and live for the application lifetime.\n")
+		b.WriteString("Scoped services are created per-scope and may have different values in different scopes.\n\n")
+		b.WriteString("A singleton depending on a scoped service would capture a single scope's value,\n")
+		b.WriteString("which is almost certainly not what you want.\n\n")
+	case Transient:
+		b.WriteString("Transient services are created every time they are resolved.\n")
+		b.WriteString("Scoped services are created per-scope and may have different values in different scopes.\n\n")
+		b.WriteString("A transient depending on a scoped service could outlive and hold a reference\n")
+		b.WriteString("to a disposed scoped service.\n\n")
+	}
+
+	b.WriteString("To resolve this:\n")
+	b.WriteString(fmt.Sprintf("  • Change %s to Scoped lifetime\n", formatType(e.ServiceType)))
+	b.WriteString(fmt.Sprintf("  • Change %s to Singleton lifetime\n", formatType(e.DependencyType)))
+	b.WriteString(fmt.Sprintf("  • Use a factory function to resolve %s lazily\n", formatType(e.DependencyType)))
+
+	return b.String()
 }
 
 // AlreadyRegisteredError indicates a service type is already registered.
@@ -100,18 +123,83 @@ type ResolutionError struct {
 	ServiceType reflect.Type
 	ServiceKey  any // nil for non-keyed services
 	Cause       error
+	Available   []reflect.Type // Types that ARE registered (optional, for suggestions)
 }
 
 func (e ResolutionError) Error() string {
+	var b strings.Builder
+
 	if e.ServiceKey != nil {
-		return fmt.Sprintf("unable to resolve %s[key=%v]: %v", formatType(e.ServiceType), e.ServiceKey, e.Cause)
+		b.WriteString(fmt.Sprintf("service not found: %s (key: %v)", formatType(e.ServiceType), e.ServiceKey))
+	} else {
+		b.WriteString(fmt.Sprintf("service not found: %s", formatType(e.ServiceType)))
 	}
 
-	return fmt.Sprintf("unable to resolve %s: %v", formatType(e.ServiceType), e.Cause)
+	if e.Cause != nil && e.Cause != ErrServiceNotFound {
+		b.WriteString(fmt.Sprintf(": %v", e.Cause))
+	}
+
+	// Suggest similar types if available
+	if len(e.Available) > 0 {
+		similar := findSimilarTypes(e.ServiceType, e.Available)
+		if len(similar) > 0 {
+			b.WriteString("\n\nDid you mean one of these?\n")
+			for _, t := range similar {
+				b.WriteString(fmt.Sprintf("  • %s\n", formatType(t)))
+			}
+		}
+	}
+
+	b.WriteString("\nMake sure the service is registered with the correct lifetime and type.")
+
+	return b.String()
 }
 
 func (e ResolutionError) Unwrap() error {
 	return e.Cause
+}
+
+// findSimilarTypes finds types with similar names using a simple substring/prefix match
+func findSimilarTypes(target reflect.Type, available []reflect.Type) []reflect.Type {
+	if target == nil || len(available) == 0 {
+		return nil
+	}
+
+	targetName := target.String()
+	targetShortName := target.Name()
+	if targetShortName == "" {
+		targetShortName = targetName
+	}
+
+	var similar []reflect.Type
+	for _, t := range available {
+		if t == nil || t == target {
+			continue
+		}
+
+		typeName := t.String()
+		typeShortName := t.Name()
+		if typeShortName == "" {
+			typeShortName = typeName
+		}
+
+		// Check for name similarity:
+		// - Same short name (different packages)
+		// - One contains the other
+		// - Similar length and many common characters
+		if targetShortName == typeShortName ||
+			strings.Contains(strings.ToLower(typeName), strings.ToLower(targetShortName)) ||
+			strings.Contains(strings.ToLower(targetName), strings.ToLower(typeShortName)) {
+			similar = append(similar, t)
+		}
+
+		// Limit suggestions
+		if len(similar) >= 5 {
+			break
+		}
+	}
+
+	return similar
 }
 
 // TimeoutError indicates a service resolution timed out.
@@ -237,6 +325,34 @@ func (e ConstructorInvocationError) Error() string {
 
 func (e ConstructorInvocationError) Unwrap() error {
 	return e.Cause
+}
+
+// ConstructorPanicError indicates a constructor panicked during invocation.
+// It captures the panic value and stack trace for debugging.
+type ConstructorPanicError struct {
+	Constructor reflect.Type
+	Panic       any
+	Stack       []byte
+}
+
+func (e ConstructorPanicError) Error() string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("constructor %s panicked: %v\n", formatType(e.Constructor), e.Panic))
+
+	b.WriteString("\nConstructors should be pure dependency wiring - avoid operations that can panic.\n")
+	b.WriteString("Critical operations that can fail belong in application initialization, not constructors.\n")
+
+	b.WriteString("\nTo resolve this:\n")
+	b.WriteString("  • Check for nil pointer dereferences in your constructor\n")
+	b.WriteString("  • Move panic-prone initialization to a separate Init() method\n")
+	b.WriteString("  • Add nil checks for dependencies before using them\n")
+
+	if len(e.Stack) > 0 {
+		b.WriteString("\nStack trace:\n")
+		b.Write(e.Stack)
+	}
+
+	return b.String()
 }
 
 // BuildError wraps errors that occur during provider building

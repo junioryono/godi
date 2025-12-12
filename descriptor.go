@@ -271,5 +271,101 @@ func (d *Descriptor) Validate() error {
 		return LifetimeError{Value: d.Lifetime}
 	}
 
+	// For function constructors, validate return types
+	if d.isFunc && !d.VoidReturn {
+		if err := d.validateReturnTypes(); err != nil {
+			return err
+		}
+	}
+
+	// Validate parameter types (dependencies)
+	if err := d.validateParameterTypes(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateReturnTypes validates that constructor return types are valid
+func (d *Descriptor) validateReturnTypes() error {
+	if d.ConstructorType == nil || d.ConstructorType.Kind() != reflect.Func {
+		return nil
+	}
+
+	numOut := d.ConstructorType.NumOut()
+	for i := 0; i < numOut; i++ {
+		outType := d.ConstructorType.Out(i)
+
+		// Check for invalid types
+		if outType.Kind() == reflect.Invalid {
+			return &ValidationError{
+				ServiceType: d.Type,
+				Cause:       fmt.Errorf("constructor return type at index %d is invalid", i),
+			}
+		}
+
+		// Skip error type validation
+		if outType.Implements(reflect.TypeOf((*error)(nil)).Elem()) {
+			continue
+		}
+
+		// Check for chan return types (generally not suitable for DI)
+		if outType.Kind() == reflect.Chan {
+			return &ValidationError{
+				ServiceType: d.Type,
+				Cause:       fmt.Errorf("constructor return type at index %d is a channel type, which is not supported as a service type", i),
+			}
+		}
+
+		// Check for unsafe pointer
+		if outType.Kind() == reflect.UnsafePointer {
+			return &ValidationError{
+				ServiceType: d.Type,
+				Cause:       fmt.Errorf("constructor return type at index %d is an unsafe pointer, which is not supported as a service type", i),
+			}
+		}
+	}
+
+	return nil
+}
+
+// validateParameterTypes validates that constructor parameter types are valid for DI
+func (d *Descriptor) validateParameterTypes() error {
+	for _, dep := range d.Dependencies {
+		if dep == nil {
+			continue
+		}
+
+		depType := dep.Type
+		if depType == nil {
+			continue
+		}
+
+		// Check for invalid dependency types
+		if depType.Kind() == reflect.Invalid {
+			return &ValidationError{
+				ServiceType: d.Type,
+				Cause:       fmt.Errorf("dependency type is invalid"),
+			}
+		}
+
+		// Check for unsupported primitive types as dependencies (not slices for groups)
+		// Group dependencies are slices, which should not have chan/unsafe pointer validation
+		if dep.Group == "" {
+			switch depType.Kind() {
+			case reflect.Chan:
+				return &ValidationError{
+					ServiceType: d.Type,
+					Cause:       fmt.Errorf("channel type %s is not supported as a dependency; use an interface or struct instead", depType),
+				}
+			case reflect.UnsafePointer:
+				return &ValidationError{
+					ServiceType: d.Type,
+					Cause:       fmt.Errorf("unsafe pointer is not supported as a dependency"),
+				}
+			}
+		}
+	}
+
 	return nil
 }

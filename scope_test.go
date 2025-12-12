@@ -3067,3 +3067,97 @@ func BenchmarkLargeGroupMixedLifetimes(b *testing.B) {
 		_, _ = ResolveGroup[*MixedService](scope, "large")
 	}
 }
+
+// ========================================
+// Panic Recovery Tests
+// ========================================
+
+// PanicTestService is used for panic recovery tests
+type PanicTestService struct {
+	Name string
+}
+
+func TestConstructorPanicRecovery(t *testing.T) {
+	t.Run("constructor panic is recovered and returned as error", func(t *testing.T) {
+		panicConstructor := func() *PanicTestService {
+			panic("intentional panic in constructor")
+		}
+
+		collection := NewCollection()
+		err := collection.AddSingleton(panicConstructor)
+		require.NoError(t, err)
+
+		_, err = collection.Build()
+		assert.Error(t, err)
+
+		// Check that it's a ConstructorPanicError
+		var panicErr *ConstructorPanicError
+		assert.True(t, errors.As(err, &panicErr), "error should be ConstructorPanicError")
+		assert.Contains(t, panicErr.Error(), "panicked")
+		assert.Contains(t, panicErr.Error(), "intentional panic in constructor")
+	})
+
+	t.Run("panic with nil pointer dereference is recovered", func(t *testing.T) {
+		nilPointerConstructor := func() *PanicTestService {
+			var ptr *PanicTestService
+			_ = ptr.Name // This will panic with nil pointer dereference
+			return ptr
+		}
+
+		collection := NewCollection()
+		err := collection.AddSingleton(nilPointerConstructor)
+		require.NoError(t, err)
+
+		_, err = collection.Build()
+		assert.Error(t, err)
+
+		var panicErr *ConstructorPanicError
+		assert.True(t, errors.As(err, &panicErr))
+		assert.NotNil(t, panicErr.Stack)
+		assert.True(t, len(panicErr.Stack) > 0, "stack trace should be captured")
+	})
+
+	t.Run("panic in scoped constructor is recovered", func(t *testing.T) {
+		panicConstructor := func() *PanicTestService {
+			panic("scoped panic")
+		}
+
+		collection := NewCollection()
+		err := collection.AddScoped(panicConstructor)
+		require.NoError(t, err)
+
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		scope, err := provider.CreateScope(context.Background())
+		require.NoError(t, err)
+		defer scope.Close()
+
+		_, err = scope.Get(reflect.TypeOf((*PanicTestService)(nil)))
+		assert.Error(t, err)
+
+		var panicErr *ConstructorPanicError
+		assert.True(t, errors.As(err, &panicErr))
+	})
+
+	t.Run("panic in transient constructor is recovered", func(t *testing.T) {
+		panicConstructor := func() *PanicTestService {
+			panic("transient panic")
+		}
+
+		collection := NewCollection()
+		err := collection.AddTransient(panicConstructor)
+		require.NoError(t, err)
+
+		provider, err := collection.Build()
+		require.NoError(t, err)
+		defer provider.Close()
+
+		_, err = provider.Get(reflect.TypeOf((*PanicTestService)(nil)))
+		assert.Error(t, err)
+
+		var panicErr *ConstructorPanicError
+		assert.True(t, errors.As(err, &panicErr))
+	})
+}

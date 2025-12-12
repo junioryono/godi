@@ -12,15 +12,32 @@ type CircularDependencyError struct {
 }
 
 func (e CircularDependencyError) Error() string {
+	var b strings.Builder
+	b.WriteString("circular dependency detected:\n\n")
+
 	if len(e.Path) == 0 {
-		return fmt.Sprintf("circular dependency detected involving %s", e.Node.String())
+		b.WriteString(fmt.Sprintf("    %s\n", e.Node.String()))
+		b.WriteString("      ↓\n")
+		b.WriteString(fmt.Sprintf("    %s (cycle)\n", e.Node.String()))
+	} else {
+		// Build a visual representation of the cycle
+		for i, node := range e.Path {
+			b.WriteString(fmt.Sprintf("    %s\n", node.String()))
+			if i < len(e.Path)-1 {
+				b.WriteString("      ↓\n")
+			}
+		}
+		// Show the cycle back to the first node
+		if len(e.Path) > 0 {
+			b.WriteString("      ↓\n")
+			b.WriteString(fmt.Sprintf("    %s (cycle)\n", e.Path[0].String()))
+		}
 	}
 
-	// Build a visual representation of the cycle
-	pathStrs := make([]string, len(e.Path))
-	for i, node := range e.Path {
-		pathStrs[i] = node.String()
-	}
+	b.WriteString("\nTo resolve this:\n")
+	b.WriteString("  • Use an interface to break the dependency\n")
+	b.WriteString("  • Use a factory function for lazy initialization\n")
+	b.WriteString("  • Restructure to remove the circular relationship\n")
 
-	return fmt.Sprintf("circular dependency detected: %s", strings.Join(pathStrs, " -> "))
+	return b.String()
 }

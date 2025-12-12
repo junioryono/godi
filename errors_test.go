@@ -52,8 +52,8 @@ func TestResolutionError(t *testing.T) {
 		}
 
 		errStr := err.Error()
-		assert.Contains(t, errStr, "unable to resolve", "Error should mention resolution failure")
-		assert.NotContains(t, errStr, "key=", "Error should not mention key when nil")
+		assert.Contains(t, errStr, "service not found", "Error should mention service not found")
+		assert.NotContains(t, errStr, "key:", "Error should not mention key when nil")
 		assert.ErrorIs(t, err, cause, "Unwrap should return the cause")
 	})
 
@@ -67,8 +67,8 @@ func TestResolutionError(t *testing.T) {
 		}
 
 		errStr := err.Error()
-		assert.Contains(t, errStr, "key=primary", "Error should mention key")
-		assert.Contains(t, errStr, "unable to resolve", "Error should mention resolution failure")
+		assert.Contains(t, errStr, "key: primary", "Error should mention key")
+		assert.Contains(t, errStr, "service not found", "Error should mention service not found")
 		assert.ErrorIs(t, err, cause, "Unwrap should return the cause")
 	})
 }
@@ -346,4 +346,63 @@ func TestErrorWrapping(t *testing.T) {
 	for _, wrapper := range wrappers {
 		assert.ErrorIs(t, wrapper, baseErr, "%T should wrap base error", wrapper)
 	}
+}
+
+func TestConstructorPanicError(t *testing.T) {
+	t.Run("error message includes panic value", func(t *testing.T) {
+		panicErr := &ConstructorPanicError{
+			Constructor: reflect.TypeOf(func() *testService { return nil }),
+			Panic:       "test panic value",
+			Stack:       []byte("stack trace here"),
+		}
+
+		errMsg := panicErr.Error()
+		assert.Contains(t, errMsg, "panicked")
+		assert.Contains(t, errMsg, "test panic value")
+	})
+
+	t.Run("error message includes helpful guidance", func(t *testing.T) {
+		panicErr := &ConstructorPanicError{
+			Constructor: reflect.TypeOf(func() *testService { return nil }),
+			Panic:       "nil pointer",
+			Stack:       []byte("goroutine 1 [running]:"),
+		}
+
+		errMsg := panicErr.Error()
+		assert.Contains(t, errMsg, "Constructors should be pure dependency wiring")
+		assert.Contains(t, errMsg, "To resolve this")
+		assert.Contains(t, errMsg, "nil pointer dereferences")
+		assert.Contains(t, errMsg, "Init() method")
+		assert.Contains(t, errMsg, "Stack trace")
+	})
+}
+
+func TestLifetimeConflictErrorActionable(t *testing.T) {
+	serviceType := reflect.TypeOf((*testService)(nil))
+	dependencyType := reflect.TypeOf((*testDependency)(nil))
+	err := LifetimeConflictError{
+		ServiceType:        serviceType,
+		ServiceLifetime:    Singleton,
+		DependencyType:     dependencyType,
+		DependencyLifetime: Scoped,
+	}
+
+	errMsg := err.Error()
+	assert.Contains(t, errMsg, "lifetime conflict")
+	assert.Contains(t, errMsg, "Singleton")
+	assert.Contains(t, errMsg, "Scoped")
+	assert.Contains(t, errMsg, "To resolve this")
+}
+
+func TestResolutionErrorActionable(t *testing.T) {
+	serviceType := reflect.TypeOf((*testService)(nil))
+	err := ResolutionError{
+		ServiceType: serviceType,
+		ServiceKey:  nil,
+		Cause:       ErrServiceNotFound,
+	}
+
+	errMsg := err.Error()
+	assert.Contains(t, errMsg, "service not found")
+	assert.Contains(t, errMsg, "Make sure the service is registered")
 }

@@ -36,6 +36,11 @@ type Collection interface {
 	// using default options.
 	Build() (Provider, error)
 
+	// BuildWithContext creates a Provider with the given context.
+	// The context is checked before each singleton creation, allowing
+	// for graceful cancellation during the build process.
+	BuildWithContext(ctx context.Context) (Provider, error)
+
 	// BuildWithOptions creates a Provider with custom options
 	// for validation and behavior configuration.
 	BuildWithOptions(options *ProviderOptions) (Provider, error)
@@ -115,40 +120,45 @@ func NewCollection() Collection {
 
 // Build creates a Provider from the registered services using default options.
 func (sc *collection) Build() (Provider, error) {
-	return sc.BuildWithOptions(nil)
+	return sc.BuildWithContext(context.Background())
+}
+
+// BuildWithContext creates a Provider with the given context.
+// The context is checked before each singleton creation, allowing
+// for graceful cancellation during the build process.
+func (sc *collection) BuildWithContext(ctx context.Context) (Provider, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return sc.doBuild(ctx)
 }
 
 // BuildWithOptions creates a Provider with custom options for validation and behavior configuration.
 func (sc *collection) BuildWithOptions(options *ProviderOptions) (Provider, error) {
+	ctx := context.Background()
+
 	// Handle build timeout if specified
 	if options != nil && options.BuildTimeout > 0 {
-		ctx, cancel := context.WithTimeout(context.Background(), options.BuildTimeout)
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, options.BuildTimeout)
 		defer cancel()
-
-		done := make(chan struct{})
-		var buildErr error
-		var provider Provider
-
-		go func() {
-			provider, buildErr = sc.doBuild()
-			close(done)
-		}()
-
-		select {
-		case <-ctx.Done():
-			return nil, &TimeoutError{
-				ServiceType: nil,
-				Timeout:     options.BuildTimeout,
-			}
-		case <-done:
-			return provider, buildErr
-		}
 	}
 
-	return sc.doBuild()
+	return sc.doBuild(ctx)
 }
 
-func (sc *collection) doBuild() (Provider, error) {
+func (sc *collection) doBuild(ctx context.Context) (Provider, error) {
+	// Check context before starting
+	select {
+	case <-ctx.Done():
+		return nil, &BuildError{
+			Phase:   "initialization",
+			Details: "build cancelled before starting",
+			Cause:   ctx.Err(),
+		}
+	default:
+	}
+
 	// Get all descriptors before locking to avoid deadlock
 	allDescriptors := sc.ToSlice()
 
@@ -156,6 +166,16 @@ func (sc *collection) doBuild() (Provider, error) {
 	defer sc.mu.Unlock()
 
 	// Phase 1: Validate dependency graph
+	select {
+	case <-ctx.Done():
+		return nil, &BuildError{
+			Phase:   "validation",
+			Details: "build cancelled during dependency graph validation",
+			Cause:   ctx.Err(),
+		}
+	default:
+	}
+
 	if err := sc.validateDependencyGraph(); err != nil {
 		return nil, &BuildError{
 			Phase:   "validation",
@@ -165,6 +185,16 @@ func (sc *collection) doBuild() (Provider, error) {
 	}
 
 	// Phase 2: Validate lifetimes
+	select {
+	case <-ctx.Done():
+		return nil, &BuildError{
+			Phase:   "validation",
+			Details: "build cancelled during lifetime validation",
+			Cause:   ctx.Err(),
+		}
+	default:
+	}
+
 	if err := sc.validateLifetimes(); err != nil {
 		return nil, &BuildError{
 			Phase:   "validation",
@@ -174,6 +204,16 @@ func (sc *collection) doBuild() (Provider, error) {
 	}
 
 	// Phase 3: Build dependency graph
+	select {
+	case <-ctx.Done():
+		return nil, &BuildError{
+			Phase:   "graph",
+			Details: "build cancelled during graph construction",
+			Cause:   ctx.Err(),
+		}
+	default:
+	}
+
 	g := graph.NewDependencyGraph()
 
 	for _, descriptor := range allDescriptors {
@@ -210,6 +250,16 @@ func (sc *collection) doBuild() (Provider, error) {
 	}
 
 	// Phase 5: Create root scope
+	select {
+	case <-ctx.Done():
+		return nil, &BuildError{
+			Phase:   "scope-creation",
+			Details: "build cancelled during root scope creation",
+			Cause:   ctx.Err(),
+		}
+	default:
+	}
+
 	var err error
 	rootCtx := context.Background()
 	p.rootScope, err = newScope(p, nil, rootCtx, nil)
@@ -221,8 +271,8 @@ func (sc *collection) doBuild() (Provider, error) {
 		}
 	}
 
-	// Phase 6: Create singletons
-	if err := p.createAllSingletons(); err != nil {
+	// Phase 6: Create singletons with context propagation
+	if err := p.createAllSingletonsWithContext(ctx); err != nil {
 		// Clean up partially created provider
 		closeErr := p.Close()
 		if closeErr != nil {

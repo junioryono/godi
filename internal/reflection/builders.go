@@ -3,6 +3,7 @@ package reflection
 import (
 	"fmt"
 	"reflect"
+	"runtime/debug"
 )
 
 // ParamObjectBuilder builds parameter objects (In structs) with resolved dependencies.
@@ -237,6 +238,18 @@ type DependencyResolver interface {
 	GetGroup(t reflect.Type, group string) ([]any, error)
 }
 
+// PanicError represents a panic that occurred during constructor invocation.
+// It captures the panic value and stack trace for debugging.
+type PanicError struct {
+	Constructor reflect.Type
+	Panic       any
+	Stack       []byte
+}
+
+func (e PanicError) Error() string {
+	return fmt.Sprintf("constructor %v panicked: %v", e.Constructor, e.Panic)
+}
+
 // ConstructorInvoker invokes constructors with resolved dependencies.
 type ConstructorInvoker struct {
 	analyzer     *Analyzer
@@ -252,10 +265,11 @@ func NewConstructorInvoker(analyzer *Analyzer) *ConstructorInvoker {
 }
 
 // Invoke calls a constructor with resolved dependencies or returns an instance value.
+// Panics in constructors are recovered and returned as PanicError.
 func (ci *ConstructorInvoker) Invoke(
 	info *ConstructorInfo,
 	resolver DependencyResolver,
-) ([]reflect.Value, error) {
+) (results []reflect.Value, err error) {
 	// Handle instance values
 	if !info.IsFunc {
 		// For instances, return the instance value directly
@@ -268,8 +282,11 @@ func (ci *ConstructorInvoker) Invoke(
 		return nil, fmt.Errorf("failed to build arguments: %w", err)
 	}
 
-	// Call the constructor
-	results := info.Value.Call(args)
+	// Call the constructor with panic recovery
+	results, err = ci.invokeWithRecovery(info, args)
+	if err != nil {
+		return nil, err
+	}
 
 	// Check for error return
 	if info.HasErrorReturn && len(results) > 0 {
@@ -281,6 +298,22 @@ func (ci *ConstructorInvoker) Invoke(
 		}
 	}
 
+	return results, nil
+}
+
+// invokeWithRecovery calls the constructor and recovers from any panics.
+func (ci *ConstructorInvoker) invokeWithRecovery(info *ConstructorInfo, args []reflect.Value) (results []reflect.Value, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = &PanicError{
+				Constructor: info.Type,
+				Panic:       r,
+				Stack:       debug.Stack(),
+			}
+		}
+	}()
+
+	results = info.Value.Call(args)
 	return results, nil
 }
 

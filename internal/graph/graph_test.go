@@ -594,7 +594,7 @@ func TestCircularDependencyError(t *testing.T) {
 	}
 
 	errStr2 := err2.Error()
-	assert.Contains(t, errStr2, "->", "Error with path should contain arrow notation")
+	assert.Contains(t, errStr2, "↓", "Error with path should contain down arrow notation")
 }
 
 // Test edge cases for GetDependencies and GetDependents
