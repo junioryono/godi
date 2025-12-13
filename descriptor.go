@@ -3,10 +3,14 @@ package godi
 import (
 	"fmt"
 	"reflect"
+	"strconv"
+	"sync/atomic"
 
-	"github.com/google/uuid"
 	"github.com/junioryono/godi/v4/internal/reflection"
 )
+
+// Global atomic counter for fast void-return service key generation
+var voidKeyCounter uint64
 
 // Descriptor represents services
 type Descriptor struct {
@@ -58,6 +62,11 @@ type Descriptor struct {
 
 // newDescriptor creates a new descriptor from a service with the given lifetime and options
 func newDescriptor(service any, lifetime Lifetime, opts ...AddOption) (*Descriptor, error) {
+	return newDescriptorWithAnalyzer(service, lifetime, nil, opts...)
+}
+
+// newDescriptorWithAnalyzer creates a new descriptor using the provided analyzer for caching
+func newDescriptorWithAnalyzer(service any, lifetime Lifetime, analyzer *reflection.Analyzer, opts ...AddOption) (*Descriptor, error) {
 	if service == nil {
 		return nil, &ValidationError{
 			ServiceType: nil,
@@ -94,8 +103,11 @@ func newDescriptor(service any, lifetime Lifetime, opts ...AddOption) (*Descript
 	// Check if it's an instance (not a function)
 	isInstance := constructorType.Kind() != reflect.Func
 
-	// Create analyzer to analyze the constructor
-	analyzer := reflection.New()
+	// Use provided analyzer or create one (for backward compatibility)
+	if analyzer == nil {
+		analyzer = reflection.New()
+	}
+
 	info, err := analyzer.Analyze(service)
 	if err != nil {
 		return nil, &ReflectionAnalysisError{
@@ -105,7 +117,7 @@ func newDescriptor(service any, lifetime Lifetime, opts ...AddOption) (*Descript
 		}
 	}
 
-	// Get dependencies from analyzer
+	// Get dependencies from analyzer (uses cache)
 	dependencies, err := analyzer.GetDependencies(service)
 	if err != nil {
 		return nil, &ReflectionAnalysisError{
@@ -151,7 +163,8 @@ func newDescriptor(service any, lifetime Lifetime, opts ...AddOption) (*Descript
 		if descriptor.VoidReturn {
 			descriptor.Type = reflect.TypeOf((*struct{})(nil)).Elem()
 			if descriptor.Key == nil {
-				descriptor.Key = uuid.NewString()
+				// Use fast atomic counter instead of UUID
+				descriptor.Key = "v" + strconv.FormatUint(atomic.AddUint64(&voidKeyCounter, 1), 36)
 			}
 		} else {
 			// Normal function with returns

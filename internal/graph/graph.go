@@ -73,6 +73,17 @@ func NewDependencyGraph() *DependencyGraph {
 	}
 }
 
+// NewDependencyGraphWithCapacity creates a new dependency graph with pre-sized maps
+func NewDependencyGraphWithCapacity(capacity int) *DependencyGraph {
+	return &DependencyGraph{
+		nodes:            make(map[NodeKey]*Node, capacity),
+		edges:            make(map[NodeKey][]NodeKey, capacity),
+		cycleCache:       make(map[NodeKey]bool, capacity),
+		sortedNodesDirty: true,
+		cycleCacheDirty:  true,
+	}
+}
+
 // AddProvider adds a provider to the graph and analyzes its dependencies
 func (g *DependencyGraph) AddProvider(provider Provider) error {
 	if provider == nil {
@@ -143,6 +154,67 @@ func (g *DependencyGraph) AddProvider(provider Provider) error {
 		g.updateDegrees()
 		return err
 	}
+
+	return nil
+}
+
+// AddProviderDeferred adds a provider to the graph without immediate cycle detection.
+// This is faster for bulk additions - call DetectCycles() after all providers are added.
+func (g *DependencyGraph) AddProviderDeferred(provider Provider) error {
+	if provider == nil {
+		return fmt.Errorf("provider cannot be nil")
+	}
+
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	// Create node key
+	nodeKey := NodeKey{
+		Type:  provider.GetType(),
+		Key:   provider.GetKey(),
+		Group: provider.GetGroup(),
+	}
+
+	// Create or update node
+	node, exists := g.nodes[nodeKey]
+	if !exists {
+		node = &Node{
+			Key:          nodeKey,
+			Dependencies: make([]NodeKey, 0, 4),
+			Dependents:   make([]NodeKey, 0, 4),
+		}
+		g.nodes[nodeKey] = node
+	}
+	node.Provider = provider
+
+	// Add edges based on dependencies
+	providerDeps := provider.GetDependencies()
+	if len(providerDeps) > 0 {
+		dependencies := make([]NodeKey, 0, len(providerDeps))
+		for _, dep := range providerDeps {
+			depKey := NodeKey{
+				Type:  dep.Type,
+				Key:   dep.Key,
+				Group: dep.Group,
+			}
+			dependencies = append(dependencies, depKey)
+
+			// Ensure dependency node exists (minimal allocation)
+			if _, exists := g.nodes[depKey]; !exists {
+				g.nodes[depKey] = &Node{
+					Key:          depKey,
+					Dependencies: make([]NodeKey, 0, 4),
+					Dependents:   make([]NodeKey, 0, 4),
+				}
+			}
+		}
+		node.Dependencies = dependencies
+		g.edges[nodeKey] = dependencies
+	}
+
+	// Mark caches as dirty (defer degree updates to DetectCycles)
+	g.sortedNodesDirty = true
+	g.cycleCacheDirty = true
 
 	return nil
 }
@@ -320,6 +392,9 @@ func (g *DependencyGraph) DetectCycles() error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
+	// Update degrees first (may have been deferred from AddProviderDeferred)
+	g.updateDegrees()
+
 	// Check cache
 	if !g.cycleCacheDirty {
 		for key, hasCycle := range g.cycleCache {
@@ -341,7 +416,7 @@ func (g *DependencyGraph) DetectCycles() error {
 	}
 
 	// Clear cycle cache
-	g.cycleCache = make(map[NodeKey]bool)
+	g.cycleCache = make(map[NodeKey]bool, len(g.nodes))
 
 	// Check each node for cycles using DFS
 	for key := range g.nodes {

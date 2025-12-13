@@ -8,9 +8,6 @@ require (
 	go.uber.org/dig v1.19.0
 )
 
-require (
-	github.com/google/uuid v1.6.0 // indirect
-	github.com/samber/go-type-to-string v1.8.0 // indirect
-)
+require github.com/samber/go-type-to-string v1.8.0 // indirect
 
 replace github.com/junioryono/godi/v4 => ../

@@ -79,6 +79,9 @@ type provider struct {
 	scopes   map[*scope]struct{}
 	scopesMu sync.Mutex
 
+	// Scope ID counter (atomic, scoped to this provider)
+	scopeCounter uint64
+
 	// State
 	disposed int32 // atomic
 }

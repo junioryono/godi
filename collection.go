@@ -4,12 +4,16 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strconv"
 	"sync"
+	"sync/atomic"
 
-	"github.com/google/uuid"
 	"github.com/junioryono/godi/v4/internal/graph"
 	"github.com/junioryono/godi/v4/internal/reflection"
 )
+
+// Global atomic counter for fast ID generation (replaces UUID)
+var providerIDCounter uint64
 
 // Collection represents a collection of service descriptors that define
 // the services available in the dependency injection container.
@@ -90,6 +94,12 @@ type collection struct {
 
 	// groups stores services that belong to groups
 	groups map[GroupKey][]*Descriptor
+
+	// allDescriptors tracks all unique descriptors for efficient iteration
+	allDescriptors []*Descriptor
+
+	// analyzer is shared across all registrations for caching
+	analyzer *reflection.Analyzer
 }
 
 // TypeKey uniquely identifies a keyed service
@@ -113,8 +123,10 @@ type GroupKey struct {
 //	provider, err := collection.Build()
 func NewCollection() Collection {
 	return &collection{
-		services: make(map[TypeKey]*Descriptor),
-		groups:   make(map[GroupKey][]*Descriptor),
+		services:       make(map[TypeKey]*Descriptor, 16), // Pre-size for typical usage
+		groups:         make(map[GroupKey][]*Descriptor, 4),
+		allDescriptors: make([]*Descriptor, 0, 16),
+		analyzer:       reflection.New(),
 	}
 }
 
@@ -159,24 +171,41 @@ func (sc *collection) doBuild(ctx context.Context) (Provider, error) {
 	default:
 	}
 
-	// Get all descriptors before locking to avoid deadlock
-	allDescriptors := sc.ToSlice()
-
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 
-	// Phase 1: Validate dependency graph
+	// Use pre-collected descriptors (no allocation needed)
+	allDescriptors := sc.allDescriptors
+
+	// Phase 1: Build dependency graph (validates cycles as part of build)
 	select {
 	case <-ctx.Done():
 		return nil, &BuildError{
-			Phase:   "validation",
-			Details: "build cancelled during dependency graph validation",
+			Phase:   "graph",
+			Details: "build cancelled during graph construction",
 			Cause:   ctx.Err(),
 		}
 	default:
 	}
 
-	if err := sc.validateDependencyGraph(); err != nil {
+	g := graph.NewDependencyGraphWithCapacity(len(allDescriptors))
+
+	for _, descriptor := range allDescriptors {
+		if descriptor == nil {
+			continue
+		}
+
+		if err := g.AddProviderDeferred(descriptor); err != nil {
+			return nil, &BuildError{
+				Phase:   "graph",
+				Details: fmt.Sprintf("failed to add provider %v", formatType(descriptor.Type)),
+				Cause:   err,
+			}
+		}
+	}
+
+	// Phase 2: Validate graph (cycles detected here, not per-add)
+	if err := g.DetectCycles(); err != nil {
 		return nil, &BuildError{
 			Phase:   "validation",
 			Details: "dependency graph validation failed",
@@ -184,7 +213,7 @@ func (sc *collection) doBuild(ctx context.Context) (Provider, error) {
 		}
 	}
 
-	// Phase 2: Validate lifetimes
+	// Phase 3: Validate lifetimes
 	select {
 	case <-ctx.Done():
 		return nil, &BuildError{
@@ -203,44 +232,25 @@ func (sc *collection) doBuild(ctx context.Context) (Provider, error) {
 		}
 	}
 
-	// Phase 3: Build dependency graph
-	select {
-	case <-ctx.Done():
-		return nil, &BuildError{
-			Phase:   "graph",
-			Details: "build cancelled during graph construction",
-			Cause:   ctx.Err(),
-		}
-	default:
-	}
-
-	g := graph.NewDependencyGraph()
-
-	for _, descriptor := range allDescriptors {
-		if descriptor == nil {
-			continue // Skip nil descriptors gracefully
-		}
-
-		if err := g.AddProvider(descriptor); err != nil {
-			return nil, &BuildError{
-				Phase:   "graph",
-				Details: fmt.Sprintf("failed to add provider %v", formatType(descriptor.Type)),
-				Cause:   err,
-			}
+	// Phase 4: Create provider with fast ID generation
+	// Count void-return scoped descriptors for pre-allocation
+	voidCount := 0
+	for _, d := range allDescriptors {
+		if d != nil && d.Lifetime == Scoped && d.VoidReturn {
+			voidCount++
 		}
 	}
 
-	// Phase 4: Create provider
 	p := &provider{
-		id:                          uuid.NewString(),
+		id:                          "p" + strconv.FormatUint(atomic.AddUint64(&providerIDCounter, 1), 36),
 		services:                    sc.services,
 		groups:                      sc.groups,
 		graph:                       g,
-		analyzer:                    reflection.New(),
-		singletonKeys:               make([]instanceKey, 0),
-		voidReturnScopedDescriptors: make([]*Descriptor, 0),
-		disposables:                 make([]Disposable, 0),
-		scopes:                      make(map[*scope]struct{}),
+		analyzer:                    sc.analyzer, // Share analyzer from collection
+		singletonKeys:               make([]instanceKey, 0, len(allDescriptors)),
+		voidReturnScopedDescriptors: make([]*Descriptor, 0, voidCount),
+		disposables:                 make([]Disposable, 0, 4),
+		scopes:                      make(map[*scope]struct{}, 4),
 	}
 
 	for _, descriptor := range allDescriptors {
@@ -397,29 +407,10 @@ func (r *collection) ToSlice() []*Descriptor {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	// Use a map to track unique descriptors and avoid duplicates
-	seen := make(map[*Descriptor]bool)
-	descriptors := make([]*Descriptor, 0)
-
-	// Add regular services
-	for _, service := range r.services {
-		if service != nil && !seen[service] {
-			descriptors = append(descriptors, service)
-			seen[service] = true
-		}
-	}
-
-	// Add grouped services
-	for _, groupServices := range r.groups {
-		for _, service := range groupServices {
-			if service != nil && !seen[service] {
-				descriptors = append(descriptors, service)
-				seen[service] = true
-			}
-		}
-	}
-
-	return descriptors
+	// Return a copy of the pre-tracked descriptors (no deduplication needed)
+	result := make([]*Descriptor, len(r.allDescriptors))
+	copy(result, r.allDescriptors)
+	return result
 }
 
 // Count returns the number of registered services in the collection.
@@ -427,26 +418,7 @@ func (r *collection) Count() int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	// Use a map to track unique descriptors and avoid duplicates
-	seen := make(map[*Descriptor]bool)
-
-	// Count regular services
-	for _, service := range r.services {
-		if service != nil {
-			seen[service] = true
-		}
-	}
-
-	// Count grouped services
-	for _, groupServices := range r.groups {
-		for _, service := range groupServices {
-			if service != nil {
-				seen[service] = true
-			}
-		}
-	}
-
-	return len(seen)
+	return len(r.allDescriptors)
 }
 
 var (
@@ -470,8 +442,8 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 		}
 	}
 
-	// Create descriptor from constructor
-	descriptor, err := newDescriptor(service, lifetime, opts...)
+	// Create descriptor from constructor using shared analyzer
+	descriptor, err := newDescriptorWithAnalyzer(service, lifetime, r.analyzer, opts...)
 	if err != nil {
 		return &RegistrationError{
 			ServiceType: nil,
@@ -518,8 +490,8 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 	}
 
 	// Check if this is a multi-return constructor (not an Out struct)
-	analyzer := reflection.New()
-	info, err := analyzer.Analyze(service)
+	// Use shared analyzer for caching
+	info, err := r.analyzer.Analyze(service)
 	if err != nil {
 		return &ReflectionAnalysisError{
 			Constructor: service,
@@ -701,49 +673,8 @@ func (r *collection) registerDescriptor(descriptor *Descriptor) error {
 		descriptor.Key = len(r.groups[groupKey])
 	}
 
-	return nil
-}
-
-// validateDependencyGraph validates the entire dependency graph for cycles.
-// It builds a graph of all service dependencies and checks for circular dependencies
-// that would prevent successful resolution at runtime.
-func (r *collection) validateDependencyGraph() error {
-	// Build the dependency graph
-	g := graph.NewDependencyGraph()
-
-	// Add all providers to the graph
-	for _, descriptor := range r.services {
-		if descriptor != nil {
-			if err := g.AddProvider(descriptor); err != nil {
-				return &GraphOperationError{
-					Operation: "add",
-					NodeType:  descriptor.Type,
-					NodeKey:   descriptor.Key,
-					Cause:     err,
-				}
-			}
-		}
-	}
-
-	for _, descriptors := range r.groups {
-		for _, descriptor := range descriptors {
-			if descriptor != nil {
-				if err := g.AddProvider(descriptor); err != nil {
-					return &GraphOperationError{
-						Operation: "add",
-						NodeType:  descriptor.Type,
-						NodeKey:   descriptor.Key,
-						Cause:     err,
-					}
-				}
-			}
-		}
-	}
-
-	// Check for cycles
-	if err := g.DetectCycles(); err != nil {
-		return err
-	}
+	// Track in allDescriptors for efficient iteration
+	r.allDescriptors = append(r.allDescriptors, descriptor)
 
 	return nil
 }

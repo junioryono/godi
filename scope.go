@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strconv"
 	"sync"
 	"sync/atomic"
 
-	"github.com/google/uuid"
 	"github.com/junioryono/godi/v4/internal/reflection"
 )
 
@@ -49,14 +49,17 @@ func newScope(rootProvider *provider, parent *scope, ctx context.Context, cancel
 		ctx = context.Background()
 	}
 
+	// Generate scope ID using provider's counter (scoped to this provider)
+	scopeNum := atomic.AddUint64(&rootProvider.scopeCounter, 1)
+
 	s := &scope{
-		id:           uuid.NewString(),
+		id:           "s" + strconv.FormatUint(scopeNum, 36),
 		rootProvider: rootProvider,
 		parentScope:  parent,
 		cancel:       cancel,
-		instances:    make(map[instanceKey]any),
-		disposables:  make([]Disposable, 0),
-		children:     make(map[*scope]struct{}),
+		instances:    make(map[instanceKey]any, 8), // Pre-size for typical usage
+		disposables:  make([]Disposable, 0, 4),
+		children:     make(map[*scope]struct{}, 2),
 	}
 
 	ctx = context.WithValue(ctx, scopeContextKey{}, s)
