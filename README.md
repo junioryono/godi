@@ -122,8 +122,8 @@ godi provides three lifetimes to control when instances are created:
 
 ```go
 services.AddSingleton(NewDatabasePool)  // One pool for the whole app
-services.AddScoped(NewTransaction)       // Fresh transaction per request
-services.AddTransient(NewQueryBuilder)   // New builder every resolution
+services.AddScoped(NewTransaction)      // Fresh transaction per request
+services.AddTransient(NewQueryBuilder)  // New builder every resolution
 ```
 
 ## HTTP Integration
