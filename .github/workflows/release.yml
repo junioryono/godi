@@ -141,6 +141,7 @@ jobs:
           name: ${{ steps.changelog.outputs.current_tag }}
           bodyFile: release_notes.md
           token: ${{ secrets.RELEASE_TOKEN }}
+          draft: false
 
       - name: Create release branch
         run: |
