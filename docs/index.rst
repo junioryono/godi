@@ -3,149 +3,170 @@
    :caption: Getting Started
    :hidden:
 
-   installation
-   core-concepts
+   getting-started/index
+   getting-started/01-installation
+   getting-started/02-first-container
+   getting-started/03-adding-services
+   getting-started/04-using-lifetimes
+   getting-started/05-http-integration
+   getting-started/06-next-steps
 
 .. toctree::
    :maxdepth: 2
-   :caption: Fundamentals
+   :caption: Concepts
    :hidden:
 
-   service-lifetimes
-   service-registration
-   dependency-resolution
-   scopes-isolation
-   resource-management
-   modules
+   concepts/how-it-works
+   concepts/lifetimes
+   concepts/scopes
+   concepts/modules
 
 .. toctree::
    :maxdepth: 2
-   :caption: Advanced Features
+   :caption: Guides
    :hidden:
 
-   keyed-services
-   service-groups
-   parameter-objects
-   result-objects
-   interface-registration
+   guides/web-applications
+   guides/testing
+   guides/error-handling
+   guides/migration
 
 .. toctree::
    :maxdepth: 2
-   :caption: Quick Links
+   :caption: Features
+   :hidden:
+
+   features/keyed-services
+   features/service-groups
+   features/parameter-objects
+   features/result-objects
+   features/interface-binding
+   features/resource-cleanup
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Integrations
+   :hidden:
+
+   integrations/gin
+   integrations/chi
+   integrations/echo
+   integrations/fiber
+   integrations/net-http
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Reference
    :hidden:
 
    GitHub <https://github.com/junioryono/godi>
-   Go Packages <https://pkg.go.dev/github.com/junioryono/godi/v4>
+   API Docs <https://pkg.go.dev/github.com/junioryono/godi/v4>
    Changelog <https://github.com/junioryono/godi/releases>
 
-.. toctree::
-   :maxdepth: 2
-   :caption: Community
-   :hidden:
+godi
+====
 
-   Contributing <https://github.com/junioryono/godi/blob/main/CONTRIBUTING.md>
-   Discussions <https://github.com/junioryono/godi/discussions>
-   Issues <https://github.com/junioryono/godi/issues>
+**Dependency injection that gets out of your way.**
 
-godi - Dependency Injection with Service Lifetimes for Go
-==========================================================
-
-.. image:: https://pkg.go.dev/badge/github.com/junioryono/godi/v4
-   :target: https://pkg.go.dev/github.com/junioryono/godi/v4
-   :alt: GoDoc
-
-.. image:: https://img.shields.io/github/release/junioryono/godi.svg
-   :target: https://github.com/junioryono/godi/releases
-   :alt: Github release
-
-.. image:: https://github.com/junioryono/godi/actions/workflows/test.yml/badge.svg
-   :target: https://github.com/junioryono/godi/actions/workflows/test.yml
-   :alt: Build Status
-
-.. image:: https://codecov.io/gh/junioryono/godi/branch/main/graph/badge.svg
-   :target: https://codecov.io/gh/junioryono/godi
-   :alt: Coverage Status
-
-.. image:: https://goreportcard.com/badge/github.com/junioryono/godi
-   :target: https://goreportcard.com/report/github.com/junioryono/godi
-   :alt: Go Report Card
-
-A sophisticated dependency injection container for Go with service lifetimes, type safety, and automatic dependency resolution.
-
-Quick Example
--------------
+godi automatically wires up your Go applications. Define your services, specify their lifetimes, and let godi handle the rest.
 
 .. code-block:: go
 
-   // Define your services
-   func NewLogger() Logger { return &logger{} }
-   func NewDatabase(logger Logger) Database { return &database{logger} }
-   func NewUserService(db Database) UserService { return &userService{db} }
-
-   // Wire everything together
    services := godi.NewCollection()
    services.AddSingleton(NewLogger)
    services.AddSingleton(NewDatabase)
    services.AddScoped(NewUserService)
 
-   // Build and use
    provider, _ := services.Build()
    defer provider.Close()
 
    userService := godi.MustResolve[UserService](provider)
 
-Key Features
-------------
+Why godi?
+---------
 
-**Service Lifetimes**
-   - **Singleton**: One instance for the entire application
-   - **Scoped**: One instance per scope (perfect for HTTP requests)
-   - **Transient**: New instance every time
+.. list-table::
+   :widths: 25 75
+   :header-rows: 1
 
-**Type Safety**
-   - Generic resolution with compile-time type checking
-   - No runtime type assertions needed
-   - Full IDE autocomplete support
+   * - Feature
+     - Benefit
+   * - **Automatic wiring**
+     - No manual constructor calls
+   * - **Three lifetimes**
+     - Singleton, Scoped, Transient
+   * - **Compile-time safety**
+     - Generic type resolution
+   * - **Zero codegen**
+     - Pure runtime, no build steps
 
-**Automatic Resolution**
-   - Analyzes constructors and builds dependency graph
-   - Detects circular dependencies at build time
-   - Validates lifetime rules before runtime
+Get Started in 5 Minutes
+------------------------
 
-**Advanced Features**
-   - **Keyed Services**: Multiple implementations of the same interface
-   - **Service Groups**: Batch operations on related services
-   - **Parameter Objects**: Clean constructors with ``godi.In``
-   - **Result Objects**: Register multiple services with ``godi.Out``
-   - **Modules**: Organize services into reusable packages
-
-Getting Started
----------------
-
-**Installation**
+Install godi:
 
 .. code-block:: bash
 
    go get github.com/junioryono/godi/v4
 
-**Requirements**: Go 1.21 or later
+Create your first container:
 
-Start with our :doc:`installation` guide to set up godi in your project.
+.. code-block:: go
 
-Why godi?
----------
+   package main
 
-- **Zero Code Generation**: Pure runtime dependency injection
-- **Thread-Safe**: Fully concurrent-safe operations
-- **Production Ready**: Battle-tested in real applications
-- **Clean API**: Intuitive and idiomatic Go
-- **Excellent Errors**: Detailed error messages for debugging
+   import (
+       "fmt"
+       "github.com/junioryono/godi/v4"
+   )
 
-Next Steps
-----------
+   type Logger struct{}
+   func (l *Logger) Log(msg string) { fmt.Println(msg) }
 
-- :doc:`installation` - Set up godi in your project
-- :doc:`core-concepts` - Understand the fundamentals
+   type UserService struct {
+       logger *Logger
+   }
+
+   func NewUserService(logger *Logger) *UserService {
+       return &UserService{logger: logger}
+   }
+
+   func main() {
+       services := godi.NewCollection()
+       services.AddSingleton(func() *Logger { return &Logger{} })
+       services.AddSingleton(NewUserService)
+
+       provider, _ := services.Build()
+       defer provider.Close()
+
+       users := godi.MustResolve[*UserService](provider)
+       users.logger.Log("Hello, godi!")
+   }
+
+**Ready for more?** Start the :doc:`getting-started/index`.
+
+Quick Links
+-----------
+
+**Learning godi**
+
+- :doc:`getting-started/index` - Build your first app in 5 minutes
+- :doc:`concepts/lifetimes` - Singleton, Scoped, and Transient explained
+- :doc:`guides/web-applications` - Complete web app patterns
+
+**Framework Integrations**
+
+- :doc:`integrations/gin` - Gin web framework
+- :doc:`integrations/chi` - Chi router
+- :doc:`integrations/echo` - Echo framework
+- :doc:`integrations/fiber` - Fiber framework
+- :doc:`integrations/net-http` - Standard library
+
+**Advanced Features**
+
+- :doc:`features/keyed-services` - Multiple implementations
+- :doc:`features/parameter-objects` - Simplify constructors
+- :doc:`concepts/modules` - Organize large apps
 
 License
 -------

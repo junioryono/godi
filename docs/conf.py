@@ -5,22 +5,28 @@
 
 # -- Path setup --------------------------------------------------------------
 
-import os
-import json
+import subprocess
+from datetime import datetime
 
 # -- Project information -----------------------------------------------------
 
 project = 'godi'
-copyright = '2025, junioryono'
 author = 'junioryono'
+copyright = f'{datetime.now().year}, {author}'
 
-# Read version from version.json
+# Read version from git tags
 def get_version():
-    version_file = os.path.join(os.path.dirname(__file__), '..', 'version.json')
-    if os.path.exists(version_file):
-        with open(version_file, 'r') as f:
-            data = json.load(f)
-            return f"v{data.get('version', '0.0.0')}"
+    try:
+        result = subprocess.run(
+            ['git', 'describe', '--tags', '--abbrev=0'],
+            capture_output=True,
+            text=True,
+            cwd='..'
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception:
+        pass
     return 'v0.0.0'
 
 # The full version, including alpha/beta/rc tags
@@ -98,5 +104,17 @@ copybutton_prompt_is_regexp = True
 
 # Rediraffe configuration for redirects
 rediraffe_redirects = {
-    # Add any page redirects here
+    "installation": "getting-started/01-installation",
+    "core-concepts": "concepts/how-it-works",
+    "service-lifetimes": "concepts/lifetimes",
+    "scopes-isolation": "concepts/scopes",
+    "modules": "concepts/modules",
+    "keyed-services": "features/keyed-services",
+    "service-groups": "features/service-groups",
+    "parameter-objects": "features/parameter-objects",
+    "result-objects": "features/result-objects",
+    "interface-registration": "features/interface-binding",
+    "resource-management": "features/resource-cleanup",
+    "dependency-resolution": "concepts/how-it-works",
+    "service-registration": "getting-started/03-adding-services",
 }
