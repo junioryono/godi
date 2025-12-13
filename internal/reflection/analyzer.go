@@ -20,6 +20,10 @@ var (
 type Analyzer struct {
 	mu    sync.RWMutex
 	cache map[uintptr]*ConstructorInfo
+
+	// Invoker cache for reusing ConstructorInvoker instances
+	invokerMu    sync.RWMutex
+	invokerCache map[uintptr]*ConstructorInvoker
 }
 
 // ConstructorInfo contains analyzed information about a constructor function or instance.
@@ -113,7 +117,8 @@ type ParamField struct {
 // New creates a new Analyzer.
 func New() *Analyzer {
 	return &Analyzer{
-		cache: make(map[uintptr]*ConstructorInfo),
+		cache:        make(map[uintptr]*ConstructorInfo),
+		invokerCache: make(map[uintptr]*ConstructorInvoker),
 	}
 }
 
@@ -186,6 +191,35 @@ func (a *Analyzer) Analyze(constructor any) (*ConstructorInfo, error) {
 	info.dependencies = a.buildDependencies(info)
 
 	return a.cacheAndReturn(cacheKey, info)
+}
+
+// GetInvoker returns a cached ConstructorInvoker or creates a new one.
+// The invoker is reusable and thread-safe, so caching it reduces allocations.
+func (a *Analyzer) GetInvoker() *ConstructorInvoker {
+	// Use a constant key since all invokers are identical
+	// (they only differ by the analyzer reference, which is the same)
+	const invokerKey uintptr = 0
+
+	// Check cache first with read lock
+	a.invokerMu.RLock()
+	if invoker, ok := a.invokerCache[invokerKey]; ok {
+		a.invokerMu.RUnlock()
+		return invoker
+	}
+	a.invokerMu.RUnlock()
+
+	// Create new invoker with write lock
+	a.invokerMu.Lock()
+	defer a.invokerMu.Unlock()
+
+	// Double-check after acquiring write lock
+	if invoker, ok := a.invokerCache[invokerKey]; ok {
+		return invoker
+	}
+
+	invoker := NewConstructorInvoker(a)
+	a.invokerCache[invokerKey] = invoker
+	return invoker
 }
 
 // analyzeParameters analyzes function parameters or In struct fields.

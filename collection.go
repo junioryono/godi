@@ -237,7 +237,7 @@ func (sc *collection) doBuild(ctx context.Context) (Provider, error) {
 		groups:                      sc.groups,
 		graph:                       g,
 		analyzer:                    reflection.New(),
-		singletons:                  make(map[instanceKey]any),
+		singletonKeys:               make([]instanceKey, 0),
 		voidReturnScopedDescriptors: make([]*Descriptor, 0),
 		disposables:                 make([]Disposable, 0),
 		scopes:                      make(map[*scope]struct{}),

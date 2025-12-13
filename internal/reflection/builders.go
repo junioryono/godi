@@ -333,7 +333,12 @@ func (ci *ConstructorInvoker) buildArguments(
 	}
 
 	// Regular parameters - resolve each one
-	args := make([]reflect.Value, len(info.Parameters))
+	numParams := len(info.Parameters)
+	if numParams == 0 {
+		return nil, nil
+	}
+
+	args := make([]reflect.Value, numParams)
 	for i, param := range info.Parameters {
 		value, err := ci.resolveParameter(&param, resolver)
 		if err != nil {

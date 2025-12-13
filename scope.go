@@ -420,8 +420,8 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 		}
 	}
 
-	// Create invoker
-	invoker := reflection.NewConstructorInvoker(s.rootProvider.analyzer)
+	// Get cached invoker (reduces allocations)
+	invoker := s.rootProvider.analyzer.GetInvoker()
 
 	// Invoke constructor
 	results, err := invoker.Invoke(info, s)

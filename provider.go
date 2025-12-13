@@ -58,8 +58,12 @@ type provider struct {
 	analyzer *reflection.Analyzer
 
 	// Singleton instances (created at build time)
-	singletons   map[instanceKey]any
-	singletonsMu sync.RWMutex
+	// Using sync.Map for lock-free concurrent reads which are the common case
+	singletons sync.Map // map[instanceKey]any
+
+	// Track singleton keys for iteration during disposal
+	singletonKeys   []instanceKey
+	singletonKeysMu sync.Mutex
 
 	voidReturnScopedDescriptors   []*Descriptor
 	voidReturnScopedDescriptorsMu sync.RWMutex
@@ -226,10 +230,13 @@ func (p *provider) Close() error {
 		}
 	}
 
-	// Clear all internal state
-	p.singletonsMu.Lock()
-	p.singletons = nil
-	p.singletonsMu.Unlock()
+	// Clear all internal state - clear singletons from sync.Map
+	p.singletonKeysMu.Lock()
+	for _, key := range p.singletonKeys {
+		p.singletons.Delete(key)
+	}
+	p.singletonKeys = nil
+	p.singletonKeysMu.Unlock()
 
 	p.voidReturnScopedDescriptorsMu.Lock()
 	p.voidReturnScopedDescriptors = nil
@@ -245,16 +252,13 @@ func (p *provider) Close() error {
 	return nil
 }
 
-// getSingleton retrieves a singleton instance in a thread-safe manner.
+// getSingleton retrieves a singleton instance using lock-free sync.Map.
 // Returns the instance and true if found, or nil and false if not found.
 func (p *provider) getSingleton(key instanceKey) (any, bool) {
-	p.singletonsMu.RLock()
-	instance, ok := p.singletons[key]
-	p.singletonsMu.RUnlock()
-	return instance, ok
+	return p.singletons.Load(key)
 }
 
-// setSingleton stores a singleton instance in a thread-safe manner.
+// setSingleton stores a singleton instance using lock-free sync.Map.
 // It also tracks the instance if it implements the Disposable interface
 // for proper cleanup during provider disposal.
 func (p *provider) setSingleton(key instanceKey, instance any) {
@@ -262,9 +266,12 @@ func (p *provider) setSingleton(key instanceKey, instance any) {
 		return
 	}
 
-	p.singletonsMu.Lock()
-	p.singletons[key] = instance
-	p.singletonsMu.Unlock()
+	p.singletons.Store(key, instance)
+
+	// Track key for iteration during disposal
+	p.singletonKeysMu.Lock()
+	p.singletonKeys = append(p.singletonKeys, key)
+	p.singletonKeysMu.Unlock()
 
 	// Track if disposable
 	if d, ok := instance.(Disposable); ok {
