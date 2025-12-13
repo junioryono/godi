@@ -99,10 +99,10 @@ func NewTCircularB(a *TCircularA) *TCircularB { return &TCircularB{A: a} }
 type TParams struct {
 	In
 	Svc      *TService
-	Dep      *TDependency     `optional:"true"`
-	Named    *TService        `name:"named"`
-	Services []*TService      `group:"services"`
-	Iface    TInterface       `optional:"true"`
+	Dep      *TDependency `optional:"true"`
+	Named    *TService    `name:"named"`
+	Services []*TService  `group:"services"`
+	Iface    TInterface   `optional:"true"`
 }
 
 // TResult demonstrates result object registration.
@@ -290,4 +290,3 @@ func TypeOf[T any]() reflect.Type {
 func PtrTypeOf[T any]() reflect.Type {
 	return reflect.TypeOf((*T)(nil))
 }
-

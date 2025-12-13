@@ -319,8 +319,8 @@ func BenchmarkGenericResolve(b *testing.B) {
 // BenchmarkProviderBuild tests provider build performance
 func BenchmarkProviderBuild(b *testing.B) {
 	cases := []struct {
-		name      string
-		services  int
+		name       string
+		services   int
 		singletons int
 	}{
 		{"10services/5singletons", 10, 5},

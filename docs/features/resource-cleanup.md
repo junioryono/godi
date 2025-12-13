@@ -254,7 +254,7 @@ You can check if a service is disposable:
 service := godi.MustResolve[SomeService](scope)
 
 // If you need manual disposal
-if closer, ok := service.(interface{ Close() error }); ok {
+if closer, ok := service.(godi.Disposable); ok {
     defer closer.Close()
 }
 ```

@@ -28,15 +28,17 @@ With modules, you organize by domain:
 ```go
 // main.go - clean and organized
 services := godi.NewCollection()
-services.AddModule(infrastructure.Module())
-services.AddModule(users.Module())
-services.AddModule(orders.Module())
-services.AddModule(payments.Module())
+services.AddModules(
+    infrastructure.Module,
+    users.Module,
+    orders.Module,
+    payments.Module,
+)
 ```
 
 ## Creating Modules
 
-A module is a function that registers services to a collection:
+Use `godi.NewModule` to create a module with a name and service registrations:
 
 ```go
 // users/module.go
@@ -44,13 +46,11 @@ package users
 
 import "github.com/junioryono/godi/v4"
 
-func Module() godi.Module {
-    return func(services *godi.ServiceCollection) {
-        services.AddScoped(NewUserRepository)
-        services.AddScoped(NewUserService)
-        services.AddScoped(NewUserController)
-    }
-}
+var Module = godi.NewModule("users",
+    godi.AddScoped(NewUserRepository),
+    godi.AddScoped(NewUserService),
+    godi.AddScoped(NewUserController),
+)
 ```
 
 ## Module Organization
@@ -89,21 +89,12 @@ package infrastructure
 
 import "github.com/junioryono/godi/v4"
 
-func Module() godi.Module {
-    return func(services *godi.ServiceCollection) {
-        // Configuration - load once, share everywhere
-        services.AddSingleton(NewConfig)
-
-        // Logging - singleton, thread-safe
-        services.AddSingleton(NewLogger)
-
-        // Database pool - singleton, manages connections
-        services.AddSingleton(NewDatabasePool)
-
-        // Redis - singleton, connection pool
-        services.AddSingleton(NewRedisClient)
-    }
-}
+var Module = godi.NewModule("infrastructure",
+    godi.AddSingleton(NewConfig),       // Configuration - load once, share everywhere
+    godi.AddSingleton(NewLogger),       // Logging - singleton, thread-safe
+    godi.AddSingleton(NewDatabasePool), // Database pool - singleton, manages connections
+    godi.AddSingleton(NewRedisClient),  // Redis - singleton, connection pool
+)
 ```
 
 ```go
@@ -133,18 +124,11 @@ package users
 
 import "github.com/junioryono/godi/v4"
 
-func Module() godi.Module {
-    return func(services *godi.ServiceCollection) {
-        // Repository - scoped, uses transaction
-        services.AddScoped(NewUserRepository)
-
-        // Service - scoped, business logic
-        services.AddScoped(NewUserService)
-
-        // Controller - scoped, HTTP handlers
-        services.AddScoped(NewUserController)
-    }
-}
+var Module = godi.NewModule("users",
+    godi.AddScoped(NewUserRepository),  // Repository - scoped, uses transaction
+    godi.AddScoped(NewUserService),     // Service - scoped, business logic
+    godi.AddScoped(NewUserController),  // Controller - scoped, HTTP handlers
+)
 ```
 
 ```go
@@ -181,10 +165,12 @@ func main() {
     services := godi.NewCollection()
 
     // Add all modules
-    services.AddModule(infrastructure.Module())
-    services.AddModule(users.Module())
-    services.AddModule(orders.Module())
-    services.AddModule(payments.Module())
+    services.AddModules(
+        infrastructure.Module,
+        users.Module,
+        orders.Module,
+        payments.Module,
+    )
 
     provider, err := services.Build()
     if err != nil {
@@ -233,16 +219,16 @@ Enable modules based on configuration:
 ```go
 func main() {
     services := godi.NewCollection()
-    services.AddModule(infrastructure.Module())
+    services.AddModules(infrastructure.Module)
 
     cfg := loadConfig()
 
     if cfg.EnableUsers {
-        services.AddModule(users.Module())
+        services.AddModules(users.Module)
     }
 
     if cfg.EnablePayments {
-        services.AddModule(payments.Module())
+        services.AddModules(payments.Module)
     }
 
     // ...
@@ -255,17 +241,14 @@ Replace modules for testing:
 
 ```go
 // users/module_test.go
-func TestModule() godi.Module {
-    return func(services *godi.ServiceCollection) {
-        // Use mock repository
-        services.AddScoped(NewMockUserRepository)
-        services.AddScoped(NewUserService)
-    }
-}
+var TestModule = godi.NewModule("users-test",
+    godi.AddScoped(NewMockUserRepository), // Use mock repository
+    godi.AddScoped(NewUserService),
+)
 
 func TestUserService(t *testing.T) {
     services := godi.NewCollection()
-    services.AddModule(TestModule())
+    services.AddModules(TestModule)
 
     provider, _ := services.Build()
     defer provider.Close()
@@ -289,24 +272,22 @@ payments/module.go   # Payment-related services
 
 ```go
 // infrastructure/module.go
-func Module() godi.Module {
-    return func(services *godi.ServiceCollection) {
-        services.AddSingleton(NewConfig)
-        services.AddSingleton(NewLogger)
-        services.AddSingleton(NewDatabasePool)
-    }
-}
+var Module = godi.NewModule("infrastructure",
+    godi.AddSingleton(NewConfig),
+    godi.AddSingleton(NewLogger),
+    godi.AddSingleton(NewDatabasePool),
+)
 ```
 
 ### 3. Keep Modules Focused
 
 ```go
 // Good: focused on one area
-func UserModule() godi.Module { ... }
-func OrderModule() godi.Module { ... }
+var UserModule = godi.NewModule("users", ...)
+var OrderModule = godi.NewModule("orders", ...)
 
 // Bad: kitchen sink module
-func EverythingModule() godi.Module { ... }
+var EverythingModule = godi.NewModule("everything", ...)
 ```
 
 ### 4. Document Cross-Module Dependencies
@@ -316,12 +297,11 @@ func EverythingModule() godi.Module { ... }
 package orders
 
 // Module registers order-related services.
-// Requires: infrastructure.Module(), users.Module()
-func Module() godi.Module {
-    return func(services *godi.ServiceCollection) {
-        // ...
-    }
-}
+// Requires: infrastructure.Module, users.Module
+var Module = godi.NewModule("orders",
+    godi.AddScoped(NewOrderRepository),
+    godi.AddScoped(NewOrderService),
+)
 ```
 
 ---

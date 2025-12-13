@@ -11,6 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type testContextKey string
+
 func TestScopeLifetimeSemantics(t *testing.T) {
 	t.Parallel()
 
@@ -246,12 +248,12 @@ func TestBuiltinServiceInjection(t *testing.T) {
 		p, _ := c.Build()
 		defer p.Close()
 
-		ctx := context.WithValue(context.Background(), "key", "value")
+		ctx := context.WithValue(context.Background(), testContextKey("key"), "value")
 		scope, _ := p.CreateScope(ctx)
 		defer scope.Close()
 
 		svc, _ := Resolve[*CtxService](scope)
-		assert.Equal(t, "value", svc.Ctx.Value("key"))
+		assert.Equal(t, "value", svc.Ctx.Value(testContextKey("key")))
 	})
 
 	t.Run("injects_scope", func(t *testing.T) {

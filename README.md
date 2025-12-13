@@ -262,17 +262,17 @@ Organize large applications:
 
 ```go
 // users/module.go
-func Module() godi.Module {
-    return func(services *godi.ServiceCollection) {
-        services.AddScoped(NewUserRepository)
-        services.AddScoped(NewUserService)
-    }
-}
+var Module = godi.NewModule("users",
+    godi.AddScoped(NewUserRepository),
+    godi.AddScoped(NewUserService),
+)
 
 // main.go
-services.AddModule(infrastructure.Module())
-services.AddModule(users.Module())
-services.AddModule(orders.Module())
+services.AddModules(
+    infrastructure.Module,
+    users.Module,
+    orders.Module,
+)
 ```
 
 ### Automatic Cleanup
