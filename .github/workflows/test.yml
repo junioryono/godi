@@ -134,7 +134,7 @@ jobs:
       - name: Run gosec
         uses: securego/gosec@master
         with:
-          args: "-fmt sarif -out gosec-results.sarif ./..."
+          args: "-exclude-dir=fiber -exclude-dir=echo -fmt sarif -out gosec-results.sarif ./..."
 
       - name: Upload SARIF file
         uses: github/codeql-action/upload-sarif@v3

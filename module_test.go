@@ -103,7 +103,8 @@ func TestModule(t *testing.T) {
 
 		t.Run("nil_builder_skipped", func(t *testing.T) {
 			t.Parallel()
-			module := NewModule("nil", nil, AddSingleton(NewTService), nil)
+			var nilOption ModuleOption
+			module := NewModule("nil", nil, AddSingleton(NewTService), nilOption)
 			c := NewCollection()
 			require.NoError(t, module(c))
 			assert.Equal(t, 1, c.Count())
