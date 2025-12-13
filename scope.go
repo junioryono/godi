@@ -479,22 +479,28 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 		for _, reg := range registrations {
 			value := reg.Value
 
-			if reg.Type == descriptor.Type && reg.Key == descriptor.Key {
+			// Convert empty string key to nil for consistent lookup
+			var regKey any
+			if reg.Key != "" {
+				regKey = reg.Key
+			}
+
+			if reg.Type == descriptor.Type && regKey == descriptor.Key {
 				primaryService = value
 			}
 
-			regDescriptor := s.rootProvider.findDescriptor(reg.Type, reg.Key)
+			regDescriptor := s.rootProvider.findDescriptor(reg.Type, regKey)
 			if regDescriptor == nil {
 				return nil, &ResolutionError{
 					ServiceType: reg.Type,
-					ServiceKey:  reg.Key,
+					ServiceKey:  regKey,
 					Cause:       fmt.Errorf("no descriptor found for return type %v", reg.Type),
 				}
 			}
 
 			key := instanceKey{
 				Type:  reg.Type,
-				Key:   reg.Key,
+				Key:   regKey,
 				Group: reg.Group,
 			}
 

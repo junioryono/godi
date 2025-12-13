@@ -1,7 +1,6 @@
 package godi
 
 import (
-	"errors"
 	"reflect"
 	"testing"
 
@@ -9,543 +8,340 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Test types for descriptor tests
-type DescriptorTestService struct {
-	Value string
-}
-
-type DescriptorTestInterface interface {
-	GetValue() string
-}
-
-func (d *DescriptorTestService) GetValue() string {
-	return d.Value
-}
-
-// Constructor functions for descriptor tests
-func NewDescriptorTestService() *DescriptorTestService {
-	return &DescriptorTestService{Value: "test"}
-}
-
-func NewDescriptorTestServiceWithError() (*DescriptorTestService, error) {
-	return &DescriptorTestService{Value: "test"}, nil
-}
-
-func NewDescriptorTestServiceReturnsError() (*DescriptorTestService, error) {
-	return nil, errors.New("constructor error")
-}
-
-func NewDescriptorNoReturn() {
-	// No return values
-}
-
-// Multiple return constructors for testing
-func NewMultipleReturns() (*DescriptorTestService, DescriptorTestInterface) {
-	svc := &DescriptorTestService{Value: "multi"}
-	return svc, svc
-}
-
-func NewTripleReturns() (*DescriptorTestService, DescriptorTestInterface, string) {
-	svc := &DescriptorTestService{Value: "triple"}
-	return svc, svc, "config"
-}
-
-func NewMultipleReturnsWithError() (*DescriptorTestService, DescriptorTestInterface, string, error) {
-	svc := &DescriptorTestService{Value: "multi-error"}
-	return svc, svc, "config", nil
-}
-
-// Parameter object constructor
-type DescriptorParamObject struct {
+// Local types needed for descriptor-specific tests
+type descriptorParamObj struct {
 	In
-	Service *DescriptorTestService
+	Svc *TService
 }
 
-func NewWithParamObject(params DescriptorParamObject) *DescriptorTestService {
-	return &DescriptorTestService{Value: params.Service.Value + "-wrapped"}
-}
-
-// Result object constructor
-type DescriptorResultObject struct {
+type descriptorResultObj struct {
 	Out
-	Service1 *DescriptorTestService
-	Service2 *DescriptorTestService `name:"named"`
+	Svc1 *TService
+	Svc2 *TService `name:"named"`
 }
 
-func NewWithResultObject() DescriptorResultObject {
-	return DescriptorResultObject{
-		Service1: &DescriptorTestService{Value: "service1"},
-		Service2: &DescriptorTestService{Value: "service2"},
+func newDescriptorParamObj(params descriptorParamObj) *TService {
+	return &TService{ID: params.Svc.ID + "-wrapped"}
+}
+
+func newDescriptorResultObj() descriptorResultObj {
+	return descriptorResultObj{
+		Svc1: &TService{ID: "svc1"},
+		Svc2: &TService{ID: "svc2"},
 	}
 }
 
-// Test newDescriptor
-func TestNewDescriptor(t *testing.T) {
-	t.Run("basic constructor", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewDescriptorTestService, Singleton)
-		require.NoError(t, err)
-		assert.NotNil(t, descriptor)
-		assert.Equal(t, reflect.TypeOf((*DescriptorTestService)(nil)), descriptor.Type)
-		assert.Equal(t, Singleton, descriptor.Lifetime)
-		assert.NotNil(t, descriptor.Constructor)
-		assert.NotNil(t, descriptor.ConstructorType)
-	})
+func TestDescriptor(t *testing.T) {
+	t.Parallel()
 
-	t.Run("constructor with error return", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewDescriptorTestServiceWithError, Scoped)
-		require.NoError(t, err)
-		assert.NotNil(t, descriptor)
-		assert.Equal(t, Scoped, descriptor.Lifetime)
-		assert.Equal(t, 2, descriptor.ConstructorType.NumOut())
-	})
+	t.Run("NewDescriptor", func(t *testing.T) {
+		t.Parallel()
 
-	t.Run("constructor with name option", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewDescriptorTestService, Transient, Name("test"))
-		require.NoError(t, err)
-		assert.NotNil(t, descriptor)
-		assert.Equal(t, "test", descriptor.Key)
-	})
-
-	t.Run("constructor with group option", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewDescriptorTestService, Singleton, Group("services"))
-		require.NoError(t, err)
-		assert.NotNil(t, descriptor)
-		assert.Equal(t, "services", descriptor.Group)
-	})
-
-	t.Run("constructor with As option", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewDescriptorTestService, Singleton, As[DescriptorTestInterface]())
-		require.NoError(t, err)
-		assert.NotNil(t, descriptor)
-	})
-
-	t.Run("nil constructor", func(t *testing.T) {
-		descriptor, err := newDescriptor(nil, Singleton)
-		assert.Error(t, err)
-		var valErr *ValidationError
-		assert.ErrorAs(t, err, &valErr)
-		assert.ErrorIs(t, valErr.Cause, ErrConstructorNil)
-		assert.Nil(t, descriptor)
-	})
-
-	t.Run("non-function constructor", func(t *testing.T) {
-		descriptor, err := newDescriptor("not a function", Singleton)
-		assert.NoError(t, err)
-		assert.NotNil(t, descriptor)
-		assert.Equal(t, reflect.TypeOf("not a function"), descriptor.ConstructorType)
-		assert.Equal(t, Singleton, descriptor.Lifetime)
-	})
-
-	t.Run("constructor with no return", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewDescriptorNoReturn, Singleton)
-		assert.NoError(t, err)
-		assert.NotNil(t, descriptor)
-	})
-
-	t.Run("constructor with multiple returns", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewMultipleReturns, Singleton)
-		assert.NoError(t, err)
-		assert.NotNil(t, descriptor)
-		// Should default to first return type
-		assert.Equal(t, reflect.TypeOf((*DescriptorTestService)(nil)), descriptor.Type)
-	})
-
-	t.Run("constructor with triple returns", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewTripleReturns, Singleton)
-		assert.NoError(t, err)
-		assert.NotNil(t, descriptor)
-		// Should default to first return type
-		assert.Equal(t, reflect.TypeOf((*DescriptorTestService)(nil)), descriptor.Type)
-	})
-
-	t.Run("constructor with multiple returns and error", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewMultipleReturnsWithError, Singleton)
-		assert.NoError(t, err)
-		assert.NotNil(t, descriptor)
-		// Should default to first return type
-		assert.Equal(t, reflect.TypeOf((*DescriptorTestService)(nil)), descriptor.Type)
-	})
-
-	t.Run("constructor with param object", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewWithParamObject, Singleton)
-		require.NoError(t, err)
-		assert.NotNil(t, descriptor)
-		assert.True(t, descriptor.isParamObject)
-		assert.NotNil(t, descriptor.paramFields)
-	})
-
-	t.Run("constructor with result object", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewWithResultObject, Singleton)
-		require.NoError(t, err)
-		assert.NotNil(t, descriptor)
-		assert.True(t, descriptor.isResultObject)
-		assert.NotNil(t, descriptor.resultFields)
-	})
-
-	t.Run("conflicting options", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewDescriptorTestService, Singleton, Name("test"), Group("services"))
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "cannot use both")
-		assert.Nil(t, descriptor)
-	})
-
-	t.Run("invalid name with backtick", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewDescriptorTestService, Singleton, Name("test`name"))
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "names cannot contain backquotes")
-		assert.Nil(t, descriptor)
-	})
-
-	t.Run("invalid group with backtick", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewDescriptorTestService, Singleton, Group("test`group"))
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "group names cannot contain backquotes")
-		assert.Nil(t, descriptor)
-	})
-
-	t.Run("invalid As with non-pointer", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewDescriptorTestService, Singleton, As[*DescriptorTestInterface]())
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "argument must be a pointer to an interface")
-		assert.Nil(t, descriptor)
-	})
-
-	t.Run("invalid As with non-interface pointer", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewDescriptorTestService, Singleton, As[*DescriptorTestService]())
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "argument must be a pointer to an interface")
-		assert.Nil(t, descriptor)
-	})
-}
-
-// Test GetType
-func TestGetType(t *testing.T) {
-	descriptor, err := newDescriptor(NewDescriptorTestService, Singleton)
-	require.NoError(t, err)
-
-	serviceType := descriptor.GetType()
-	assert.Equal(t, reflect.TypeOf((*DescriptorTestService)(nil)), serviceType)
-}
-
-// Test GetKey
-func TestGetKey(t *testing.T) {
-	t.Run("descriptor without key", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewDescriptorTestService, Singleton)
-		require.NoError(t, err)
-		assert.Nil(t, descriptor.GetKey())
-	})
-
-	t.Run("descriptor with key", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewDescriptorTestService, Singleton, Name("test"))
-		require.NoError(t, err)
-		assert.Equal(t, "test", descriptor.GetKey())
-	})
-}
-
-// Test GetGroup
-func TestGetGroup(t *testing.T) {
-	t.Run("descriptor without group", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewDescriptorTestService, Singleton)
-		require.NoError(t, err)
-		assert.Empty(t, descriptor.GetGroup())
-	})
-
-	t.Run("descriptor with group", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewDescriptorTestService, Singleton, Group("services"))
-		require.NoError(t, err)
-		assert.Equal(t, "services", descriptor.GetGroup())
-	})
-}
-
-// Test GetDependencies
-func TestGetDependencies(t *testing.T) {
-	t.Run("constructor with no dependencies", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewDescriptorTestService, Singleton)
-		require.NoError(t, err)
-		deps := descriptor.GetDependencies()
-		assert.NotNil(t, deps)
-		assert.Empty(t, deps)
-	})
-
-	t.Run("constructor with dependencies", func(t *testing.T) {
-		newWithDep := func(service *DescriptorTestService) *DescriptorTestService {
-			return &DescriptorTestService{Value: service.Value + "-dep"}
-		}
-
-		descriptor, err := newDescriptor(newWithDep, Singleton)
-		require.NoError(t, err)
-		deps := descriptor.GetDependencies()
-		assert.NotNil(t, deps)
-		assert.Len(t, deps, 1)
-		assert.Equal(t, reflect.TypeOf((*DescriptorTestService)(nil)), deps[0].Type)
-	})
-}
-
-// Test Validate
-func TestValidate(t *testing.T) {
-	t.Run("valid descriptor", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewDescriptorTestService, Singleton)
-		require.NoError(t, err)
-		err = descriptor.Validate()
-		assert.NoError(t, err)
-	})
-
-	t.Run("descriptor with nil type", func(t *testing.T) {
-		descriptor := &Descriptor{
-			Constructor:     reflect.ValueOf(NewDescriptorTestService),
-			ConstructorType: reflect.TypeOf(NewDescriptorTestService),
-			Lifetime:        Singleton,
-		}
-		err := descriptor.Validate()
-		assert.Error(t, err)
-		var valErr *ValidationError
-		assert.ErrorAs(t, err, &valErr)
-		assert.ErrorIs(t, valErr.Cause, ErrDescriptorNil)
-	})
-
-	t.Run("descriptor with invalid constructor", func(t *testing.T) {
-		descriptor := &Descriptor{
-			Type:            reflect.TypeOf((*DescriptorTestService)(nil)),
-			Constructor:     reflect.Value{}, // Invalid value
-			ConstructorType: reflect.TypeOf(NewDescriptorTestService),
-			Lifetime:        Singleton,
-		}
-		err := descriptor.Validate()
-		assert.Error(t, err)
-		var valErr *ValidationError
-		assert.ErrorAs(t, err, &valErr)
-		assert.ErrorIs(t, valErr.Cause, ErrConstructorNil)
-	})
-
-	t.Run("descriptor with nil constructor type", func(t *testing.T) {
-		descriptor := &Descriptor{
-			Type:        reflect.TypeOf((*DescriptorTestService)(nil)),
-			Constructor: reflect.ValueOf(NewDescriptorTestService),
-			Lifetime:    Singleton,
-		}
-		err := descriptor.Validate()
-		assert.Error(t, err)
-		var valErr *ValidationError
-		assert.ErrorAs(t, err, &valErr)
-		assert.ErrorIs(t, valErr.Cause, ErrConstructorNil)
-	})
-
-	t.Run("descriptor with both key and group", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewDescriptorTestService, Singleton)
-		require.NoError(t, err)
-		descriptor.Key = "key"
-		descriptor.Group = "group"
-		err = descriptor.Validate()
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "cannot have both key and group")
-	})
-
-	t.Run("descriptor with invalid lifetime", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewDescriptorTestService, Singleton)
-		require.NoError(t, err)
-		descriptor.Lifetime = Lifetime(999) // Invalid lifetime
-		err = descriptor.Validate()
-		assert.Error(t, err)
-		assert.IsType(t, LifetimeError{}, err)
-	})
-}
-
-// Test different lifetime values
-func TestDescriptorLifetimes(t *testing.T) {
-	t.Run("singleton lifetime", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewDescriptorTestService, Singleton)
-		require.NoError(t, err)
-		assert.Equal(t, Singleton, descriptor.Lifetime)
-		err = descriptor.Validate()
-		assert.NoError(t, err)
-	})
-
-	t.Run("scoped lifetime", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewDescriptorTestService, Scoped)
-		require.NoError(t, err)
-		assert.Equal(t, Scoped, descriptor.Lifetime)
-		err = descriptor.Validate()
-		assert.NoError(t, err)
-	})
-
-	t.Run("transient lifetime", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewDescriptorTestService, Transient)
-		require.NoError(t, err)
-		assert.Equal(t, Transient, descriptor.Lifetime)
-		err = descriptor.Validate()
-		assert.NoError(t, err)
-	})
-}
-
-// Test complex constructors
-func TestDescriptorComplexConstructors(t *testing.T) {
-	t.Run("constructor with multiple dependencies", func(t *testing.T) {
-		type Service1 struct{}
-		type Service2 struct{}
-		type Service3 struct{}
-
-		newComplex := func(s1 *Service1, s2 *Service2, s3 *Service3) *DescriptorTestService {
-			return &DescriptorTestService{Value: "complex"}
-		}
-
-		descriptor, err := newDescriptor(newComplex, Singleton)
-		require.NoError(t, err)
-		deps := descriptor.GetDependencies()
-		assert.Len(t, deps, 3)
-	})
-
-	t.Run("constructor with optional dependencies", func(t *testing.T) {
-		type OptionalParams struct {
-			In
-			Service1 *DescriptorTestService
-			Service2 *DescriptorTestService `optional:"true"`
-		}
-
-		newWithOptional := func(params OptionalParams) *DescriptorTestService {
-			val := "with-optional"
-			if params.Service2 != nil {
-				val += "-" + params.Service2.Value
-			}
-			return &DescriptorTestService{Value: val}
-		}
-
-		descriptor, err := newDescriptor(newWithOptional, Singleton)
-		require.NoError(t, err)
-		assert.True(t, descriptor.isParamObject)
-	})
-
-	t.Run("constructor with keyed dependencies", func(t *testing.T) {
-		type KeyedParams struct {
-			In
-			Primary   *DescriptorTestService `name:"primary"`
-			Secondary *DescriptorTestService `name:"secondary"`
-		}
-
-		newWithKeyed := func(params KeyedParams) *DescriptorTestService {
-			return &DescriptorTestService{
-				Value: params.Primary.Value + "-" + params.Secondary.Value,
-			}
-		}
-
-		descriptor, err := newDescriptor(newWithKeyed, Singleton)
-		require.NoError(t, err)
-		assert.True(t, descriptor.isParamObject)
-	})
-
-	t.Run("constructor with group dependencies", func(t *testing.T) {
-		type GroupParams struct {
-			In
-			Services []DescriptorTestService `group:"services"`
-		}
-
-		newWithGroup := func(params GroupParams) *DescriptorTestService {
-			return &DescriptorTestService{
-				Value: "grouped",
-			}
-		}
-
-		descriptor, err := newDescriptor(newWithGroup, Singleton)
-		require.NoError(t, err)
-		assert.True(t, descriptor.isParamObject)
-	})
-}
-
-// Test validateDescriptor
-func TestValidateDescriptor(t *testing.T) {
-	t.Run("valid descriptor", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewValidationServiceD, Singleton)
-		require.NoError(t, err)
-
-		err = descriptor.Validate()
-		assert.NoError(t, err)
-	})
-
-	t.Run("descriptor with nil type", func(t *testing.T) {
-		descriptor := &Descriptor{
-			Type:            nil,
-			Constructor:     reflect.ValueOf(NewValidationServiceD),
-			ConstructorType: reflect.TypeOf(NewValidationServiceD),
-			Lifetime:        Singleton,
-		}
-
-		err := descriptor.Validate()
-		assert.Error(t, err)
-		var valErr *ValidationError
-		assert.ErrorAs(t, err, &valErr)
-		assert.ErrorIs(t, valErr.Cause, ErrDescriptorNil)
-	})
-
-	t.Run("descriptor with invalid constructor", func(t *testing.T) {
-		descriptor := &Descriptor{
-			Type:            reflect.TypeOf((*ValidationServiceD)(nil)),
-			Constructor:     reflect.Value{},
-			ConstructorType: reflect.TypeOf(NewValidationServiceD),
-			Lifetime:        Singleton,
-		}
-
-		err := descriptor.Validate()
-		assert.Error(t, err)
-		var valErr *ValidationError
-		assert.ErrorAs(t, err, &valErr)
-		assert.ErrorIs(t, valErr.Cause, ErrConstructorNil)
-	})
-
-	t.Run("descriptor with invalid service lifetime", func(t *testing.T) {
-		descriptor, err := newDescriptor(NewValidationServiceD, Singleton)
-		require.NoError(t, err)
-
-		descriptor.Lifetime = Lifetime(999)
-
-		err = descriptor.Validate()
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid service lifetime")
-	})
-
-	t.Run("all valid lifetimes", func(t *testing.T) {
-		lifetimes := []Lifetime{Singleton, Scoped, Transient}
-
-		for _, lt := range lifetimes {
-			descriptor, err := newDescriptor(NewValidationServiceD, lt)
+		t.Run("basic", func(t *testing.T) {
+			t.Parallel()
+			d, err := newDescriptor(NewTService, Singleton)
 			require.NoError(t, err)
+			assert.NotNil(t, d)
+			assert.Equal(t, PtrTypeOf[TService](), d.Type)
+			assert.Equal(t, Singleton, d.Lifetime)
+			assert.NotNil(t, d.Constructor)
+			assert.NotNil(t, d.ConstructorType)
+		})
 
-			err = descriptor.Validate()
-			assert.NoError(t, err, "Lifetime %v should be valid", lt)
-		}
+		t.Run("with_error_return", func(t *testing.T) {
+			t.Parallel()
+			d, err := newDescriptor(NewTServiceWithError, Scoped)
+			require.NoError(t, err)
+			assert.Equal(t, Scoped, d.Lifetime)
+			assert.Equal(t, 2, d.ConstructorType.NumOut())
+		})
+
+		t.Run("all_lifetimes", func(t *testing.T) {
+			t.Parallel()
+			for _, lt := range []Lifetime{Singleton, Scoped, Transient} {
+				d, err := newDescriptor(NewTService, lt)
+				require.NoError(t, err)
+				assert.Equal(t, lt, d.Lifetime)
+				assert.NoError(t, d.Validate())
+			}
+		})
+
+		t.Run("with_name", func(t *testing.T) {
+			t.Parallel()
+			d, err := newDescriptor(NewTService, Transient, Name("test"))
+			require.NoError(t, err)
+			assert.Equal(t, "test", d.Key)
+		})
+
+		t.Run("with_group", func(t *testing.T) {
+			t.Parallel()
+			d, err := newDescriptor(NewTService, Singleton, Group("services"))
+			require.NoError(t, err)
+			assert.Equal(t, "services", d.Group)
+		})
+
+		t.Run("with_As", func(t *testing.T) {
+			t.Parallel()
+			d, err := newDescriptor(NewTService, Singleton, As[TInterface]())
+			require.NoError(t, err)
+			assert.NotNil(t, d)
+		})
+
+		t.Run("multi_return", func(t *testing.T) {
+			t.Parallel()
+			cases := []struct {
+				name string
+				ctor any
+			}{
+				{"two_returns", NewTMultiReturn},
+				{"with_error", NewTMultiReturnWithError},
+				{"triple", NewTTripleReturn},
+			}
+			for _, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					d, err := newDescriptor(tc.ctor, Singleton)
+					require.NoError(t, err)
+					assert.Equal(t, PtrTypeOf[TService](), d.Type)
+				})
+			}
+		})
+
+		t.Run("param_object", func(t *testing.T) {
+			t.Parallel()
+			d, err := newDescriptor(newDescriptorParamObj, Singleton)
+			require.NoError(t, err)
+			assert.True(t, d.isParamObject)
+			assert.NotNil(t, d.paramFields)
+		})
+
+		t.Run("result_object", func(t *testing.T) {
+			t.Parallel()
+			d, err := newDescriptor(newDescriptorResultObj, Singleton)
+			require.NoError(t, err)
+			assert.True(t, d.isResultObject)
+			assert.NotNil(t, d.resultFields)
+		})
+
+		t.Run("non_function", func(t *testing.T) {
+			t.Parallel()
+			d, err := newDescriptor("not a function", Singleton)
+			require.NoError(t, err)
+			assert.Equal(t, reflect.TypeOf(""), d.ConstructorType)
+		})
+
+		t.Run("void_constructor", func(t *testing.T) {
+			t.Parallel()
+			d, err := newDescriptor(NewTVoid, Singleton)
+			require.NoError(t, err)
+			assert.NotNil(t, d)
+		})
 	})
-}
 
-// Benchmark tests
-func BenchmarkNewDescriptor(b *testing.B) {
-	b.Run("simple constructor", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			_, _ = newDescriptor(NewDescriptorTestService, Singleton)
-		}
+	t.Run("NewDescriptor_Errors", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("nil", func(t *testing.T) {
+			t.Parallel()
+			d, err := newDescriptor(nil, Singleton)
+			require.Error(t, err)
+			var valErr *ValidationError
+			assert.ErrorAs(t, err, &valErr)
+			assert.ErrorIs(t, valErr.Cause, ErrConstructorNil)
+			assert.Nil(t, d)
+		})
+
+		t.Run("name_and_group", func(t *testing.T) {
+			t.Parallel()
+			_, err := newDescriptor(NewTService, Singleton, Name("n"), Group("g"))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "cannot use both")
+		})
+
+		t.Run("backtick_in_name", func(t *testing.T) {
+			t.Parallel()
+			_, err := newDescriptor(NewTService, Singleton, Name("test`name"))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "backquotes")
+		})
+
+		t.Run("backtick_in_group", func(t *testing.T) {
+			t.Parallel()
+			_, err := newDescriptor(NewTService, Singleton, Group("test`group"))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "backquotes")
+		})
+
+		t.Run("invalid_As_pointer_to_pointer", func(t *testing.T) {
+			t.Parallel()
+			_, err := newDescriptor(NewTService, Singleton, As[*TInterface]())
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "pointer to an interface")
+		})
+
+		t.Run("invalid_As_pointer_to_struct", func(t *testing.T) {
+			t.Parallel()
+			_, err := newDescriptor(NewTService, Singleton, As[*TService]())
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "pointer to an interface")
+		})
 	})
 
-	b.Run("constructor with options", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			_, _ = newDescriptor(NewDescriptorTestService, Singleton, Name("test"), As[DescriptorTestInterface]())
-		}
+	t.Run("Getters", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("GetType", func(t *testing.T) {
+			t.Parallel()
+			d, _ := newDescriptor(NewTService, Singleton)
+			assert.Equal(t, PtrTypeOf[TService](), d.GetType())
+		})
+
+		t.Run("GetKey", func(t *testing.T) {
+			t.Parallel()
+			d1, _ := newDescriptor(NewTService, Singleton)
+			assert.Nil(t, d1.GetKey())
+
+			d2, _ := newDescriptor(NewTService, Singleton, Name("k"))
+			assert.Equal(t, "k", d2.GetKey())
+		})
+
+		t.Run("GetGroup", func(t *testing.T) {
+			t.Parallel()
+			d1, _ := newDescriptor(NewTService, Singleton)
+			assert.Empty(t, d1.GetGroup())
+
+			d2, _ := newDescriptor(NewTService, Singleton, Group("g"))
+			assert.Equal(t, "g", d2.GetGroup())
+		})
+
+		t.Run("GetDependencies", func(t *testing.T) {
+			t.Parallel()
+			d1, _ := newDescriptor(NewTService, Singleton)
+			assert.Empty(t, d1.GetDependencies())
+
+			withDep := func(s *TService) *TDependency { return &TDependency{Name: s.ID} }
+			d2, _ := newDescriptor(withDep, Singleton)
+			deps := d2.GetDependencies()
+			assert.Len(t, deps, 1)
+			assert.Equal(t, PtrTypeOf[TService](), deps[0].Type)
+		})
 	})
 
-	b.Run("constructor with param object", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			_, _ = newDescriptor(NewWithParamObject, Singleton)
-		}
+	t.Run("Validate", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("valid", func(t *testing.T) {
+			t.Parallel()
+			d, _ := newDescriptor(NewTService, Singleton)
+			assert.NoError(t, d.Validate())
+		})
+
+		t.Run("nil_type", func(t *testing.T) {
+			t.Parallel()
+			d := &Descriptor{
+				Constructor:     reflect.ValueOf(NewTService),
+				ConstructorType: reflect.TypeOf(NewTService),
+				Lifetime:        Singleton,
+			}
+			err := d.Validate()
+			require.Error(t, err)
+			var valErr *ValidationError
+			assert.ErrorAs(t, err, &valErr)
+			assert.ErrorIs(t, valErr.Cause, ErrDescriptorNil)
+		})
+
+		t.Run("invalid_constructor", func(t *testing.T) {
+			t.Parallel()
+			d := &Descriptor{
+				Type:            PtrTypeOf[TService](),
+				Constructor:     reflect.Value{},
+				ConstructorType: reflect.TypeOf(NewTService),
+				Lifetime:        Singleton,
+			}
+			err := d.Validate()
+			require.Error(t, err)
+			assert.ErrorIs(t, err, ErrConstructorNil)
+		})
+
+		t.Run("nil_constructor_type", func(t *testing.T) {
+			t.Parallel()
+			d := &Descriptor{
+				Type:        PtrTypeOf[TService](),
+				Constructor: reflect.ValueOf(NewTService),
+				Lifetime:    Singleton,
+			}
+			err := d.Validate()
+			require.Error(t, err)
+			assert.ErrorIs(t, err, ErrConstructorNil)
+		})
+
+		t.Run("key_and_group", func(t *testing.T) {
+			t.Parallel()
+			d, _ := newDescriptor(NewTService, Singleton)
+			d.Key = "key"
+			d.Group = "group"
+			err := d.Validate()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "cannot have both key and group")
+		})
+
+		t.Run("invalid_lifetime", func(t *testing.T) {
+			t.Parallel()
+			d, _ := newDescriptor(NewTService, Singleton)
+			d.Lifetime = Lifetime(999)
+			err := d.Validate()
+			require.Error(t, err)
+			assert.IsType(t, LifetimeError{}, err)
+		})
 	})
 
-	b.Run("constructor with result object", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			_, _ = newDescriptor(NewWithResultObject, Singleton)
-		}
+	t.Run("ComplexConstructors", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("multiple_deps", func(t *testing.T) {
+			t.Parallel()
+			type (
+				S1 struct{}
+				S2 struct{}
+				S3 struct{}
+			)
+			ctor := func(*S1, *S2, *S3) *TService { return nil }
+			d, _ := newDescriptor(ctor, Singleton)
+			assert.Len(t, d.GetDependencies(), 3)
+		})
+
+		t.Run("optional_dep", func(t *testing.T) {
+			t.Parallel()
+			type OptParams struct {
+				In
+				Svc *TService
+				Opt *TService `optional:"true"`
+			}
+			ctor := func(p OptParams) *TService { return nil }
+			d, _ := newDescriptor(ctor, Singleton)
+			assert.True(t, d.isParamObject)
+		})
+
+		t.Run("keyed_deps", func(t *testing.T) {
+			t.Parallel()
+			type KeyedParams struct {
+				In
+				Primary   *TService `name:"primary"`
+				Secondary *TService `name:"secondary"`
+			}
+			ctor := func(p KeyedParams) *TService { return nil }
+			d, _ := newDescriptor(ctor, Singleton)
+			assert.True(t, d.isParamObject)
+		})
+
+		t.Run("group_deps", func(t *testing.T) {
+			t.Parallel()
+			type GroupParams struct {
+				In
+				Services []*TService `group:"services"`
+			}
+			ctor := func(p GroupParams) *TService { return nil }
+			d, _ := newDescriptor(ctor, Singleton)
+			assert.True(t, d.isParamObject)
+		})
 	})
-}
-
-func BenchmarkDescriptorValidate(b *testing.B) {
-	descriptor, _ := newDescriptor(NewDescriptorTestService, Singleton)
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_ = descriptor.Validate()
-	}
 }
