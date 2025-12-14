@@ -97,11 +97,11 @@ jobs:
           echo "new_tag=$NEW_VERSION" >> $GITHUB_OUTPUT
           echo "version=$MAJOR.$MINOR.$PATCH" >> $GITHUB_OUTPUT
 
-      - name: Create and push tag
+      - name: Create and push tags
         run: |
           NEW_TAG="${{ steps.new_version.outputs.new_tag }}"
 
-          # Check if tag already exists
+          # Check if main tag already exists
           if git rev-parse "$NEW_TAG" >/dev/null 2>&1; then
             echo "❌ Error: Tag $NEW_TAG already exists!"
             echo "This may indicate a version calculation issue. Please check existing tags."
@@ -109,20 +109,54 @@ jobs:
             exit 1
           fi
 
-          # Create annotated tag
+          # Define submodules that need their own tags
+          SUBMODULES="gin chi echo fiber http"
+
+          # Check if any submodule tag already exists
+          for submod in $SUBMODULES; do
+            SUBMOD_TAG="${submod}/${NEW_TAG}"
+            if git rev-parse "$SUBMOD_TAG" >/dev/null 2>&1; then
+              echo "❌ Error: Tag $SUBMOD_TAG already exists!"
+              exit 1
+            fi
+          done
+
+          # Create annotated tag for main module
           git tag -a "$NEW_TAG" -m "Release $NEW_TAG - ${{ github.event.inputs.version_bump }} version bump"
+          echo "✅ Created main module tag: $NEW_TAG"
 
-          # Push the tag
+          # Create annotated tags for each submodule
+          for submod in $SUBMODULES; do
+            SUBMOD_TAG="${submod}/${NEW_TAG}"
+            git tag -a "$SUBMOD_TAG" -m "Release $SUBMOD_TAG - ${{ github.event.inputs.version_bump }} version bump"
+            echo "✅ Created submodule tag: $SUBMOD_TAG"
+          done
+
+          # Push all tags at once
           git push origin "$NEW_TAG"
+          for submod in $SUBMODULES; do
+            git push origin "${submod}/${NEW_TAG}"
+          done
 
-          echo "✅ Successfully created and pushed tag: $NEW_TAG"
+          echo "✅ Successfully pushed all tags"
 
       - name: Summary
         run: |
+          NEW_TAG="${{ steps.new_version.outputs.new_tag }}"
+          SUBMODULES="gin chi echo fiber http"
+
           echo "## Tag Creation Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Version Bump Type:** ${{ github.event.inputs.version_bump }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Previous Tag:** ${{ steps.current_version.outputs.current_tag }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **New Tag:** ${{ steps.new_version.outputs.new_tag }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "✅ All tests passed and new tag has been created successfully!" >> $GITHUB_STEP_SUMMARY
+          echo "### Created Tags" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Module | Tag | Go Get Command |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-----|----------------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Main (godi/v4) | \`$NEW_TAG\` | \`go get github.com/junioryono/godi/v4@$NEW_TAG\` |" >> $GITHUB_STEP_SUMMARY
+          for submod in $SUBMODULES; do
+            echo "| $submod | \`${submod}/$NEW_TAG\` | \`go get github.com/junioryono/godi/v4/${submod}@$NEW_TAG\` |" >> $GITHUB_STEP_SUMMARY
+          done
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ All tests passed and all tags have been created successfully!" >> $GITHUB_STEP_SUMMARY

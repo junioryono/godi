@@ -124,6 +124,35 @@ jobs:
             echo -e "$FIXES" >> $RELEASE_NOTES
           fi
 
+          # Add installation instructions
+          echo "" >> $RELEASE_NOTES
+          echo "## Installation" >> $RELEASE_NOTES
+          echo "" >> $RELEASE_NOTES
+          echo "### Main Module" >> $RELEASE_NOTES
+          echo "" >> $RELEASE_NOTES
+          echo '```bash' >> $RELEASE_NOTES
+          echo "go get github.com/junioryono/godi/v4@$CURRENT_TAG" >> $RELEASE_NOTES
+          echo '```' >> $RELEASE_NOTES
+          echo "" >> $RELEASE_NOTES
+          echo "### Framework Integrations" >> $RELEASE_NOTES
+          echo "" >> $RELEASE_NOTES
+          echo '```bash' >> $RELEASE_NOTES
+          echo "# Gin" >> $RELEASE_NOTES
+          echo "go get github.com/junioryono/godi/v4/gin@$CURRENT_TAG" >> $RELEASE_NOTES
+          echo "" >> $RELEASE_NOTES
+          echo "# Chi" >> $RELEASE_NOTES
+          echo "go get github.com/junioryono/godi/v4/chi@$CURRENT_TAG" >> $RELEASE_NOTES
+          echo "" >> $RELEASE_NOTES
+          echo "# Echo" >> $RELEASE_NOTES
+          echo "go get github.com/junioryono/godi/v4/echo@$CURRENT_TAG" >> $RELEASE_NOTES
+          echo "" >> $RELEASE_NOTES
+          echo "# Fiber" >> $RELEASE_NOTES
+          echo "go get github.com/junioryono/godi/v4/fiber@$CURRENT_TAG" >> $RELEASE_NOTES
+          echo "" >> $RELEASE_NOTES
+          echo "# HTTP (net/http)" >> $RELEASE_NOTES
+          echo "go get github.com/junioryono/godi/v4/http@$CURRENT_TAG" >> $RELEASE_NOTES
+          echo '```' >> $RELEASE_NOTES
+
           # Add commit list
           echo "" >> $RELEASE_NOTES
           echo "## All Changes" >> $RELEASE_NOTES
