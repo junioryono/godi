@@ -307,25 +307,25 @@ func main() {
 
 ```
 ┌─────────────────────────────────────────────┐
-│  Controllers (HTTP handlers)                 │
-│  - Parse requests                            │
-│  - Call services                             │
-│  - Return responses                          │
+│  Controllers (HTTP handlers)                │
+│  - Parse requests                           │
+│  - Call services                            │
+│  - Return responses                         │
 ├─────────────────────────────────────────────┤
-│  Services (Business logic)                   │
-│  - Orchestrate operations                    │
-│  - Apply business rules                      │
-│  - Coordinate repositories                   │
+│  Services (Business logic)                  │
+│  - Orchestrate operations                   │
+│  - Apply business rules                     │
+│  - Coordinate repositories                  │
 ├─────────────────────────────────────────────┤
-│  Repositories (Data access)                  │
-│  - Database queries                          │
-│  - Cache operations                          │
-│  - External API calls                        │
+│  Repositories (Data access)                 │
+│  - Database queries                         │
+│  - Cache operations                         │
+│  - External API calls                       │
 ├─────────────────────────────────────────────┤
-│  Infrastructure (Shared resources)           │
-│  - Database connections                      │
-│  - Logger                                    │
-│  - Configuration                             │
+│  Infrastructure (Shared resources)          │
+│  - Database connections                     │
+│  - Logger                                   │
+│  - Configuration                            │
 └─────────────────────────────────────────────┘
 ```
 

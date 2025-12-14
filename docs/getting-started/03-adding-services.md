@@ -45,7 +45,7 @@ godi saw that `NewUserService` needs a `*Logger`, found `NewLogger`, and called 
 
 ```
 ┌────────────────────────────────────────────────────────┐
-│  You register:                                          │
+│  You register:                                         │
 │    NewLogger()      → *Logger                          │
 │    NewUserService() → *UserService (needs *Logger)     │
 ├────────────────────────────────────────────────────────┤

@@ -77,14 +77,14 @@ func main() {
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
-│  GET /users                                                     │
+│  GET /users                                                    │
 ├────────────────────────────────────────────────────────────────┤
 │  1. ScopeMiddleware creates a new scope                        │
 │     scope := provider.CreateScope(r.Context())                 │
 │                                                                │
 │  2. Handle resolves UserService from scope                     │
 │     userService := godi.Resolve[*UserService](scope)           │
-│
+│                                                                │
 │  3. UserService depends on Logger (singleton)                  │
 │     - Logger already exists, reused                            │
 │                                                                │
