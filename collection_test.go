@@ -340,3 +340,77 @@ func TestCollectionResultObjects(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "info", logger.(*ResultLogger).Level)
 }
+
+func TestSingletonConsumingGroupViaIn(t *testing.T) {
+	t.Parallel()
+
+	type RouteHandler struct{ Name string }
+
+	type RouterParams struct {
+		In
+		Routes []*RouteHandler `group:"routes"`
+	}
+
+	type Router struct {
+		Routes []*RouteHandler
+	}
+
+	newRouteHandler := func(name string) func() *RouteHandler {
+		return func() *RouteHandler {
+			return &RouteHandler{Name: name}
+		}
+	}
+
+	newRouter := func(params RouterParams) *Router {
+		return &Router{Routes: params.Routes}
+	}
+
+	c := NewCollection()
+	require.NoError(t, c.AddSingleton(newRouteHandler("api"), Group("routes")))
+	require.NoError(t, c.AddSingleton(newRouteHandler("web"), Group("routes")))
+	require.NoError(t, c.AddSingleton(newRouter))
+
+	p, err := c.Build()
+	require.NoError(t, err)
+	defer p.Close()
+
+	router, err := Resolve[*Router](p)
+	require.NoError(t, err)
+	assert.NotNil(t, router)
+	assert.Len(t, router.Routes, 2)
+
+	// Verify both routes are present
+	names := make([]string, len(router.Routes))
+	for i, r := range router.Routes {
+		names[i] = r.Name
+	}
+	assert.Contains(t, names, "api")
+	assert.Contains(t, names, "web")
+}
+
+func TestGroupLifetimeValidation(t *testing.T) {
+	t.Parallel()
+
+	type Handler struct{ Name string }
+
+	type AppParams struct {
+		In
+		Handlers []*Handler `group:"handlers"`
+	}
+
+	type App struct{}
+
+	c := NewCollection()
+	// Scoped group member
+	require.NoError(t, c.AddScoped(func() *Handler {
+		return &Handler{Name: "scoped"}
+	}, Group("handlers")))
+	// Singleton consumer of the group
+	require.NoError(t, c.AddSingleton(func(params AppParams) *App {
+		return &App{}
+	}))
+
+	_, err := c.Build()
+	assert.Error(t, err, "Singleton consuming scoped group member should fail lifetime validation")
+	assert.Contains(t, err.Error(), "lifetime")
+}

@@ -204,6 +204,13 @@ func (sc *collection) doBuild(ctx context.Context) (Provider, error) {
 		}
 	}
 
+	// Phase 1.5: Resolve group dependencies
+	// Connect group consumers to actual group member nodes in the graph.
+	// Without this, group consumers depend on phantom nodes (Key=nil) that
+	// don't match the real group members (Key=1,2,...), causing incorrect
+	// topological ordering and ErrSingletonNotInitialized during build.
+	g.ResolveGroupDependencies()
+
 	// Phase 2: Validate graph (cycles detected here, not per-add)
 	if err := g.DetectCycles(); err != nil {
 		return nil, &BuildError{
@@ -717,6 +724,23 @@ func (c *collection) validateLifetimes() error {
 		// Both Singleton and Transient cannot depend on Scoped
 		for _, dep := range descriptor.Dependencies {
 			if dep == nil {
+				continue
+			}
+
+			// Group dependencies have Key=nil but group members have numeric keys.
+			// Check each member's lifetime individually.
+			if dep.Group != "" && dep.Key == nil {
+				groupKey := GroupKey{Type: dep.Type, Group: dep.Group}
+				for _, memberDesc := range c.groups[groupKey] {
+					if memberDesc != nil && memberDesc.Lifetime == Scoped {
+						return &LifetimeConflictError{
+							ServiceType:        descriptor.Type,
+							ServiceLifetime:    descriptor.Lifetime,
+							DependencyType:     dep.Type,
+							DependencyLifetime: Scoped,
+						}
+					}
+				}
 				continue
 			}
 

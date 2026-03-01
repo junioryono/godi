@@ -1139,3 +1139,150 @@ func TestTopologicalSort_ForDependencyInjection(t *testing.T) {
 	// The second node should be ResolutionServiceWithDep (depends on first)
 	assert.Equal(t, typeServiceWithDep, sorted[1].Key.Type, "Second node should be ResolutionServiceWithDep (has deps)")
 }
+
+// Test types for ResolveGroupDependencies
+type GroupMember struct{}
+type GroupConsumer struct{}
+
+func TestResolveGroupDependencies(t *testing.T) {
+	t.Run("connects consumer to group members", func(t *testing.T) {
+		g := graph.NewDependencyGraph()
+
+		memberType := reflect.TypeOf(GroupMember{})
+		consumerType := reflect.TypeOf(GroupConsumer{})
+
+		member1 := &godi.Descriptor{
+			Type:     memberType,
+			Key:      1,
+			Group:    "routes",
+			Lifetime: godi.Singleton,
+		}
+		member2 := &godi.Descriptor{
+			Type:     memberType,
+			Key:      2,
+			Group:    "routes",
+			Lifetime: godi.Singleton,
+		}
+		consumer := &godi.Descriptor{
+			Type:     consumerType,
+			Lifetime: godi.Singleton,
+			Dependencies: []*reflection.Dependency{
+				{Type: memberType, Key: nil, Group: "routes"},
+			},
+		}
+
+		assert.NoError(t, g.AddProviderDeferred(member1))
+		assert.NoError(t, g.AddProviderDeferred(member2))
+		assert.NoError(t, g.AddProviderDeferred(consumer))
+
+		g.ResolveGroupDependencies()
+		assert.NoError(t, g.DetectCycles())
+
+		sorted, err := g.TopologicalSort()
+		assert.NoError(t, err)
+		assert.Len(t, sorted, 3) // 2 members + 1 consumer, phantom removed
+
+		// Find consumer index
+		consumerIdx := -1
+		for i, node := range sorted {
+			if node.Key.Type == consumerType {
+				consumerIdx = i
+			}
+		}
+		assert.NotEqual(t, -1, consumerIdx)
+
+		// All members must come before the consumer
+		for i, node := range sorted {
+			if node.Key.Type == memberType {
+				assert.Less(t, i, consumerIdx,
+					"Group member (Key=%v) should come before consumer", node.Key.Key)
+			}
+		}
+
+		// Phantom node should be gone
+		assert.False(t, g.HasNode(memberType, nil, "routes"))
+	})
+
+	t.Run("handles empty groups", func(t *testing.T) {
+		g := graph.NewDependencyGraph()
+
+		memberType := reflect.TypeOf(GroupMember{})
+		consumerType := reflect.TypeOf(GroupConsumer{})
+
+		consumer := &godi.Descriptor{
+			Type:     consumerType,
+			Lifetime: godi.Singleton,
+			Dependencies: []*reflection.Dependency{
+				{Type: memberType, Key: nil, Group: "empty"},
+			},
+		}
+
+		assert.NoError(t, g.AddProviderDeferred(consumer))
+		g.ResolveGroupDependencies()
+		assert.NoError(t, g.DetectCycles())
+
+		sorted, err := g.TopologicalSort()
+		assert.NoError(t, err)
+		assert.Len(t, sorted, 1) // Only the consumer, phantom removed
+
+		// Phantom node should be gone
+		assert.False(t, g.HasNode(memberType, nil, "empty"))
+	})
+
+	t.Run("consumer added before members", func(t *testing.T) {
+		g := graph.NewDependencyGraph()
+
+		memberType := reflect.TypeOf(GroupMember{})
+		consumerType := reflect.TypeOf(GroupConsumer{})
+
+		consumer := &godi.Descriptor{
+			Type:     consumerType,
+			Lifetime: godi.Singleton,
+			Dependencies: []*reflection.Dependency{
+				{Type: memberType, Key: nil, Group: "routes"},
+			},
+		}
+		member1 := &godi.Descriptor{
+			Type:     memberType,
+			Key:      1,
+			Group:    "routes",
+			Lifetime: godi.Singleton,
+		}
+
+		// Consumer added first
+		assert.NoError(t, g.AddProviderDeferred(consumer))
+		assert.NoError(t, g.AddProviderDeferred(member1))
+
+		g.ResolveGroupDependencies()
+		assert.NoError(t, g.DetectCycles())
+
+		sorted, err := g.TopologicalSort()
+		assert.NoError(t, err)
+		assert.Len(t, sorted, 2) // 1 member + 1 consumer
+
+		// Member must come first
+		assert.Equal(t, memberType, sorted[0].Key.Type)
+		assert.Equal(t, consumerType, sorted[1].Key.Type)
+	})
+
+	t.Run("no phantom nodes present", func(t *testing.T) {
+		g := graph.NewDependencyGraph()
+
+		memberType := reflect.TypeOf(GroupMember{})
+
+		member := &godi.Descriptor{
+			Type:     memberType,
+			Key:      1,
+			Group:    "routes",
+			Lifetime: godi.Singleton,
+		}
+
+		assert.NoError(t, g.AddProviderDeferred(member))
+		g.ResolveGroupDependencies() // Should be a no-op
+		assert.NoError(t, g.DetectCycles())
+
+		sorted, err := g.TopologicalSort()
+		assert.NoError(t, err)
+		assert.Len(t, sorted, 1)
+	})
+}

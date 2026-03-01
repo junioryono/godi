@@ -219,6 +219,75 @@ func (g *DependencyGraph) AddProviderDeferred(provider Provider) error {
 	return nil
 }
 
+// groupIndex identifies a group by type and name, without a specific key.
+type groupIndex struct {
+	Type  reflect.Type
+	Group string
+}
+
+// ResolveGroupDependencies resolves phantom group dependency nodes by connecting
+// consumers directly to actual group member nodes. This must be called after all
+// providers are added via AddProviderDeferred and before DetectCycles.
+//
+// When a service depends on a group (e.g., group:"routes"), the dependency is
+// recorded as NodeKey{Type: T, Key: nil, Group: "routes"}. However, actual group
+// members are registered with numeric keys like NodeKey{Type: T, Key: 1, Group: "routes"}.
+// This method replaces phantom group dependencies with edges to real group members.
+func (g *DependencyGraph) ResolveGroupDependencies() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	// Step 1: Build an index of real group members
+	groupMembers := make(map[groupIndex][]NodeKey)
+	for key, node := range g.nodes {
+		if key.Group != "" && key.Key != nil && node.Provider != nil {
+			idx := groupIndex{Type: key.Type, Group: key.Group}
+			groupMembers[idx] = append(groupMembers[idx], key)
+		}
+	}
+
+	// Step 2: Find phantom group nodes (Group != "", Key == nil, no Provider)
+	phantomKeys := make([]NodeKey, 0)
+	for key, node := range g.nodes {
+		if key.Group != "" && key.Key == nil && node.Provider == nil {
+			phantomKeys = append(phantomKeys, key)
+		}
+	}
+
+	// Step 3: Rewire consumers and remove phantoms
+	for _, phantomKey := range phantomKeys {
+		idx := groupIndex{Type: phantomKey.Type, Group: phantomKey.Group}
+		members := groupMembers[idx]
+
+		// Replace phantom edge with actual member edges in all consumers
+		for consumerKey, edges := range g.edges {
+			newEdges := make([]NodeKey, 0, len(edges)+len(members))
+			modified := false
+			for _, edge := range edges {
+				if edge == phantomKey {
+					newEdges = append(newEdges, members...)
+					modified = true
+				} else {
+					newEdges = append(newEdges, edge)
+				}
+			}
+			if modified {
+				g.edges[consumerKey] = newEdges
+			}
+		}
+
+		// Remove the phantom node
+		delete(g.nodes, phantomKey)
+		delete(g.edges, phantomKey)
+	}
+
+	// Mark caches as dirty since edges changed
+	if len(phantomKeys) > 0 {
+		g.sortedNodesDirty = true
+		g.cycleCacheDirty = true
+	}
+}
+
 // RemoveProvider removes a provider from the graph
 func (g *DependencyGraph) RemoveProvider(serviceType reflect.Type, key any, group string) {
 	g.mu.Lock()
