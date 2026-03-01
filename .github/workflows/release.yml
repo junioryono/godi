@@ -77,6 +77,30 @@ jobs:
             echo "" >> $RELEASE_NOTES
           fi
 
+          # Parse bug fixes
+          FIXES=""
+          while IFS='|' read -r msg hash; do
+            # Check for fix commits
+            if echo "$msg" | grep -qE '^fix(\([^)]+\))?:'; then
+              # Extract scope and message
+              if echo "$msg" | grep -qE '^fix\([^)]+\):'; then
+                SCOPE=$(echo "$msg" | sed -E 's/^fix\(([^)]+)\):.*/\1/')
+                CLEAN_MSG=$(echo "$msg" | sed -E 's/^fix\([^)]+\): ?//')
+                FIXES="${FIXES}* **${SCOPE}:** ${CLEAN_MSG} ([${hash}](https://github.com/junioryono/godi/commit/${hash}))\n"
+              else
+                CLEAN_MSG=$(echo "$msg" | sed -E 's/^fix: ?//')
+                FIXES="${FIXES}* ${CLEAN_MSG} ([${hash}](https://github.com/junioryono/godi/commit/${hash}))\n"
+              fi
+            fi
+          done <<< "$COMMITS"
+
+          if [ -n "$FIXES" ]; then
+            echo "## Bug Fixes" >> $RELEASE_NOTES
+            echo "" >> $RELEASE_NOTES
+            echo -e "$FIXES" >> $RELEASE_NOTES
+            echo "" >> $RELEASE_NOTES
+          fi
+
           # Parse features
           FEATURES=""
           while IFS='|' read -r msg hash; do
@@ -101,56 +125,12 @@ jobs:
             echo "" >> $RELEASE_NOTES
           fi
 
-          # Parse bug fixes
-          FIXES=""
-          while IFS='|' read -r msg hash; do
-            # Check for fix commits
-            if echo "$msg" | grep -qE '^fix(\([^)]+\))?:'; then
-              # Extract scope and message
-              if echo "$msg" | grep -qE '^fix\([^)]+\):'; then
-                SCOPE=$(echo "$msg" | sed -E 's/^fix\(([^)]+)\):.*/\1/')
-                CLEAN_MSG=$(echo "$msg" | sed -E 's/^fix\([^)]+\): ?//')
-                FIXES="${FIXES}* **${SCOPE}:** ${CLEAN_MSG} ([${hash}](https://github.com/junioryono/godi/commit/${hash}))\n"
-              else
-                CLEAN_MSG=$(echo "$msg" | sed -E 's/^fix: ?//')
-                FIXES="${FIXES}* ${CLEAN_MSG} ([${hash}](https://github.com/junioryono/godi/commit/${hash}))\n"
-              fi
-            fi
-          done <<< "$COMMITS"
-
-          if [ -n "$FIXES" ]; then
-            echo "## Bug Fixes" >> $RELEASE_NOTES
-            echo "" >> $RELEASE_NOTES
-            echo -e "$FIXES" >> $RELEASE_NOTES
-          fi
-
           # Add installation instructions
           echo "" >> $RELEASE_NOTES
           echo "## Installation" >> $RELEASE_NOTES
           echo "" >> $RELEASE_NOTES
-          echo "### Main Module" >> $RELEASE_NOTES
-          echo "" >> $RELEASE_NOTES
           echo '```bash' >> $RELEASE_NOTES
           echo "go get github.com/junioryono/godi/v4@$CURRENT_TAG" >> $RELEASE_NOTES
-          echo '```' >> $RELEASE_NOTES
-          echo "" >> $RELEASE_NOTES
-          echo "### Framework Integrations" >> $RELEASE_NOTES
-          echo "" >> $RELEASE_NOTES
-          echo '```bash' >> $RELEASE_NOTES
-          echo "# Gin" >> $RELEASE_NOTES
-          echo "go get github.com/junioryono/godi/v4/gin@$CURRENT_TAG" >> $RELEASE_NOTES
-          echo "" >> $RELEASE_NOTES
-          echo "# Chi" >> $RELEASE_NOTES
-          echo "go get github.com/junioryono/godi/v4/chi@$CURRENT_TAG" >> $RELEASE_NOTES
-          echo "" >> $RELEASE_NOTES
-          echo "# Echo" >> $RELEASE_NOTES
-          echo "go get github.com/junioryono/godi/v4/echo@$CURRENT_TAG" >> $RELEASE_NOTES
-          echo "" >> $RELEASE_NOTES
-          echo "# Fiber" >> $RELEASE_NOTES
-          echo "go get github.com/junioryono/godi/v4/fiber@$CURRENT_TAG" >> $RELEASE_NOTES
-          echo "" >> $RELEASE_NOTES
-          echo "# HTTP (net/http)" >> $RELEASE_NOTES
-          echo "go get github.com/junioryono/godi/v4/http@$CURRENT_TAG" >> $RELEASE_NOTES
           echo '```' >> $RELEASE_NOTES
 
           # Add commit list
