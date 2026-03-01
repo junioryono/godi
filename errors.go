@@ -80,9 +80,9 @@ type LifetimeConflictError struct {
 
 func (e LifetimeConflictError) Error() string {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("lifetime conflict: %s (%s) cannot depend on %s (%s)\n\n",
+	fmt.Fprintf(&b, "lifetime conflict: %s (%s) cannot depend on %s (%s)\n\n",
 		formatType(e.ServiceType), e.ServiceLifetime,
-		formatType(e.DependencyType), e.DependencyLifetime))
+		formatType(e.DependencyType), e.DependencyLifetime)
 
 	// Explain the issue
 	switch e.ServiceLifetime {
@@ -99,9 +99,9 @@ func (e LifetimeConflictError) Error() string {
 	}
 
 	b.WriteString("To resolve this:\n")
-	b.WriteString(fmt.Sprintf("  • Change %s to Scoped lifetime\n", formatType(e.ServiceType)))
-	b.WriteString(fmt.Sprintf("  • Change %s to Singleton lifetime\n", formatType(e.DependencyType)))
-	b.WriteString(fmt.Sprintf("  • Use a factory function to resolve %s lazily\n", formatType(e.DependencyType)))
+	fmt.Fprintf(&b, "  • Change %s to Scoped lifetime\n", formatType(e.ServiceType))
+	fmt.Fprintf(&b, "  • Change %s to Singleton lifetime\n", formatType(e.DependencyType))
+	fmt.Fprintf(&b, "  • Use a factory function to resolve %s lazily\n", formatType(e.DependencyType))
 
 	return b.String()
 }
@@ -130,13 +130,13 @@ func (e ResolutionError) Error() string {
 	var b strings.Builder
 
 	if e.ServiceKey != nil {
-		b.WriteString(fmt.Sprintf("service not found: %s (key: %v)", formatType(e.ServiceType), e.ServiceKey))
+		fmt.Fprintf(&b, "service not found: %s (key: %v)", formatType(e.ServiceType), e.ServiceKey)
 	} else {
-		b.WriteString(fmt.Sprintf("service not found: %s", formatType(e.ServiceType)))
+		fmt.Fprintf(&b, "service not found: %s", formatType(e.ServiceType))
 	}
 
 	if e.Cause != nil && e.Cause != ErrServiceNotFound {
-		b.WriteString(fmt.Sprintf(": %v", e.Cause))
+		fmt.Fprintf(&b, ": %v", e.Cause)
 	}
 
 	// Suggest similar types if available
@@ -145,7 +145,7 @@ func (e ResolutionError) Error() string {
 		if len(similar) > 0 {
 			b.WriteString("\n\nDid you mean one of these?\n")
 			for _, t := range similar {
-				b.WriteString(fmt.Sprintf("  • %s\n", formatType(t)))
+				fmt.Fprintf(&b, "  • %s\n", formatType(t))
 			}
 		}
 	}
@@ -337,7 +337,7 @@ type ConstructorPanicError struct {
 
 func (e ConstructorPanicError) Error() string {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("constructor %s panicked: %v\n", formatType(e.Constructor), e.Panic))
+	fmt.Fprintf(&b, "constructor %s panicked: %v\n", formatType(e.Constructor), e.Panic)
 
 	b.WriteString("\nConstructors should be pure dependency wiring - avoid operations that can panic.\n")
 	b.WriteString("Critical operations that can fail belong in application initialization, not constructors.\n")
@@ -382,9 +382,9 @@ func (e DisposalError) Error() string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("%s disposal failed with %d errors:", e.Context, len(e.Errors)))
+	fmt.Fprintf(&sb, "%s disposal failed with %d errors:", e.Context, len(e.Errors))
 	for i, err := range e.Errors {
-		sb.WriteString(fmt.Sprintf("\n  %d. %v", i+1, err))
+		fmt.Fprintf(&sb, "\n  %d. %v", i+1, err)
 	}
 	return sb.String()
 }

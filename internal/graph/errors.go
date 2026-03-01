@@ -16,13 +16,13 @@ func (e CircularDependencyError) Error() string {
 	b.WriteString("circular dependency detected:\n\n")
 
 	if len(e.Path) == 0 {
-		b.WriteString(fmt.Sprintf("    %s\n", e.Node.String()))
+		fmt.Fprintf(&b, "    %s\n", e.Node.String())
 		b.WriteString("      ↓\n")
-		b.WriteString(fmt.Sprintf("    %s (cycle)\n", e.Node.String()))
+		fmt.Fprintf(&b, "    %s (cycle)\n", e.Node.String())
 	} else {
 		// Build a visual representation of the cycle
 		for i, node := range e.Path {
-			b.WriteString(fmt.Sprintf("    %s\n", node.String()))
+			fmt.Fprintf(&b, "    %s\n", node.String())
 			if i < len(e.Path)-1 {
 				b.WriteString("      ↓\n")
 			}
@@ -30,7 +30,7 @@ func (e CircularDependencyError) Error() string {
 		// Show the cycle back to the first node
 		if len(e.Path) > 0 {
 			b.WriteString("      ↓\n")
-			b.WriteString(fmt.Sprintf("    %s (cycle)\n", e.Path[0].String()))
+			fmt.Fprintf(&b, "    %s (cycle)\n", e.Path[0].String())
 		}
 	}
 
