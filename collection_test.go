@@ -388,6 +388,47 @@ func TestSingletonConsumingGroupViaIn(t *testing.T) {
 	assert.Contains(t, names, "web")
 }
 
+// TestMultiReturnWithAsRejected: when a multi-return constructor is paired
+// with godi.As(...), the registration must fail. The pre-fix code silently
+// ignored godi.As for multi-return constructors and registered the concrete
+// types instead, which is almost certainly not what the caller wanted.
+func TestMultiReturnWithAsRejected(t *testing.T) {
+	t.Parallel()
+
+	type asLeft struct{}
+	type asRight struct{}
+	type asIface interface {
+		mark()
+	}
+
+	c := NewCollection()
+	err := c.AddSingleton(func() (*asLeft, *asRight) {
+		return &asLeft{}, &asRight{}
+	}, As[asIface]())
+
+	require.Error(t, err, "multi-return + As must be rejected")
+	var regErr *RegistrationError
+	assert.ErrorAs(t, err, &regErr)
+}
+
+// TestAddServiceAnalyzeCalledOnce asserts that registering a single
+// constructor invokes analyzer.Analyze exactly once. Pre-fix the path calls
+// Analyze twice — once in newDescriptorWithAnalyzer and again in addService
+// — even though the second is a cache hit. The fix folds the second call
+// into the first by reusing the info already computed in
+// newDescriptorWithAnalyzer.
+func TestAddServiceAnalyzeCalledOnce(t *testing.T) {
+	t.Parallel()
+
+	col := NewCollection().(*collection)
+	before := col.analyzer.AnalyzeCalls()
+	require.NoError(t, col.AddSingleton(NewTService))
+	delta := col.analyzer.AnalyzeCalls() - before
+
+	assert.Equal(t, int64(1), delta,
+		"AddSingleton must call analyzer.Analyze exactly once (got %d)", delta)
+}
+
 func TestGroupLifetimeValidation(t *testing.T) {
 	t.Parallel()
 

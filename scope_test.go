@@ -3,6 +3,8 @@ package godi
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -459,4 +461,377 @@ func TestComplexDependencyGraph(t *testing.T) {
 	assert.Equal(t, "postgres://...", svc.Repo.DB.Config.DSN)
 	assert.NotNil(t, svc.Cache)
 	assert.Same(t, svc.Repo.DB, svc.Cache.DB) // Singleton shared
+}
+
+// ----------------------------------------------------------------------------
+// Audit regression tests. Each test demonstrates a real bug found during the
+// codebase audit; they must remain green after the corresponding fix.
+// ----------------------------------------------------------------------------
+
+// TestScopeCloseRaceWithResolve forces the close-vs-resolve interleaving that
+// panics with "assignment to entry in nil map" on the pre-fix tree. After the
+// fix, every resolver sees either a valid instance or ErrScopeDisposed and
+// scope.Close completes without panicking.
+func TestScopeCloseRaceWithResolve(t *testing.T) {
+	t.Parallel()
+
+	const goroutines = 200
+
+	type slowScoped struct{ id int }
+
+	start := make(chan struct{})
+	c := NewCollection()
+	require.NoError(t, c.AddScoped(func() *slowScoped {
+		<-start
+		return &slowScoped{id: 1}
+	}))
+
+	p, err := c.Build()
+	require.NoError(t, err)
+	defer p.Close()
+
+	scope, err := p.CreateScope(context.Background())
+	require.NoError(t, err)
+
+	resolverDone := make(chan struct{}, goroutines)
+	resolveErrs := make(chan error, goroutines)
+
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					resolveErrs <- fmt.Errorf("panic in Get: %v", r)
+				}
+				resolverDone <- struct{}{}
+			}()
+			_, err := scope.Get(PtrTypeOf[slowScoped]())
+			if err != nil && !errors.Is(err, ErrScopeDisposed) {
+				resolveErrs <- err
+			}
+		}()
+	}
+
+	closeResult := make(chan error, 1)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				closeResult <- fmt.Errorf("panic in Close: %v", r)
+			}
+		}()
+		closeResult <- scope.Close()
+	}()
+
+	close(start)
+
+	for i := 0; i < goroutines; i++ {
+		<-resolverDone
+	}
+
+	closeErr := <-closeResult
+	require.NoError(t, closeErr, "Close must not panic or error")
+
+	close(resolveErrs)
+	for err := range resolveErrs {
+		t.Errorf("unexpected resolver error: %v", err)
+	}
+}
+
+// TestScopedSingleFlight asserts that concurrent first-resolves of the same
+// Scoped service result in exactly one constructor invocation and identical
+// returned pointers. Pre-fix: ctor runs N times and pointers diverge.
+func TestScopedSingleFlight(t *testing.T) {
+	t.Parallel()
+
+	type sfSvc struct{ id int64 }
+
+	const goroutines = 100
+	var ctorCalls atomic.Int64
+
+	c := NewCollection()
+	require.NoError(t, c.AddScoped(func() *sfSvc {
+		return &sfSvc{id: ctorCalls.Add(1)}
+	}))
+
+	p, err := c.Build()
+	require.NoError(t, err)
+	defer p.Close()
+
+	scope, err := p.CreateScope(context.Background())
+	require.NoError(t, err)
+	defer scope.Close()
+
+	var wg sync.WaitGroup
+	results := make([]*sfSvc, goroutines)
+	start := make(chan struct{})
+
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			<-start
+			v, err := scope.Get(PtrTypeOf[sfSvc]())
+			require.NoError(t, err)
+			results[idx] = v.(*sfSvc)
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	assert.Equal(t, int64(1), ctorCalls.Load(),
+		"constructor must run exactly once (single-flight)")
+	first := results[0]
+	require.NotNil(t, first)
+	for i, got := range results {
+		assert.Samef(t, first, got, "resolver #%d got a different instance", i)
+	}
+}
+
+// TestScopedMultiReturnSingleFlight covers a multi-return Scoped constructor.
+// Concurrent resolves of the two output types must run the constructor
+// exactly once.
+func TestScopedMultiReturnSingleFlight(t *testing.T) {
+	t.Parallel()
+
+	type sfLeft struct{ n int64 }
+	type sfRight struct{ n int64 }
+
+	var ctorCalls atomic.Int64
+	c := NewCollection()
+	require.NoError(t, c.AddScoped(func() (*sfLeft, *sfRight) {
+		n := ctorCalls.Add(1)
+		return &sfLeft{n: n}, &sfRight{n: n}
+	}))
+
+	p, err := c.Build()
+	require.NoError(t, err)
+	defer p.Close()
+
+	scope, err := p.CreateScope(context.Background())
+	require.NoError(t, err)
+	defer scope.Close()
+
+	const goroutines = 100
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			<-start
+			if idx%2 == 0 {
+				_, err := scope.Get(PtrTypeOf[sfLeft]())
+				require.NoError(t, err)
+			} else {
+				_, err := scope.Get(PtrTypeOf[sfRight]())
+				require.NoError(t, err)
+			}
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	assert.Equal(t, int64(1), ctorCalls.Load(),
+		"multi-return Scoped ctor must run exactly once")
+}
+
+// TestScopedOutStructSingleFlight covers the Out-struct fan-out path. The
+// constructor must run once even when many goroutines resolve different
+// fields concurrently.
+func TestScopedOutStructSingleFlight(t *testing.T) {
+	t.Parallel()
+
+	type sfOutA struct{ n int64 }
+	type sfOutB struct{ n int64 }
+	type sfOutResult struct {
+		Out
+		A *sfOutA
+		B *sfOutB
+	}
+
+	var ctorCalls atomic.Int64
+	c := NewCollection()
+	require.NoError(t, c.AddScoped(func() sfOutResult {
+		n := ctorCalls.Add(1)
+		return sfOutResult{A: &sfOutA{n: n}, B: &sfOutB{n: n}}
+	}))
+
+	p, err := c.Build()
+	require.NoError(t, err)
+	defer p.Close()
+
+	scope, err := p.CreateScope(context.Background())
+	require.NoError(t, err)
+	defer scope.Close()
+
+	const goroutines = 100
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			<-start
+			if idx%2 == 0 {
+				_, err := scope.Get(PtrTypeOf[sfOutA]())
+				require.NoError(t, err)
+			} else {
+				_, err := scope.Get(PtrTypeOf[sfOutB]())
+				require.NoError(t, err)
+			}
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	assert.Equal(t, int64(1), ctorCalls.Load(),
+		"Out-struct Scoped ctor must run exactly once")
+}
+
+// panickyDisposable's Close() panics; recordingDisposable's Close() records
+// that it ran. Used to assert teardown is panic-isolated.
+type panickyDisposable struct{ name string }
+
+func (p *panickyDisposable) Close() error {
+	panic("intentional panic in " + p.name)
+}
+
+type recordingDisposable struct{ closed atomic.Bool }
+
+func (r *recordingDisposable) Close() error {
+	r.closed.Store(true)
+	return nil
+}
+
+// TestScopeCloseSurvivesDisposablePanic: a panicking disposable Close must not
+// stop the remaining disposables from being released, and scope.Close itself
+// must not propagate the panic.
+func TestScopeCloseSurvivesDisposablePanic(t *testing.T) {
+	t.Parallel()
+
+	c := NewCollection()
+	require.NoError(t, c.AddTransient(func() *panickyDisposable {
+		return &panickyDisposable{name: "boom"}
+	}))
+	require.NoError(t, c.AddTransient(func() *recordingDisposable {
+		return &recordingDisposable{}
+	}))
+
+	p, err := c.Build()
+	require.NoError(t, err)
+	defer p.Close()
+
+	scope, err := p.CreateScope(context.Background())
+	require.NoError(t, err)
+
+	// Resolve recording first (index 0 in disposables), then panicky (index
+	// 1). scope.Close iterates in reverse: panicky fires first; the fix must
+	// recover and still Close() the recording disposable.
+	rec, err := scope.Get(PtrTypeOf[recordingDisposable]())
+	require.NoError(t, err)
+	_, err = scope.Get(PtrTypeOf[panickyDisposable]())
+	require.NoError(t, err)
+
+	var closeErr error
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("scope.Close propagated panic: %v", r)
+			}
+		}()
+		closeErr = scope.Close()
+	}()
+
+	require.Error(t, closeErr)
+	var disposalErr *DisposalError
+	assert.ErrorAs(t, closeErr, &disposalErr)
+	assert.True(t, rec.(*recordingDisposable).closed.Load(),
+		"recording disposable must be closed despite the earlier panic")
+}
+
+// TestTransientResolveArgsAreScratchPooled asserts the per-resolve allocation
+// count for a multi-arg Transient stays at or below the post-pool target.
+// Pre-fix this is 3 allocs/op (args slice + Call's return slice + the
+// instance boxing). After the args slice is pooled in
+// internal/reflection.ConstructorInvoker.buildArguments, the args allocation
+// goes away and we're at 2.
+func TestTransientResolveArgsAreScratchPooled(t *testing.T) {
+	// Intentionally not parallel: testing.AllocsPerRun cannot be called
+	// from a parallel test.
+
+	type leafA struct{}
+	type leafB struct{}
+	type leafC struct{}
+	type composite struct {
+		a *leafA
+		b *leafB
+		c *leafC
+	}
+
+	c := NewCollection()
+	require.NoError(t, c.AddSingleton(func() *leafA { return &leafA{} }))
+	require.NoError(t, c.AddSingleton(func() *leafB { return &leafB{} }))
+	require.NoError(t, c.AddSingleton(func() *leafC { return &leafC{} }))
+	require.NoError(t, c.AddTransient(func(a *leafA, b *leafB, cc *leafC) *composite {
+		return &composite{a: a, b: b, c: cc}
+	}))
+
+	p, err := c.Build()
+	require.NoError(t, err)
+	defer p.Close()
+
+	scope, err := p.CreateScope(context.Background())
+	require.NoError(t, err)
+	defer scope.Close()
+
+	tgt := PtrTypeOf[composite]()
+	_, err = scope.Get(tgt) // warmup
+	require.NoError(t, err)
+
+	allocs := testing.AllocsPerRun(2000, func() {
+		_, _ = scope.Get(tgt)
+	})
+
+	// After the args-slice pool fix we expect <= 2 allocs/op for a 3-arg
+	// Transient resolve. The baseline pre-fix is 3.
+	assert.LessOrEqualf(t, allocs, 2.0,
+		"resolve allocs/op = %.2f; expected the pooled args slice to keep it <= 2",
+		allocs)
+}
+
+// TestResolveDoesNotReanalyzeConstructor verifies that resolving a service
+// does not call analyzer.Analyze on the hot path. Pre-fix, scope.createInstance
+// re-analyzes the constructor on every resolution (a cache hit, but still
+// extra lock-acquisition and interface boxing). Post-fix, the analysis is
+// stashed on the Descriptor at build time and the resolver reads it directly.
+func TestResolveDoesNotReanalyzeConstructor(t *testing.T) {
+	t.Parallel()
+
+	type svc struct{ n int }
+
+	col := NewCollection().(*collection)
+	require.NoError(t, col.AddTransient(func() *svc { return &svc{n: 1} }))
+
+	p, err := col.Build()
+	require.NoError(t, err)
+	defer p.Close()
+
+	scope, err := p.CreateScope(context.Background())
+	require.NoError(t, err)
+	defer scope.Close()
+
+	// Warm up the resolver path.
+	_, err = scope.Get(PtrTypeOf[svc]())
+	require.NoError(t, err)
+
+	before := col.analyzer.AnalyzeCalls()
+	const iterations = 50
+	for i := 0; i < iterations; i++ {
+		_, err := scope.Get(PtrTypeOf[svc]())
+		require.NoError(t, err)
+	}
+	delta := col.analyzer.AnalyzeCalls() - before
+
+	assert.Zero(t, delta,
+		"resolution must not re-Analyze the constructor (got %d extra calls)", delta)
 }

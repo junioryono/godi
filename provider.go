@@ -224,10 +224,11 @@ func (p *provider) Close() error {
 	p.disposables = nil
 	p.disposablesMu.Unlock()
 
-	// Dispose in reverse order of creation
+	// Dispose in reverse order of creation; panic-isolate each Close so one
+	// misbehaving disposable cannot abort the rest of the teardown loop.
 	for i := len(disposables) - 1; i >= 0; i-- {
 		if disposables[i] != nil {
-			if err := disposables[i].Close(); err != nil {
+			if err := safeClose(disposables[i]); err != nil {
 				errors = append(errors, fmt.Errorf("singleton disposable %d: %w", i, err))
 			}
 		}

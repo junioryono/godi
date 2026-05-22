@@ -58,6 +58,11 @@ type Descriptor struct {
 	resultFields   []reflection.ResultField
 	isParamObject  bool
 	paramFields    []reflection.ParamField
+
+	// info is the analyzed constructor metadata, stashed at registration time
+	// so the hot resolution path can skip a Lock + map lookup + interface
+	// boxing per resolve. Populated by newDescriptorWithAnalyzer.
+	info *reflection.ConstructorInfo
 }
 
 // newDescriptor creates a new descriptor from a service with the given lifetime and options
@@ -117,15 +122,9 @@ func newDescriptorWithAnalyzer(service any, lifetime Lifetime, analyzer *reflect
 		}
 	}
 
-	// Get dependencies from analyzer (uses cache)
-	dependencies, err := analyzer.GetDependencies(service)
-	if err != nil {
-		return nil, &ReflectionAnalysisError{
-			Constructor: service,
-			Operation:   "dependencies",
-			Cause:       err,
-		}
-	}
+	// Reuse the dependencies already computed by Analyze rather than calling
+	// GetDependencies (which would issue a second Analyze cache lookup).
+	dependencies := info.Dependencies()
 
 	// Create descriptor
 	descriptor := &Descriptor{
@@ -181,6 +180,7 @@ func newDescriptorWithAnalyzer(service any, lifetime Lifetime, analyzer *reflect
 	descriptor.isFunc = info.IsFunc
 	descriptor.isResultObject = info.IsResultObject
 	descriptor.isParamObject = info.IsParamObject
+	descriptor.info = info
 
 	// Store param fields if it's a param object
 	if info.IsParamObject && len(info.Parameters) > 0 {

@@ -252,6 +252,46 @@ func TestProvider(t *testing.T) {
 	})
 }
 
+// TestProviderCloseSurvivesDisposablePanic ensures the singleton-disposal loop
+// at provider.Close keeps running even if a Close() panics. The provider's
+// Close must return a DisposalError and the remaining disposables must still
+// be released.
+func TestProviderCloseSurvivesDisposablePanic(t *testing.T) {
+	t.Parallel()
+
+	c := NewCollection()
+	require.NoError(t, c.AddSingleton(func() *recordingDisposable {
+		return &recordingDisposable{}
+	}))
+	require.NoError(t, c.AddSingleton(func() *panickyDisposable {
+		return &panickyDisposable{name: "boom"}
+	}))
+
+	p, err := c.Build()
+	require.NoError(t, err)
+
+	rec, err := Resolve[*recordingDisposable](p)
+	require.NoError(t, err)
+	_, err = Resolve[*panickyDisposable](p)
+	require.NoError(t, err)
+
+	var closeErr error
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("provider.Close propagated panic: %v", r)
+			}
+		}()
+		closeErr = p.Close()
+	}()
+
+	require.Error(t, closeErr)
+	var disposalErr *DisposalError
+	assert.ErrorAs(t, closeErr, &disposalErr)
+	assert.True(t, rec.closed.Load(),
+		"recording singleton disposable must be closed despite the panic")
+}
+
 func TestExtractParameterTypes(t *testing.T) {
 	t.Parallel()
 

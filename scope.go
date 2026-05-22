@@ -32,6 +32,14 @@ type scope struct {
 	instances   map[instanceKey]any
 	instancesMu sync.RWMutex
 
+	// In-flight constructor invocations (single-flight by constructor identity).
+	// Without this, two goroutines requesting the same Scoped service can both
+	// miss the cache and both run the constructor, violating the per-scope
+	// uniqueness guarantee. For multi-return / Out-struct constructors, the
+	// key is the constructor's function pointer so that all sister output
+	// types share one flight.
+	inflight sync.Map // map[any]*scopeFlight
+
 	// Track disposable scoped instances
 	disposables   []Disposable
 	disposablesMu sync.Mutex
@@ -42,6 +50,15 @@ type scope struct {
 
 	// State
 	disposed int32 // atomic
+}
+
+// scopeFlight coordinates a single-flight constructor invocation. The first
+// goroutine to LoadOrStore one of these runs createInstance; later goroutines
+// for the same flight key block on done and read the cached value out.
+type scopeFlight struct {
+	done     chan struct{}
+	instance any
+	err      error
 }
 
 func newScope(rootProvider *provider, parent *scope, ctx context.Context, cancel context.CancelFunc) (*scope, error) {
@@ -110,7 +127,13 @@ func (s *scope) Get(serviceType reflect.Type) (any, error) {
 	}
 
 	key := instanceKey{Type: serviceType}
-	return s.resolve(key, nil)
+	instance, err := s.resolve(key, nil)
+	// If Close ran while resolve was in flight, surface that as
+	// ErrScopeDisposed instead of a stale "not found" / dangling instance.
+	if atomic.LoadInt32(&s.disposed) != 0 {
+		return nil, ErrScopeDisposed
+	}
+	return instance, err
 }
 
 // GetKeyed resolves a keyed service in this scope
@@ -128,7 +151,11 @@ func (s *scope) GetKeyed(serviceType reflect.Type, serviceKey any) (any, error) 
 	}
 
 	key := instanceKey{Type: serviceType, Key: serviceKey}
-	return s.resolve(key, nil)
+	instance, err := s.resolve(key, nil)
+	if atomic.LoadInt32(&s.disposed) != 0 {
+		return nil, ErrScopeDisposed
+	}
+	return instance, err
 }
 
 // GetGroup resolves all services in a group
@@ -169,6 +196,9 @@ func (s *scope) GetGroup(serviceType reflect.Type, group string) ([]any, error) 
 		instances = append(instances, instance)
 	}
 
+	if atomic.LoadInt32(&s.disposed) != 0 {
+		return nil, ErrScopeDisposed
+	}
 	return instances, nil
 }
 
@@ -246,7 +276,7 @@ func (s *scope) Close() error {
 	s.disposablesMu.Unlock()
 
 	for i := len(disposables) - 1; i >= 0; i-- {
-		if err := disposables[i].Close(); err != nil {
+		if err := safeClose(disposables[i]); err != nil {
 			errs = append(errs, fmt.Errorf("failed to dispose scoped instance: %w", err))
 		}
 	}
@@ -292,22 +322,129 @@ func (s *scope) getInstance(key instanceKey) (any, bool) {
 // setInstance caches an instance in this scope in a thread-safe manner.
 // It also tracks the instance if it implements the Disposable interface
 // for proper cleanup when the scope is closed.
+//
+// If the scope has been closed between when the caller decided to create
+// this instance and when setInstance runs, the instance is closed eagerly
+// (if Disposable) and not cached. This is the fix for the close-vs-resolve
+// race: previously a write to s.instances after Close set it to nil would
+// panic with "assignment to entry in nil map".
 func (s *scope) setInstance(descriptor *Descriptor, key instanceKey, instance any) {
 	switch descriptor.Lifetime {
 	case Singleton:
 		s.rootProvider.setSingleton(key, instance)
 	case Scoped:
 		s.instancesMu.Lock()
+		if s.instances == nil {
+			s.instancesMu.Unlock()
+			closeOrphan(instance)
+			return
+		}
 		s.instances[key] = instance
 		s.instancesMu.Unlock()
-		fallthrough
+		s.appendDisposable(instance)
 	case Transient:
-		if d, ok := instance.(Disposable); ok {
-			s.disposablesMu.Lock()
-			s.disposables = append(s.disposables, d)
-			s.disposablesMu.Unlock()
+		s.appendDisposable(instance)
+	}
+}
+
+// appendDisposable tracks a Disposable instance for cleanup at scope close.
+// If the scope is already closed, the instance is closed eagerly to avoid a
+// leak.
+func (s *scope) appendDisposable(instance any) {
+	d, ok := instance.(Disposable)
+	if !ok {
+		return
+	}
+	s.disposablesMu.Lock()
+	if atomic.LoadInt32(&s.disposed) != 0 {
+		s.disposablesMu.Unlock()
+		closeOrphan(d)
+		return
+	}
+	s.disposables = append(s.disposables, d)
+	s.disposablesMu.Unlock()
+}
+
+// closeOrphan closes a Disposable produced for a scope that has already been
+// torn down. Panics from the disposable's Close are recovered (we have no
+// caller to report to and we don't want to crash the goroutine that produced
+// the orphan).
+func closeOrphan(v any) {
+	d, ok := v.(Disposable)
+	if !ok {
+		return
+	}
+	defer func() {
+		_ = recover()
+	}()
+	_ = d.Close()
+}
+
+// safeClose calls d.Close() with panic recovery so a single misbehaving
+// disposable can't abort the rest of a teardown loop. Recovered panics are
+// returned as a wrapped error so the caller can aggregate them into a
+// DisposalError.
+func safeClose(d Disposable) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic during Close: %v", r)
+		}
+	}()
+	return d.Close()
+}
+
+// flightKey computes a single-flight key for a descriptor. Multi-return and
+// Out-struct constructors produce several descriptors that share the same
+// reflect.Value constructor; flightKey returns the constructor pointer in
+// that case so that one ctor invocation serves every sister descriptor.
+// Instance descriptors don't share constructors, so the descriptor pointer
+// itself is used.
+func flightKey(d *Descriptor) any {
+	if d.IsInstance {
+		return d
+	}
+	return d.Constructor.Pointer()
+}
+
+// resolveScopedSingleFlight runs createInstance for a Scoped descriptor under
+// single-flight: concurrent resolutions of the same key (or of sister output
+// keys from the same multi-return ctor) share one constructor invocation.
+func (s *scope) resolveScopedSingleFlight(key instanceKey, descriptor *Descriptor) (any, error) {
+	fkey := flightKey(descriptor)
+	newFlight := &scopeFlight{done: make(chan struct{})}
+	raw, loaded := s.inflight.LoadOrStore(fkey, newFlight)
+	flight := raw.(*scopeFlight)
+
+	if loaded {
+		<-flight.done
+		// Sister flights may have cached our key during their createInstance.
+		if instance, ok := s.getInstance(key); ok {
+			return instance, nil
+		}
+		if flight.err != nil {
+			return nil, flight.err
+		}
+		return nil, &ResolutionError{
+			ServiceType: key.Type,
+			ServiceKey:  key.Key,
+			Cause:       ErrServiceNotFound,
 		}
 	}
+
+	defer func() {
+		s.inflight.Delete(fkey)
+		close(flight.done)
+	}()
+
+	// Re-check the cache: another flight might have completed and been
+	// deleted between our initial getInstance miss and LoadOrStore.
+	if instance, ok := s.getInstance(key); ok {
+		flight.instance = instance
+		return instance, nil
+	}
+
+	flight.instance, flight.err = s.createInstance(descriptor)
+	return flight.instance, flight.err
 }
 
 var (
@@ -359,18 +496,10 @@ func (s *scope) resolve(key instanceKey, descriptor *Descriptor) (any, error) {
 		}
 
 	case Scoped:
-		// Check for circular dependency only when creating new instance
 		if instance, ok := s.getInstance(key); ok {
 			return instance, nil
 		}
-
-		// Create and cache scoped instance
-		instance, err := s.createInstance(descriptor)
-		if err != nil {
-			return nil, err
-		}
-
-		return instance, nil
+		return s.resolveScopedSingleFlight(key, descriptor)
 
 	case Transient:
 		// Always create new instance
@@ -413,13 +542,20 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 		return instance, nil
 	}
 
-	// Analyze constructor
-	info, err := s.rootProvider.analyzer.Analyze(descriptor.Constructor.Interface())
-	if err != nil {
-		return nil, &ReflectionAnalysisError{
-			Constructor: descriptor.Constructor.Interface(),
-			Operation:   "analyze",
-			Cause:       err,
+	// Read the pre-analyzed constructor info stashed on the descriptor at
+	// registration time. Falls back to a fresh Analyze for descriptors that
+	// were created outside the normal Add* path (e.g. constructed directly
+	// in tests).
+	info := descriptor.info
+	if info == nil {
+		var err error
+		info, err = s.rootProvider.analyzer.Analyze(descriptor.Constructor.Interface())
+		if err != nil {
+			return nil, &ReflectionAnalysisError{
+				Constructor: descriptor.Constructor.Interface(),
+				Operation:   "analyze",
+				Cause:       err,
+			}
 		}
 	}
 

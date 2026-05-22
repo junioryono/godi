@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 	"sync"
+	"sync/atomic"
 )
 
 type In struct{}
@@ -24,6 +25,11 @@ type Analyzer struct {
 	// Invoker cache for reusing ConstructorInvoker instances
 	invokerMu    sync.RWMutex
 	invokerCache map[uintptr]*ConstructorInvoker
+
+	// Diagnostic counter: total number of Analyze() invocations (cache hits
+	// + misses). Used by tests to assert that callers cache the result and
+	// don't re-Analyze on the hot path. Not part of the public API.
+	analyzeCalls atomic.Int64
 }
 
 // ConstructorInfo contains analyzed information about a constructor function or instance.
@@ -124,6 +130,7 @@ func New() *Analyzer {
 
 // Analyze analyzes a constructor function and extracts dependency information.
 func (a *Analyzer) Analyze(constructor any) (*ConstructorInfo, error) {
+	a.analyzeCalls.Add(1)
 	if constructor == nil {
 		return nil, fmt.Errorf("constructor cannot be nil")
 	}
@@ -448,6 +455,13 @@ func (a *Analyzer) GetDependencies(constructor any) ([]*Dependency, error) {
 	return info.dependencies, nil
 }
 
+// Dependencies returns the analyzed dependencies cached on this info value.
+// Use this when you already hold a *ConstructorInfo to avoid the extra
+// Analyze call (and its lock/lookup) that Analyzer.GetDependencies performs.
+func (info *ConstructorInfo) Dependencies() []*Dependency {
+	return info.dependencies
+}
+
 // GetServiceType determines the primary service type from a constructor or instance.
 func (a *Analyzer) GetServiceType(constructor any) (reflect.Type, error) {
 	info, err := a.Analyze(constructor)
@@ -559,6 +573,13 @@ func (a *Analyzer) CacheSize() int {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return len(a.cache)
+}
+
+// AnalyzeCalls returns the total number of calls made to Analyze. It is
+// intended for use by tests that want to assert callers cache the result
+// rather than re-analyzing on every operation. Not part of the public API.
+func (a *Analyzer) AnalyzeCalls() int64 {
+	return a.analyzeCalls.Load()
 }
 
 // hasEmbeddedType checks if a type has an embedded field of the given type.

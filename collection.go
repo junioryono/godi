@@ -479,7 +479,11 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// Parse options to handle special registration cases
+	// newDescriptorWithAnalyzer already parsed options and validated them,
+	// and Analyze() was called on the way through. Re-parse the options
+	// locally so we can inspect them (Name/Group/As), but skip the second
+	// Analyze call and the second Validate by reading the cached info off
+	// the descriptor.
 	options := &addOptions{}
 	for _, opt := range opts {
 		if opt != nil {
@@ -487,23 +491,18 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 		}
 	}
 
-	// Validate options
-	if optErr := options.Validate(); optErr != nil {
-		return &RegistrationError{
-			ServiceType: descriptor.Type,
-			Operation:   "validate options",
-			Cause:       optErr,
-		}
-	}
-
-	// Check if this is a multi-return constructor (not an Out struct)
-	// Use shared analyzer for caching
-	info, err := r.analyzer.Analyze(service)
-	if err != nil {
-		return &ReflectionAnalysisError{
-			Constructor: service,
-			Operation:   "analyze",
-			Cause:       err,
+	info := descriptor.info
+	if info == nil {
+		// Defensive fallback: a descriptor constructed outside the normal
+		// path won't have info stashed. Re-analyze in that case.
+		var err error
+		info, err = r.analyzer.Analyze(service)
+		if err != nil {
+			return &ReflectionAnalysisError{
+				Constructor: service,
+				Operation:   "analyze",
+				Cause:       err,
+			}
 		}
 	}
 
@@ -534,6 +533,7 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 				resultFields:    descriptor.resultFields,
 				isParamObject:   descriptor.isParamObject,
 				paramFields:     descriptor.paramFields,
+				info:            descriptor.info,
 			}
 
 			// Register the field descriptor
@@ -562,6 +562,16 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 
 		// If we have multiple non-error returns, register each as a separate service
 		if len(nonErrorReturns) > 1 {
+			// godi.As is ambiguous for multi-return constructors: it's
+			// unclear which return value the interface should bind to.
+			// Reject explicitly rather than silently dropping the option.
+			if len(options.As) > 0 {
+				return &RegistrationError{
+					ServiceType: descriptor.Type,
+					Operation:   "register multi-return type",
+					Cause:       fmt.Errorf("godi.As cannot be combined with a multi-return constructor; register a wrapper constructor that returns the desired interface"),
+				}
+			}
 			for i, ret := range nonErrorReturns {
 				// Create a descriptor for each return type
 				typeDescriptor := &Descriptor{
@@ -577,6 +587,7 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 					isFunc:           descriptor.isFunc,
 					isParamObject:    descriptor.isParamObject,
 					paramFields:      descriptor.paramFields,
+					info:             descriptor.info,
 				}
 
 				// Apply name/key only to the first return if specified
@@ -633,6 +644,7 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 				resultFields:     descriptor.resultFields,
 				isParamObject:    descriptor.isParamObject,
 				paramFields:      descriptor.paramFields,
+				info:             descriptor.info,
 			}
 
 			// Register the interface descriptor

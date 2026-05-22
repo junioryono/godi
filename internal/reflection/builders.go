@@ -4,7 +4,45 @@ import (
 	"fmt"
 	"reflect"
 	"runtime/debug"
+	"sync"
 )
+
+// argsPool reuses []reflect.Value backing arrays across constructor
+// invocations. The hot path resolves one slice per call; without the pool
+// each Transient resolve allocates a fresh slice. Reusing the backing array
+// drops one allocation per resolve.
+var argsPool = sync.Pool{
+	New: func() any {
+		s := make([]reflect.Value, 0, 8)
+		return &s
+	},
+}
+
+// borrowArgs returns a []reflect.Value of length n drawn from argsPool.
+// Callers must releaseArgs when done.
+func borrowArgs(n int) *[]reflect.Value {
+	pooled := argsPool.Get().(*[]reflect.Value)
+	if cap(*pooled) < n {
+		*pooled = make([]reflect.Value, n)
+	} else {
+		*pooled = (*pooled)[:n]
+	}
+	return pooled
+}
+
+// releaseArgs returns a borrowed args slice to the pool after zeroing entries
+// so the pool doesn't keep references to old values alive.
+func releaseArgs(p *[]reflect.Value) {
+	if p == nil {
+		return
+	}
+	s := *p
+	for i := range s {
+		s[i] = reflect.Value{}
+	}
+	*p = s[:0]
+	argsPool.Put(p)
+}
 
 // ParamObjectBuilder builds parameter objects (In structs) with resolved dependencies.
 type ParamObjectBuilder struct {
@@ -276,10 +314,18 @@ func (ci *ConstructorInvoker) Invoke(
 		return []reflect.Value{reflect.ValueOf(info.InstanceValue)}, nil
 	}
 
-	// Build arguments
-	args, err := ci.buildArguments(info, resolver)
+	// Build arguments into a pooled scratch slice so the per-resolve
+	// allocation cost is zero for the args backing array. The pool is
+	// returned after Call (which copies the values it needs).
+	argsPtr, err := ci.buildArguments(info, resolver)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build arguments: %w", err)
+	}
+	defer releaseArgs(argsPtr)
+
+	var args []reflect.Value
+	if argsPtr != nil {
+		args = *argsPtr
 	}
 
 	// Call the constructor with panic recovery
@@ -317,11 +363,13 @@ func (ci *ConstructorInvoker) invokeWithRecovery(info *ConstructorInfo, args []r
 	return results, nil
 }
 
-// buildArguments builds the argument list for a constructor.
+// buildArguments builds the argument list for a constructor. The returned
+// slice pointer comes from argsPool and must be released by the caller via
+// releaseArgs once Call has consumed it.
 func (ci *ConstructorInvoker) buildArguments(
 	info *ConstructorInfo,
 	resolver DependencyResolver,
-) ([]reflect.Value, error) {
+) (*[]reflect.Value, error) {
 	if info.IsParamObject {
 		// Build the In struct
 		paramType := info.Type.In(0)
@@ -329,7 +377,9 @@ func (ci *ConstructorInvoker) buildArguments(
 		if err != nil {
 			return nil, err
 		}
-		return []reflect.Value{paramValue}, nil
+		argsPtr := borrowArgs(1)
+		(*argsPtr)[0] = paramValue
+		return argsPtr, nil
 	}
 
 	// Regular parameters - resolve each one
@@ -338,16 +388,18 @@ func (ci *ConstructorInvoker) buildArguments(
 		return nil, nil
 	}
 
-	args := make([]reflect.Value, numParams)
+	argsPtr := borrowArgs(numParams)
+	args := *argsPtr
 	for i, param := range info.Parameters {
 		value, err := ci.resolveParameter(&param, resolver)
 		if err != nil {
+			releaseArgs(argsPtr)
 			return nil, fmt.Errorf("failed to resolve parameter %d: %w", i, err)
 		}
 		args[i] = reflect.ValueOf(value)
 	}
 
-	return args, nil
+	return argsPtr, nil
 }
 
 // resolveParameter resolves a single parameter.
