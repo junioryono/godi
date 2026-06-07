@@ -43,7 +43,7 @@ type ConstructorInfo struct {
 	IsParamObject      bool               // Has In embedded struct
 	IsResultObject     bool               // Has Out embedded struct
 	HasErrorReturn     bool               // Returns error as last value
-	argumentParameters ArgumentParameters // Custom argument parameters.
+	argumentParameters ArgumentParameters // Custom argument parameters
 
 	// Cached for performance
 	dependencies []*Dependency
