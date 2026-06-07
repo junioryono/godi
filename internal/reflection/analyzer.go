@@ -44,7 +44,7 @@ type ConstructorInfo struct {
 	IsResultObject bool // Has Out embedded struct
 	HasErrorReturn bool // Returns error as last value
 
-	argumentInfo []ArgumentInfo
+	argumentInfo ArgumentInfoList
 
 	// Cached for performance
 	dependencies []*Dependency
@@ -254,15 +254,7 @@ func (a *Analyzer) analyzeParameters(info *ConstructorInfo) error {
 	info.Parameters = make([]ParameterInfo, fnType.NumIn())
 	for i := 0; i < fnType.NumIn(); i++ {
 		paramType := fnType.In(i)
-		var pkey any
-		var pgroup string
-		for _, ap := range info.argumentInfo {
-			if ap.Index == i {
-				pkey = ap.Key
-				pgroup = ap.Group
-				break
-			}
-		}
+		pkey, pgroup, _ := info.argumentInfo.FindIndex(i)
 		info.Parameters[i] = ParameterInfo{
 			Type:     paramType,
 			Index:    i,
@@ -646,6 +638,17 @@ type ArgumentInfo struct {
 	Index int
 	Key   any
 	Group string
+}
+
+type ArgumentInfoList []ArgumentInfo
+
+func (a ArgumentInfoList) FindIndex(index int) (key any, group string, ok bool) {
+	for _, arg := range a {
+		if arg.Index == index {
+			return arg.Key, arg.Group, true
+		}
+	}
+	return nil, "", false
 }
 
 type AnalyzeOption func(options *analyzeOptions)
