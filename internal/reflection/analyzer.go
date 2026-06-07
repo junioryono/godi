@@ -34,17 +34,15 @@ type Analyzer struct {
 
 // ConstructorInfo contains analyzed information about a constructor function or instance.
 type ConstructorInfo struct {
-	Type               reflect.Type
-	Value              reflect.Value
-	Parameters         []ParameterInfo
-	Returns            []ReturnInfo
-	IsFunc             bool               // True if this is a function constructor
-	InstanceValue      any                // The actual instance value when IsInstance is true
-	IsParamObject      bool               // Has In embedded struct
-	IsResultObject     bool               // Has Out embedded struct
-	HasErrorReturn     bool               // Returns error as last value
-	argumentParameters ArgumentParameters // Custom argument parameters
-	resultParameters   ArgumentParameters // Custom result parameters
+	Type           reflect.Type
+	Value          reflect.Value
+	Parameters     []ParameterInfo
+	Returns        []ReturnInfo
+	IsFunc         bool // True if this is a function constructor
+	InstanceValue  any  // The actual instance value when IsInstance is true
+	IsParamObject  bool // Has In embedded struct
+	IsResultObject bool // Has Out embedded struct
+	HasErrorReturn bool // Returns error as last value
 
 	// Cached for performance
 	dependencies []*Dependency
@@ -176,10 +174,8 @@ func (a *Analyzer) Analyze(constructor any, options ...AnalyzeOption) (*Construc
 
 	// Perform analysis
 	info := &ConstructorInfo{
-		Type:               typ,
-		Value:              val,
-		argumentParameters: optns.argumentParameters,
-		resultParameters:   optns.resultParameters,
+		Type:  typ,
+		Value: val,
 	}
 
 	// Check if it's a function
@@ -194,12 +190,12 @@ func (a *Analyzer) Analyze(constructor any, options ...AnalyzeOption) (*Construc
 	info.IsFunc = true
 
 	// Analyze parameters
-	if err := a.analyzeParameters(info); err != nil {
+	if err := a.analyzeParameters(info, optns.argumentParameters); err != nil {
 		return nil, fmt.Errorf("failed to analyze parameters: %w", err)
 	}
 
 	// Analyze return values
-	if err := a.analyzeReturns(info); err != nil {
+	if err := a.analyzeReturns(info, optns.resultParameters); err != nil {
 		return nil, fmt.Errorf("failed to analyze returns: %w", err)
 	}
 
@@ -239,7 +235,7 @@ func (a *Analyzer) GetInvoker() *ConstructorInvoker {
 }
 
 // analyzeParameters analyzes function parameters or In struct fields.
-func (a *Analyzer) analyzeParameters(info *ConstructorInfo) error {
+func (a *Analyzer) analyzeParameters(info *ConstructorInfo, argumentParameters ArgumentParameters) error {
 	fnType := info.Type
 
 	// Check for In parameter object
@@ -247,7 +243,7 @@ func (a *Analyzer) analyzeParameters(info *ConstructorInfo) error {
 		paramType := fnType.In(0)
 		if hasEmbeddedType(paramType, inType) {
 			info.IsParamObject = true
-			return a.analyzeParamObject(info, paramType)
+			return a.analyzeParamObject(info, paramType, argumentParameters)
 		}
 	}
 
@@ -255,7 +251,7 @@ func (a *Analyzer) analyzeParameters(info *ConstructorInfo) error {
 	info.Parameters = make([]ParameterInfo, fnType.NumIn())
 	for i := 0; i < fnType.NumIn(); i++ {
 		paramType := fnType.In(i)
-		pkey, pgroup, _ := info.argumentParameters.FindIndex(i)
+		pkey, pgroup, _ := argumentParameters.FindIndex(i)
 		info.Parameters[i] = ParameterInfo{
 			Type:     paramType,
 			Index:    i,
@@ -270,7 +266,7 @@ func (a *Analyzer) analyzeParameters(info *ConstructorInfo) error {
 }
 
 // analyzeParamObject analyzes an In struct's fields.
-func (a *Analyzer) analyzeParamObject(info *ConstructorInfo, structType reflect.Type) error {
+func (a *Analyzer) analyzeParamObject(info *ConstructorInfo, structType reflect.Type, argumentParameters ArgumentParameters) error {
 	if structType.Kind() == reflect.Pointer {
 		structType = structType.Elem()
 	}
@@ -279,7 +275,7 @@ func (a *Analyzer) analyzeParamObject(info *ConstructorInfo, structType reflect.
 		return fmt.Errorf("In parameter must be a struct, got %v", structType.Kind())
 	}
 
-	if len(info.argumentParameters) > 0 {
+	if len(argumentParameters) > 0 {
 		return fmt.Errorf("In parameter cannot have custom argument parameters")
 	}
 
@@ -330,7 +326,7 @@ func (a *Analyzer) analyzeParamObject(info *ConstructorInfo, structType reflect.
 }
 
 // analyzeReturns analyzes function return values or Out struct fields.
-func (a *Analyzer) analyzeReturns(info *ConstructorInfo) error {
+func (a *Analyzer) analyzeReturns(info *ConstructorInfo, resultParameters ArgumentParameters) error {
 	fnType := info.Type
 
 	if fnType.NumOut() == 0 {
@@ -341,7 +337,7 @@ func (a *Analyzer) analyzeReturns(info *ConstructorInfo) error {
 	firstReturn := fnType.Out(0)
 	if hasEmbeddedType(firstReturn, outType) {
 		info.IsResultObject = true
-		return a.analyzeResultObject(info, firstReturn)
+		return a.analyzeResultObject(info, firstReturn, resultParameters)
 	}
 
 	// Handle multiple returns (including multiple non-error returns)
@@ -363,7 +359,7 @@ func (a *Analyzer) analyzeReturns(info *ConstructorInfo) error {
 			})
 		default:
 			// Regular non-error return
-			pkey, pgroup, _ := info.resultParameters.FindIndex(i)
+			pkey, pgroup, _ := resultParameters.FindIndex(i)
 			info.Returns = append(info.Returns, ReturnInfo{
 				Type:    retType,
 				Index:   i,
@@ -378,7 +374,7 @@ func (a *Analyzer) analyzeReturns(info *ConstructorInfo) error {
 }
 
 // analyzeResultObject analyzes an Out struct's fields.
-func (a *Analyzer) analyzeResultObject(info *ConstructorInfo, structType reflect.Type) error {
+func (a *Analyzer) analyzeResultObject(info *ConstructorInfo, structType reflect.Type, resultParameters ArgumentParameters) error {
 	if structType.Kind() == reflect.Pointer {
 		structType = structType.Elem()
 	}
@@ -387,7 +383,7 @@ func (a *Analyzer) analyzeResultObject(info *ConstructorInfo, structType reflect
 		return fmt.Errorf("Out result must be a struct, got %v", structType.Kind())
 	}
 
-	if len(info.resultParameters) > 0 {
+	if len(resultParameters) > 0 {
 		return fmt.Errorf("Out result cannot have custom parameters")
 	}
 
