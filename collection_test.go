@@ -303,6 +303,24 @@ func TestCollectionParameterObjects(t *testing.T) {
 	assert.Nil(t, svc.Dep) // Optional and not registered
 }
 
+func TestCollectionParameterObjectsArgumentParametersUnsupported(t *testing.T) {
+	t.Parallel()
+
+	type Params struct {
+		In
+		Service *TService
+		Dep     *TDependency `optional:"true"`
+	}
+
+	c := NewCollection()
+	require.NoError(t, c.AddSingleton(NewTService))
+	err := c.AddSingleton(func(p Params) *TServiceWithDeps {
+		return &TServiceWithDeps{Svc: p.Service, Dep: p.Dep}
+	}, ArgumentKey(3, "duration"))
+	var regErr *RegistrationError
+	assert.ErrorAs(t, err, &regErr)
+}
+
 func TestCollectionResultObjects(t *testing.T) {
 	t.Parallel()
 
