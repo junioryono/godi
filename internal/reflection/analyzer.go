@@ -44,7 +44,7 @@ type ConstructorInfo struct {
 	IsResultObject bool // Has Out embedded struct
 	HasErrorReturn bool // Returns error as last value
 
-	argumentInfos []ArgumentInfo
+	argumentInfo []ArgumentInfo
 
 	// Cached for performance
 	dependencies []*Dependency
@@ -176,9 +176,9 @@ func (a *Analyzer) Analyze(constructor any, options ...AnalyzeOption) (*Construc
 
 	// Perform analysis
 	info := &ConstructorInfo{
-		Type:          typ,
-		Value:         val,
-		argumentInfos: optns.argumentInfos,
+		Type:         typ,
+		Value:        val,
+		argumentInfo: optns.argumentInfo,
 	}
 
 	// Check if it's a function
@@ -256,7 +256,7 @@ func (a *Analyzer) analyzeParameters(info *ConstructorInfo) error {
 		paramType := fnType.In(i)
 		var pkey any
 		var pgroup string
-		for _, ap := range info.argumentInfos {
+		for _, ap := range info.argumentInfo {
 			if ap.Index == i {
 				pkey = ap.Key
 				pgroup = ap.Group
@@ -650,12 +650,12 @@ type ArgumentInfo struct {
 
 type AnalyzeOption func(options *analyzeOptions)
 
-func WithArgumentInfos(info ...ArgumentInfo) AnalyzeOption {
+func WithArgumentInfo(info ...ArgumentInfo) AnalyzeOption {
 	return func(options *analyzeOptions) {
-		options.argumentInfos = append(options.argumentInfos, info...)
+		options.argumentInfo = append(options.argumentInfo, info...)
 	}
 }
 
 type analyzeOptions struct {
-	argumentInfos []ArgumentInfo
+	argumentInfo []ArgumentInfo
 }

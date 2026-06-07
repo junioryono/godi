@@ -81,10 +81,10 @@ type AddOption interface {
 // type ArgKey = reflection.ArgumentInfo
 
 type addOptions struct {
-	Name          string
-	Group         string
-	As            []any
-	ArgumentInfos []reflection.ArgumentInfo
+	Name         string
+	Group        string
+	As           []any
+	ArgumentInfo []reflection.ArgumentInfo
 }
 
 func (o *addOptions) Validate() error {
@@ -278,7 +278,7 @@ func (o addArgumentInfoOption) String() string {
 }
 
 func (o addArgumentInfoOption) applyAddOption(opt *addOptions) {
-	opt.ArgumentInfos = append(opt.ArgumentInfos, reflection.ArgumentInfo(o))
+	opt.ArgumentInfo = append(opt.ArgumentInfo, reflection.ArgumentInfo(o))
 }
 
 // Remove creates a ModuleOption for removing all services of type T.
