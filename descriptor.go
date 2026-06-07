@@ -32,6 +32,8 @@ type Descriptor struct {
 	// ConstructorType is the type of the constructor function
 	ConstructorType reflect.Type
 
+	ArgProvider []ArgInfo
+
 	// Dependencies are the analyzed dependencies
 	Dependencies []*reflection.Dependency
 
@@ -113,7 +115,7 @@ func newDescriptorWithAnalyzer(service any, lifetime Lifetime, analyzer *reflect
 		analyzer = reflection.New()
 	}
 
-	info, err := analyzer.Analyze(service)
+	info, err := analyzer.Analyze(service, reflection.ArgProvider(options.ArgInfos...))
 	if err != nil {
 		return nil, &ReflectionAnalysisError{
 			Constructor: service,
@@ -131,6 +133,7 @@ func newDescriptorWithAnalyzer(service any, lifetime Lifetime, analyzer *reflect
 		Lifetime:         lifetime,
 		Constructor:      constructorValue,
 		ConstructorType:  constructorType,
+		ArgProvider:      options.ArgInfos,
 		Dependencies:     dependencies,
 		Group:            options.Group,
 		IsInstance:       isInstance,

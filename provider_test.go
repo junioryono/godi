@@ -250,6 +250,23 @@ func TestProvider(t *testing.T) {
 		assert.NotNil(t, swd.Svc)
 		assert.NotNil(t, swd.Dep)
 	})
+
+	t.Run("ExtraArgs", func(t *testing.T) {
+		t.Parallel()
+		p := BuildProvider(t,
+			AddSingleton(NewTService),
+			AddSingleton(NewTDependency),
+			AddTransient(NewTServiceWithDepsAndValueArgs,
+				ArgProvider(2, "duration"),
+				ArgProvider(3, "folder"),
+			),
+		)
+
+		swd, err := Resolve[*TServiceWithDeps](p)
+		require.NoError(t, err)
+		assert.NotNil(t, swd.Svc)
+		assert.NotNil(t, swd.Dep)
+	})
 }
 
 // TestProviderCloseSurvivesDisposablePanic ensures the singleton-disposal loop

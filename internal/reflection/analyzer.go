@@ -44,6 +44,8 @@ type ConstructorInfo struct {
 	IsResultObject bool // Has Out embedded struct
 	HasErrorReturn bool // Returns error as last value
 
+	argProvider []ArgInfo
+
 	// Cached for performance
 	dependencies []*Dependency
 }
@@ -129,7 +131,12 @@ func New() *Analyzer {
 }
 
 // Analyze analyzes a constructor function and extracts dependency information.
-func (a *Analyzer) Analyze(constructor any) (*ConstructorInfo, error) {
+func (a *Analyzer) Analyze(constructor any, options ...AnalyzeOption) (*ConstructorInfo, error) {
+	var optns analyzeOptions
+	for _, option := range options {
+		option(&optns)
+	}
+
 	a.analyzeCalls.Add(1)
 	if constructor == nil {
 		return nil, fmt.Errorf("constructor cannot be nil")
@@ -169,8 +176,9 @@ func (a *Analyzer) Analyze(constructor any) (*ConstructorInfo, error) {
 
 	// Perform analysis
 	info := &ConstructorInfo{
-		Type:  typ,
-		Value: val,
+		Type:        typ,
+		Value:       val,
+		argProvider: optns.argProvider,
 	}
 
 	// Check if it's a function
@@ -246,9 +254,17 @@ func (a *Analyzer) analyzeParameters(info *ConstructorInfo) error {
 	info.Parameters = make([]ParameterInfo, fnType.NumIn())
 	for i := 0; i < fnType.NumIn(); i++ {
 		paramType := fnType.In(i)
+		var pkey any
+		for _, ap := range info.argProvider {
+			if ap.Index == i {
+				pkey = ap.Key
+				break
+			}
+		}
 		info.Parameters[i] = ParameterInfo{
 			Type:     paramType,
 			Index:    i,
+			Key:      pkey,
 			IsSlice:  paramType.Kind() == reflect.Slice,
 			ElemType: a.getSliceElemType(paramType),
 		}
@@ -621,4 +637,21 @@ func isInOutType(t, target reflect.Type) bool {
 // implementsError checks if a type implements the error interface.
 func implementsError(t reflect.Type) bool {
 	return t.Implements(errType)
+}
+
+type ArgInfo struct {
+	Index int
+	Key   any
+}
+
+type AnalyzeOption func(options *analyzeOptions)
+
+func ArgProvider(info ...ArgInfo) AnalyzeOption {
+	return func(options *analyzeOptions) {
+		options.argProvider = append(options.argProvider, info...)
+	}
+}
+
+type analyzeOptions struct {
+	argProvider []ArgInfo
 }

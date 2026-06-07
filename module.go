@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+
+	"github.com/junioryono/godi/v4/internal/reflection"
 )
 
 // ModuleOption represents a registration action within a module.
@@ -76,10 +78,13 @@ type AddOption interface {
 	applyAddOption(*addOptions)
 }
 
+type ArgInfo = reflection.ArgInfo
+
 type addOptions struct {
-	Name  string
-	Group string
-	As    []any
+	Name     string
+	Group    string
+	As       []any
+	ArgInfos []ArgInfo
 }
 
 func (o *addOptions) Validate() error {
@@ -250,6 +255,23 @@ func (o addAsOption) String() string {
 
 func (o addAsOption) applyAddOption(opts *addOptions) {
 	opts.As = append(opts.As, o...)
+}
+
+func ArgProvider(argIndex int, key any) AddOption {
+	return addArgProviderOption(ArgInfo{
+		Index: argIndex,
+		Key:   key,
+	})
+}
+
+type addArgProviderOption ArgInfo
+
+func (o addArgProviderOption) String() string {
+	return fmt.Sprintf("ArgProvider(%d:%s)", o.Index, o.Key)
+}
+
+func (o addArgProviderOption) applyAddOption(opt *addOptions) {
+	opt.ArgInfos = append(opt.ArgInfos, ArgInfo(o))
 }
 
 // Remove creates a ModuleOption for removing all services of type T.

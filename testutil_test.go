@@ -29,8 +29,10 @@ type TDependency struct {
 
 // TServiceWithDeps demonstrates dependency injection.
 type TServiceWithDeps struct {
-	Svc *TService
-	Dep *TDependency
+	Svc      *TService
+	Dep      *TDependency
+	Duration time.Duration
+	Folder   string
 }
 
 // TInterface is a basic interface for testing.
@@ -147,6 +149,10 @@ func NewTDependencyWithName(name string) func() *TDependency {
 
 func NewTServiceWithDeps(svc *TService, dep *TDependency) *TServiceWithDeps {
 	return &TServiceWithDeps{Svc: svc, Dep: dep}
+}
+
+func NewTServiceWithDepsAndValueArgs(svc *TService, dep *TDependency, duration time.Duration, folder string) *TServiceWithDeps {
+	return &TServiceWithDeps{Svc: svc, Dep: dep, Duration: duration, Folder: folder}
 }
 
 func NewTDisposable() *TDisposable {
