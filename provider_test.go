@@ -263,12 +263,15 @@ func TestProvider(t *testing.T) {
 			),
 			AddSingleton(time.Hour, Name("duration")),
 			AddSingleton("my-folder", Group("folder")),
+			AddSingleton("my-folder-2", Group("folder")),
 		)
 
 		swd, err := Resolve[*TServiceWithDeps](p)
 		require.NoError(t, err)
 		assert.NotNil(t, swd.Svc)
 		assert.NotNil(t, swd.Dep)
+		assert.Equal(t, time.Hour, swd.Duration)
+		assert.Equal(t, []string{"my-folder", "my-folder-2"}, swd.Folder)
 	})
 }
 
