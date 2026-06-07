@@ -178,7 +178,7 @@ func (a *Analyzer) Analyze(constructor any, options ...AnalyzeOption) (*Construc
 	info := &ConstructorInfo{
 		Type:         typ,
 		Value:        val,
-		argumentKeys: optns.argKeys,
+		argumentKeys: optns.argumentKeys,
 	}
 
 	// Check if it's a function
@@ -652,10 +652,10 @@ type AnalyzeOption func(options *analyzeOptions)
 
 func WithArgumentKeys(info ...ArgumentKey) AnalyzeOption {
 	return func(options *analyzeOptions) {
-		options.argKeys = append(options.argKeys, info...)
+		options.argumentKeys = append(options.argumentKeys, info...)
 	}
 }
 
 type analyzeOptions struct {
-	argKeys []ArgumentKey
+	argumentKeys []ArgumentKey
 }
