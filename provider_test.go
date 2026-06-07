@@ -3,6 +3,7 @@ package godi
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -260,6 +261,8 @@ func TestProvider(t *testing.T) {
 				ArgProvider(2, "duration"),
 				ArgProvider(3, "folder"),
 			),
+			AddSingleton(time.Hour, Name("duration")),
+			AddSingleton("my-folder", Name("folder")),
 		)
 
 		swd, err := Resolve[*TServiceWithDeps](p)
