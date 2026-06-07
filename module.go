@@ -264,6 +264,13 @@ func ArgumentKey(argIndex int, key any) AddOption {
 	})
 }
 
+func ArgumentGroup(argIndex int, name string) AddOption {
+	return addArgumentKeyOption(reflection.ArgumentKey{
+		Index: argIndex,
+		Group: name,
+	})
+}
+
 type addArgumentKeyOption reflection.ArgumentKey
 
 func (o addArgumentKeyOption) String() string {

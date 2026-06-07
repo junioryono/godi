@@ -255,9 +255,11 @@ func (a *Analyzer) analyzeParameters(info *ConstructorInfo) error {
 	for i := 0; i < fnType.NumIn(); i++ {
 		paramType := fnType.In(i)
 		var pkey any
+		var pgroup string
 		for _, ap := range info.argProvider {
 			if ap.Index == i {
 				pkey = ap.Key
+				pgroup = ap.Group
 				break
 			}
 		}
@@ -265,6 +267,7 @@ func (a *Analyzer) analyzeParameters(info *ConstructorInfo) error {
 			Type:     paramType,
 			Index:    i,
 			Key:      pkey,
+			Group:    pgroup,
 			IsSlice:  paramType.Kind() == reflect.Slice,
 			ElemType: a.getSliceElemType(paramType),
 		}
@@ -642,6 +645,7 @@ func implementsError(t reflect.Type) bool {
 type ArgumentKey struct {
 	Index int
 	Key   any
+	Group string
 }
 
 type AnalyzeOption func(options *analyzeOptions)
