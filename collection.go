@@ -583,7 +583,7 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 					Constructor:      descriptor.Constructor,
 					ConstructorType:  descriptor.ConstructorType,
 					Dependencies:     descriptor.Dependencies,
-					Group:            descriptor.Group, // TODO: ret.Group?
+					Group:            descriptor.Group,
 					As:               descriptor.As,
 					IsInstance:       false,
 					MultiReturnIndex: ret.Index,
