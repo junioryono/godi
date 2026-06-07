@@ -300,7 +300,7 @@ func (o addArgumentInfoOption) String() string {
 	if o.Key == nil {
 		return fmt.Sprintf("ArgumentGroup(%d:%s)", o.Index, o.Group)
 	}
-	return fmt.Sprintf("ArgumentKey(%d:%s)", o.Index, o.Key)
+	return fmt.Sprintf("ArgumentKey(%d:%v)", o.Index, o.Key)
 }
 
 func (o addArgumentInfoOption) applyAddOption(opt *addOptions) {
