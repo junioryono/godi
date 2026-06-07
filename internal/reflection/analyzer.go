@@ -646,7 +646,7 @@ type ArgumentKey struct {
 
 type AnalyzeOption func(options *analyzeOptions)
 
-func WithArgumentKey(info ...ArgumentKey) AnalyzeOption {
+func WithArgumentKeys(info ...ArgumentKey) AnalyzeOption {
 	return func(options *analyzeOptions) {
 		options.argKeys = append(options.argKeys, info...)
 	}
