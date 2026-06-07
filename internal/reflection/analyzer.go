@@ -44,7 +44,7 @@ type ConstructorInfo struct {
 	IsResultObject bool // Has Out embedded struct
 	HasErrorReturn bool // Returns error as last value
 
-	argProvider []ArgInfo
+	argProvider []ArgumentKey
 
 	// Cached for performance
 	dependencies []*Dependency
@@ -178,7 +178,7 @@ func (a *Analyzer) Analyze(constructor any, options ...AnalyzeOption) (*Construc
 	info := &ConstructorInfo{
 		Type:        typ,
 		Value:       val,
-		argProvider: optns.argProvider,
+		argProvider: optns.argKeys,
 	}
 
 	// Check if it's a function
@@ -639,19 +639,19 @@ func implementsError(t reflect.Type) bool {
 	return t.Implements(errType)
 }
 
-type ArgInfo struct {
+type ArgumentKey struct {
 	Index int
 	Key   any
 }
 
 type AnalyzeOption func(options *analyzeOptions)
 
-func ArgProvider(info ...ArgInfo) AnalyzeOption {
+func WithArgumentKey(info ...ArgumentKey) AnalyzeOption {
 	return func(options *analyzeOptions) {
-		options.argProvider = append(options.argProvider, info...)
+		options.argKeys = append(options.argKeys, info...)
 	}
 }
 
 type analyzeOptions struct {
-	argProvider []ArgInfo
+	argKeys []ArgumentKey
 }
