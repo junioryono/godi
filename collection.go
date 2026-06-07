@@ -594,13 +594,17 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 				}
 
 				// Apply name/key only to the first return if specified
-				if typeDescriptor.Key == nil {
+				if ret.Key == nil {
 					if options.Name != "" && i == 0 {
 						typeDescriptor.Key = options.Name
 					} else if options.Name != "" {
 						// For subsequent returns, leave them unkeyed
 						typeDescriptor.Key = nil
 					}
+				}
+
+				if ret.Group != "" {
+					typeDescriptor.Group = ret.Group
 				}
 
 				// Register each type descriptor
