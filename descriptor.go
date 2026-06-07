@@ -29,6 +29,7 @@ type Descriptor struct {
 	// Constructor is the reflected function value
 	Constructor reflect.Value
 
+	// ArgumentInfo are custom argument parameters.
 	ArgumentInfo []reflection.ArgumentInfo
 
 	// ConstructorType is the type of the constructor function

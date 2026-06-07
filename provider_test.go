@@ -252,18 +252,16 @@ func TestProvider(t *testing.T) {
 		assert.NotNil(t, swd.Dep)
 	})
 
-	t.Run("ExtraArgs", func(t *testing.T) {
+	t.Run("ArgumentParameters", func(t *testing.T) {
 		t.Parallel()
 		p := BuildProvider(t,
 			AddSingleton(NewTService),
 			AddSingleton(NewTDependency),
 			AddTransient(NewTServiceWithDepsAndValueArgs,
 				ArgumentKey(2, "duration"),
-				// ArgumentInfo(3, "folder"),
 				ArgumentGroup(3, "folder"),
 			),
 			AddSingleton(time.Hour, Name("duration")),
-			// AddSingleton("my-folder", Name("folder")),
 			AddSingleton("my-folder", Group("folder")),
 		)
 

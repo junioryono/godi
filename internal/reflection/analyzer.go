@@ -38,13 +38,12 @@ type ConstructorInfo struct {
 	Value          reflect.Value
 	Parameters     []ParameterInfo
 	Returns        []ReturnInfo
-	IsFunc         bool // True if this is a function constructor
-	InstanceValue  any  // The actual instance value when IsInstance is true
-	IsParamObject  bool // Has In embedded struct
-	IsResultObject bool // Has Out embedded struct
-	HasErrorReturn bool // Returns error as last value
-
-	argumentInfo ArgumentInfoList
+	IsFunc         bool             // True if this is a function constructor
+	InstanceValue  any              // The actual instance value when IsInstance is true
+	IsParamObject  bool             // Has In embedded struct
+	IsResultObject bool             // Has Out embedded struct
+	HasErrorReturn bool             // Returns error as last value
+	argumentInfo   ArgumentInfoList // Custom argument parameters.
 
 	// Cached for performance
 	dependencies []*Dependency

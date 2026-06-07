@@ -78,8 +78,6 @@ type AddOption interface {
 	applyAddOption(*addOptions)
 }
 
-// type ArgKey = reflection.ArgumentInfo
-
 type addOptions struct {
 	Name         string
 	Group        string
@@ -257,6 +255,18 @@ func (o addAsOption) applyAddOption(opts *addOptions) {
 	opts.As = append(opts.As, o...)
 }
 
+// ArgumentKey is an AddOption that adds a Key to a constructor argument, so that it can be loaded via GetKeyed.
+//
+// Given,
+//
+//	func NewReadOnlyConnection(source Server, duration time.Duration) (*Connection, error)
+//
+// The following will provide the value from the keyed singleton "duration" to NewReadOnlyConnection.
+//
+//	c.AddSingleton(NewReadOnlyConnection, godi.ArgumentKey(1, "duration"))
+//	c.AddSingleton(time.Hour, godi.Name("duration"))
+//
+// As argument names are not available in reflection, a 0-based argument index is used in the option.
 func ArgumentKey(argIndex int, key any) AddOption {
 	return addArgumentInfoOption(reflection.ArgumentInfo{
 		Index: argIndex,
@@ -264,6 +274,19 @@ func ArgumentKey(argIndex int, key any) AddOption {
 	})
 }
 
+// ArgumentGroup is an AddOption that adds a Group to a constructor argument, so that it can be loaded via GetGroup.
+//
+// Given,
+//
+//	func NewReadOnlyConnection(source Server, folders []string) (*Connection, error)
+//
+// The following will provide values from the keyed singleton "folder" to NewReadOnlyConnection.
+//
+//	c.AddSingleton(NewReadOnlyConnection, godi.ArgumentGroup(1, "folder"))
+//	c.AddSingleton("folder-a", godi.Group("folder"))
+//	c.AddSingleton("folder-b", godi.Group("folder"))
+//
+// As argument names are not available in reflection, a 0-based argument index is used in the option.
 func ArgumentGroup(argIndex int, name string) AddOption {
 	return addArgumentInfoOption(reflection.ArgumentInfo{
 		Index: argIndex,
