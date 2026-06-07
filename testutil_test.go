@@ -32,7 +32,7 @@ type TServiceWithDeps struct {
 	Svc      *TService
 	Dep      *TDependency
 	Duration time.Duration
-	Folder   string
+	Folder   []string
 }
 
 // TInterface is a basic interface for testing.
@@ -151,7 +151,7 @@ func NewTServiceWithDeps(svc *TService, dep *TDependency) *TServiceWithDeps {
 	return &TServiceWithDeps{Svc: svc, Dep: dep}
 }
 
-func NewTServiceWithDepsAndValueArgs(svc *TService, dep *TDependency, duration time.Duration, folder string) *TServiceWithDeps {
+func NewTServiceWithDepsAndValueArgs(svc *TService, dep *TDependency, duration time.Duration, folder []string) *TServiceWithDeps {
 	return &TServiceWithDeps{Svc: svc, Dep: dep, Duration: duration, Folder: folder}
 }
 

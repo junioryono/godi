@@ -263,7 +263,8 @@ func TestProvider(t *testing.T) {
 				ArgumentGroup(3, "folder"),
 			),
 			AddSingleton(time.Hour, Name("duration")),
-			AddSingleton("my-folder", Name("folder")),
+			// AddSingleton("my-folder", Name("folder")),
+			AddSingleton("my-folder", Group("folder")),
 		)
 
 		swd, err := Resolve[*TServiceWithDeps](p)
