@@ -388,7 +388,7 @@ func (a *Analyzer) analyzeResultObject(info *ConstructorInfo, structType reflect
 	}
 
 	if len(info.resultParameters) > 0 {
-		return fmt.Errorf("Out result cannot have custom argument parameters")
+		return fmt.Errorf("Out result cannot have custom parameters")
 	}
 
 	returns := make([]ReturnInfo, 0)
