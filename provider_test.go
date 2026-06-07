@@ -257,7 +257,7 @@ func TestProvider(t *testing.T) {
 		p := BuildProvider(t,
 			AddSingleton(NewTService),
 			AddSingleton(NewTDependency),
-			AddTransient(NewTServiceWithDepsAndValueArgs,
+			AddSingleton(NewTServiceWithDepsAndValueArgs,
 				ArgumentKey(2, "duration"),
 				ArgumentGroup(3, "folder"),
 			),
