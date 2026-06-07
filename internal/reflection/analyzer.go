@@ -34,16 +34,16 @@ type Analyzer struct {
 
 // ConstructorInfo contains analyzed information about a constructor function or instance.
 type ConstructorInfo struct {
-	Type           reflect.Type
-	Value          reflect.Value
-	Parameters     []ParameterInfo
-	Returns        []ReturnInfo
-	IsFunc         bool             // True if this is a function constructor
-	InstanceValue  any              // The actual instance value when IsInstance is true
-	IsParamObject  bool             // Has In embedded struct
-	IsResultObject bool             // Has Out embedded struct
-	HasErrorReturn bool             // Returns error as last value
-	argumentInfo   ArgumentInfoList // Custom argument parameters.
+	Type               reflect.Type
+	Value              reflect.Value
+	Parameters         []ParameterInfo
+	Returns            []ReturnInfo
+	IsFunc             bool               // True if this is a function constructor
+	InstanceValue      any                // The actual instance value when IsInstance is true
+	IsParamObject      bool               // Has In embedded struct
+	IsResultObject     bool               // Has Out embedded struct
+	HasErrorReturn     bool               // Returns error as last value
+	argumentParameters ArgumentParameters // Custom argument parameters.
 
 	// Cached for performance
 	dependencies []*Dependency
@@ -175,9 +175,9 @@ func (a *Analyzer) Analyze(constructor any, options ...AnalyzeOption) (*Construc
 
 	// Perform analysis
 	info := &ConstructorInfo{
-		Type:         typ,
-		Value:        val,
-		argumentInfo: optns.argumentInfo,
+		Type:               typ,
+		Value:              val,
+		argumentParameters: optns.argumentParameters,
 	}
 
 	// Check if it's a function
@@ -253,7 +253,7 @@ func (a *Analyzer) analyzeParameters(info *ConstructorInfo) error {
 	info.Parameters = make([]ParameterInfo, fnType.NumIn())
 	for i := 0; i < fnType.NumIn(); i++ {
 		paramType := fnType.In(i)
-		pkey, pgroup, _ := info.argumentInfo.FindIndex(i)
+		pkey, pgroup, _ := info.argumentParameters.FindIndex(i)
 		info.Parameters[i] = ParameterInfo{
 			Type:     paramType,
 			Index:    i,
@@ -633,15 +633,15 @@ func implementsError(t reflect.Type) bool {
 	return t.Implements(errType)
 }
 
-type ArgumentInfo struct {
+type ArgumentParameter struct {
 	Index int
 	Key   any
 	Group string
 }
 
-type ArgumentInfoList []ArgumentInfo
+type ArgumentParameters []ArgumentParameter
 
-func (a ArgumentInfoList) FindIndex(index int) (key any, group string, ok bool) {
+func (a ArgumentParameters) FindIndex(index int) (key any, group string, ok bool) {
 	for _, arg := range a {
 		if arg.Index == index {
 			return arg.Key, arg.Group, true
@@ -652,12 +652,12 @@ func (a ArgumentInfoList) FindIndex(index int) (key any, group string, ok bool) 
 
 type AnalyzeOption func(options *analyzeOptions)
 
-func WithArgumentInfo(info ...ArgumentInfo) AnalyzeOption {
+func WithArgumentParameters(parameters ...ArgumentParameter) AnalyzeOption {
 	return func(options *analyzeOptions) {
-		options.argumentInfo = append(options.argumentInfo, info...)
+		options.argumentParameters = append(options.argumentParameters, parameters...)
 	}
 }
 
 type analyzeOptions struct {
-	argumentInfo []ArgumentInfo
+	argumentParameters []ArgumentParameter
 }

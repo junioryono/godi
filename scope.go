@@ -550,7 +550,7 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 	if info == nil {
 		var err error
 		info, err = s.rootProvider.analyzer.Analyze(descriptor.Constructor.Interface(),
-			reflection.WithArgumentInfo(descriptor.ArgumentInfo...))
+			reflection.WithArgumentParameters(descriptor.ArgumentParameters...))
 		if err != nil {
 			return nil, &ReflectionAnalysisError{
 				Constructor: descriptor.Constructor.Interface(),

@@ -496,7 +496,7 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 		// Defensive fallback: a descriptor constructed outside the normal
 		// path won't have info stashed. Re-analyze in that case.
 		var err error
-		info, err = r.analyzer.Analyze(service, reflection.WithArgumentInfo(descriptor.ArgumentInfo...))
+		info, err = r.analyzer.Analyze(service, reflection.WithArgumentParameters(descriptor.ArgumentParameters...))
 		if err != nil {
 			return &ReflectionAnalysisError{
 				Constructor: service,

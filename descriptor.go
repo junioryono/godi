@@ -29,8 +29,8 @@ type Descriptor struct {
 	// Constructor is the reflected function value
 	Constructor reflect.Value
 
-	// ArgumentInfo are custom argument parameters.
-	ArgumentInfo []reflection.ArgumentInfo
+	// ArgumentParameters are custom argument parameters.
+	ArgumentParameters []reflection.ArgumentParameter
 
 	// ConstructorType is the type of the constructor function
 	ConstructorType reflect.Type
@@ -116,7 +116,7 @@ func newDescriptorWithAnalyzer(service any, lifetime Lifetime, analyzer *reflect
 		analyzer = reflection.New()
 	}
 
-	info, err := analyzer.Analyze(service, reflection.WithArgumentInfo(options.ArgumentInfo...))
+	info, err := analyzer.Analyze(service, reflection.WithArgumentParameters(options.ArgumentParameters...))
 	if err != nil {
 		return nil, &ReflectionAnalysisError{
 			Constructor: service,
@@ -131,15 +131,15 @@ func newDescriptorWithAnalyzer(service any, lifetime Lifetime, analyzer *reflect
 
 	// Create descriptor
 	descriptor := &Descriptor{
-		Lifetime:         lifetime,
-		Constructor:      constructorValue,
-		ConstructorType:  constructorType,
-		ArgumentInfo:     options.ArgumentInfo,
-		Dependencies:     dependencies,
-		Group:            options.Group,
-		IsInstance:       isInstance,
-		Instance:         nil,
-		MultiReturnIndex: -1,
+		Lifetime:           lifetime,
+		Constructor:        constructorValue,
+		ConstructorType:    constructorType,
+		ArgumentParameters: options.ArgumentParameters,
+		Dependencies:       dependencies,
+		Group:              options.Group,
+		IsInstance:         isInstance,
+		Instance:           nil,
+		MultiReturnIndex:   -1,
 	}
 
 	// Store the instance if it's not a function

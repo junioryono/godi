@@ -79,10 +79,10 @@ type AddOption interface {
 }
 
 type addOptions struct {
-	Name         string
-	Group        string
-	As           []any
-	ArgumentInfo []reflection.ArgumentInfo
+	Name               string
+	Group              string
+	As                 []any
+	ArgumentParameters []reflection.ArgumentParameter
 }
 
 func (o *addOptions) Validate() error {
@@ -268,7 +268,7 @@ func (o addAsOption) applyAddOption(opts *addOptions) {
 //
 // As argument names are not available in reflection, a 0-based argument index is used in the option.
 func ArgumentKey(argIndex int, key any) AddOption {
-	return addArgumentInfoOption(reflection.ArgumentInfo{
+	return addArgumentParameterOption(reflection.ArgumentParameter{
 		Index: argIndex,
 		Key:   key,
 	})
@@ -288,23 +288,23 @@ func ArgumentKey(argIndex int, key any) AddOption {
 //
 // As argument names are not available in reflection, a 0-based argument index is used in the option.
 func ArgumentGroup(argIndex int, name string) AddOption {
-	return addArgumentInfoOption(reflection.ArgumentInfo{
+	return addArgumentParameterOption(reflection.ArgumentParameter{
 		Index: argIndex,
 		Group: name,
 	})
 }
 
-type addArgumentInfoOption reflection.ArgumentInfo
+type addArgumentParameterOption reflection.ArgumentParameter
 
-func (o addArgumentInfoOption) String() string {
+func (o addArgumentParameterOption) String() string {
 	if o.Key == nil {
 		return fmt.Sprintf("ArgumentGroup(%d:%s)", o.Index, o.Group)
 	}
 	return fmt.Sprintf("ArgumentKey(%d:%v)", o.Index, o.Key)
 }
 
-func (o addArgumentInfoOption) applyAddOption(opt *addOptions) {
-	opt.ArgumentInfo = append(opt.ArgumentInfo, reflection.ArgumentInfo(o))
+func (o addArgumentParameterOption) applyAddOption(opt *addOptions) {
+	opt.ArgumentParameters = append(opt.ArgumentParameters, reflection.ArgumentParameter(o))
 }
 
 // Remove creates a ModuleOption for removing all services of type T.
