@@ -297,7 +297,10 @@ func ArgumentGroup(argIndex int, name string) AddOption {
 type addArgumentInfoOption reflection.ArgumentInfo
 
 func (o addArgumentInfoOption) String() string {
-	return fmt.Sprintf("ArgumentInfo(%d:%s)", o.Index, o.Key)
+	if o.Key == nil {
+		return fmt.Sprintf("ArgumentGroup(%d:%s)", o.Index, o.Group)
+	}
+	return fmt.Sprintf("ArgumentKey(%d:%s)", o.Index, o.Key)
 }
 
 func (o addArgumentInfoOption) applyAddOption(opt *addOptions) {
