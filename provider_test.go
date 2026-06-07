@@ -271,7 +271,7 @@ func TestProvider(t *testing.T) {
 		assert.NotNil(t, swd.Svc)
 		assert.NotNil(t, swd.Dep)
 		assert.Equal(t, time.Hour, swd.Duration)
-		assert.Equal(t, []string{"my-folder", "my-folder-2"}, swd.Folder)
+		assert.Equal(t, []string{"my-folder", "my-folder-2"}, swd.Folders)
 	})
 }
 

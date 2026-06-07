@@ -277,6 +277,10 @@ func (a *Analyzer) analyzeParamObject(info *ConstructorInfo, structType reflect.
 		return fmt.Errorf("In parameter must be a struct, got %v", structType.Kind())
 	}
 
+	if len(info.argumentParameters) > 0 {
+		return fmt.Errorf("In parameter cannot have custom argument parameters")
+	}
+
 	params := make([]ParameterInfo, 0)
 
 	for i := 0; i < structType.NumField(); i++ {
