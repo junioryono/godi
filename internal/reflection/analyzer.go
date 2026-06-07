@@ -44,6 +44,7 @@ type ConstructorInfo struct {
 	IsResultObject     bool               // Has Out embedded struct
 	HasErrorReturn     bool               // Returns error as last value
 	argumentParameters ArgumentParameters // Custom argument parameters
+	resultParameters   ArgumentParameters // Custom result parameters
 
 	// Cached for performance
 	dependencies []*Dependency
@@ -178,6 +179,7 @@ func (a *Analyzer) Analyze(constructor any, options ...AnalyzeOption) (*Construc
 		Type:               typ,
 		Value:              val,
 		argumentParameters: optns.argumentParameters,
+		resultParameters:   optns.resultParameters,
 	}
 
 	// Check if it's a function
@@ -361,10 +363,13 @@ func (a *Analyzer) analyzeReturns(info *ConstructorInfo) error {
 			})
 		default:
 			// Regular non-error return
+			pkey, pgroup, _ := info.resultParameters.FindIndex(i)
 			info.Returns = append(info.Returns, ReturnInfo{
 				Type:    retType,
 				Index:   i,
 				IsError: false,
+				Key:     pkey,
+				Group:   pgroup,
 			})
 		}
 	}
@@ -380,6 +385,10 @@ func (a *Analyzer) analyzeResultObject(info *ConstructorInfo, structType reflect
 
 	if structType.Kind() != reflect.Struct {
 		return fmt.Errorf("Out result must be a struct, got %v", structType.Kind())
+	}
+
+	if len(info.resultParameters) > 0 {
+		return fmt.Errorf("Out result cannot have custom argument parameters")
 	}
 
 	returns := make([]ReturnInfo, 0)
@@ -662,6 +671,13 @@ func WithArgumentParameters(parameters ...ArgumentParameter) AnalyzeOption {
 	}
 }
 
+func WithResultParameters(parameters ...ArgumentParameter) AnalyzeOption {
+	return func(options *analyzeOptions) {
+		options.resultParameters = append(options.resultParameters, parameters...)
+	}
+}
+
 type analyzeOptions struct {
 	argumentParameters []ArgumentParameter
+	resultParameters   []ArgumentParameter
 }

@@ -32,6 +32,9 @@ type Descriptor struct {
 	// ArgumentParameters are custom argument parameters
 	ArgumentParameters []reflection.ArgumentParameter
 
+	// ResultParameters are custom argument parameters
+	ResultParameters []reflection.ArgumentParameter
+
 	// ConstructorType is the type of the constructor function
 	ConstructorType reflect.Type
 
@@ -116,7 +119,9 @@ func newDescriptorWithAnalyzer(service any, lifetime Lifetime, analyzer *reflect
 		analyzer = reflection.New()
 	}
 
-	info, err := analyzer.Analyze(service, reflection.WithArgumentParameters(options.ArgumentParameters...))
+	info, err := analyzer.Analyze(service,
+		reflection.WithArgumentParameters(options.ArgumentParameters...),
+		reflection.WithResultParameters(options.ResultParameters...))
 	if err != nil {
 		return nil, &ReflectionAnalysisError{
 			Constructor: service,
@@ -135,6 +140,7 @@ func newDescriptorWithAnalyzer(service any, lifetime Lifetime, analyzer *reflect
 		Constructor:        constructorValue,
 		ConstructorType:    constructorType,
 		ArgumentParameters: options.ArgumentParameters,
+		ResultParameters:   options.ResultParameters,
 		Dependencies:       dependencies,
 		Group:              options.Group,
 		IsInstance:         isInstance,

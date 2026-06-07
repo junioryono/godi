@@ -496,7 +496,9 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 		// Defensive fallback: a descriptor constructed outside the normal
 		// path won't have info stashed. Re-analyze in that case.
 		var err error
-		info, err = r.analyzer.Analyze(service, reflection.WithArgumentParameters(descriptor.ArgumentParameters...))
+		info, err = r.analyzer.Analyze(service,
+			reflection.WithArgumentParameters(descriptor.ArgumentParameters...),
+			reflection.WithResultParameters(descriptor.ResultParameters...))
 		if err != nil {
 			return &ReflectionAnalysisError{
 				Constructor: service,
@@ -576,11 +578,12 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 				// Create a descriptor for each return type
 				typeDescriptor := &Descriptor{
 					Type:             ret.Type,
+					Key:              ret.Key,
 					Lifetime:         descriptor.Lifetime,
 					Constructor:      descriptor.Constructor,
 					ConstructorType:  descriptor.ConstructorType,
 					Dependencies:     descriptor.Dependencies,
-					Group:            descriptor.Group,
+					Group:            descriptor.Group, // TODO: ret.Group?
 					As:               descriptor.As,
 					IsInstance:       false,
 					MultiReturnIndex: ret.Index,
@@ -591,11 +594,13 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 				}
 
 				// Apply name/key only to the first return if specified
-				if options.Name != "" && i == 0 {
-					typeDescriptor.Key = options.Name
-				} else if options.Name != "" {
-					// For subsequent returns, leave them unkeyed
-					typeDescriptor.Key = nil
+				if typeDescriptor.Key == nil {
+					if options.Name != "" && i == 0 {
+						typeDescriptor.Key = options.Name
+					} else if options.Name != "" {
+						// For subsequent returns, leave them unkeyed
+						typeDescriptor.Key = nil
+					}
 				}
 
 				// Register each type descriptor

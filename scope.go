@@ -550,7 +550,8 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 	if info == nil {
 		var err error
 		info, err = s.rootProvider.analyzer.Analyze(descriptor.Constructor.Interface(),
-			reflection.WithArgumentParameters(descriptor.ArgumentParameters...))
+			reflection.WithArgumentParameters(descriptor.ArgumentParameters...),
+			reflection.WithResultParameters(descriptor.ResultParameters...))
 		if err != nil {
 			return nil, &ReflectionAnalysisError{
 				Constructor: descriptor.Constructor.Interface(),
@@ -667,11 +668,11 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 			value := results[ret.Index].Interface()
 
 			// Find the descriptor for this return type
-			serviceDescriptor := s.rootProvider.findDescriptor(ret.Type, nil)
+			serviceDescriptor := s.rootProvider.findDescriptor(ret.Type, ret.Key)
 			if serviceDescriptor == nil {
 				return nil, &ResolutionError{
 					ServiceType: ret.Type,
-					ServiceKey:  nil,
+					ServiceKey:  ret.Key,
 					Cause:       fmt.Errorf("no descriptor found for return type %v", ret.Type),
 				}
 			}

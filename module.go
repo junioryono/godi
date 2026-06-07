@@ -83,6 +83,7 @@ type addOptions struct {
 	Group              string
 	As                 []any
 	ArgumentParameters []reflection.ArgumentParameter
+	ResultParameters   []reflection.ArgumentParameter
 }
 
 func (o *addOptions) Validate() error {
@@ -305,6 +306,57 @@ func (o addArgumentParameterOption) String() string {
 
 func (o addArgumentParameterOption) applyAddOption(opt *addOptions) {
 	opt.ArgumentParameters = append(opt.ArgumentParameters, reflection.ArgumentParameter(o))
+}
+
+// ResultKey is an AddOption that adds a Key to a constructor result, so that it can be returned via GetKeyed.
+//
+// Given,
+//
+//	func NewReadOnlyConnection(source Server) (*ConnectionRedis, *ConnectionMemory, error)
+//
+// The following will provide the result from the keyed "redis" output.
+//
+//	c.AddSingleton(NewReadOnlyConnection, godi.ResultKey(0, "redis"), godi.ResultKey(1, "memory))
+//	redis := godi.MustResolveKeyed[Cache](provider, "redis")
+//
+// As result names are not available in reflection, a 0-based result index is used in the option.
+func ResultKey(argIndex int, key any) AddOption {
+	return addResultParameterOption(reflection.ArgumentParameter{
+		Index: argIndex,
+		Key:   key,
+	})
+}
+
+// ResultGroup is an AddOption that adds a Group to a constructor result, so that it can be returned via GetGroup.
+//
+// Given,
+//
+//	func NewReadOnlyConnection(source Server) (*ConnectionRedis, *ConnectionMemory, error)
+//
+// The following will provide the result from the keyed "cache" output.
+//
+//		c.AddSingleton(NewReadOnlyConnection, godi.ResultGroup(0, "cache"), godi.ResultGroup(1, "cache"))
+//	 caches := godi.MustResolveGroup[Cache](provider, "cache")
+//
+// As result names are not available in reflection, a 0-based result index is used in the option.
+func ResultGroup(argIndex int, name string) AddOption {
+	return addResultParameterOption(reflection.ArgumentParameter{
+		Index: argIndex,
+		Group: name,
+	})
+}
+
+type addResultParameterOption reflection.ArgumentParameter
+
+func (o addResultParameterOption) String() string {
+	if o.Key == nil {
+		return fmt.Sprintf("ResultGroup(%d:%s)", o.Index, o.Group)
+	}
+	return fmt.Sprintf("ResultKey(%d:%v)", o.Index, o.Key)
+}
+
+func (o addResultParameterOption) applyAddOption(opt *addOptions) {
+	opt.ResultParameters = append(opt.ResultParameters, reflection.ArgumentParameter(o))
 }
 
 // Remove creates a ModuleOption for removing all services of type T.

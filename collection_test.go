@@ -321,6 +321,35 @@ func TestCollectionParameterObjectsArgumentParametersUnsupported(t *testing.T) {
 	assert.ErrorAs(t, err, &regErr)
 }
 
+func TestCollectionFunctionResultObjects(t *testing.T) {
+	t.Parallel()
+
+	// Use local types to avoid any potential shared type issues
+	type ResultConfig struct{ Value string }
+	type ResultLogger struct{ Level string }
+
+	c := NewCollection()
+	require.NoError(t, c.AddSingleton(func() (*ResultConfig, *ResultLogger) {
+		return &ResultConfig{Value: "test-config"}, &ResultLogger{Level: "info"}
+	}, ResultKey(1, "audit")))
+
+	// Verify registration
+	assert.True(t, c.Contains(reflect.TypeOf((*ResultConfig)(nil))))
+	assert.True(t, c.ContainsKeyed(reflect.TypeOf((*ResultLogger)(nil)), "audit"))
+
+	p, err := c.Build()
+	require.NoError(t, err)
+	defer p.Close()
+
+	cfg, err := p.Get(reflect.TypeOf((*ResultConfig)(nil)))
+	require.NoError(t, err)
+	assert.Equal(t, "test-config", cfg.(*ResultConfig).Value)
+
+	logger, err := p.GetKeyed(reflect.TypeOf((*ResultLogger)(nil)), "audit")
+	require.NoError(t, err)
+	assert.Equal(t, "info", logger.(*ResultLogger).Level)
+}
+
 func TestCollectionResultObjects(t *testing.T) {
 	t.Parallel()
 
