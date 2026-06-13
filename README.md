@@ -361,44 +361,45 @@ func TestUserService(t *testing.T) {
 
 Benchmarks comparing godi with [dig](https://github.com/uber-go/dig) (Uber's DI, powers Fx) and [do](https://github.com/samber/do) (samber's DI).
 
-Run on Apple M2 Max. [Source code](benchmarks/comparison_test.go).
+Run on Apple M2 Max (Go 1.26). 🏆 marks the fastest in each benchmark.
+[Source code](benchmarks/comparison_test.go).
 
 ### Singleton Resolution
 
-| Library | ns/op | B/op | allocs/op | vs godi |
-| ------- | ----: | ---: | --------: | ------: |
-| godi    |    55 |    0 |         0 |      1x |
-| do      |   180 |  192 |         6 |    3.3x |
-| dig     |   640 |  736 |        20 |     12x |
+| Library  | ns/op | B/op | allocs/op | vs fastest  |
+| -------- | ----: | ---: | --------: | ----------- |
+| godi 🏆  |    55 |    0 |         0 | fastest     |
+| do       |   180 |  192 |         6 | 3.3x slower |
+| dig      |   640 |  736 |        20 | 12x slower  |
 
 godi uses a lock-free cache with **zero allocations**. Singletons are created at build time, so every resolution is a fast cache lookup.
 
 ### Concurrent Resolution
 
-| Library | ns/op | B/op | allocs/op | vs godi |
-| ------- | ----: | ---: | --------: | ------: |
-| godi    |     7 |    0 |         0 |      1x |
-| do      |   297 |  224 |         6 |     42x |
-| dig     |   366 |  736 |        20 |     52x |
+| Library  | ns/op | B/op | allocs/op | vs fastest  |
+| -------- | ----: | ---: | --------: | ----------- |
+| godi 🏆  |     7 |    0 |         0 | fastest     |
+| do       |   297 |  224 |         6 | 42x slower  |
+| dig      |   366 |  736 |        20 | 52x slower  |
 
 Under high concurrency, godi is **40-50x faster** with zero contention.
 
 ### Transient Resolution
 
-| Library | ns/op | B/op | allocs/op |
-| ------- | ----: | ---: | --------: |
-| godi    |   176 |   40 |         2 |
-| do      |   188 |  208 |         7 |
+| Library  | ns/op | B/op | allocs/op | vs fastest  |
+| -------- | ----: | ---: | --------: | ----------- |
+| godi 🏆  |   176 |   40 |         2 | fastest     |
+| do       |   188 |  208 |         7 | 1.1x slower |
 
 New instance created on each call.
 
 ### Cold Start
 
-| Library |  ns/op |   B/op | allocs/op | vs godi |
-| ------- | -----: | -----: | --------: | ------: |
-| godi    | 17,500 | 21,064 |       155 |      1x |
-| dig     | 36,000 | 37,665 |       549 |    2.1x |
-| do      | 47,000 | 30,511 |       351 |    2.7x |
+| Library  |  ns/op |   B/op | allocs/op | vs fastest  |
+| -------- | -----: | -----: | --------: | ----------- |
+| godi 🏆  | 17,500 | 21,064 |       155 | fastest     |
+| dig      | 36,000 | 37,665 |       549 | 2.1x slower |
+| do       | 47,000 | 30,511 |       351 | 2.7x slower |
 
 Full cycle: create container, register services, build, resolve. godi is **2x faster** than dig.
 

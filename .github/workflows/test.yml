@@ -41,6 +41,40 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
+  submodules:
+    name: Submodule Tests
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [http, chi, echo, fiber, gin, huma]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+
+      - name: Verify ${{ matrix.module }} module
+        working-directory: ${{ matrix.module }}
+        run: |
+          go mod verify
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
+      - name: Vet ${{ matrix.module }}
+        working-directory: ${{ matrix.module }}
+        run: go vet ./...
+
+      - name: Test ${{ matrix.module }}
+        working-directory: ${{ matrix.module }}
+        run: go test -race ./...
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -181,15 +215,16 @@ jobs:
   all-checks:
     name: All checks passed
     runs-on: ubuntu-latest
-    needs: [test, lint, build, security]
+    needs: [test, submodules, lint, build, security]
     if: always()
 
     steps:
       - name: Verify all checks passed
         run: |
-          if [[ "${{ needs.test.result }}" != "success" || "${{ needs.lint.result }}" != "success" || "${{ needs.build.result }}" != "success" || "${{ needs.security.result }}" != "success" ]]; then
+          if [[ "${{ needs.test.result }}" != "success" || "${{ needs.submodules.result }}" != "success" || "${{ needs.lint.result }}" != "success" || "${{ needs.build.result }}" != "success" || "${{ needs.security.result }}" != "success" ]]; then
             echo "One or more checks failed"
             echo "Test: ${{ needs.test.result }}"
+            echo "Submodules: ${{ needs.submodules.result }}"
             echo "Lint: ${{ needs.lint.result }}"
             echo "Build: ${{ needs.build.result }}"
             echo "Security: ${{ needs.security.result }}"
