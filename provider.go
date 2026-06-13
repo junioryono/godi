@@ -48,8 +48,8 @@ type provider struct {
 	id string
 
 	// Service registry (immutable after build)
-	services map[TypeKey]*Descriptor
-	groups   map[GroupKey][]*Descriptor
+	services map[TypeKey]*descriptor
+	groups   map[GroupKey][]*descriptor
 
 	// Dependency graph (immutable after build)
 	graph *graph.DependencyGraph
@@ -67,7 +67,7 @@ type provider struct {
 
 	// Scoped descriptors with no return values (initialization functions),
 	// invoked when each scope is created. Immutable after build.
-	voidReturnScopedDescriptors []*Descriptor
+	voidReturnScopedDescriptors []*descriptor
 
 	// Track disposable instances for cleanup
 	disposables   []Disposable
@@ -293,7 +293,7 @@ func (p *provider) setSingleton(key instanceKey, instance any) {
 
 // findDescriptor finds a descriptor for the given service type and optional key.
 // Returns nil if no matching descriptor is found in the service registry.
-func (p *provider) findDescriptor(serviceType reflect.Type, key any) *Descriptor {
+func (p *provider) findDescriptor(serviceType reflect.Type, key any) *descriptor {
 	if serviceType == nil {
 		return nil
 	}
@@ -304,7 +304,7 @@ func (p *provider) findDescriptor(serviceType reflect.Type, key any) *Descriptor
 
 // findGroupDescriptors finds all descriptors for a specific type within a group.
 // Returns an empty slice if the type is nil, group is empty, or no services are found.
-func (p *provider) findGroupDescriptors(serviceType reflect.Type, group string) []*Descriptor {
+func (p *provider) findGroupDescriptors(serviceType reflect.Type, group string) []*descriptor {
 	if serviceType == nil || group == "" {
 		return nil
 	}
@@ -345,7 +345,7 @@ func (p *provider) createAllSingletonsWithContext(ctx context.Context) error {
 			continue
 		}
 
-		descriptor, ok := node.Provider.(*Descriptor)
+		descriptor, ok := node.Provider.(*descriptor)
 		if !ok {
 			return &ValidationError{
 				ServiceType: nil,

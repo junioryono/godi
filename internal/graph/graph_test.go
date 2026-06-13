@@ -8,11 +8,29 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/junioryono/godi/v5"
 	"github.com/junioryono/godi/v5/internal/graph"
 	"github.com/junioryono/godi/v5/internal/reflection"
 	"github.com/stretchr/testify/assert"
 )
+
+// testSingleton stands in for godi.Singleton in test literals. The graph
+// never reads a provider's lifetime, so its value is irrelevant.
+const testSingleton = 0
+
+// testProvider is a minimal graph.Provider implementation for graph tests,
+// decoupling them from the godi package's concrete descriptor type.
+type testProvider struct {
+	Type         reflect.Type
+	Key          any
+	Group        string
+	Lifetime     int // unused by the graph; present so existing literals compile
+	Dependencies []*reflection.Dependency
+}
+
+func (p *testProvider) GetType() reflect.Type                     { return p.Type }
+func (p *testProvider) GetKey() any                               { return p.Key }
+func (p *testProvider) GetGroup() string                          { return p.Group }
+func (p *testProvider) GetDependencies() []*reflection.Dependency { return p.Dependencies }
 
 // Test concurrent graph operations
 func TestDependencyGraph_ConcurrentOperations(t *testing.T) {
@@ -51,9 +69,9 @@ func TestDependencyGraph_ConcurrentOperations(t *testing.T) {
 		go func(idx int) {
 			defer wg.Done()
 
-			provider := &godi.Descriptor{
+			provider := &testProvider{
 				Type:     types[idx],
-				Lifetime: godi.Singleton,
+				Lifetime: testSingleton,
 				Dependencies: func() []*reflection.Dependency {
 					if idx == 0 {
 						return nil
@@ -116,7 +134,7 @@ func TestDependencyGraph_ComplexCycles(t *testing.T) {
 				type SelfCycleService struct{}
 				type1 := reflect.TypeFor[SelfCycleService]()
 
-				provider := &godi.Descriptor{
+				provider := &testProvider{
 					Type: type1,
 					Dependencies: []*reflection.Dependency{
 						{Type: type1}, // Self dependency
@@ -144,7 +162,7 @@ func TestDependencyGraph_ComplexCycles(t *testing.T) {
 				typeC := reflect.TypeFor[DiamondC]()
 				typeD := reflect.TypeFor[DiamondD]()
 
-				providers := []*godi.Descriptor{
+				providers := []*testProvider{
 					{Type: typeD, Dependencies: nil},
 					{Type: typeB, Dependencies: []*reflection.Dependency{{Type: typeD}}},
 					{Type: typeC, Dependencies: []*reflection.Dependency{{Type: typeD}}},
@@ -178,18 +196,18 @@ func TestDependencyGraph_ComplexCycles(t *testing.T) {
 				typeB := reflect.TypeFor[CycleB]()
 				typeC := reflect.TypeFor[CycleC]()
 
-				g.AddProvider(&godi.Descriptor{
+				g.AddProvider(&testProvider{
 					Type:         typeB,
 					Dependencies: []*reflection.Dependency{{Type: typeC}},
 				})
 
-				g.AddProvider(&godi.Descriptor{
+				g.AddProvider(&testProvider{
 					Type:         typeC,
 					Dependencies: []*reflection.Dependency{{Type: typeA}},
 				})
 
 				// This should fail
-				err := g.AddProvider(&godi.Descriptor{
+				err := g.AddProvider(&testProvider{
 					Type:         typeA,
 					Dependencies: []*reflection.Dependency{{Type: typeB}},
 				})
@@ -216,7 +234,7 @@ func TestDependencyGraph_ComplexCycles(t *testing.T) {
 				for _, expected := range tt.cycleIncludes {
 					found := false
 					for _, node := range cErr.Path {
-						if strings.Contains(node.String(), expected) {
+						if strings.Contains(node, expected) {
 							found = true
 							break
 						}
@@ -250,7 +268,7 @@ func BenchmarkDependencyGraph_TopologicalSort(b *testing.B) {
 			deps = append(deps, &reflection.Dependency{Type: types[i-1]})
 		}
 
-		g.AddProvider(&godi.Descriptor{
+		g.AddProvider(&testProvider{
 			Type:         types[i],
 			Dependencies: deps,
 		})
@@ -275,7 +293,7 @@ func TestDependencyGraph_HasNode(t *testing.T) {
 	assert.False(t, g.HasNode(testType, nil, ""), "HasNode should return false for non-existent node")
 
 	// Add the node
-	g.AddProvider(&godi.Descriptor{
+	g.AddProvider(&testProvider{
 		Type:         testType,
 		Dependencies: nil,
 	})
@@ -287,7 +305,7 @@ func TestDependencyGraph_HasNode(t *testing.T) {
 	assert.False(t, g.HasNode(testType, "some-key", ""), "HasNode should return false for non-existent keyed node")
 
 	// Add keyed node
-	g.AddProvider(&godi.Descriptor{
+	g.AddProvider(&testProvider{
 		Type:         testType,
 		Key:          "test-key",
 		Dependencies: nil,
@@ -340,8 +358,8 @@ func TestCircularDependencyError(t *testing.T) {
 
 	// Test with empty path
 	err1 := graph.CircularDependencyError{
-		Node: graph.NodeKey{Type: testType},
-		Path: []graph.NodeKey{},
+		Node: testType.String(),
+		Path: []string{},
 	}
 
 	errStr1 := err1.Error()
@@ -350,12 +368,8 @@ func TestCircularDependencyError(t *testing.T) {
 
 	// Test with path
 	err2 := graph.CircularDependencyError{
-		Node: graph.NodeKey{Type: testType},
-		Path: []graph.NodeKey{
-			{Type: reflect.TypeFor[string]()},
-			{Type: reflect.TypeFor[string]()},
-			{Type: reflect.TypeFor[string]()},
-		},
+		Node: testType.String(),
+		Path: []string{"A", "B", "C"},
 	}
 
 	errStr2 := err2.Error()
@@ -399,7 +413,7 @@ func TestDependencyGraph_CacheInvalidation(t *testing.T) {
 	type2 := reflect.TypeFor[CacheService2]()
 
 	// Add initial provider
-	g.AddProvider(&godi.Descriptor{
+	g.AddProvider(&testProvider{
 		Type:         type1,
 		Dependencies: nil,
 	})
@@ -408,7 +422,7 @@ func TestDependencyGraph_CacheInvalidation(t *testing.T) {
 	sorted1, _ := g.TopologicalSort()
 
 	// Add another provider
-	g.AddProvider(&godi.Descriptor{
+	g.AddProvider(&testProvider{
 		Type:         type2,
 		Dependencies: []*reflection.Dependency{{Type: type1}},
 	})
@@ -437,7 +451,7 @@ func TestDependencyGraph_ComplexScenarios(t *testing.T) {
 		typeB := reflect.TypeFor[SortB]()
 
 		// Add B depending on A, but don't add A as a provider
-		g.AddProvider(&godi.Descriptor{
+		g.AddProvider(&testProvider{
 			Type:         typeB,
 			Dependencies: []*reflection.Dependency{{Type: typeA}},
 		})
@@ -466,23 +480,23 @@ func TestDependencyGraph_ComplexScenarios(t *testing.T) {
 		typeD := reflect.TypeFor[PathD]()
 
 		// Create: A -> B -> C -> D -> B (cycle)
-		g.AddProvider(&godi.Descriptor{
+		g.AddProvider(&testProvider{
 			Type:         typeA,
 			Dependencies: []*reflection.Dependency{{Type: typeB}},
 		})
 
-		g.AddProvider(&godi.Descriptor{
+		g.AddProvider(&testProvider{
 			Type:         typeB,
 			Dependencies: []*reflection.Dependency{{Type: typeC}},
 		})
 
-		g.AddProvider(&godi.Descriptor{
+		g.AddProvider(&testProvider{
 			Type:         typeC,
 			Dependencies: []*reflection.Dependency{{Type: typeD}},
 		})
 
 		// This should fail with cycle
-		err := g.AddProvider(&godi.Descriptor{
+		err := g.AddProvider(&testProvider{
 			Type:         typeD,
 			Dependencies: []*reflection.Dependency{{Type: typeB}},
 		})
@@ -502,12 +516,12 @@ func TestDependencyGraph_ComplexScenarios(t *testing.T) {
 		type CycleTest1 struct{}
 		type CycleTest2 struct{}
 
-		g.AddProvider(&godi.Descriptor{
+		g.AddProvider(&testProvider{
 			Type:         reflect.TypeFor[CycleTest1](),
 			Dependencies: nil,
 		})
 
-		g.AddProvider(&godi.Descriptor{
+		g.AddProvider(&testProvider{
 			Type:         reflect.TypeFor[CycleTest2](),
 			Dependencies: []*reflection.Dependency{{Type: reflect.TypeFor[CycleTest1]()}},
 		})
@@ -541,7 +555,7 @@ func TestTopologicalSort_DependencyOrder(t *testing.T) {
 				typeWithOneDep := reflect.TypeFor[ServiceWithOneDep]()
 
 				// ServiceNoDeps has no dependencies
-				err := g.AddProvider(&godi.Descriptor{
+				err := g.AddProvider(&testProvider{
 					Type:         typeNoDeps,
 					Dependencies: nil,
 				})
@@ -550,7 +564,7 @@ func TestTopologicalSort_DependencyOrder(t *testing.T) {
 				}
 
 				// ServiceWithOneDep depends on ServiceNoDeps
-				err = g.AddProvider(&godi.Descriptor{
+				err = g.AddProvider(&testProvider{
 					Type: typeWithOneDep,
 					Dependencies: []*reflection.Dependency{
 						{Type: typeNoDeps},
@@ -574,7 +588,7 @@ func TestTopologicalSort_DependencyOrder(t *testing.T) {
 				typeWithTwoDeps := reflect.TypeFor[ServiceWithTwoDeps]()
 
 				// ServiceNoDeps has no dependencies
-				err := g.AddProvider(&godi.Descriptor{
+				err := g.AddProvider(&testProvider{
 					Type:         typeNoDeps,
 					Dependencies: nil,
 				})
@@ -583,7 +597,7 @@ func TestTopologicalSort_DependencyOrder(t *testing.T) {
 				}
 
 				// ServiceWithOneDep depends on ServiceNoDeps
-				err = g.AddProvider(&godi.Descriptor{
+				err = g.AddProvider(&testProvider{
 					Type: typeWithOneDep,
 					Dependencies: []*reflection.Dependency{
 						{Type: typeNoDeps},
@@ -594,7 +608,7 @@ func TestTopologicalSort_DependencyOrder(t *testing.T) {
 				}
 
 				// ServiceWithTwoDeps depends on both ServiceNoDeps and ServiceWithOneDep
-				err = g.AddProvider(&godi.Descriptor{
+				err = g.AddProvider(&testProvider{
 					Type: typeWithTwoDeps,
 					Dependencies: []*reflection.Dependency{
 						{Type: typeNoDeps},
@@ -632,13 +646,13 @@ func TestTopologicalSort_DependencyOrder(t *testing.T) {
 				typeD := reflect.TypeFor[D]()
 
 				// A has no dependencies
-				g.AddProvider(&godi.Descriptor{
+				g.AddProvider(&testProvider{
 					Type:         typeA,
 					Dependencies: nil,
 				})
 
 				// B depends on A
-				g.AddProvider(&godi.Descriptor{
+				g.AddProvider(&testProvider{
 					Type: typeB,
 					Dependencies: []*reflection.Dependency{
 						{Type: typeA},
@@ -646,7 +660,7 @@ func TestTopologicalSort_DependencyOrder(t *testing.T) {
 				})
 
 				// C depends on A
-				g.AddProvider(&godi.Descriptor{
+				g.AddProvider(&testProvider{
 					Type: typeC,
 					Dependencies: []*reflection.Dependency{
 						{Type: typeA},
@@ -654,7 +668,7 @@ func TestTopologicalSort_DependencyOrder(t *testing.T) {
 				})
 
 				// D depends on B and C
-				g.AddProvider(&godi.Descriptor{
+				g.AddProvider(&testProvider{
 					Type: typeD,
 					Dependencies: []*reflection.Dependency{
 						{Type: typeB},
@@ -763,20 +777,20 @@ func TestTopologicalSort_ForDependencyInjection(t *testing.T) {
 	typeServiceWithDep := reflect.TypeFor[*ResolutionServiceWithDep]()
 
 	// Add ResolutionTestService (no dependencies)
-	err := g.AddProvider(&godi.Descriptor{
+	err := g.AddProvider(&testProvider{
 		Type:         typeTestService,
 		Dependencies: nil,
-		Lifetime:     godi.Singleton,
+		Lifetime:     testSingleton,
 	})
 	assert.NoError(t, err, "Failed to add ResolutionTestService")
 
 	// Add ResolutionServiceWithDep (depends on ResolutionTestService)
-	err = g.AddProvider(&godi.Descriptor{
+	err = g.AddProvider(&testProvider{
 		Type: typeServiceWithDep,
 		Dependencies: []*reflection.Dependency{
 			{Type: typeTestService},
 		},
-		Lifetime: godi.Singleton,
+		Lifetime: testSingleton,
 	})
 	assert.NoError(t, err, "Failed to add ResolutionServiceWithDep")
 
@@ -811,21 +825,21 @@ func TestResolveGroupDependencies(t *testing.T) {
 		memberType := reflect.TypeFor[GroupMember]()
 		consumerType := reflect.TypeFor[GroupConsumer]()
 
-		member1 := &godi.Descriptor{
+		member1 := &testProvider{
 			Type:     memberType,
 			Key:      1,
 			Group:    "routes",
-			Lifetime: godi.Singleton,
+			Lifetime: testSingleton,
 		}
-		member2 := &godi.Descriptor{
+		member2 := &testProvider{
 			Type:     memberType,
 			Key:      2,
 			Group:    "routes",
-			Lifetime: godi.Singleton,
+			Lifetime: testSingleton,
 		}
-		consumer := &godi.Descriptor{
+		consumer := &testProvider{
 			Type:     consumerType,
-			Lifetime: godi.Singleton,
+			Lifetime: testSingleton,
 			Dependencies: []*reflection.Dependency{
 				{Type: memberType, Key: nil, Group: "routes"},
 			},
@@ -869,9 +883,9 @@ func TestResolveGroupDependencies(t *testing.T) {
 		memberType := reflect.TypeFor[GroupMember]()
 		consumerType := reflect.TypeFor[GroupConsumer]()
 
-		consumer := &godi.Descriptor{
+		consumer := &testProvider{
 			Type:     consumerType,
-			Lifetime: godi.Singleton,
+			Lifetime: testSingleton,
 			Dependencies: []*reflection.Dependency{
 				{Type: memberType, Key: nil, Group: "empty"},
 			},
@@ -895,18 +909,18 @@ func TestResolveGroupDependencies(t *testing.T) {
 		memberType := reflect.TypeFor[GroupMember]()
 		consumerType := reflect.TypeFor[GroupConsumer]()
 
-		consumer := &godi.Descriptor{
+		consumer := &testProvider{
 			Type:     consumerType,
-			Lifetime: godi.Singleton,
+			Lifetime: testSingleton,
 			Dependencies: []*reflection.Dependency{
 				{Type: memberType, Key: nil, Group: "routes"},
 			},
 		}
-		member1 := &godi.Descriptor{
+		member1 := &testProvider{
 			Type:     memberType,
 			Key:      1,
 			Group:    "routes",
-			Lifetime: godi.Singleton,
+			Lifetime: testSingleton,
 		}
 
 		// Consumer added first
@@ -930,11 +944,11 @@ func TestResolveGroupDependencies(t *testing.T) {
 
 		memberType := reflect.TypeFor[GroupMember]()
 
-		member := &godi.Descriptor{
+		member := &testProvider{
 			Type:     memberType,
 			Key:      1,
 			Group:    "routes",
-			Lifetime: godi.Singleton,
+			Lifetime: testSingleton,
 		}
 
 		assert.NoError(t, g.AddProviderDeferred(member))
@@ -955,18 +969,18 @@ func TestAddProviderDeferred_ReplacementClearsStaleEdges(t *testing.T) {
 
 	g := graph.NewDependencyGraph()
 
-	withDep := &godi.Descriptor{
+	withDep := &testProvider{
 		Type:     reflect.TypeFor[ServiceA](),
-		Lifetime: godi.Singleton,
+		Lifetime: testSingleton,
 		Dependencies: []*reflection.Dependency{
 			{Type: reflect.TypeFor[ServiceB]()},
 		},
 	}
 	assert.NoError(t, g.AddProviderDeferred(withDep))
 
-	noDeps := &godi.Descriptor{
+	noDeps := &testProvider{
 		Type:     reflect.TypeFor[ServiceA](),
-		Lifetime: godi.Singleton,
+		Lifetime: testSingleton,
 	}
 	assert.NoError(t, g.AddProviderDeferred(noDeps))
 	assert.NoError(t, g.DetectCycles())

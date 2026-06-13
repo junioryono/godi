@@ -12,8 +12,10 @@ import (
 // Global atomic counter for fast void-return service key generation
 var voidKeyCounter atomic.Uint64
 
-// Descriptor represents services
-type Descriptor struct {
+// descriptor is the internal registration record for a service. It is not
+// exported: callers inspect registrations through the read-only ServiceInfo
+// view returned by Collection.ToSlice.
+type descriptor struct {
 	// Type is the service type this descriptor produces
 	Type reflect.Type
 
@@ -70,7 +72,7 @@ type Descriptor struct {
 	// this descriptor itself). One constructor call must cache an instance
 	// for each sibling, regardless of its key or group. Populated by
 	// collection.addService.
-	siblings []*Descriptor
+	siblings []*descriptor
 
 	// resultFieldIndex is the Out-struct field index this descriptor was
 	// created from. -1 when the descriptor is not a result-object field.
@@ -78,12 +80,12 @@ type Descriptor struct {
 }
 
 // newDescriptor creates a new descriptor from a service with the given lifetime and options
-func newDescriptor(service any, lifetime Lifetime, opts ...AddOption) (*Descriptor, error) {
+func newDescriptor(service any, lifetime Lifetime, opts ...AddOption) (*descriptor, error) {
 	return newDescriptorWithAnalyzer(service, lifetime, nil, opts...)
 }
 
 // newDescriptorWithAnalyzer creates a new descriptor using the provided analyzer for caching
-func newDescriptorWithAnalyzer(service any, lifetime Lifetime, analyzer *reflection.Analyzer, opts ...AddOption) (*Descriptor, error) {
+func newDescriptorWithAnalyzer(service any, lifetime Lifetime, analyzer *reflection.Analyzer, opts ...AddOption) (*descriptor, error) {
 	if service == nil {
 		return nil, &ValidationError{
 			ServiceType: nil,
@@ -139,7 +141,7 @@ func newDescriptorWithAnalyzer(service any, lifetime Lifetime, analyzer *reflect
 	dependencies := info.Dependencies()
 
 	// Create descriptor
-	descriptor := &Descriptor{
+	descriptor := &descriptor{
 		Lifetime:         lifetime,
 		Constructor:      constructorValue,
 		ConstructorType:  constructorType,
@@ -233,9 +235,9 @@ func newDescriptorWithAnalyzer(service any, lifetime Lifetime, analyzer *reflect
 // cleared. Registration paths that derive several descriptors from one
 // analyzed constructor (result-object fields, multi-return values, interface
 // bindings) clone the source and override only the fields that differ, so a
-// new Descriptor field is inherited by every derived descriptor
+// new descriptor field is inherited by every derived descriptor
 // automatically instead of having to be added to each construction site.
-func (d *Descriptor) clone() *Descriptor {
+func (d *descriptor) clone() *descriptor {
 	c := *d
 	c.siblings = nil
 	return &c
@@ -244,7 +246,7 @@ func (d *Descriptor) clone() *Descriptor {
 // siblingForField returns the sibling descriptor registered for the given
 // Out-struct field index, or nil when this descriptor has no sibling links
 // (e.g. it was constructed outside the normal Add* path).
-func (d *Descriptor) siblingForField(index int) *Descriptor {
+func (d *descriptor) siblingForField(index int) *descriptor {
 	for _, sibling := range d.siblings {
 		if sibling.resultFieldIndex == index {
 			return sibling
@@ -256,35 +258,35 @@ func (d *Descriptor) siblingForField(index int) *Descriptor {
 // GetType returns the service type this descriptor produces.
 // This method implements the Provider interface from the graph package,
 // enabling the descriptor to participate in dependency resolution.
-func (d *Descriptor) GetType() reflect.Type {
+func (d *descriptor) GetType() reflect.Type {
 	return d.Type
 }
 
 // GetKey returns the optional key for named/keyed services.
 // Returns nil for non-keyed services. This method implements the Provider
 // interface from the graph package for keyed service resolution.
-func (d *Descriptor) GetKey() any {
+func (d *descriptor) GetKey() any {
 	return d.Key
 }
 
 // GetGroup returns the group this provider belongs to.
 // Returns empty string if not part of a group. This method implements
 // the Provider interface from the graph package for group-based resolution.
-func (d *Descriptor) GetGroup() string {
+func (d *descriptor) GetGroup() string {
 	return d.Group
 }
 
 // GetDependencies returns the analyzed dependencies for this descriptor.
 // These dependencies must be resolved before this service can be created.
 // This method implements the Provider interface from the graph package.
-func (d *Descriptor) GetDependencies() []*reflection.Dependency {
+func (d *descriptor) GetDependencies() []*reflection.Dependency {
 	return d.Dependencies
 }
 
 // Validate validates the descriptor's configuration.
 // It checks that the descriptor has a valid type, constructor, and lifetime,
 // and ensures that key and group are not both set simultaneously.
-func (d *Descriptor) Validate() error {
+func (d *descriptor) Validate() error {
 	if d.Type == nil {
 		return &ValidationError{
 			ServiceType: nil,
@@ -337,7 +339,7 @@ func (d *Descriptor) Validate() error {
 }
 
 // validateReturnTypes validates that constructor return types are valid
-func (d *Descriptor) validateReturnTypes() error {
+func (d *descriptor) validateReturnTypes() error {
 	if d.ConstructorType == nil || d.ConstructorType.Kind() != reflect.Func {
 		return nil
 	}
@@ -404,7 +406,7 @@ func (d *Descriptor) validateReturnTypes() error {
 }
 
 // validateParameterTypes validates that constructor parameter types are valid for DI
-func (d *Descriptor) validateParameterTypes() error {
+func (d *descriptor) validateParameterTypes() error {
 	if d.isParamObject {
 		// Group-tagged fields of an In struct must be slices: they receive
 		// every member of the group.

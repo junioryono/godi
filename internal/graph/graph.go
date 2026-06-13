@@ -432,9 +432,13 @@ func (g *DependencyGraph) detectCyclesFrom(start NodeKey, visited map[NodeKey]bo
 		if visiting[item.key] {
 			// Found a cycle
 			path := g.findCyclePath(item.key)
+			pathStrs := make([]string, len(path))
+			for i, k := range path {
+				pathStrs[i] = k.String()
+			}
 			return &CircularDependencyError{
-				Node: item.key,
-				Path: path,
+				Node: item.key.String(),
+				Path: pathStrs,
 			}
 		}
 

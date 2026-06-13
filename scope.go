@@ -366,7 +366,7 @@ func (s *scope) getInstance(key instanceKey) (any, bool) {
 // (if Disposable) and not cached. This is the fix for the close-vs-resolve
 // race: previously a write to s.instances after Close set it to nil would
 // panic with "assignment to entry in nil map".
-func (s *scope) setInstance(descriptor *Descriptor, key instanceKey, instance any) {
+func (s *scope) setInstance(descriptor *descriptor, key instanceKey, instance any) {
 	switch descriptor.Lifetime {
 	case Singleton:
 		s.rootProvider.setSingleton(key, instance)
@@ -440,7 +440,7 @@ func safeClose(d Disposable) (err error) {
 // times (under different names, or in different groups), and each
 // registration must produce its own instances — which is why the constructor
 // pointer is NOT a valid key.
-func flightKey(d *Descriptor) any {
+func flightKey(d *descriptor) any {
 	if len(d.siblings) > 0 {
 		return d.siblings[0]
 	}
@@ -450,7 +450,7 @@ func flightKey(d *Descriptor) any {
 // resolveScopedSingleFlight runs createInstance for a Scoped descriptor under
 // single-flight: concurrent resolutions of the same key (or of sister output
 // keys from the same multi-return ctor) share one constructor invocation.
-func (s *scope) resolveScopedSingleFlight(key instanceKey, descriptor *Descriptor) (any, error) {
+func (s *scope) resolveScopedSingleFlight(key instanceKey, descriptor *descriptor) (any, error) {
 	fkey := flightKey(descriptor)
 	newFlight := &scopeFlight{done: make(chan struct{})}
 	raw, loaded := s.inflight.LoadOrStore(fkey, newFlight)
@@ -497,7 +497,7 @@ var (
 // resolve performs the actual service resolution using the appropriate lifetime strategy.
 // It handles singleton caching, scoped caching, and transient creation, while also
 // detecting circular dependencies during resolution.
-func (s *scope) resolve(key instanceKey, descriptor *Descriptor) (any, error) {
+func (s *scope) resolve(key instanceKey, descriptor *descriptor) (any, error) {
 	// Find descriptor if not provided
 	if descriptor == nil {
 		if key.Key == nil && key.Group == "" {
@@ -556,7 +556,7 @@ func (s *scope) resolve(key instanceKey, descriptor *Descriptor) (any, error) {
 // createInstance creates a new instance of a service using its constructor.
 // It handles regular constructors, result objects (Out structs), multi-return
 // constructors, and instance descriptors.
-func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
+func (s *scope) createInstance(descriptor *descriptor) (any, error) {
 	if descriptor == nil {
 		return nil, &ValidationError{
 			ServiceType: nil,

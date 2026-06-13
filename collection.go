@@ -88,9 +88,9 @@ type Collection interface {
 	// RemoveKeyed removes a specific keyed service.
 	RemoveKeyed(serviceType reflect.Type, key any)
 
-	// ToSlice returns a copy of all registered service descriptors.
-	// This is useful for inspection and debugging.
-	ToSlice() []*Descriptor
+	// ToSlice returns a read-only snapshot of all registered services for
+	// inspection and debugging.
+	ToSlice() []ServiceInfo
 
 	// Count returns the number of registered services.
 	Count() int
@@ -101,13 +101,13 @@ type collection struct {
 	mu sync.RWMutex
 
 	// services stores all non-keyed services by type
-	services map[TypeKey]*Descriptor
+	services map[TypeKey]*descriptor
 
 	// groups stores services that belong to groups
-	groups map[GroupKey][]*Descriptor
+	groups map[GroupKey][]*descriptor
 
 	// allDescriptors tracks all unique descriptors for efficient iteration
-	allDescriptors []*Descriptor
+	allDescriptors []*descriptor
 
 	// analyzer is shared across all registrations for caching
 	analyzer *reflection.Analyzer
@@ -133,6 +133,20 @@ type GroupKey struct {
 	Group string
 }
 
+// ServiceInfo is a read-only description of a registered service, returned by
+// Collection.ToSlice for inspection and debugging. It intentionally exposes
+// only the stable identity of a registration, not godi's internal wiring.
+type ServiceInfo struct {
+	// ServiceType is the type the service resolves as.
+	ServiceType reflect.Type
+	// Key is the name for keyed services, or nil.
+	Key any
+	// Group is the value-group name for grouped services, or "".
+	Group string
+	// Lifetime is the service's lifetime (Singleton, Scoped, or Transient).
+	Lifetime Lifetime
+}
+
 // NewCollection creates a new empty Collection instance.
 //
 // Example:
@@ -142,9 +156,9 @@ type GroupKey struct {
 //	provider, err := collection.Build()
 func NewCollection() Collection {
 	return &collection{
-		services:       make(map[TypeKey]*Descriptor, 16), // Pre-size for typical usage
-		groups:         make(map[GroupKey][]*Descriptor, 4),
-		allDescriptors: make([]*Descriptor, 0, 16),
+		services:       make(map[TypeKey]*descriptor, 16), // Pre-size for typical usage
+		groups:         make(map[GroupKey][]*descriptor, 4),
+		allDescriptors: make([]*descriptor, 0, 16),
 		analyzer:       reflection.New(),
 	}
 }
@@ -285,7 +299,7 @@ func (sc *collection) doBuild(ctx context.Context) (Provider, error) {
 		graph:                       g,
 		analyzer:                    sc.analyzer, // Share analyzer from collection
 		singletonKeys:               make([]instanceKey, 0, len(allDescriptors)),
-		voidReturnScopedDescriptors: make([]*Descriptor, 0, voidCount),
+		voidReturnScopedDescriptors: make([]*descriptor, 0, voidCount),
 		disposables:                 make([]Disposable, 0, 4),
 		scopes:                      make(map[*scope]struct{}, 4),
 	}
@@ -474,7 +488,7 @@ func (r *collection) Remove(t reflect.Type) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	removed := make(map[*Descriptor]struct{})
+	removed := make(map[*descriptor]struct{})
 	for key, descriptor := range r.services {
 		if key.Type == t {
 			removed[descriptor] = struct{}{}
@@ -503,27 +517,27 @@ func (r *collection) RemoveKeyed(t reflect.Type, key any) {
 	defer r.mu.Unlock()
 
 	typeKey := TypeKey{Type: t, Key: key}
-	descriptor, ok := r.services[typeKey]
+	d, ok := r.services[typeKey]
 	if !ok {
 		return
 	}
 
 	delete(r.services, typeKey)
-	r.pruneDescriptors(map[*Descriptor]struct{}{descriptor: {}})
+	r.pruneDescriptors(map[*descriptor]struct{}{d: {}})
 }
 
 // pruneDescriptors drops the given descriptors from allDescriptors so that
 // Build, Count, and ToSlice no longer see them. Without this, removed
 // singletons would still be constructed at build time.
-func (r *collection) pruneDescriptors(removed map[*Descriptor]struct{}) {
+func (r *collection) pruneDescriptors(removed map[*descriptor]struct{}) {
 	if len(removed) == 0 {
 		return
 	}
 
 	kept := r.allDescriptors[:0]
-	for _, descriptor := range r.allDescriptors {
-		if _, ok := removed[descriptor]; !ok {
-			kept = append(kept, descriptor)
+	for _, d := range r.allDescriptors {
+		if _, ok := removed[d]; !ok {
+			kept = append(kept, d)
 		}
 	}
 	// Zero the tail so the backing array doesn't pin removed descriptors.
@@ -536,12 +550,12 @@ func (r *collection) pruneDescriptors(removed map[*Descriptor]struct{}) {
 	// surviving sibling's constructor invocation would still cache instances
 	// under the removed registration's keys, shadowing any replacement
 	// registered after the removal.
-	for _, descriptor := range r.allDescriptors {
-		if len(descriptor.siblings) == 0 {
+	for _, d := range r.allDescriptors {
+		if len(d.siblings) == 0 {
 			continue
 		}
 		pruned := false
-		for _, sibling := range descriptor.siblings {
+		for _, sibling := range d.siblings {
 			if _, ok := removed[sibling]; ok {
 				pruned = true
 				break
@@ -550,8 +564,8 @@ func (r *collection) pruneDescriptors(removed map[*Descriptor]struct{}) {
 		if !pruned {
 			continue
 		}
-		surviving := make([]*Descriptor, 0, len(descriptor.siblings))
-		for _, sibling := range descriptor.siblings {
+		surviving := make([]*descriptor, 0, len(d.siblings))
+		for _, sibling := range d.siblings {
 			if _, ok := removed[sibling]; !ok {
 				surviving = append(surviving, sibling)
 			}
@@ -563,13 +577,22 @@ func (r *collection) pruneDescriptors(removed map[*Descriptor]struct{}) {
 }
 
 // ToSlice returns a copy of all registered service descriptors
-func (r *collection) ToSlice() []*Descriptor {
+func (r *collection) ToSlice() []ServiceInfo {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	// Return a copy of the pre-tracked descriptors (no deduplication needed)
-	result := make([]*Descriptor, len(r.allDescriptors))
-	copy(result, r.allDescriptors)
+	result := make([]ServiceInfo, 0, len(r.allDescriptors))
+	for _, d := range r.allDescriptors {
+		if d == nil {
+			continue
+		}
+		result = append(result, ServiceInfo{
+			ServiceType: d.Type,
+			Key:         d.Key,
+			Group:       d.Group,
+			Lifetime:    d.Lifetime,
+		})
+	}
 	return result
 }
 
@@ -742,14 +765,14 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 // constructor and are linked as siblings so one invocation can cache every
 // field under its own registration (key or group). The result object type
 // itself is not registered. Caller must hold r.mu.
-func (r *collection) registerResultObjectFields(descriptor *Descriptor) error {
+func (r *collection) registerResultObjectFields(d *descriptor) error {
 	// No fields to register
-	if len(descriptor.resultFields) == 0 {
+	if len(d.resultFields) == 0 {
 		return nil
 	}
 
-	fieldDescriptors := make([]*Descriptor, 0, len(descriptor.resultFields))
-	for _, field := range descriptor.resultFields {
+	fieldDescriptors := make([]*descriptor, 0, len(d.resultFields))
+	for _, field := range d.resultFields {
 		// A field cannot be both keyed and grouped: the resolver caches and
 		// looks up under exactly one of the two, so accepting both would
 		// register a service that can never be resolved consistently.
@@ -761,7 +784,7 @@ func (r *collection) registerResultObjectFields(descriptor *Descriptor) error {
 			}
 		}
 
-		fieldDescriptor := descriptor.clone()
+		fieldDescriptor := d.clone()
 		fieldDescriptor.Type = field.Type
 		fieldDescriptor.Key = field.Key
 		fieldDescriptor.Group = field.Group
@@ -773,7 +796,7 @@ func (r *collection) registerResultObjectFields(descriptor *Descriptor) error {
 		fieldDescriptor.siblings = fieldDescriptors
 	}
 
-	registered := make([]*Descriptor, 0, len(fieldDescriptors))
+	registered := make([]*descriptor, 0, len(fieldDescriptors))
 	for _, fieldDescriptor := range fieldDescriptors {
 		if err := r.registerDescriptor(fieldDescriptor); err != nil {
 			// Roll back the fields registered so far: leaving them in place
@@ -798,7 +821,7 @@ func (r *collection) registerResultObjectFields(descriptor *Descriptor) error {
 // Returns handled=false when the constructor has at most one non-error
 // return, in which case the caller proceeds with normal registration.
 // Caller must hold r.mu.
-func (r *collection) registerMultiReturn(descriptor *Descriptor, info *reflection.ConstructorInfo, options *addOptions) (bool, error) {
+func (r *collection) registerMultiReturn(d *descriptor, info *reflection.ConstructorInfo, options *addOptions) (bool, error) {
 	if !info.IsFunc || len(info.Returns) <= 1 {
 		return false, nil
 	}
@@ -820,15 +843,15 @@ func (r *collection) registerMultiReturn(descriptor *Descriptor, info *reflectio
 	// than silently dropping the option.
 	if len(options.As) > 0 {
 		return true, &RegistrationError{
-			ServiceType: descriptor.Type,
+			ServiceType: d.Type,
 			Operation:   "register multi-return type",
 			Cause:       fmt.Errorf("godi.As cannot be combined with a multi-return constructor; register a wrapper constructor that returns the desired interface"),
 		}
 	}
 
-	typeDescriptors := make([]*Descriptor, 0, len(nonErrorReturns))
+	typeDescriptors := make([]*descriptor, 0, len(nonErrorReturns))
 	for i, ret := range nonErrorReturns {
-		typeDescriptor := descriptor.clone()
+		typeDescriptor := d.clone()
 		typeDescriptor.Type = ret.Type
 		typeDescriptor.MultiReturnIndex = ret.Index
 
@@ -848,7 +871,7 @@ func (r *collection) registerMultiReturn(descriptor *Descriptor, info *reflectio
 		typeDescriptor.siblings = typeDescriptors
 	}
 
-	registered := make([]*Descriptor, 0, len(typeDescriptors))
+	registered := make([]*descriptor, 0, len(typeDescriptors))
 	for _, typeDescriptor := range typeDescriptors {
 		if err := r.registerDescriptor(typeDescriptor); err != nil {
 			// Roll back the returns registered so far (see
@@ -871,12 +894,12 @@ func (r *collection) registerMultiReturn(descriptor *Descriptor, info *reflectio
 // a multi-descriptor registration whose later step failed, restoring the
 // collection to its pre-call state so no phantom sibling links remain
 // reachable. Caller must hold r.mu.
-func (r *collection) unregisterDescriptors(batch []*Descriptor) {
+func (r *collection) unregisterDescriptors(batch []*descriptor) {
 	if len(batch) == 0 {
 		return
 	}
 
-	removed := make(map[*Descriptor]struct{}, len(batch))
+	removed := make(map[*descriptor]struct{}, len(batch))
 	for _, descriptor := range batch {
 		removed[descriptor] = struct{}{}
 
@@ -912,7 +935,7 @@ func (r *collection) unregisterDescriptors(batch []*Descriptor) {
 // registerDescriptor registers a descriptor in the appropriate collections based on its type.
 // Regular services are registered by type and key,
 // and grouped services are registered in their respective groups.
-func (r *collection) registerDescriptor(descriptor *Descriptor) error {
+func (r *collection) registerDescriptor(descriptor *descriptor) error {
 	// Register based on type of service
 	if descriptor.Key != nil || descriptor.Group == "" {
 		key := TypeKey{Type: descriptor.Type, Key: descriptor.Key}
@@ -967,7 +990,7 @@ func (c *collection) validateLifetimes() error {
 		}
 	}
 
-	checkDescriptor := func(descriptor *Descriptor) error {
+	checkDescriptor := func(descriptor *descriptor) error {
 		if descriptor == nil {
 			return nil
 		}

@@ -311,7 +311,7 @@ func TestCollectionRemove(t *testing.T) {
 		assert.Equal(t, 1, c.Count())
 		descriptors := c.ToSlice()
 		require.Len(t, descriptors, 1)
-		assert.Equal(t, PtrTypeOf[TDependency](), descriptors[0].Type)
+		assert.Equal(t, PtrTypeOf[TDependency](), descriptors[0].ServiceType)
 	})
 
 	t.Run("remove_drops_keyed_and_grouped_registrations_of_type", func(t *testing.T) {
@@ -458,6 +458,12 @@ func TestCollectionBuild(t *testing.T) {
 		_, err := c.Build()
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "circular dependency")
+
+		// The public CircularDependencyError must be matchable and expose the
+		// cycle as plain strings (no leaked internal node-key type).
+		var cycleErr *CircularDependencyError
+		require.ErrorAs(t, err, &cycleErr)
+		assert.NotEmpty(t, cycleErr.Path)
 	})
 
 	t.Run("detects_lifetime_violations", func(t *testing.T) {
@@ -1168,4 +1174,34 @@ func TestBuildWithOptions(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "constructor cannot be nil")
 	})
+}
+
+// ToSlice returns a read-only ServiceInfo view exposing identity + lifetime,
+// not the internal descriptor.
+func TestToSliceServiceInfo(t *testing.T) {
+	t.Parallel()
+
+	c := NewCollection()
+	c.AddSingleton(NewTService)
+	c.AddScoped(NewTServiceWithID("k"), Name("keyed"))
+	c.AddTransient(NewTServiceWithID("g"), Group("grp"))
+
+	infos := c.ToSlice()
+	require.Len(t, infos, 3)
+
+	byLifetime := map[Lifetime]ServiceInfo{}
+	for _, info := range infos {
+		assert.Equal(t, PtrTypeOf[TService](), info.ServiceType)
+		byLifetime[info.Lifetime] = info
+	}
+
+	require.Contains(t, byLifetime, Singleton)
+	assert.Nil(t, byLifetime[Singleton].Key)
+	assert.Empty(t, byLifetime[Singleton].Group)
+
+	require.Contains(t, byLifetime, Scoped)
+	assert.Equal(t, "keyed", byLifetime[Scoped].Key)
+
+	require.Contains(t, byLifetime, Transient)
+	assert.Equal(t, "grp", byLifetime[Transient].Group)
 }

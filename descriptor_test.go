@@ -237,7 +237,7 @@ func TestDescriptor(t *testing.T) {
 
 		t.Run("nil_type", func(t *testing.T) {
 			t.Parallel()
-			d := &Descriptor{
+			d := &descriptor{
 				Constructor:     reflect.ValueOf(NewTService),
 				ConstructorType: reflect.TypeFor[func() *TService](),
 				Lifetime:        Singleton,
@@ -251,7 +251,7 @@ func TestDescriptor(t *testing.T) {
 
 		t.Run("invalid_constructor", func(t *testing.T) {
 			t.Parallel()
-			d := &Descriptor{
+			d := &descriptor{
 				Type:            PtrTypeOf[TService](),
 				Constructor:     reflect.Value{},
 				ConstructorType: reflect.TypeFor[func() *TService](),
@@ -264,7 +264,7 @@ func TestDescriptor(t *testing.T) {
 
 		t.Run("nil_constructor_type", func(t *testing.T) {
 			t.Parallel()
-			d := &Descriptor{
+			d := &descriptor{
 				Type:        PtrTypeOf[TService](),
 				Constructor: reflect.ValueOf(NewTService),
 				Lifetime:    Singleton,
