@@ -228,15 +228,3 @@ func Handle[T any](method func(T, http.ResponseWriter, *http.Request), opts ...H
 		method(controller, w, r)
 	}
 }
-
-// Wrap creates an http.Handler from a function that takes a typed controller.
-// This is useful when you want to use middleware-style composition.
-//
-// Example:
-//
-//	handler := godihttp.Wrap(func(ctrl *UserController, w http.ResponseWriter, r *http.Request) {
-//	    ctrl.GetByID(w, r)
-//	})
-func Wrap[T any](fn func(T, http.ResponseWriter, *http.Request), opts ...HandlerOption) http.Handler {
-	return Handle(fn, opts...)
-}

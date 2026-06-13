@@ -14,9 +14,27 @@ services.AddSingleton(NewDatabase)     // One instance, shared everywhere
 services.AddScoped(NewUserService)     // One instance per request
 services.AddTransient(NewEmailBuilder) // New instance every time
 
-provider, _ := services.Build()
+provider, err := services.Build()
+if err != nil {
+    log.Fatal(err)
+}
+
 user := godi.MustResolve[*UserService](provider)
 ```
+
+## Contents
+
+- [Why godi?](#why-godi)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Service Lifetimes](#service-lifetimes)
+- [HTTP Integration](#http-integration)
+- [Features](#features)
+- [Error Handling](#error-handling)
+- [Testing](#testing)
+- [Comparison](#comparison)
+- [Performance](#performance)
+- [Documentation](#documentation)
 
 ## Why godi?
 
@@ -65,6 +83,8 @@ package main
 
 import (
     "fmt"
+    "log"
+
     "github.com/junioryono/godi/v5"
 )
 
@@ -86,8 +106,11 @@ func main() {
     services.AddSingleton(NewLogger)
     services.AddSingleton(NewUserService)
 
-    // 2. Build the container
-    provider, _ := services.Build()
+    // 2. Build the container — registration errors surface here
+    provider, err := services.Build()
+    if err != nil {
+        log.Fatal(err)
+    }
     defer provider.Close()
 
     // 3. Resolve and use - dependencies wired automatically
@@ -137,7 +160,9 @@ godi shines in web applications where each request needs isolated services:
 package main
 
 import (
+    "log"
     "net/http"
+
     "github.com/junioryono/godi/v5"
     godihttp "github.com/junioryono/godi/v5/http"
 )
@@ -155,7 +180,10 @@ func main() {
     services.AddSingleton(NewLogger)
     services.AddScoped(NewUserController)
 
-    provider, _ := services.Build()
+    provider, err := services.Build()
+    if err != nil {
+        log.Fatal(err)
+    }
     defer provider.Close()
 
     mux := http.NewServeMux()
@@ -176,6 +204,11 @@ func main() {
 | Chi       | `github.com/junioryono/godi/v5/chi`   | `go get github.com/junioryono/godi/v5/chi`   |
 | Echo      | `github.com/junioryono/godi/v5/echo`  | `go get github.com/junioryono/godi/v5/echo`  |
 | Fiber     | `github.com/junioryono/godi/v5/fiber` | `go get github.com/junioryono/godi/v5/fiber` |
+| Huma      | `github.com/junioryono/godi/v5/huma`  | `go get github.com/junioryono/godi/v5/huma`  |
+
+Huma runs on top of a router, so pair `godi/v5/huma` with the matching router
+integration above — the router middleware owns the request scope, and Huma
+propagates it to your typed operation handlers.
 
 ## Features
 
@@ -346,44 +379,45 @@ func TestUserService(t *testing.T) {
 
 Benchmarks comparing godi with [dig](https://github.com/uber-go/dig) (Uber's DI, powers Fx) and [do](https://github.com/samber/do) (samber's DI).
 
-Run on Apple M2 Max. [Source code](benchmarks/comparison_test.go).
+Run on Apple M2 Max (Go 1.26). 🏆 marks the fastest in each benchmark.
+[Source code](benchmarks/comparison_test.go).
 
 ### Singleton Resolution
 
-| Library | ns/op | B/op | allocs/op | vs godi |
-| ------- | ----: | ---: | --------: | ------: |
-| godi    |    55 |    0 |         0 |      1x |
-| do      |   180 |  192 |         6 |    3.3x |
-| dig     |   640 |  736 |        20 |     12x |
+| Library  | ns/op | B/op | allocs/op | vs fastest  |
+| -------- | ----: | ---: | --------: | ----------- |
+| godi 🏆  |    55 |    0 |         0 | fastest     |
+| do       |   180 |  192 |         6 | 3.3x slower |
+| dig      |   640 |  736 |        20 | 12x slower  |
 
 godi uses a lock-free cache with **zero allocations**. Singletons are created at build time, so every resolution is a fast cache lookup.
 
 ### Concurrent Resolution
 
-| Library | ns/op | B/op | allocs/op | vs godi |
-| ------- | ----: | ---: | --------: | ------: |
-| godi    |     7 |    0 |         0 |      1x |
-| do      |   297 |  224 |         6 |     42x |
-| dig     |   366 |  736 |        20 |     52x |
+| Library  | ns/op | B/op | allocs/op | vs fastest  |
+| -------- | ----: | ---: | --------: | ----------- |
+| godi 🏆  |     7 |    0 |         0 | fastest     |
+| do       |   297 |  224 |         6 | 42x slower  |
+| dig      |   366 |  736 |        20 | 52x slower  |
 
 Under high concurrency, godi is **40-50x faster** with zero contention.
 
 ### Transient Resolution
 
-| Library | ns/op | B/op | allocs/op |
-| ------- | ----: | ---: | --------: |
-| godi    |   176 |   40 |         2 |
-| do      |   188 |  208 |         7 |
+| Library  | ns/op | B/op | allocs/op | vs fastest  |
+| -------- | ----: | ---: | --------: | ----------- |
+| godi 🏆  |   176 |   40 |         2 | fastest     |
+| do       |   188 |  208 |         7 | 1.1x slower |
 
 New instance created on each call.
 
 ### Cold Start
 
-| Library |  ns/op |   B/op | allocs/op | vs godi |
-| ------- | -----: | -----: | --------: | ------: |
-| godi    | 17,500 | 21,064 |       155 |      1x |
-| dig     | 36,000 | 37,665 |       549 |    2.1x |
-| do      | 47,000 | 30,511 |       351 |    2.7x |
+| Library  |  ns/op |   B/op | allocs/op | vs fastest  |
+| -------- | -----: | -----: | --------: | ----------- |
+| godi 🏆  | 17,500 | 21,064 |       155 | fastest     |
+| dig      | 36,000 | 37,665 |       549 | 2.1x slower |
+| do       | 47,000 | 30,511 |       351 | 2.7x slower |
 
 Full cycle: create container, register services, build, resolve. godi is **2x faster** than dig.
 
@@ -403,7 +437,7 @@ cd benchmarks && go test -bench=. -benchmem
 - [Getting Started](https://godi.readthedocs.io/en/latest/getting-started/) - 5-minute tutorial
 - [Core Concepts](https://godi.readthedocs.io/en/latest/concepts/) - Lifetimes, scopes, modules
 - [Features](https://godi.readthedocs.io/en/latest/features/) - Keyed services, groups, parameter objects
-- [Integrations](https://godi.readthedocs.io/en/latest/integrations/) - Gin, Chi, Echo, Fiber, net/http
+- [Integrations](https://godi.readthedocs.io/en/latest/integrations/) - Gin, Chi, Echo, Fiber, net/http, Huma
 - [Guides](https://godi.readthedocs.io/en/latest/guides/) - Web apps, testing, error handling
 - [API Reference](https://pkg.go.dev/github.com/junioryono/godi/v5)
 

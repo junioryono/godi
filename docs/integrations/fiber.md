@@ -47,7 +47,7 @@ func main() {
 
 ## ScopeMiddleware
 
-Creates a request scope for each HTTP request. The scope is stored in `fiber.Ctx.Locals` and in the `UserContext`.
+Creates a request scope for each HTTP request. The scope is attached to the request's `UserContext`, which Fiber resets between requests.
 
 ```go
 app := fiber.New()
@@ -284,12 +284,13 @@ orders.Post("/", godifiber.Handle((*OrderController).Create))
 
 ## FromContext Helper
 
-Fiber stores the scope in `Locals`. Use the helper to retrieve it:
+Fiber attaches the scope to the request's `UserContext`. Retrieve it with
+`godi.FromContext`:
 
 ```go
 app.Get("/custom", func(c *fiber.Ctx) error {
-    scope := godifiber.FromContext(c)
-    if scope == nil {
+    scope, err := godi.FromContext(c.UserContext())
+    if err != nil {
         return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
             "error": "No scope",
         })
@@ -337,13 +338,10 @@ func (c *UserController) Create(ctx *fiber.Ctx) error {
 
 ## Important: Fiber's Context Handling
 
-Fiber reuses `*fiber.Ctx` between requests for performance. The godi integration handles this correctly by storing the scope in `Locals`, which is cleared between requests.
+Fiber reuses `*fiber.Ctx` between requests for performance. The godi integration handles this correctly by attaching the scope to the request's `UserContext`, which Fiber resets between requests.
 
 ```go
-// Safe: scope is stored per-request in Locals
-scope := godifiber.FromContext(c)
-
-// Also safe: scope is in UserContext
+// Retrieve the scope the same way as every other integration:
 scope, err := godi.FromContext(c.UserContext())
 ```
 

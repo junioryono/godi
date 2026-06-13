@@ -193,6 +193,39 @@ with what the v4 docs already promised.
   If `Build` newly fails, the constructor was already broken; the error message
   names the fix.
 
+## 8. Framework integration changes
+
+If you use the framework integration packages, two helpers were removed:
+
+- **`godihttp.Wrap` is removed.** Use `Handle` — it returns an
+  `http.HandlerFunc`, which already satisfies `http.Handler`, so it works
+  anywhere `Wrap` did.
+
+  ```go
+  // Before
+  handler := godihttp.Wrap(fn)
+  // After
+  handler := godihttp.Handle(fn)
+  ```
+
+- **`godifiber.FromContext` is removed.** Fiber now attaches the scope to the
+  request's `UserContext` (the same context-based access the other
+  integrations use, and what Huma needs), instead of `Locals`. Retrieve it
+  with the standard helper:
+
+  ```go
+  // Before
+  scope := godifiber.FromContext(c)
+  // After
+  scope, err := godi.FromContext(c.UserContext())
+  ```
+
+The `gin`, `chi`, `echo`, and `net/http` integrations are otherwise
+source-compatible (beyond the `/v5` import path).
+
+New in v5: a [Huma](https://github.com/danielgtaylor/huma) integration
+(`github.com/junioryono/godi/v5/huma`) for typed, OpenAPI-backed APIs.
+
 ---
 
 ## Verifying your upgrade

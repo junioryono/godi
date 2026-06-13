@@ -21,9 +21,6 @@ import (
 	"github.com/junioryono/godi/v5"
 )
 
-// scopeKey is the key used to store the scope in fiber.Ctx.Locals
-const scopeKey = "godi_scope"
-
 // Config holds the configuration for the scope middleware.
 type Config struct {
 	// ErrorHandler is called when scope creation fails.
@@ -79,8 +76,8 @@ func defaultConfig() *Config {
 }
 
 // ScopeMiddleware creates a Fiber middleware that creates a request-scoped
-// container for each request. The scope is stored in fiber.Ctx.Locals
-// and attached to the UserContext.
+// container for each request. The scope is attached to the request's
+// UserContext and can be retrieved with godi.FromContext(c.UserContext()).
 //
 // The scope is automatically closed when the request completes.
 //
@@ -109,9 +106,11 @@ func ScopeMiddleware(provider godi.Provider, opts ...Option) fiber.Handler {
 			}
 		}()
 
-		// Store scope in context and locals
+		// Attach the scope's context as the request's UserContext so it is
+		// reachable via godi.FromContext(c.UserContext()) — the same
+		// context-based access the other integrations use — and so it
+		// propagates to frameworks layered on top (e.g. Huma).
 		c.SetUserContext(scope.Context())
-		c.Locals(scopeKey, scope)
 
 		// Run middlewares
 		for _, mw := range cfg.Middlewares {
@@ -196,7 +195,7 @@ func defaultHandlerConfig() *HandlerConfig {
 }
 
 // Handle wraps a controller method for type-safe resolution from the request scope.
-// The controller type T is resolved from the scope stored in fiber.Ctx.Locals.
+// The controller type T is resolved from the scope on the request's UserContext.
 //
 // The method signature should be: func(T, *fiber.Ctx) error
 //
@@ -222,15 +221,9 @@ func Handle[T any](method func(T, *fiber.Ctx) error, opts ...HandlerOption) fibe
 			}()
 		}
 
-		// Get scope from locals
-		scopeVal := c.Locals(scopeKey)
-		if scopeVal == nil {
-			return cfg.ScopeErrorHandler(c, godi.ErrScopeDisposed)
-		}
-
-		scope, ok := scopeVal.(godi.Scope)
-		if !ok {
-			return cfg.ScopeErrorHandler(c, godi.ErrScopeDisposed)
+		scope, scopeErr := godi.FromContext(c.UserContext())
+		if scopeErr != nil {
+			return cfg.ScopeErrorHandler(c, scopeErr)
 		}
 
 		controller, resolveErr := godi.Resolve[T](scope)
@@ -240,25 +233,4 @@ func Handle[T any](method func(T, *fiber.Ctx) error, opts ...HandlerOption) fibe
 
 		return method(controller, c)
 	}
-}
-
-// FromContext retrieves the scope from fiber.Ctx.Locals.
-// This is useful when you need to resolve services manually.
-//
-// Example:
-//
-//	scope := godifiber.FromContext(c)
-//	userService := godi.MustResolve[*UserService](scope)
-func FromContext(c *fiber.Ctx) godi.Scope {
-	scopeVal := c.Locals(scopeKey)
-	if scopeVal == nil {
-		return nil
-	}
-
-	scope, ok := scopeVal.(godi.Scope)
-	if !ok {
-		return nil
-	}
-
-	return scope
 }

@@ -20,6 +20,8 @@ The full guide with before/after examples lives at
 | `Remove[T]()` removes keyed + grouped registrations too | Use `RemoveKeyed[T](key)` for surgical removal |
 | `optional:"true"` propagates construction failures | Only *unregistered* deps are forgiven; fix the failing constructor |
 | Stricter registration validation | Previously-broken constructor shapes now fail at `Build` with a descriptive error |
+| `godihttp.Wrap` removed | Use `godihttp.Handle` (its `http.HandlerFunc` result already satisfies `http.Handler`) |
+| `godifiber.FromContext` removed | Use `godi.FromContext(c.UserContext())` (Fiber now stores the scope on `UserContext`, not `Locals`) |
 
 ## The one that touches the most code
 

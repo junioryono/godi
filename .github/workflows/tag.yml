@@ -110,7 +110,7 @@ jobs:
           fi
 
           # Define submodules that need their own tags
-          SUBMODULES="gin chi echo fiber http"
+          SUBMODULES="gin chi echo fiber http huma"
 
           # Check if any submodule tag already exists
           for submod in $SUBMODULES; do
@@ -143,7 +143,7 @@ jobs:
       - name: Summary
         run: |
           NEW_TAG="${{ steps.new_version.outputs.new_tag }}"
-          SUBMODULES="gin chi echo fiber http"
+          SUBMODULES="gin chi echo fiber http huma"
 
           echo "## Tag Creation Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY

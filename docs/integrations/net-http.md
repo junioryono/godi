@@ -283,12 +283,13 @@ func main() {
 }
 ```
 
-## Wrap Helper
+## Inline Controller Functions
 
-Alternative to `Handle` for creating `http.Handler`:
+`Handle` also accepts an inline function; its result is an `http.HandlerFunc`,
+which satisfies `http.Handler`:
 
 ```go
-handler := godihttp.Wrap(func(ctrl *UserController, w http.ResponseWriter, r *http.Request) {
+handler := godihttp.Handle(func(ctrl *UserController, w http.ResponseWriter, r *http.Request) {
     ctrl.List(w, r)
 })
 
