@@ -14,9 +14,27 @@ services.AddSingleton(NewDatabase)     // One instance, shared everywhere
 services.AddScoped(NewUserService)     // One instance per request
 services.AddTransient(NewEmailBuilder) // New instance every time
 
-provider, _ := services.Build()
+provider, err := services.Build()
+if err != nil {
+    log.Fatal(err)
+}
+
 user := godi.MustResolve[*UserService](provider)
 ```
+
+## Contents
+
+- [Why godi?](#why-godi)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Service Lifetimes](#service-lifetimes)
+- [HTTP Integration](#http-integration)
+- [Features](#features)
+- [Error Handling](#error-handling)
+- [Testing](#testing)
+- [Comparison](#comparison)
+- [Performance](#performance)
+- [Documentation](#documentation)
 
 ## Why godi?
 
