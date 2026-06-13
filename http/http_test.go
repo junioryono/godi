@@ -333,8 +333,8 @@ func TestHandle(t *testing.T) {
 	})
 }
 
-func TestWrap(t *testing.T) {
-	t.Run("wraps function as handler", func(t *testing.T) {
+func TestHandleInlineFunc(t *testing.T) {
+	t.Run("handles inline controller function", func(t *testing.T) {
 		collection := godi.NewCollection()
 		collection.AddScoped(func() *testService {
 			return &testService{ID: "wrapped", Value: 200}
@@ -345,7 +345,7 @@ func TestWrap(t *testing.T) {
 		assert.NoError(t, err)
 		defer provider.Close()
 
-		handler := ScopeMiddleware(provider)(Wrap(func(ctrl *testController, w http.ResponseWriter, r *http.Request) {
+		handler := ScopeMiddleware(provider)(Handle(func(ctrl *testController, w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte("wrapped: " + ctrl.Service.ID))
 		}))

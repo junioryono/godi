@@ -1,7 +1,8 @@
 // Package chi provides godi integration for the Chi router.
 //
-// This package provides middleware for creating request-scoped containers
-// and type-safe handler wrappers for resolving controllers.
+// Chi uses standard net/http handlers and middleware, so this integration
+// mirrors the net/http one (github.com/junioryono/godi/v5/http): using godihttp
+// with a Chi router works identically. This package exists for discoverability.
 //
 // Example usage:
 //

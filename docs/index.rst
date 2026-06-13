@@ -54,6 +54,7 @@
    integrations/echo
    integrations/fiber
    integrations/net-http
+   integrations/huma
 
 .. toctree::
    :maxdepth: 2
@@ -162,6 +163,7 @@ Quick Links
 - :doc:`integrations/echo` - Echo framework
 - :doc:`integrations/fiber` - Fiber framework
 - :doc:`integrations/net-http` - Standard library
+- :doc:`integrations/huma` - Huma REST API framework
 
 **Advanced Features**
 

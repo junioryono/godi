@@ -51,7 +51,8 @@ func TestScopeMiddleware(t *testing.T) {
 		app := fiber.New()
 		app.Use(ScopeMiddleware(provider))
 		app.Get("/test", func(c *fiber.Ctx) error {
-			scope := FromContext(c)
+			scope, scopeErr := godi.FromContext(c.UserContext())
+			assert.NoError(t, scopeErr)
 			assert.NotNil(t, scope)
 
 			resolvedService, err = godi.Resolve[*testService](scope)
@@ -314,11 +315,12 @@ func TestHandle(t *testing.T) {
 	})
 }
 
-func TestFromContext(t *testing.T) {
+func TestScopeFromUserContext(t *testing.T) {
 	t.Run("returns nil when no scope", func(t *testing.T) {
 		app := fiber.New()
 		app.Get("/test", func(c *fiber.Ctx) error {
-			scope := FromContext(c)
+			scope, scopeErr := godi.FromContext(c.UserContext())
+			assert.Error(t, scopeErr)
 			assert.Nil(t, scope)
 			return c.SendStatus(http.StatusOK)
 		})
@@ -346,8 +348,8 @@ func TestFromContext(t *testing.T) {
 		app := fiber.New()
 		app.Use(ScopeMiddleware(provider))
 		app.Get("/test", func(c *fiber.Ctx) error {
-			scope := FromContext(c)
-			scopeFound = scope != nil
+			scope, scopeErr := godi.FromContext(c.UserContext())
+			scopeFound = scopeErr == nil && scope != nil
 			return c.SendStatus(http.StatusOK)
 		})
 
@@ -456,7 +458,8 @@ func TestScopeClosedWhenHandlerPanics(t *testing.T) {
 		WithCloseErrorHandler(func(err error) { closeErr = err }),
 	))
 	app.Get("/panic", func(c *fiber.Ctx) error {
-		scope := FromContext(c)
+		scope, scopeErr := godi.FromContext(c.UserContext())
+		assert.NoError(t, scopeErr)
 		_, resolveErr := godi.Resolve[*testDisposable](scope)
 		assert.NoError(t, resolveErr)
 		panic("handler exploded")
