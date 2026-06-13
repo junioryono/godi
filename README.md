@@ -55,6 +55,9 @@ go get github.com/junioryono/godi/v5
 
 Requires **Go 1.26+**. Zero external dependencies.
 
+> **Upgrading from v4?** See the [v4 → v5 migration guide](MIGRATION.md) — v5
+> is a breaking release at a new import path.
+
 ## Quick Start
 
 ```go

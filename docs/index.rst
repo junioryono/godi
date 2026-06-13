@@ -30,6 +30,7 @@
    guides/testing
    guides/error-handling
    guides/migration
+   guides/v4-to-v5
 
 .. toctree::
    :maxdepth: 2
