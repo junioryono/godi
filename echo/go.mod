@@ -1,4 +1,4 @@
-module github.com/junioryono/godi/v5/echo
+module github.com/junioryono/godi/echo/v5
 
 go 1.26.0
 

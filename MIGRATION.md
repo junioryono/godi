@@ -11,7 +11,7 @@ The full guide with before/after examples lives at
 
 | Change | Action |
 | --- | --- |
-| Import path `/v4` → `/v5` | Find-and-replace across your module |
+| Import path `/v4` → `/v5` (integrations are now `/<framework>/v5`) | Find-and-replace across your module |
 | Go 1.26 minimum | Set `go 1.26.0` in your `go.mod` |
 | `AddSingleton`/`AddScoped`/`AddTransient`/`AddModules` no longer return errors | Check `Build()` (or `Collection.Err()`) instead |
 | Typed errors are now pointers | Match with `errors.AsType[*godi.XxxError]` (Go 1.26) or a pointer target |
@@ -45,7 +45,8 @@ match individual causes, and module errors carry the module name.
 ## Quick path-migration
 
 ```sh
-go get github.com/junioryono/godi/v5@latest
+grep -rl 'junioryono/godi/v4' . | xargs sed -i '' -E 's#junioryono/godi/v4/(http|chi|echo|fiber|gin|huma)#junioryono/godi/\1/v5#g'
 grep -rl 'junioryono/godi/v4' . | xargs sed -i '' 's#junioryono/godi/v4#junioryono/godi/v5#g'
+go get github.com/junioryono/godi/v5@latest
 go mod tidy && go build ./...
 ```

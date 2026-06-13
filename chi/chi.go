@@ -1,7 +1,7 @@
 // Package chi provides godi integration for the Chi router.
 //
 // Chi uses standard net/http handlers and middleware, so this integration
-// mirrors the net/http one (github.com/junioryono/godi/v5/http): using godihttp
+// mirrors the net/http one (github.com/junioryono/godi/http/v5): using godihttp
 // with a Chi router works identically. This package exists for discoverability.
 //
 // Example usage:
