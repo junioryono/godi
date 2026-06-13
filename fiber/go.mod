@@ -1,4 +1,4 @@
-module github.com/junioryono/godi/v5/fiber
+module github.com/junioryono/godi/fiber/v5
 
 go 1.26.0
 

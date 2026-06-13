@@ -1,4 +1,4 @@
-module github.com/junioryono/godi/v5/chi
+module github.com/junioryono/godi/chi/v5
 
 go 1.26.0
 

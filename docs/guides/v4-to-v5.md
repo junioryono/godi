@@ -24,7 +24,9 @@ so nothing updates until you opt in.
 
 ## 1. Import path
 
-v5 modules live under `/v5`:
+The root module moves to `/v5`. Each framework integration is its own module
+with the major version at the **end** of its path (`/<framework>/v5`), the
+layout Go requires for a multi-module repository:
 
 ```go
 // Before
@@ -33,16 +35,20 @@ import godigin "github.com/junioryono/godi/v4/gin"
 
 // After
 import "github.com/junioryono/godi/v5"
-import godigin "github.com/junioryono/godi/v5/gin"
+import godigin "github.com/junioryono/godi/gin/v5"
 ```
 
 ```sh
-# One-shot for a whole module:
-go mod edit -droprequire github.com/junioryono/godi/v4
-go get github.com/junioryono/godi/v5@latest
+# Rewrite integration imports first (godi/v4/<fw> -> godi/<fw>/v5), then the
+# root import (godi/v4 -> godi/v5). Order matters.
+grep -rl 'junioryono/godi/v4' . | xargs sed -i '' -E 's#junioryono/godi/v4/(http|chi|echo|fiber|gin|huma)#junioryono/godi/\1/v5#g'
 grep -rl 'junioryono/godi/v4' . | xargs sed -i '' 's#junioryono/godi/v4#junioryono/godi/v5#g'
+go get github.com/junioryono/godi/v5@latest
 go mod tidy
 ```
+
+> Integration import paths are `github.com/junioryono/godi/<framework>/v5`
+> (e.g. `.../gin/v5`), **not** `.../v5/gin`.
 
 ## 2. Go 1.26 minimum
 
@@ -224,7 +230,7 @@ The `gin`, `chi`, `echo`, and `net/http` integrations are otherwise
 source-compatible (beyond the `/v5` import path).
 
 New in v5: a [Huma](https://github.com/danielgtaylor/huma) integration
-(`github.com/junioryono/godi/v5/huma`) for typed, OpenAPI-backed APIs.
+(`github.com/junioryono/godi/huma/v5`) for typed, OpenAPI-backed APIs.
 
 ---
 

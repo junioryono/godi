@@ -1,4 +1,4 @@
-module github.com/junioryono/godi/v5/huma
+module github.com/junioryono/godi/huma/v5
 
 go 1.26.0
 

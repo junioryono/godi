@@ -164,7 +164,7 @@ import (
     "net/http"
 
     "github.com/junioryono/godi/v5"
-    godihttp "github.com/junioryono/godi/v5/http"
+    godihttp "github.com/junioryono/godi/http/v5"
 )
 
 type UserController struct {
@@ -199,12 +199,12 @@ func main() {
 
 | Framework | Package                               | Install                                      |
 | --------- | ------------------------------------- | -------------------------------------------- |
-| net/http  | `github.com/junioryono/godi/v5/http`  | `go get github.com/junioryono/godi/v5/http`  |
-| Gin       | `github.com/junioryono/godi/v5/gin`   | `go get github.com/junioryono/godi/v5/gin`   |
-| Chi       | `github.com/junioryono/godi/v5/chi`   | `go get github.com/junioryono/godi/v5/chi`   |
-| Echo      | `github.com/junioryono/godi/v5/echo`  | `go get github.com/junioryono/godi/v5/echo`  |
-| Fiber     | `github.com/junioryono/godi/v5/fiber` | `go get github.com/junioryono/godi/v5/fiber` |
-| Huma      | `github.com/junioryono/godi/v5/huma`  | `go get github.com/junioryono/godi/v5/huma`  |
+| net/http  | `github.com/junioryono/godi/http/v5`  | `go get github.com/junioryono/godi/http/v5`  |
+| Gin       | `github.com/junioryono/godi/gin/v5`   | `go get github.com/junioryono/godi/gin/v5`   |
+| Chi       | `github.com/junioryono/godi/chi/v5`   | `go get github.com/junioryono/godi/chi/v5`   |
+| Echo      | `github.com/junioryono/godi/echo/v5`  | `go get github.com/junioryono/godi/echo/v5`  |
+| Fiber     | `github.com/junioryono/godi/fiber/v5` | `go get github.com/junioryono/godi/fiber/v5` |
+| Huma      | `github.com/junioryono/godi/huma/v5`  | `go get github.com/junioryono/godi/huma/v5`  |
 
 Huma runs on top of a router, so pair `godi/v5/huma` with the matching router
 integration above — the router middleware owns the request scope, and Huma

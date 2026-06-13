@@ -16,9 +16,9 @@ integration (`godigin`, `godichi`, `godihttp`, `godiecho`, `godifiber`).
 
 ```bash
 go get github.com/junioryono/godi/v5
-go get github.com/junioryono/godi/v5/huma
+go get github.com/junioryono/godi/huma/v5
 # plus the router integration you mount Huma on, e.g.:
-go get github.com/junioryono/godi/v5/gin
+go get github.com/junioryono/godi/gin/v5
 ```
 
 ## Quick Start
@@ -34,8 +34,8 @@ import (
     "github.com/danielgtaylor/huma/v2/adapters/humagin"
     "github.com/gin-gonic/gin"
     "github.com/junioryono/godi/v5"
-    godigin "github.com/junioryono/godi/v5/gin"
-    godihuma "github.com/junioryono/godi/v5/huma"
+    godigin "github.com/junioryono/godi/gin/v5"
+    godihuma "github.com/junioryono/godi/huma/v5"
 )
 
 type GreetInput struct {

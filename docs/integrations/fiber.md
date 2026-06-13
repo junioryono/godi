@@ -6,7 +6,7 @@ Complete guide for using godi with the [Fiber](https://github.com/gofiber/fiber)
 
 ```bash
 go get github.com/junioryono/godi/v5
-go get github.com/junioryono/godi/v5/fiber
+go get github.com/junioryono/godi/fiber/v5
 ```
 
 ## Quick Start
@@ -17,7 +17,7 @@ package main
 import (
     "github.com/gofiber/fiber/v2"
     "github.com/junioryono/godi/v5"
-    godifiber "github.com/junioryono/godi/v5/fiber"
+    godifiber "github.com/junioryono/godi/fiber/v5"
 )
 
 type UserController struct{}
@@ -140,7 +140,7 @@ import (
     "github.com/gofiber/fiber/v2/middleware/recover"
     "github.com/google/uuid"
     "github.com/junioryono/godi/v5"
-    godifiber "github.com/junioryono/godi/v5/fiber"
+    godifiber "github.com/junioryono/godi/fiber/v5"
 )
 
 // === Services ===

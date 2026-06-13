@@ -39,7 +39,7 @@ import (
     "time"
 
     "github.com/junioryono/godi/v5"
-    godihttp "github.com/junioryono/godi/v5/http"
+    godihttp "github.com/junioryono/godi/http/v5"
     _ "github.com/lib/pq"
 )
 

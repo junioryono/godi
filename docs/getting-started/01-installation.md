@@ -48,19 +48,19 @@ If you're using a web framework, install the corresponding integration:
 
 ```bash
 # For Gin
-go get github.com/junioryono/godi/v5/gin
+go get github.com/junioryono/godi/gin/v5
 
 # For Chi
-go get github.com/junioryono/godi/v5/chi
+go get github.com/junioryono/godi/chi/v5
 
 # For Echo
-go get github.com/junioryono/godi/v5/echo
+go get github.com/junioryono/godi/echo/v5
 
 # For Fiber
-go get github.com/junioryono/godi/v5/fiber
+go get github.com/junioryono/godi/fiber/v5
 
 # For net/http
-go get github.com/junioryono/godi/v5/http
+go get github.com/junioryono/godi/http/v5
 ```
 
 ---

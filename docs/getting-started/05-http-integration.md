@@ -21,7 +21,7 @@ import (
     "net/http"
 
     "github.com/junioryono/godi/v5"
-    godihttp "github.com/junioryono/godi/v5/http"
+    godihttp "github.com/junioryono/godi/http/v5"
 )
 
 // Services
@@ -165,7 +165,7 @@ import (
 
     "github.com/google/uuid"
     "github.com/junioryono/godi/v5"
-    godihttp "github.com/junioryono/godi/v5/http"
+    godihttp "github.com/junioryono/godi/http/v5"
 )
 
 // === Services ===
@@ -272,11 +272,11 @@ godi has dedicated integrations for popular frameworks:
 
 | Framework | Package                               | Docs                                                |
 | --------- | ------------------------------------- | --------------------------------------------------- |
-| Gin       | `github.com/junioryono/godi/v5/gin`   | [Gin Integration](../integrations/gin.md)           |
-| Chi       | `github.com/junioryono/godi/v5/chi`   | [Chi Integration](../integrations/chi.md)           |
-| Echo      | `github.com/junioryono/godi/v5/echo`  | [Echo Integration](../integrations/echo.md)         |
-| Fiber     | `github.com/junioryono/godi/v5/fiber` | [Fiber Integration](../integrations/fiber.md)       |
-| net/http  | `github.com/junioryono/godi/v5/http`  | [net/http Integration](../integrations/net-http.md) |
+| Gin       | `github.com/junioryono/godi/gin/v5`   | [Gin Integration](../integrations/gin.md)           |
+| Chi       | `github.com/junioryono/godi/chi/v5`   | [Chi Integration](../integrations/chi.md)           |
+| Echo      | `github.com/junioryono/godi/echo/v5`  | [Echo Integration](../integrations/echo.md)         |
+| Fiber     | `github.com/junioryono/godi/fiber/v5` | [Fiber Integration](../integrations/fiber.md)       |
+| net/http  | `github.com/junioryono/godi/http/v5`  | [net/http Integration](../integrations/net-http.md) |
 
 Each integration provides:
 
