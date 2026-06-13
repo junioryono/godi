@@ -65,6 +65,8 @@ package main
 
 import (
     "fmt"
+    "log"
+
     "github.com/junioryono/godi/v5"
 )
 
@@ -86,8 +88,11 @@ func main() {
     services.AddSingleton(NewLogger)
     services.AddSingleton(NewUserService)
 
-    // 2. Build the container
-    provider, _ := services.Build()
+    // 2. Build the container — registration errors surface here
+    provider, err := services.Build()
+    if err != nil {
+        log.Fatal(err)
+    }
     defer provider.Close()
 
     // 3. Resolve and use - dependencies wired automatically
@@ -137,7 +142,9 @@ godi shines in web applications where each request needs isolated services:
 package main
 
 import (
+    "log"
     "net/http"
+
     "github.com/junioryono/godi/v5"
     godihttp "github.com/junioryono/godi/v5/http"
 )
@@ -155,7 +162,10 @@ func main() {
     services.AddSingleton(NewLogger)
     services.AddScoped(NewUserController)
 
-    provider, _ := services.Build()
+    provider, err := services.Build()
+    if err != nil {
+        log.Fatal(err)
+    }
     defer provider.Close()
 
     mux := http.NewServeMux()
@@ -408,7 +418,7 @@ cd benchmarks && go test -bench=. -benchmem
 - [Getting Started](https://godi.readthedocs.io/en/latest/getting-started/) - 5-minute tutorial
 - [Core Concepts](https://godi.readthedocs.io/en/latest/concepts/) - Lifetimes, scopes, modules
 - [Features](https://godi.readthedocs.io/en/latest/features/) - Keyed services, groups, parameter objects
-- [Integrations](https://godi.readthedocs.io/en/latest/integrations/) - Gin, Chi, Echo, Fiber, net/http
+- [Integrations](https://godi.readthedocs.io/en/latest/integrations/) - Gin, Chi, Echo, Fiber, net/http, Huma
 - [Guides](https://godi.readthedocs.io/en/latest/guides/) - Web apps, testing, error handling
 - [API Reference](https://pkg.go.dev/github.com/junioryono/godi/v5)
 

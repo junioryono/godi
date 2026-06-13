@@ -38,6 +38,8 @@ package main
 
 import (
     "fmt"
+    "log"
+
     "github.com/junioryono/godi/v5"
 )
 
@@ -58,8 +60,11 @@ func main() {
     services.AddSingleton(func() *Logger { return &Logger{} })
     services.AddSingleton(NewUserService)
 
-    // Build and use
-    provider, _ := services.Build()
+    // Build and use — registration errors surface here
+    provider, err := services.Build()
+    if err != nil {
+        log.Fatal(err)
+    }
     defer provider.Close()
 
     // godi automatically wires Logger into UserService
