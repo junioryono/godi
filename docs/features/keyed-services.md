@@ -102,13 +102,13 @@ func (s *PaymentService) Process(method string, amount float64) error {
 ### Environment-Specific Services
 
 ```go
-func RegisterEmailService(services *godi.ServiceCollection, env string) {
+func RegisterEmailService(services godi.Collection, env string) {
     switch env {
     case "development":
         services.AddSingleton(NewMockEmailer, godi.Name("email"))
     case "staging":
         services.AddSingleton(NewSandboxEmailer, godi.Name("email"))
-    case "production":
+    default:
         services.AddSingleton(NewSESEmailer, godi.Name("email"))
     }
 }

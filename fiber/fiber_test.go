@@ -8,7 +8,8 @@ import (
 	"testing"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/junioryono/godi/v4"
+	fiberrecover "github.com/gofiber/fiber/v2/middleware/recover"
+	"github.com/junioryono/godi/v5"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -419,4 +420,55 @@ func TestIntegration(t *testing.T) {
 		assert.Equal(t, "true", requestValues["initialized"])
 		assert.Equal(t, "integration", requestValues["service_id"])
 	})
+}
+
+type testDisposable struct {
+	closed bool
+}
+
+func (d *testDisposable) Close() error {
+	d.closed = true
+	return errors.New("close failed")
+}
+
+func TestScopeClosedWhenHandlerPanics(t *testing.T) {
+	var disposable *testDisposable
+
+	collection := godi.NewCollection()
+	collection.AddScoped(func() *testDisposable {
+		disposable = &testDisposable{}
+		return disposable
+	})
+
+	provider, err := collection.Build()
+	assert.NoError(t, err)
+	defer provider.Close()
+
+	// The disposable's Close error is observable only through the
+	// middleware's CloseErrorHandler; the context-cancellation auto-close
+	// path discards Close errors. This makes the test discriminating: it
+	// fails if the middleware stops closing the scope on panic, even though
+	// the auto-close would eventually dispose the instance anyway.
+	var closeErr error
+	app := fiber.New()
+	app.Use(fiberrecover.New())
+	app.Use(ScopeMiddleware(provider,
+		WithCloseErrorHandler(func(err error) { closeErr = err }),
+	))
+	app.Get("/panic", func(c *fiber.Ctx) error {
+		scope := FromContext(c)
+		_, resolveErr := godi.Resolve[*testDisposable](scope)
+		assert.NoError(t, resolveErr)
+		panic("handler exploded")
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/panic", http.NoBody)
+	resp, err := app.Test(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.NotNil(t, disposable)
+	assert.Error(t, closeErr, "the middleware itself must close the scope when the handler panics")
+	assert.Contains(t, closeErr.Error(), "close failed")
+	assert.True(t, disposable.closed, "scope must be closed even when the handler panics")
 }

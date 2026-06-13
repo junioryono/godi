@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/junioryono/godi/v4/internal/graph"
-	"github.com/junioryono/godi/v4/internal/reflection"
+	"github.com/junioryono/godi/v5/internal/graph"
+	"github.com/junioryono/godi/v5/internal/reflection"
 )
 
 // Disposable interface for resources that need cleanup
@@ -48,8 +48,8 @@ type provider struct {
 	id string
 
 	// Service registry (immutable after build)
-	services map[TypeKey]*Descriptor
-	groups   map[GroupKey][]*Descriptor
+	services map[TypeKey]*descriptor
+	groups   map[GroupKey][]*descriptor
 
 	// Dependency graph (immutable after build)
 	graph *graph.DependencyGraph
@@ -65,8 +65,9 @@ type provider struct {
 	singletonKeys   []instanceKey
 	singletonKeysMu sync.Mutex
 
-	voidReturnScopedDescriptors   []*Descriptor
-	voidReturnScopedDescriptorsMu sync.RWMutex
+	// Scoped descriptors with no return values (initialization functions),
+	// invoked when each scope is created. Immutable after build.
+	voidReturnScopedDescriptors []*descriptor
 
 	// Track disposable instances for cleanup
 	disposables   []Disposable
@@ -80,10 +81,10 @@ type provider struct {
 	scopesMu sync.Mutex
 
 	// Scope ID counter (atomic, scoped to this provider)
-	scopeCounter uint64
+	scopeCounter atomic.Uint64
 
 	// State
-	disposed int32 // atomic
+	disposed atomic.Int32
 }
 
 // instanceKey uniquely identifies a service instance
@@ -101,7 +102,7 @@ func (p *provider) ID() string {
 
 // Get resolves a service from the root scope
 func (p *provider) Get(serviceType reflect.Type) (any, error) {
-	if atomic.LoadInt32(&p.disposed) != 0 {
+	if p.disposed.Load() != 0 {
 		return nil, ErrProviderDisposed
 	}
 
@@ -114,7 +115,7 @@ func (p *provider) Get(serviceType reflect.Type) (any, error) {
 
 // GetKeyed resolves a keyed service from the root scope
 func (p *provider) GetKeyed(serviceType reflect.Type, key any) (any, error) {
-	if atomic.LoadInt32(&p.disposed) != 0 {
+	if p.disposed.Load() != 0 {
 		return nil, ErrProviderDisposed
 	}
 
@@ -131,7 +132,7 @@ func (p *provider) GetKeyed(serviceType reflect.Type, key any) (any, error) {
 
 // GetGroup resolves all services in a group from the root scope
 func (p *provider) GetGroup(serviceType reflect.Type, group string) ([]any, error) {
-	if atomic.LoadInt32(&p.disposed) != 0 {
+	if p.disposed.Load() != 0 {
 		return nil, ErrProviderDisposed
 	}
 
@@ -151,7 +152,7 @@ func (p *provider) GetGroup(serviceType reflect.Type, group string) ([]any, erro
 
 // CreateScope creates a new service scope
 func (p *provider) CreateScope(ctx context.Context) (Scope, error) {
-	if atomic.LoadInt32(&p.disposed) != 0 {
+	if p.disposed.Load() != 0 {
 		return nil, ErrProviderDisposed
 	}
 
@@ -166,27 +167,34 @@ func (p *provider) CreateScope(ctx context.Context) (Scope, error) {
 		return nil, err
 	}
 
-	// Track scope
+	// Track scope. Re-check disposal under the lock: Close may have run
+	// (and enumerated scopes) between the check at the top of this method
+	// and here, in which case this scope must be torn down by us instead
+	// of leaking untracked.
 	p.scopesMu.Lock()
+	if p.disposed.Load() != 0 {
+		p.scopesMu.Unlock()
+		_ = s.Close()
+		return nil, ErrProviderDisposed
+	}
 	p.scopes[s] = struct{}{}
 	p.scopesMu.Unlock()
 
-	// Auto-close on context cancellation
-	go func() {
-		<-ctx.Done()
-		if err := s.Close(); err != nil {
-			// Context cancellation cleanup errors are expected during shutdown
-			// and cannot be meaningfully handled, so we ignore them
-			_ = err
-		}
-	}()
+	// Auto-close on context cancellation. AfterFunc avoids dedicating a
+	// goroutine per scope; Close is idempotent, so the callback firing
+	// after an explicit Close (which cancels ctx) is harmless.
+	context.AfterFunc(ctx, func() {
+		// Context cancellation cleanup errors are expected during shutdown
+		// and cannot be meaningfully handled, so we ignore them.
+		_ = s.Close()
+	})
 
 	return s, nil
 }
 
 // Close disposes the provider and all its resources
 func (p *provider) Close() error {
-	if !atomic.CompareAndSwapInt32(&p.disposed, 0, 1) {
+	if !p.disposed.CompareAndSwap(0, 1) {
 		return nil // Already disposed
 	}
 
@@ -209,13 +217,13 @@ func (p *provider) Close() error {
 		}
 	}
 
-	// Close root scope
+	// Close root scope. The field is deliberately not nil-ed: concurrent
+	// Get/GetKeyed/GetGroup calls read it without synchronization, and a
+	// closed root scope already rejects resolution with ErrScopeDisposed.
 	if p.rootScope != nil {
 		if err := p.rootScope.Close(); err != nil {
 			errors = append(errors, fmt.Errorf("root scope: %w", err))
 		}
-
-		p.rootScope = nil
 	}
 
 	// Dispose all singleton disposables
@@ -234,17 +242,15 @@ func (p *provider) Close() error {
 		}
 	}
 
-	// Clear all internal state - clear singletons from sync.Map
+	// Clear all internal state - clear singletons from sync.Map.
+	// voidReturnScopedDescriptors is deliberately left intact: it is
+	// immutable after build and read without synchronization by newScope.
 	p.singletonKeysMu.Lock()
 	for _, key := range p.singletonKeys {
 		p.singletons.Delete(key)
 	}
 	p.singletonKeys = nil
 	p.singletonKeysMu.Unlock()
-
-	p.voidReturnScopedDescriptorsMu.Lock()
-	p.voidReturnScopedDescriptors = nil
-	p.voidReturnScopedDescriptorsMu.Unlock()
 
 	if len(errors) > 0 {
 		return &DisposalError{
@@ -287,7 +293,7 @@ func (p *provider) setSingleton(key instanceKey, instance any) {
 
 // findDescriptor finds a descriptor for the given service type and optional key.
 // Returns nil if no matching descriptor is found in the service registry.
-func (p *provider) findDescriptor(serviceType reflect.Type, key any) *Descriptor {
+func (p *provider) findDescriptor(serviceType reflect.Type, key any) *descriptor {
 	if serviceType == nil {
 		return nil
 	}
@@ -298,7 +304,7 @@ func (p *provider) findDescriptor(serviceType reflect.Type, key any) *Descriptor
 
 // findGroupDescriptors finds all descriptors for a specific type within a group.
 // Returns an empty slice if the type is nil, group is empty, or no services are found.
-func (p *provider) findGroupDescriptors(serviceType reflect.Type, group string) []*Descriptor {
+func (p *provider) findGroupDescriptors(serviceType reflect.Type, group string) []*descriptor {
 	if serviceType == nil || group == "" {
 		return nil
 	}
@@ -339,7 +345,7 @@ func (p *provider) createAllSingletonsWithContext(ctx context.Context) error {
 			continue
 		}
 
-		descriptor, ok := node.Provider.(*Descriptor)
+		descriptor, ok := node.Provider.(*descriptor)
 		if !ok {
 			return &ValidationError{
 				ServiceType: nil,
@@ -408,7 +414,7 @@ func Resolve[T any](provider Provider) (T, error) {
 		return zero, ErrProviderNil
 	}
 
-	serviceType := reflect.TypeOf((*T)(nil)).Elem()
+	serviceType := reflect.TypeFor[T]()
 	service, err := provider.Get(serviceType)
 	if err != nil {
 		return zero, err
@@ -459,7 +465,7 @@ func ResolveKeyed[T any](provider Provider, key any) (T, error) {
 		return zero, ErrServiceKeyNil
 	}
 
-	serviceType := reflect.TypeOf((*T)(nil)).Elem()
+	serviceType := reflect.TypeFor[T]()
 	service, err := provider.GetKeyed(serviceType, key)
 	if err != nil {
 		return zero, err
@@ -510,7 +516,7 @@ func ResolveGroup[T any](provider Provider, group string) ([]T, error) {
 		}
 	}
 
-	serviceType := reflect.TypeOf((*T)(nil)).Elem()
+	serviceType := reflect.TypeFor[T]()
 	services, err := provider.GetGroup(serviceType, group)
 	if err != nil {
 		return nil, err

@@ -7,7 +7,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/junioryono/godi/v4"
+	"github.com/junioryono/godi/v5"
 	"github.com/samber/do/v2"
 	"go.uber.org/dig"
 )

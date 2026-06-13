@@ -1,19 +1,27 @@
 package reflection
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"sync"
 	"sync/atomic"
 )
 
+// ErrServiceNotFound indicates that no provider is registered for a requested
+// type/key. It lives here (rather than in the root package) so the parameter
+// builder can distinguish "not registered" from "registered but failed to
+// construct" without an import cycle. The root package re-exports it as
+// godi.ErrServiceNotFound.
+var ErrServiceNotFound = errors.New("service not found")
+
 type In struct{}
 type Out struct{}
 
 var (
-	inType  = reflect.TypeOf((*In)(nil)).Elem()
-	outType = reflect.TypeOf((*Out)(nil)).Elem()
-	errType = reflect.TypeOf((*error)(nil)).Elem()
+	inType  = reflect.TypeFor[In]()
+	outType = reflect.TypeFor[Out]()
+	errType = reflect.TypeFor[error]()
 )
 
 // Analyzer performs reflection-based analysis of constructors and types.
@@ -22,9 +30,9 @@ type Analyzer struct {
 	mu    sync.RWMutex
 	cache map[uintptr]*ConstructorInfo
 
-	// Invoker cache for reusing ConstructorInvoker instances
-	invokerMu    sync.RWMutex
-	invokerCache map[uintptr]*ConstructorInvoker
+	// invoker is the shared ConstructorInvoker for this analyzer. Invokers
+	// are stateless, so a single instance serves every resolution.
+	invoker *ConstructorInvoker
 
 	// Diagnostic counter: total number of Analyze() invocations (cache hits
 	// + misses). Used by tests to assert that callers cache the result and
@@ -122,10 +130,11 @@ type ParamField struct {
 
 // New creates a new Analyzer.
 func New() *Analyzer {
-	return &Analyzer{
-		cache:        make(map[uintptr]*ConstructorInfo),
-		invokerCache: make(map[uintptr]*ConstructorInvoker),
+	a := &Analyzer{
+		cache: make(map[uintptr]*ConstructorInfo),
 	}
+	a.invoker = NewConstructorInvoker(a)
+	return a
 }
 
 // Analyze analyzes a constructor function and extracts dependency information.
@@ -144,20 +153,23 @@ func (a *Analyzer) Analyze(constructor any) (*ConstructorInfo, error) {
 
 	typ := reflect.TypeOf(constructor)
 
-	// This ensures different functions with the same signature are cached separately
-	var cacheKey uintptr
-	switch {
-	case typ.Kind() == reflect.Func && val.CanAddr():
-		// For functions, use the function pointer as the cache key
-		cacheKey = val.Pointer()
-	case typ.Kind() == reflect.Func:
-		// For non-addressable functions, use the pointer from Value
-		cacheKey = val.Pointer()
-	default:
-		// For non-functions, we can still use the type's address as a fallback
-		// Note: This won't differentiate between different instances of the same type
-		cacheKey = reflect.ValueOf(typ).Pointer()
+	// Non-functions (instances) are not cached: a per-type cache key would
+	// make every instance of a type share the first instance's
+	// ConstructorInfo (and its InstanceValue). The analysis is trivial for
+	// instances, so building it fresh costs almost nothing.
+	if typ.Kind() != reflect.Func {
+		return &ConstructorInfo{
+			Type:          typ,
+			Value:         val,
+			InstanceValue: constructor,
+			Parameters:    []ParameterInfo{},
+			dependencies:  []*Dependency{},
+		}, nil
 	}
+
+	// For functions, the function pointer keys the cache so different
+	// functions with the same signature are cached separately.
+	cacheKey := val.Pointer()
 
 	// Check cache first
 	a.mu.RLock()
@@ -169,20 +181,10 @@ func (a *Analyzer) Analyze(constructor any) (*ConstructorInfo, error) {
 
 	// Perform analysis
 	info := &ConstructorInfo{
-		Type:  typ,
-		Value: val,
+		Type:   typ,
+		Value:  val,
+		IsFunc: true,
 	}
-
-	// Check if it's a function
-	if typ.Kind() != reflect.Func {
-		info.InstanceValue = constructor
-		info.Parameters = []ParameterInfo{}
-		info.dependencies = []*Dependency{}
-		return a.cacheAndReturn(cacheKey, info)
-	}
-
-	// It's a function constructor
-	info.IsFunc = true
 
 	// Analyze parameters
 	if err := a.analyzeParameters(info); err != nil {
@@ -200,33 +202,10 @@ func (a *Analyzer) Analyze(constructor any) (*ConstructorInfo, error) {
 	return a.cacheAndReturn(cacheKey, info)
 }
 
-// GetInvoker returns a cached ConstructorInvoker or creates a new one.
-// The invoker is reusable and thread-safe, so caching it reduces allocations.
+// GetInvoker returns the shared ConstructorInvoker for this analyzer.
+// The invoker is stateless and thread-safe.
 func (a *Analyzer) GetInvoker() *ConstructorInvoker {
-	// Use a constant key since all invokers are identical
-	// (they only differ by the analyzer reference, which is the same)
-	const invokerKey uintptr = 0
-
-	// Check cache first with read lock
-	a.invokerMu.RLock()
-	if invoker, ok := a.invokerCache[invokerKey]; ok {
-		a.invokerMu.RUnlock()
-		return invoker
-	}
-	a.invokerMu.RUnlock()
-
-	// Create new invoker with write lock
-	a.invokerMu.Lock()
-	defer a.invokerMu.Unlock()
-
-	// Double-check after acquiring write lock
-	if invoker, ok := a.invokerCache[invokerKey]; ok {
-		return invoker
-	}
-
-	invoker := NewConstructorInvoker(a)
-	a.invokerCache[invokerKey] = invoker
-	return invoker
+	return a.invoker
 }
 
 // analyzeParameters analyzes function parameters or In struct fields.
@@ -582,6 +561,12 @@ func (a *Analyzer) AnalyzeCalls() int64 {
 	return a.analyzeCalls.Load()
 }
 
+// HasEmbeddedIn reports whether t (or the struct it points to) embeds In,
+// i.e. whether it is a parameter object.
+func HasEmbeddedIn(t reflect.Type) bool {
+	return hasEmbeddedType(t, inType)
+}
+
 // hasEmbeddedType checks if a type has an embedded field of the given type.
 func hasEmbeddedType(t, embedded reflect.Type) bool {
 	if t.Kind() == reflect.Pointer {
@@ -592,8 +577,7 @@ func hasEmbeddedType(t, embedded reflect.Type) bool {
 		return false
 	}
 
-	for i := 0; i < t.NumField(); i++ {
-		field := t.Field(i)
+	for field := range t.Fields() {
 		if field.Anonymous && isInOutType(field.Type, embedded) {
 			return true
 		}

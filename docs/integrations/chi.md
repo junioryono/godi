@@ -5,8 +5,8 @@ Complete guide for using godi with the [Chi](https://github.com/go-chi/chi) rout
 ## Installation
 
 ```bash
-go get github.com/junioryono/godi/v4
-go get github.com/junioryono/godi/v4/chi
+go get github.com/junioryono/godi/v5
+go get github.com/junioryono/godi/v5/chi
 ```
 
 ## Quick Start
@@ -19,8 +19,8 @@ import (
     "net/http"
 
     "github.com/go-chi/chi/v5"
-    "github.com/junioryono/godi/v4"
-    godichi "github.com/junioryono/godi/v4/chi"
+    "github.com/junioryono/godi/v5"
+    godichi "github.com/junioryono/godi/v5/chi"
 )
 
 type UserController struct{}
@@ -135,8 +135,8 @@ import (
     "github.com/go-chi/chi/v5"
     "github.com/go-chi/chi/v5/middleware"
     "github.com/google/uuid"
-    "github.com/junioryono/godi/v4"
-    godichi "github.com/junioryono/godi/v4/chi"
+    "github.com/junioryono/godi/v5"
+    godichi "github.com/junioryono/godi/v5/chi"
 )
 
 // === Services ===

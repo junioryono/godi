@@ -2,18 +2,19 @@ package godi
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"strconv"
 	"sync"
 	"sync/atomic"
 
-	"github.com/junioryono/godi/v4/internal/graph"
-	"github.com/junioryono/godi/v4/internal/reflection"
+	"github.com/junioryono/godi/v5/internal/graph"
+	"github.com/junioryono/godi/v5/internal/reflection"
 )
 
 // Global atomic counter for fast ID generation (replaces UUID)
-var providerIDCounter uint64
+var providerIDCounter atomic.Uint64
 
 // Collection represents a collection of service descriptors that define
 // the services available in the dependency injection container.
@@ -51,19 +52,29 @@ type Collection interface {
 
 	// AddModules applies one or more module configurations to the service collection.
 	// Modules provide a way to group related service registrations.
-	AddModules(modules ...ModuleOption) error
+	// Registration errors are recorded and reported by Build (or Err).
+	AddModules(modules ...ModuleOption)
 
 	// AddSingleton registers a service with singleton lifetime.
 	// Only one instance is created and shared across all resolutions.
-	AddSingleton(service any, opts ...AddOption) error
+	// Registration errors are recorded and reported by Build (or Err).
+	AddSingleton(service any, opts ...AddOption)
 
 	// AddScoped registers a service with scoped lifetime.
 	// One instance is created per scope and shared within that scope.
-	AddScoped(service any, opts ...AddOption) error
+	// Registration errors are recorded and reported by Build (or Err).
+	AddScoped(service any, opts ...AddOption)
 
 	// AddTransient registers a service with transient lifetime.
 	// A new instance is created every time the service is resolved.
-	AddTransient(service any, opts ...AddOption) error
+	// Registration errors are recorded and reported by Build (or Err).
+	AddTransient(service any, opts ...AddOption)
+
+	// Err returns all registration errors recorded so far, joined into a
+	// single error, or nil if every registration succeeded. Build returns
+	// the same errors, so checking Err is only needed when inspecting the
+	// collection before building.
+	Err() error
 
 	// Contains checks if a service exists for the type.
 	Contains(serviceType reflect.Type) bool
@@ -77,9 +88,9 @@ type Collection interface {
 	// RemoveKeyed removes a specific keyed service.
 	RemoveKeyed(serviceType reflect.Type, key any)
 
-	// ToSlice returns a copy of all registered service descriptors.
-	// This is useful for inspection and debugging.
-	ToSlice() []*Descriptor
+	// ToSlice returns a read-only snapshot of all registered services for
+	// inspection and debugging.
+	ToSlice() []ServiceInfo
 
 	// Count returns the number of registered services.
 	Count() int
@@ -90,16 +101,24 @@ type collection struct {
 	mu sync.RWMutex
 
 	// services stores all non-keyed services by type
-	services map[TypeKey]*Descriptor
+	services map[TypeKey]*descriptor
 
 	// groups stores services that belong to groups
-	groups map[GroupKey][]*Descriptor
+	groups map[GroupKey][]*descriptor
 
 	// allDescriptors tracks all unique descriptors for efficient iteration
-	allDescriptors []*Descriptor
+	allDescriptors []*descriptor
 
 	// analyzer is shared across all registrations for caching
 	analyzer *reflection.Analyzer
+
+	// errs accumulates registration errors so Build can report them all at
+	// once; the Add* methods do not return errors.
+	errs []error
+
+	// moduleStack tracks the modules currently being applied so that
+	// registration errors recorded inside a module carry the module's name.
+	moduleStack []string
 }
 
 // TypeKey uniquely identifies a keyed service
@@ -114,6 +133,20 @@ type GroupKey struct {
 	Group string
 }
 
+// ServiceInfo is a read-only description of a registered service, returned by
+// Collection.ToSlice for inspection and debugging. It intentionally exposes
+// only the stable identity of a registration, not godi's internal wiring.
+type ServiceInfo struct {
+	// ServiceType is the type the service resolves as.
+	ServiceType reflect.Type
+	// Key is the name for keyed services, or nil.
+	Key any
+	// Group is the value-group name for grouped services, or "".
+	Group string
+	// Lifetime is the service's lifetime (Singleton, Scoped, or Transient).
+	Lifetime Lifetime
+}
+
 // NewCollection creates a new empty Collection instance.
 //
 // Example:
@@ -123,9 +156,9 @@ type GroupKey struct {
 //	provider, err := collection.Build()
 func NewCollection() Collection {
 	return &collection{
-		services:       make(map[TypeKey]*Descriptor, 16), // Pre-size for typical usage
-		groups:         make(map[GroupKey][]*Descriptor, 4),
-		allDescriptors: make([]*Descriptor, 0, 16),
+		services:       make(map[TypeKey]*descriptor, 16), // Pre-size for typical usage
+		groups:         make(map[GroupKey][]*descriptor, 4),
+		allDescriptors: make([]*descriptor, 0, 16),
 		analyzer:       reflection.New(),
 	}
 }
@@ -173,6 +206,17 @@ func (sc *collection) doBuild(ctx context.Context) (Provider, error) {
 
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
+
+	// Surface every recorded registration error before doing any work:
+	// the Add* methods defer their errors to Build so callers can register
+	// services without per-call error checks.
+	if len(sc.errs) > 0 {
+		return nil, &BuildError{
+			Phase:   "registration",
+			Details: "one or more service registrations failed",
+			Cause:   errors.Join(sc.errs...),
+		}
+	}
 
 	// Use pre-collected descriptors (no allocation needed)
 	allDescriptors := sc.allDescriptors
@@ -249,13 +293,13 @@ func (sc *collection) doBuild(ctx context.Context) (Provider, error) {
 	}
 
 	p := &provider{
-		id:                          "p" + strconv.FormatUint(atomic.AddUint64(&providerIDCounter, 1), 36),
+		id:                          "p" + strconv.FormatUint(providerIDCounter.Add(1), 36),
 		services:                    sc.services,
 		groups:                      sc.groups,
 		graph:                       g,
 		analyzer:                    sc.analyzer, // Share analyzer from collection
 		singletonKeys:               make([]instanceKey, 0, len(allDescriptors)),
-		voidReturnScopedDescriptors: make([]*Descriptor, 0, voidCount),
+		voidReturnScopedDescriptors: make([]*descriptor, 0, voidCount),
 		disposables:                 make([]Disposable, 0, 4),
 		scopes:                      make(map[*scope]struct{}, 4),
 	}
@@ -311,33 +355,84 @@ func (sc *collection) doBuild(ctx context.Context) (Provider, error) {
 }
 
 // AddModules applies one or more module configurations to the service collection.
-func (sc *collection) AddModules(modules ...ModuleOption) error {
+// Errors returned by module functions are recorded and reported by Build.
+func (sc *collection) AddModules(modules ...ModuleOption) {
 	for _, module := range modules {
 		if module == nil {
 			continue
 		}
 
 		if err := module(sc); err != nil {
-			return err
+			sc.recordErr(err)
 		}
 	}
-
-	return nil
 }
 
 // AddSingleton adds a singleton service to the collection.
-func (sc *collection) AddSingleton(service any, opts ...AddOption) error {
-	return sc.addService(service, Singleton, opts...)
+// Registration errors are recorded and reported by Build (or Err).
+func (sc *collection) AddSingleton(service any, opts ...AddOption) {
+	sc.recordErr(sc.addService(service, Singleton, opts...))
 }
 
 // AddScoped adds a scoped service to the collection.
-func (sc *collection) AddScoped(service any, opts ...AddOption) error {
-	return sc.addService(service, Scoped, opts...)
+// Registration errors are recorded and reported by Build (or Err).
+func (sc *collection) AddScoped(service any, opts ...AddOption) {
+	sc.recordErr(sc.addService(service, Scoped, opts...))
 }
 
 // AddTransient adds a transient service to the collection.
-func (sc *collection) AddTransient(service any, opts ...AddOption) error {
-	return sc.addService(service, Transient, opts...)
+// Registration errors are recorded and reported by Build (or Err).
+func (sc *collection) AddTransient(service any, opts ...AddOption) {
+	sc.recordErr(sc.addService(service, Transient, opts...))
+}
+
+// recordErr stores a registration error for Build to report, wrapping it
+// with the names of the modules being applied (innermost last) so the
+// failure is attributable.
+func (sc *collection) recordErr(err error) {
+	if err == nil {
+		return
+	}
+
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+
+	for i := len(sc.moduleStack) - 1; i >= 0; i-- {
+		// Avoid double-wrapping: module functions may already return
+		// ModuleError for the innermost module.
+		var moduleErr *ModuleError
+		if errors.As(err, &moduleErr) && moduleErr.Module == sc.moduleStack[i] {
+			continue
+		}
+		err = &ModuleError{Module: sc.moduleStack[i], Cause: err}
+	}
+
+	sc.errs = append(sc.errs, err)
+}
+
+// Err returns all registration errors recorded so far, joined into a single
+// error, or nil if every registration succeeded.
+func (sc *collection) Err() error {
+	sc.mu.RLock()
+	defer sc.mu.RUnlock()
+
+	return errors.Join(sc.errs...)
+}
+
+// pushModule and popModule maintain the module attribution stack used by
+// recordErr. They are invoked by NewModule via interface assertion.
+func (sc *collection) pushModule(name string) {
+	sc.mu.Lock()
+	sc.moduleStack = append(sc.moduleStack, name)
+	sc.mu.Unlock()
+}
+
+func (sc *collection) popModule() {
+	sc.mu.Lock()
+	if len(sc.moduleStack) > 0 {
+		sc.moduleStack = sc.moduleStack[:len(sc.moduleStack)-1]
+	}
+	sc.mu.Unlock()
 }
 
 // Contains checks if a service exists for the type
@@ -383,7 +478,8 @@ func (r *collection) HasGroup(t reflect.Type, group string) bool {
 	return ok && len(services) > 0
 }
 
-// Remove removes all services for a given type
+// Remove removes all services for a given type: the unkeyed registration,
+// every keyed registration, and every group member of that type.
 func (r *collection) Remove(t reflect.Type) {
 	if t == nil {
 		return
@@ -392,8 +488,23 @@ func (r *collection) Remove(t reflect.Type) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	typeKey := TypeKey{Type: t}
-	delete(r.services, typeKey)
+	removed := make(map[*descriptor]struct{})
+	for key, descriptor := range r.services {
+		if key.Type == t {
+			removed[descriptor] = struct{}{}
+			delete(r.services, key)
+		}
+	}
+	for key, descriptors := range r.groups {
+		if key.Type == t {
+			for _, descriptor := range descriptors {
+				removed[descriptor] = struct{}{}
+			}
+			delete(r.groups, key)
+		}
+	}
+
+	r.pruneDescriptors(removed)
 }
 
 // RemoveKeyed removes a specific keyed service
@@ -406,17 +517,82 @@ func (r *collection) RemoveKeyed(t reflect.Type, key any) {
 	defer r.mu.Unlock()
 
 	typeKey := TypeKey{Type: t, Key: key}
+	d, ok := r.services[typeKey]
+	if !ok {
+		return
+	}
+
 	delete(r.services, typeKey)
+	r.pruneDescriptors(map[*descriptor]struct{}{d: {}})
+}
+
+// pruneDescriptors drops the given descriptors from allDescriptors so that
+// Build, Count, and ToSlice no longer see them. Without this, removed
+// singletons would still be constructed at build time.
+func (r *collection) pruneDescriptors(removed map[*descriptor]struct{}) {
+	if len(removed) == 0 {
+		return
+	}
+
+	kept := r.allDescriptors[:0]
+	for _, d := range r.allDescriptors {
+		if _, ok := removed[d]; !ok {
+			kept = append(kept, d)
+		}
+	}
+	// Zero the tail so the backing array doesn't pin removed descriptors.
+	for i := len(kept); i < len(r.allDescriptors); i++ {
+		r.allDescriptors[i] = nil
+	}
+	r.allDescriptors = kept
+
+	// Unlink removed descriptors from survivors' sibling lists. Otherwise a
+	// surviving sibling's constructor invocation would still cache instances
+	// under the removed registration's keys, shadowing any replacement
+	// registered after the removal.
+	for _, d := range r.allDescriptors {
+		if len(d.siblings) == 0 {
+			continue
+		}
+		pruned := false
+		for _, sibling := range d.siblings {
+			if _, ok := removed[sibling]; ok {
+				pruned = true
+				break
+			}
+		}
+		if !pruned {
+			continue
+		}
+		surviving := make([]*descriptor, 0, len(d.siblings))
+		for _, sibling := range d.siblings {
+			if _, ok := removed[sibling]; !ok {
+				surviving = append(surviving, sibling)
+			}
+		}
+		for _, sibling := range surviving {
+			sibling.siblings = surviving
+		}
+	}
 }
 
 // ToSlice returns a copy of all registered service descriptors
-func (r *collection) ToSlice() []*Descriptor {
+func (r *collection) ToSlice() []ServiceInfo {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	// Return a copy of the pre-tracked descriptors (no deduplication needed)
-	result := make([]*Descriptor, len(r.allDescriptors))
-	copy(result, r.allDescriptors)
+	result := make([]ServiceInfo, 0, len(r.allDescriptors))
+	for _, d := range r.allDescriptors {
+		if d == nil {
+			continue
+		}
+		result = append(result, ServiceInfo{
+			ServiceType: d.Type,
+			Key:         d.Key,
+			Group:       d.Group,
+			Lifetime:    d.Lifetime,
+		})
+	}
 	return result
 }
 
@@ -431,9 +607,9 @@ func (r *collection) Count() int {
 var (
 	// Reserved types that are handled specially by the framework
 	reservedTypes = map[reflect.Type]struct{}{
-		reflect.TypeOf((*context.Context)(nil)).Elem(): {},
-		reflect.TypeOf((*Provider)(nil)).Elem():        {},
-		reflect.TypeOf((*Scope)(nil)).Elem():           {},
+		reflect.TypeFor[context.Context](): {},
+		reflect.TypeFor[Provider]():        {},
+		reflect.TypeFor[Scope]():           {},
 	}
 )
 
@@ -507,115 +683,50 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 	}
 
 	// Handle result objects (Out structs)
-	// For result objects, we only register each field as a separate service
-	// They all share the same constructor and will be created together
 	if info.IsResultObject {
-		// No fields to register
-		if len(descriptor.resultFields) == 0 {
-			return nil
-		}
-
-		// Register each field as a separate service that points to the same constructor
-		for _, field := range descriptor.resultFields {
-			// Create a descriptor for each field type
-			fieldDescriptor := &Descriptor{
-				Type:            field.Type,
-				Key:             field.Key,
-				Lifetime:        descriptor.Lifetime,
-				Constructor:     descriptor.Constructor,
-				ConstructorType: descriptor.ConstructorType,
-				Dependencies:    descriptor.Dependencies,
-				Group:           field.Group,
-				As:              descriptor.As,
-				IsInstance:      false,
-				isFunc:          descriptor.isFunc,
-				isResultObject:  true,
-				resultFields:    descriptor.resultFields,
-				isParamObject:   descriptor.isParamObject,
-				paramFields:     descriptor.paramFields,
-				info:            descriptor.info,
-			}
-
-			// Register the field descriptor
-			if err := r.registerDescriptor(fieldDescriptor); err != nil {
-				return &RegistrationError{
-					ServiceType: field.Type,
-					Operation:   "register result object field",
-					Cause:       err,
-				}
+		// godi.As is ambiguous for result objects: it's unclear which field
+		// the interface should bind to. Reject explicitly rather than
+		// silently dropping the option.
+		if len(options.As) > 0 {
+			return &RegistrationError{
+				ServiceType: descriptor.Type,
+				Operation:   "register result object",
+				Cause:       fmt.Errorf("godi.As cannot be combined with a result object (godi.Out) constructor; use a name or group tag on the field instead"),
 			}
 		}
-
-		// Don't register the result object type itself
-		return nil
+		return r.registerResultObjectFields(descriptor)
 	}
 
 	// Handle multiple return types (not Out structs)
-	if info.IsFunc && len(info.Returns) > 1 {
-		// Filter out error returns to get actual service types
-		nonErrorReturns := make([]reflection.ReturnInfo, 0)
-		for _, ret := range info.Returns {
-			if !ret.IsError {
-				nonErrorReturns = append(nonErrorReturns, ret)
-			}
-		}
-
-		// If we have multiple non-error returns, register each as a separate service
-		if len(nonErrorReturns) > 1 {
-			// godi.As is ambiguous for multi-return constructors: it's
-			// unclear which return value the interface should bind to.
-			// Reject explicitly rather than silently dropping the option.
-			if len(options.As) > 0 {
-				return &RegistrationError{
-					ServiceType: descriptor.Type,
-					Operation:   "register multi-return type",
-					Cause:       fmt.Errorf("godi.As cannot be combined with a multi-return constructor; register a wrapper constructor that returns the desired interface"),
-				}
-			}
-			for i, ret := range nonErrorReturns {
-				// Create a descriptor for each return type
-				typeDescriptor := &Descriptor{
-					Type:             ret.Type,
-					Lifetime:         descriptor.Lifetime,
-					Constructor:      descriptor.Constructor,
-					ConstructorType:  descriptor.ConstructorType,
-					Dependencies:     descriptor.Dependencies,
-					Group:            descriptor.Group,
-					As:               descriptor.As,
-					IsInstance:       false,
-					MultiReturnIndex: ret.Index,
-					isFunc:           descriptor.isFunc,
-					isParamObject:    descriptor.isParamObject,
-					paramFields:      descriptor.paramFields,
-					info:             descriptor.info,
-				}
-
-				// Apply name/key only to the first return if specified
-				if options.Name != "" && i == 0 {
-					typeDescriptor.Key = options.Name
-				} else if options.Name != "" {
-					// For subsequent returns, leave them unkeyed
-					typeDescriptor.Key = nil
-				}
-
-				// Register each type descriptor
-				if err := r.registerDescriptor(typeDescriptor); err != nil {
-					return &RegistrationError{
-						ServiceType: ret.Type,
-						Operation:   "register multi-return type",
-						Cause:       err,
-					}
-				}
-			}
-			return nil
-		}
+	if handled, err := r.registerMultiReturn(descriptor, info, options); handled {
+		return err
 	}
 
 	// Handle As option - register under interface types
 	if len(options.As) > 0 {
+		// A void or error-only constructor produces no service value to bind
+		// to an interface. Reject rather than registering an empty struct
+		// placeholder under the interface type.
+		if descriptor.VoidReturn {
+			return &RegistrationError{
+				ServiceType: descriptor.Type,
+				Operation:   "register as interface",
+				Cause:       fmt.Errorf("godi.As cannot be combined with a constructor that returns no service value"),
+			}
+		}
+
 		// When As is specified, register the service under each interface type
 		for _, iface := range options.As {
 			interfaceType := reflect.TypeOf(iface).Elem()
+
+			// Reserved types are special-cased by the resolver and cannot be
+			// registered, not even via As.
+			if _, isReserved := reservedTypes[interfaceType]; isReserved {
+				return &ValidationError{
+					ServiceType: interfaceType,
+					Cause:       fmt.Errorf("service type %s is reserved and cannot be registered", formatType(interfaceType)),
+				}
+			}
 
 			// Validate that the service type implements the interface
 			if !descriptor.Type.Implements(interfaceType) && !reflect.PointerTo(descriptor.Type).Implements(interfaceType) {
@@ -627,25 +738,9 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 			}
 
 			// Create a new descriptor for the interface type
-			interfaceDescriptor := &Descriptor{
-				Type:             interfaceType,
-				Key:              descriptor.Key,
-				Lifetime:         descriptor.Lifetime,
-				Constructor:      descriptor.Constructor,
-				ConstructorType:  descriptor.ConstructorType,
-				Dependencies:     descriptor.Dependencies,
-				Group:            descriptor.Group,
-				As:               options.As,
-				IsInstance:       descriptor.IsInstance,
-				Instance:         descriptor.Instance,
-				MultiReturnIndex: descriptor.MultiReturnIndex,
-				isFunc:           descriptor.isFunc,
-				isResultObject:   descriptor.isResultObject,
-				resultFields:     descriptor.resultFields,
-				isParamObject:    descriptor.isParamObject,
-				paramFields:      descriptor.paramFields,
-				info:             descriptor.info,
-			}
+			interfaceDescriptor := descriptor.clone()
+			interfaceDescriptor.Type = interfaceType
+			interfaceDescriptor.As = options.As
 
 			// Register the interface descriptor
 			if err := r.registerDescriptor(interfaceDescriptor); err != nil {
@@ -665,10 +760,182 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 	return r.registerDescriptor(descriptor)
 }
 
+// registerResultObjectFields registers each exported field of a result
+// object (Out struct) as its own service. The fields all share the same
+// constructor and are linked as siblings so one invocation can cache every
+// field under its own registration (key or group). The result object type
+// itself is not registered. Caller must hold r.mu.
+func (r *collection) registerResultObjectFields(d *descriptor) error {
+	// No fields to register
+	if len(d.resultFields) == 0 {
+		return nil
+	}
+
+	fieldDescriptors := make([]*descriptor, 0, len(d.resultFields))
+	for _, field := range d.resultFields {
+		// A field cannot be both keyed and grouped: the resolver caches and
+		// looks up under exactly one of the two, so accepting both would
+		// register a service that can never be resolved consistently.
+		if field.Key != nil && field.Group != "" {
+			return &RegistrationError{
+				ServiceType: field.Type,
+				Operation:   "register result object field",
+				Cause:       fmt.Errorf("field %s cannot have both name and group tags", field.Name),
+			}
+		}
+
+		fieldDescriptor := d.clone()
+		fieldDescriptor.Type = field.Type
+		fieldDescriptor.Key = field.Key
+		fieldDescriptor.Group = field.Group
+		fieldDescriptor.resultFieldIndex = field.Index
+		fieldDescriptors = append(fieldDescriptors, fieldDescriptor)
+	}
+
+	for _, fieldDescriptor := range fieldDescriptors {
+		fieldDescriptor.siblings = fieldDescriptors
+	}
+
+	registered := make([]*descriptor, 0, len(fieldDescriptors))
+	for _, fieldDescriptor := range fieldDescriptors {
+		if err := r.registerDescriptor(fieldDescriptor); err != nil {
+			// Roll back the fields registered so far: leaving them in place
+			// would keep sibling links to never-registered descriptors,
+			// corrupting primary detection and scoped caching for callers
+			// that ignore the Add error.
+			r.unregisterDescriptors(registered)
+			return &RegistrationError{
+				ServiceType: fieldDescriptor.Type,
+				Operation:   "register result object field",
+				Cause:       err,
+			}
+		}
+		registered = append(registered, fieldDescriptor)
+	}
+
+	return nil
+}
+
+// registerMultiReturn registers each non-error return of a multi-return
+// constructor as its own service, linking the descriptors as siblings.
+// Returns handled=false when the constructor has at most one non-error
+// return, in which case the caller proceeds with normal registration.
+// Caller must hold r.mu.
+func (r *collection) registerMultiReturn(d *descriptor, info *reflection.ConstructorInfo, options *addOptions) (bool, error) {
+	if !info.IsFunc || len(info.Returns) <= 1 {
+		return false, nil
+	}
+
+	// Filter out error returns to get actual service types
+	nonErrorReturns := make([]reflection.ReturnInfo, 0)
+	for _, ret := range info.Returns {
+		if !ret.IsError {
+			nonErrorReturns = append(nonErrorReturns, ret)
+		}
+	}
+
+	if len(nonErrorReturns) <= 1 {
+		return false, nil
+	}
+
+	// godi.As is ambiguous for multi-return constructors: it's unclear which
+	// return value the interface should bind to. Reject explicitly rather
+	// than silently dropping the option.
+	if len(options.As) > 0 {
+		return true, &RegistrationError{
+			ServiceType: d.Type,
+			Operation:   "register multi-return type",
+			Cause:       fmt.Errorf("godi.As cannot be combined with a multi-return constructor; register a wrapper constructor that returns the desired interface"),
+		}
+	}
+
+	typeDescriptors := make([]*descriptor, 0, len(nonErrorReturns))
+	for i, ret := range nonErrorReturns {
+		typeDescriptor := d.clone()
+		typeDescriptor.Type = ret.Type
+		typeDescriptor.MultiReturnIndex = ret.Index
+
+		// Apply name/key only to the first return if specified
+		typeDescriptor.Key = nil
+		if options.Name != "" && i == 0 {
+			typeDescriptor.Key = options.Name
+		}
+
+		typeDescriptors = append(typeDescriptors, typeDescriptor)
+	}
+
+	// Link the descriptors as siblings: one constructor invocation produces
+	// every return value, so instance creation caches each of them under its
+	// own registration (key or group).
+	for _, typeDescriptor := range typeDescriptors {
+		typeDescriptor.siblings = typeDescriptors
+	}
+
+	registered := make([]*descriptor, 0, len(typeDescriptors))
+	for _, typeDescriptor := range typeDescriptors {
+		if err := r.registerDescriptor(typeDescriptor); err != nil {
+			// Roll back the returns registered so far (see
+			// registerResultObjectFields for why phantom siblings are
+			// harmful).
+			r.unregisterDescriptors(registered)
+			return true, &RegistrationError{
+				ServiceType: typeDescriptor.Type,
+				Operation:   "register multi-return type",
+				Cause:       err,
+			}
+		}
+		registered = append(registered, typeDescriptor)
+	}
+
+	return true, nil
+}
+
+// unregisterDescriptors removes descriptors that were registered earlier in
+// a multi-descriptor registration whose later step failed, restoring the
+// collection to its pre-call state so no phantom sibling links remain
+// reachable. Caller must hold r.mu.
+func (r *collection) unregisterDescriptors(batch []*descriptor) {
+	if len(batch) == 0 {
+		return
+	}
+
+	removed := make(map[*descriptor]struct{}, len(batch))
+	for _, descriptor := range batch {
+		removed[descriptor] = struct{}{}
+
+		if descriptor.Group != "" {
+			// Registered as a group member (key and group are mutually
+			// exclusive at registration; the numeric key was assigned by
+			// registerDescriptor).
+			groupKey := GroupKey{Type: descriptor.Type, Group: descriptor.Group}
+			members := r.groups[groupKey]
+			kept := members[:0]
+			for _, member := range members {
+				if member != descriptor {
+					kept = append(kept, member)
+				}
+			}
+			if len(kept) == 0 {
+				delete(r.groups, groupKey)
+			} else {
+				r.groups[groupKey] = kept
+			}
+			continue
+		}
+
+		key := TypeKey{Type: descriptor.Type, Key: descriptor.Key}
+		if r.services[key] == descriptor {
+			delete(r.services, key)
+		}
+	}
+
+	r.pruneDescriptors(removed)
+}
+
 // registerDescriptor registers a descriptor in the appropriate collections based on its type.
 // Regular services are registered by type and key,
 // and grouped services are registered in their respective groups.
-func (r *collection) registerDescriptor(descriptor *Descriptor) error {
+func (r *collection) registerDescriptor(descriptor *descriptor) error {
 	// Register based on type of service
 	if descriptor.Key != nil || descriptor.Group == "" {
 		key := TypeKey{Type: descriptor.Type, Key: descriptor.Key}
@@ -723,7 +990,7 @@ func (c *collection) validateLifetimes() error {
 		}
 	}
 
-	checkDescriptor := func(descriptor *Descriptor) error {
+	checkDescriptor := func(descriptor *descriptor) error {
 		if descriptor == nil {
 			return nil
 		}

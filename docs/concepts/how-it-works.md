@@ -47,10 +47,10 @@ godi is a dependency injection container that automatically resolves and creates
 │                                                                 │
 │   godi.MustResolve[*UserService](provider)                      │
 │                                                                 │
-│   1. Check if Logger exists → No → Create Logger                │
-│   2. Check if Database exists → No → Create Database(Logger)    │
-│   3. Create UserService(Database, Logger)                       │
-│   4. Return UserService                                         │
+│   1. Logger and Database already exist (singletons are          │
+│      created eagerly during Build, in dependency order)         │
+│   2. Create UserService(Database, Logger)                       │
+│   3. Return UserService                                         │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -96,8 +96,9 @@ When you call `Build()`, godi:
 
 1. **Analyzes constructors** - Looks at function parameters and return types
 2. **Builds dependency graph** - Maps what depends on what
-3. **Validates** - Checks for circular dependencies, missing services, lifetime conflicts
-4. **Returns provider** - Ready to create services on demand
+3. **Validates** - Checks for circular dependencies and lifetime conflicts
+4. **Creates singletons** - All singletons are constructed eagerly, in dependency order
+5. **Returns provider** - Scoped and transient services are created on demand
 
 ```go
 provider, err := services.Build()
@@ -115,11 +116,9 @@ When you resolve a service, godi walks the dependency graph:
 userService := godi.MustResolve[*UserService](provider)
 ```
 
-godi creates dependencies in order:
-
-1. Logger first (no dependencies)
-2. Database next (needs Logger)
-3. UserService last (needs Database and Logger)
+The singletons (Logger, Database) were already created during `Build()` in
+dependency order — Logger first (no dependencies), then Database (needs
+Logger). Resolving UserService creates it from those cached instances.
 
 ## Type Resolution
 

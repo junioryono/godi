@@ -53,18 +53,22 @@ db2 := godi.MustResolve[*DatabasePool](provider)
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│  Application Start                                       │
+│  services.Build()                                        │
 │       │                                                  │
 │       ▼                                                  │
-│  First Resolution ──▶ Constructor Called ──▶ Cached      │
+│  Constructor Called (eagerly, at build) ──▶ Cached       │
 │       │                                                  │
 │       ▼                                                  │
-│  Subsequent Resolutions ──▶ Return Cached Instance       │
+│  Every Resolution ──▶ Return Cached Instance             │
 │       │                                                  │
 │       ▼                                                  │
 │  provider.Close() ──▶ Dispose (if implements Close())    │
 └──────────────────────────────────────────────────────────┘
 ```
+
+Singletons are created **eagerly when you call `Build()`**, in dependency
+order. A failing singleton constructor fails the build, not the first
+resolution.
 
 ## Scoped
 
@@ -150,12 +154,10 @@ builder2 := godi.MustResolve[*EmailBuilder](provider)
 
 ## The Golden Rule
 
-**A service can only depend on services with the same or longer lifetime.**
+**Only scoped services may depend on scoped services.**
 
-```
-Lifetime Order (longest to shortest):
-  Singleton > Scoped > Transient
-```
+Scoped services can depend on anything. Singletons and transients cannot
+depend on scoped services — godi rejects both at build time.
 
 ### Valid Dependencies
 
@@ -172,10 +174,18 @@ services.AddTransient(func(logger *Logger) *TempService {
     return &TempService{logger: logger}
 })
 
-// ✓ Transient depending on Scoped
+// ✓ Scoped depending on Scoped
 services.AddScoped(NewRequestContext)
-services.AddTransient(func(ctx *RequestContext) *Handler {
+services.AddScoped(func(ctx *RequestContext) *Handler {
     return &Handler{ctx: ctx}
+})
+
+// ✓ Singleton depending on Transient
+// Allowed: the transient is created once at build and captured
+// by the singleton for its whole lifetime.
+services.AddTransient(NewIDGenerator)
+services.AddSingleton(func(gen *IDGenerator) *Storage {
+    return &Storage{gen: gen}
 })
 ```
 
@@ -191,11 +201,14 @@ services.AddSingleton(func(ctx *RequestContext) *Cache {
 // is destroyed when the scope closes. The singleton would
 // hold a dangling reference.
 
-// ✗ Singleton depending on Transient
-services.AddTransient(NewTempFile)
-services.AddSingleton(func(file *TempFile) *Storage {
-    return &Storage{file: file}  // Build error!
+// ✗ Transient depending on Scoped
+services.AddScoped(NewRequestContext)
+services.AddTransient(func(ctx *RequestContext) *Handler {
+    return &Handler{ctx: ctx}  // Build error!
 })
+// Why? A transient can be resolved from the root provider or
+// outlive the scope it was created in, so it could hold a
+// reference to a disposed scoped service.
 ```
 
 ## Performance Considerations

@@ -24,7 +24,7 @@ services.AddSingleton(func() string {
 })
 ```
 
-This registers a `string` service. The function is called when the service is first needed.
+This registers a `string` service. Singleton constructors run once, during `Build()`; scoped and transient constructors run when the service is needed.
 
 ## Step 3: Build the Provider
 
@@ -55,7 +55,7 @@ package main
 import (
     "fmt"
     "log"
-    "github.com/junioryono/godi/v4"
+    "github.com/junioryono/godi/v5"
 )
 
 func main() {
@@ -100,8 +100,8 @@ func main() {
 ```
 
 1. You registered a `string` service with a factory function
-2. Building created the provider with the dependency graph
-3. Resolving called your factory and returned the result
+2. Building validated the dependency graph and called your factory (singletons are created eagerly)
+3. Resolving returned the cached instance
 
 ## Key Points
 

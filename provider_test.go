@@ -2,6 +2,7 @@ package godi
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -260,12 +261,12 @@ func TestProviderCloseSurvivesDisposablePanic(t *testing.T) {
 	t.Parallel()
 
 	c := NewCollection()
-	require.NoError(t, c.AddSingleton(func() *recordingDisposable {
+	c.AddSingleton(func() *recordingDisposable {
 		return &recordingDisposable{}
-	}))
-	require.NoError(t, c.AddSingleton(func() *panickyDisposable {
+	})
+	c.AddSingleton(func() *panickyDisposable {
 		return &panickyDisposable{name: "boom"}
-	}))
+	})
 
 	p, err := c.Build()
 	require.NoError(t, err)
@@ -315,4 +316,57 @@ func TestExtractParameterTypes(t *testing.T) {
 		assert.Equal(t, "test", swd.Svc.ID)
 		assert.Equal(t, "dep", swd.Dep.Name)
 	})
+}
+
+func TestCreateScopeRacingProviderClose(t *testing.T) {
+	t.Parallel()
+
+	for range 500 {
+		c := NewCollection()
+		c.AddScoped(NewTService)
+		p, err := c.Build()
+		require.NoError(t, err)
+
+		var wg sync.WaitGroup
+		var panicked any
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			defer func() { panicked = recover() }()
+			s, err := p.CreateScope(context.Background())
+			if err == nil {
+				_ = s.Close()
+			}
+		}()
+		go func() { defer wg.Done(); _ = p.Close() }()
+		wg.Wait()
+
+		require.Nil(t, panicked, "CreateScope racing Close must not panic")
+	}
+}
+
+func TestGetRacingProviderClose(t *testing.T) {
+	t.Parallel()
+
+	// Meaningful under -race: provider.Close must not write fields that
+	// concurrent Get reads without synchronization.
+	for range 300 {
+		c := NewCollection()
+		c.AddSingleton(NewTService)
+		p, err := c.Build()
+		require.NoError(t, err)
+
+		var wg sync.WaitGroup
+		var panicked any
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			defer func() { panicked = recover() }()
+			_, _ = Resolve[*TService](p)
+		}()
+		go func() { defer wg.Done(); _ = p.Close() }()
+		wg.Wait()
+
+		require.Nil(t, panicked, "Get racing Close must not panic")
+	}
 }

@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/junioryono/godi/v4/internal/reflection"
+	"github.com/junioryono/godi/v5/internal/reflection"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -99,11 +99,11 @@ func TestAnalyzer_SimpleConstructor(t *testing.T) {
 
 	// Check parameters
 	assert.Len(t, info.Parameters, 1, "Expected 1 parameter")
-	assert.Equal(t, reflect.TypeOf(""), info.Parameters[0].Type, "Expected string parameter type")
+	assert.Equal(t, reflect.TypeFor[string](), info.Parameters[0].Type, "Expected string parameter type")
 
 	// Check returns
 	assert.Len(t, info.Returns, 1, "Expected 1 return value")
-	assert.Equal(t, reflect.TypeOf((*Database)(nil)), info.Returns[0].Type, "Expected *Database return type")
+	assert.Equal(t, reflect.TypeFor[*Database](), info.Returns[0].Type, "Expected *Database return type")
 }
 
 func TestAnalyzer_ConstructorWithMultipleParams(t *testing.T) {
@@ -114,8 +114,8 @@ func TestAnalyzer_ConstructorWithMultipleParams(t *testing.T) {
 
 	// Check parameters
 	assert.Len(t, info.Parameters, 2, "Expected 2 parameters")
-	assert.Equal(t, reflect.TypeOf((*Database)(nil)), info.Parameters[0].Type, "Expected first parameter to be *Database")
-	assert.Equal(t, reflect.TypeOf((*Logger)(nil)).Elem(), info.Parameters[1].Type, "Expected second parameter to be Logger interface")
+	assert.Equal(t, reflect.TypeFor[*Database](), info.Parameters[0].Type, "Expected first parameter to be *Database")
+	assert.Equal(t, reflect.TypeFor[Logger](), info.Parameters[1].Type, "Expected second parameter to be Logger interface")
 
 	// Check dependencies
 	deps, err := analyzer.GetDependencies(NewUserService)
@@ -243,7 +243,7 @@ func TestAnalyzer_NonFunction(t *testing.T) {
 
 	serviceType, err := analyzer.GetServiceType(db)
 	require.NoError(t, err, "Failed to get service type")
-	assert.Equal(t, reflect.TypeOf(db), serviceType, "Expected service type to match")
+	assert.Equal(t, reflect.TypeFor[*Database](), serviceType, "Expected service type to match")
 }
 
 func TestAnalyzer_GetServiceType(t *testing.T) {
@@ -258,22 +258,22 @@ func TestAnalyzer_GetServiceType(t *testing.T) {
 		{
 			name:        "Simple constructor",
 			constructor: NewDatabase,
-			wantType:    reflect.TypeOf((*Database)(nil)),
+			wantType:    reflect.TypeFor[*Database](),
 		},
 		{
 			name:        "Constructor with error",
 			constructor: NewUserServiceWithError,
-			wantType:    reflect.TypeOf((*UserService)(nil)),
+			wantType:    reflect.TypeFor[*UserService](),
 		},
 		{
 			name:        "Result object",
 			constructor: NewServices,
-			wantType:    reflect.TypeOf(ServiceResults{}),
+			wantType:    reflect.TypeFor[ServiceResults](),
 		},
 		{
 			name:        "Non-function",
 			constructor: &Database{},
-			wantType:    reflect.TypeOf((*Database)(nil)),
+			wantType:    reflect.TypeFor[*Database](),
 		},
 	}
 
@@ -304,10 +304,10 @@ func TestAnalyzer_GetResultTypes(t *testing.T) {
 	hasFunc := false
 
 	for _, typ := range types {
-		if typ == reflect.TypeOf((*UserService)(nil)) {
+		if typ == reflect.TypeFor[*UserService]() {
 			hasUserService = true
 		}
-		if typ == reflect.TypeOf(func() {}) {
+		if typ == reflect.TypeFor[func()]() {
 			hasFunc = true
 		}
 	}
@@ -343,152 +343,6 @@ func TestAnalyzer_Caching(t *testing.T) {
 	assert.NotSame(t, info1, info3, "Expected new analysis after cache clear")
 }
 
-func TestValidator(t *testing.T) {
-	analyzer := reflection.New()
-	validator := reflection.NewValidator(analyzer)
-
-	tests := []struct {
-		name        string
-		constructor any
-		wantErr     bool
-		errContains string
-	}{
-		{
-			name:        "Valid simple constructor",
-			constructor: NewDatabase,
-			wantErr:     false,
-		},
-		{
-			name:        "Valid constructor with error",
-			constructor: NewUserServiceWithError,
-			wantErr:     false,
-		},
-		{
-			name:        "Valid param object",
-			constructor: NewServiceWithParams,
-			wantErr:     false,
-		},
-		{
-			name:        "Valid result object",
-			constructor: NewServices,
-			wantErr:     false,
-		},
-		{
-			name:        "No return values",
-			constructor: func() {},
-			wantErr:     true,
-			errContains: "must return at least one value",
-		},
-		{
-			name:        "Too many returns",
-			constructor: func() (int, int, int) { return 1, 2, 3 },
-			wantErr:     true,
-			errContains: "at most 2 values",
-		},
-		{
-			name:        "Second return not error",
-			constructor: func() (int, string) { return 1, "" },
-			wantErr:     true,
-			errContains: "second return value must be error",
-		},
-		{
-			name:        "Only error return",
-			constructor: func() error { return nil },
-			wantErr:     true,
-			errContains: "must return at least one non-error",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			info, err := analyzer.Analyze(tt.constructor)
-			require.NoError(t, err, "Analysis failed")
-
-			err = validator.Validate(info)
-			if tt.wantErr {
-				assert.Error(t, err)
-				if tt.errContains != "" {
-					assert.Contains(t, err.Error(), tt.errContains)
-				}
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
-func TestTypeFormatter(t *testing.T) {
-	formatter := &reflection.TypeFormatter{}
-
-	tests := []struct {
-		name     string
-		typ      reflect.Type
-		expected string
-	}{
-		{
-			name:     "Pointer type",
-			typ:      reflect.TypeOf((*Database)(nil)),
-			expected: "*Database",
-		},
-		{
-			name:     "Slice type",
-			typ:      reflect.TypeOf([]string{}),
-			expected: "[]string",
-		},
-		{
-			name:     "Interface type",
-			typ:      reflect.TypeOf((*Logger)(nil)).Elem(),
-			expected: "Logger",
-		},
-		{
-			name:     "Function type",
-			typ:      reflect.TypeOf(func(int) string { return "" }),
-			expected: "func(int) string",
-		},
-		{
-			name:     "Map type",
-			typ:      reflect.TypeOf(map[string]int{}),
-			expected: "map[string]int",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := formatter.FormatType(tt.typ)
-			assert.Equal(t, tt.expected, got)
-		})
-	}
-}
-
-// Additional test types for edge cases
-type ComplexService struct {
-	Database *Database
-	Logger   Logger `optional:"true"`
-	_        string // unexported field for testing
-}
-
-type CircularA struct {
-	B *CircularB
-}
-
-type CircularB struct {
-	A *CircularA
-}
-
-// Test parameter object with all tag types
-type FullParamObject struct {
-	reflection.In
-
-	Required    *Database
-	Optional    Logger    `optional:"true"`
-	Named       *Database `name:"backup"`
-	Grouped     []func()  `group:"handlers"`
-	Ignored     string    `inject:"-"`
-	_           string    // unexported field for testing
-	Combination *Database `name:"special" optional:"true"`
-}
-
-// Test edge cases in analyzer
 func TestAnalyzer_EdgeCases(t *testing.T) {
 	analyzer := reflection.New()
 
@@ -562,10 +416,8 @@ func TestAnalyzer_ConcurrentAnalysis(t *testing.T) {
 	errs := make(chan error, 100)
 
 	// Analyze the same constructor concurrently
-	for i := 0; i < 50; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 50 {
+		wg.Go(func() {
 
 			info, err := analyzer.Analyze(NewDatabase)
 			if err != nil {
@@ -576,7 +428,7 @@ func TestAnalyzer_ConcurrentAnalysis(t *testing.T) {
 			if info == nil {
 				errs <- errors.New("info is nil")
 			}
-		}()
+		})
 	}
 
 	// Analyze different constructors concurrently
@@ -589,7 +441,7 @@ func TestAnalyzer_ConcurrentAnalysis(t *testing.T) {
 	}
 
 	for _, constructor := range constructors {
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			wg.Add(1)
 			go func(c any) {
 				defer wg.Done()
@@ -633,6 +485,19 @@ func TestAnalyzer_ConcurrentAnalysis(t *testing.T) {
 	info2, _ := analyzer.Analyze(NewDatabase)
 
 	assert.Same(t, info1, info2, "Expected same cached instance for NewDatabase")
+}
+
+// Test parameter object with all tag types
+type FullParamObject struct {
+	reflection.In
+
+	Required    *Database
+	Optional    Logger    `optional:"true"`
+	Named       *Database `name:"backup"`
+	Grouped     []func()  `group:"handlers"`
+	Ignored     string    `inject:"-"`
+	_           string    // unexported field for testing
+	Combination *Database `name:"special" optional:"true"`
 }
 
 // Test complex parameter object with all features
@@ -710,7 +575,7 @@ func TestAnalyzer_MultipleReturns(t *testing.T) {
 				return &Database{}
 			},
 			expectedTypes: []reflect.Type{
-				reflect.TypeOf((*Database)(nil)),
+				reflect.TypeFor[*Database](),
 			},
 			hasError:      false,
 			errorPosition: -1,
@@ -721,7 +586,7 @@ func TestAnalyzer_MultipleReturns(t *testing.T) {
 				return &Database{}, nil
 			},
 			expectedTypes: []reflect.Type{
-				reflect.TypeOf((*Database)(nil)),
+				reflect.TypeFor[*Database](),
 			},
 			hasError:      true,
 			errorPosition: 1,
@@ -732,9 +597,9 @@ func TestAnalyzer_MultipleReturns(t *testing.T) {
 				return &Database{}, &UserService{}, &ConsoleLogger{}
 			},
 			expectedTypes: []reflect.Type{
-				reflect.TypeOf((*Database)(nil)),
-				reflect.TypeOf((*UserService)(nil)),
-				reflect.TypeOf((*Logger)(nil)).Elem(),
+				reflect.TypeFor[*Database](),
+				reflect.TypeFor[*UserService](),
+				reflect.TypeFor[Logger](),
 			},
 			hasError:      false,
 			errorPosition: -1,
@@ -745,9 +610,9 @@ func TestAnalyzer_MultipleReturns(t *testing.T) {
 				return &Database{}, &UserService{}, &ConsoleLogger{}, nil
 			},
 			expectedTypes: []reflect.Type{
-				reflect.TypeOf((*Database)(nil)),
-				reflect.TypeOf((*UserService)(nil)),
-				reflect.TypeOf((*Logger)(nil)).Elem(),
+				reflect.TypeFor[*Database](),
+				reflect.TypeFor[*UserService](),
+				reflect.TypeFor[Logger](),
 			},
 			hasError:      true,
 			errorPosition: 3,
@@ -758,8 +623,8 @@ func TestAnalyzer_MultipleReturns(t *testing.T) {
 				return &Database{}, &ConsoleLogger{}, nil
 			},
 			expectedTypes: []reflect.Type{
-				reflect.TypeOf((*Database)(nil)),
-				reflect.TypeOf((*Logger)(nil)).Elem(),
+				reflect.TypeFor[*Database](),
+				reflect.TypeFor[Logger](),
 			},
 			hasError:      true,
 			errorPosition: 2,
@@ -814,89 +679,40 @@ func TestParamObjectBuilder_ErrorCases(t *testing.T) {
 
 	// Test with non-struct type
 	_, err := builder.BuildParamObject(
-		reflect.TypeOf(42), // int, not struct
+		reflect.TypeFor[int](), // int, not struct
 		failingResolver,
 	)
 	assert.Error(t, err, "Expected error for non-struct type")
 
 	// Test with struct containing required field that fails to resolve
-	paramType := reflect.TypeOf(struct {
+	paramType := reflect.TypeFor[struct {
 		reflection.In
 		Required *Database
-	}{})
+	}]()
 
 	_, err = builder.BuildParamObject(paramType, failingResolver)
 	assert.Error(t, err, "Expected error for failed required dependency")
 
-	// Test with optional field that fails to resolve (should succeed)
-	optionalType := reflect.TypeOf(struct {
+	// Optional only forgives "not registered": a generic construction
+	// failure must propagate even for optional fields.
+	optionalType := reflect.TypeFor[struct {
 		reflection.In
-		Optional *Database `optional:"true"`
-	}{})
+		Optional *Database "optional:\"true\""
+	}]()
 
 	_, err = builder.BuildParamObject(optionalType, failingResolver)
-	assert.NoError(t, err, "Should succeed with failed optional dependency")
+	assert.Error(t, err, "construction failure of an optional dependency must propagate")
+
+	// A missing (not registered) optional dependency is skipped.
+	notFoundResolver := &mockResolver{
+		shouldFail: true,
+		failError:  reflection.ErrServiceNotFound,
+	}
+	_, err = builder.BuildParamObject(optionalType, notFoundResolver)
+	assert.NoError(t, err, "missing optional dependency should be skipped")
 }
 
 // Test TypeFormatter with complex types
-func TestTypeFormatter_ComplexTypes(t *testing.T) {
-	formatter := &reflection.TypeFormatter{}
-
-	tests := []struct {
-		name     string
-		typ      reflect.Type
-		expected string
-	}{
-		{
-			name:     "nil type",
-			typ:      nil,
-			expected: "<nil>",
-		},
-		{
-			name:     "channel",
-			typ:      reflect.TypeOf(make(chan int)),
-			expected: "chan int",
-		},
-		{
-			name:     "send-only channel",
-			typ:      reflect.TypeOf(make(chan<- int)),
-			expected: "->chan int",
-		},
-		{
-			name:     "receive-only channel",
-			typ:      reflect.TypeOf(make(<-chan int)),
-			expected: "<-chan int",
-		},
-		{
-			name:     "nested map",
-			typ:      reflect.TypeOf(map[string]map[int]bool{}),
-			expected: "map[string]map[int]bool",
-		},
-		{
-			name:     "function with multiple params and returns",
-			typ:      reflect.TypeOf(func(int, string) (bool, error) { return false, nil }),
-			expected: "func(int, string) (bool, error)",
-		},
-		{
-			name:     "unnamed struct",
-			typ:      reflect.TypeOf(struct{ Field int }{}),
-			expected: "struct{...}",
-		},
-		{
-			name:     "array",
-			typ:      reflect.TypeOf([5]int{}),
-			expected: "[5]int",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := formatter.FormatType(tt.typ)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
 // Test that different functions with the same signature are cached separately
 func TestAnalyzer_DifferentFunctionsWithSameSignature(t *testing.T) {
 	analyzer := reflection.New()
@@ -1027,7 +843,7 @@ func TestAnalyzer_CacheSizeWithDuplicateFunctions(t *testing.T) {
 	}
 
 	// Analyze each constructor multiple times
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		analyzer.Analyze(constructor1)
 		analyzer.Analyze(constructor2)
 		analyzer.Analyze(constructor3)
@@ -1192,7 +1008,7 @@ func TestAnalyzer_GetResultTypesEdgeCases(t *testing.T) {
 		require.NoError(t, err, "GetResultTypes failed")
 
 		assert.Len(t, types, 1, "Expected 1 type")
-		assert.Equal(t, reflect.TypeOf((*Database)(nil)), types[0], "Wrong type returned")
+		assert.Equal(t, reflect.TypeFor[*Database](), types[0], "Wrong type returned")
 	})
 }
 
@@ -1295,7 +1111,7 @@ func BenchmarkAnalyzer_SameSignatureDifferentFunctions(b *testing.B) {
 
 	// Create many functions with the same signature
 	constructors := make([]func() *Database, 100)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		idx := i
 		constructors[i] = func() *Database {
 			return &Database{ConnectionString: fmt.Sprintf("db%d", idx)}

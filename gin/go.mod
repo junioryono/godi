@@ -1,10 +1,10 @@
-module github.com/junioryono/godi/v4/gin
+module github.com/junioryono/godi/v5/gin
 
-go 1.24.6
+go 1.26.0
 
 require (
 	github.com/gin-gonic/gin v1.10.0
-	github.com/junioryono/godi/v4 v4.0.0
+	github.com/junioryono/godi/v5 v5.0.0
 	github.com/stretchr/testify v1.11.1
 )
 
@@ -39,4 +39,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/junioryono/godi/v4 => ../
+replace github.com/junioryono/godi/v5 => ../

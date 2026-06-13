@@ -95,8 +95,7 @@ func TestLifetime(t *testing.T) {
 				var got Lifetime
 				err := got.UnmarshalText([]byte(input))
 				assert.Error(t, err, "input: %q should error", input)
-				var ltErr *LifetimeError
-				assert.IsType(t, ltErr, err)
+				assert.IsType(t, &LifetimeError{}, err)
 			}
 		})
 	})
@@ -210,15 +209,13 @@ func TestLifetime(t *testing.T) {
 		t.Parallel()
 		lt := Singleton
 		var wg sync.WaitGroup
-		for i := 0; i < 100; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+		for range 100 {
+			wg.Go(func() {
 				_ = lt.String()
 				_ = lt.IsValid()
 				_, _ = lt.MarshalText()
 				_, _ = lt.MarshalJSON()
-			}()
+			})
 		}
 		wg.Wait()
 	})

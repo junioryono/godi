@@ -64,7 +64,7 @@ You now understand the fundamentals of godi. Here's where to go next based on wh
 ## Get Help
 
 - **[GitHub Issues](https://github.com/junioryono/godi/issues)** - Report bugs or request features
-- **[API Reference](https://pkg.go.dev/github.com/junioryono/godi/v4)** - Complete API documentation
+- **[API Reference](https://pkg.go.dev/github.com/junioryono/godi/v5)** - Complete API documentation
 
 ---
 

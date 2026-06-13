@@ -28,7 +28,7 @@ When should a database connection be shared? When should a request context be un
 
 ## Singleton - One Instance Forever
 
-Created once when first requested. Shared by everyone.
+Created once, eagerly, when you call `Build()`. Shared by everyone.
 
 ```go
 services.AddSingleton(NewDatabasePool)
@@ -90,7 +90,7 @@ import (
     "context"
     "fmt"
     "log"
-    "github.com/junioryono/godi/v4"
+    "github.com/junioryono/godi/v5"
 )
 
 // Singleton - shared everywhere
@@ -177,7 +177,10 @@ TempFile: temp_3.txt, temp_4.txt
 
 ## The Golden Rule
 
-**A service can only depend on services with the same or longer lifetime.**
+**Only scoped services may depend on scoped services.**
+
+Scoped services can depend on anything. Singletons and transients cannot
+depend on scoped services — godi rejects both at build time.
 
 ```go
 // ✓ OK: Scoped can depend on Singleton

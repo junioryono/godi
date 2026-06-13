@@ -216,24 +216,20 @@ Easy to swap implementations for testing:
 
 ```go
 // Production setup
-func ProductionModule() godi.Module {
-    return func(services *godi.ServiceCollection) {
-        services.AddSingleton(NewProductionDB, godi.As[Database]())
-        services.AddSingleton(NewProductionCache, godi.As[Cache]())
-    }
-}
+var ProductionModule = godi.NewModule("production",
+    godi.AddSingleton(NewProductionDB, godi.As[Database]()),
+    godi.AddSingleton(NewProductionCache, godi.As[Cache]()),
+)
 
 // Test setup
-func TestModule() godi.Module {
-    return func(services *godi.ServiceCollection) {
-        services.AddSingleton(NewMockDB, godi.As[Database]())
-        services.AddSingleton(NewMockCache, godi.As[Cache]())
-    }
-}
+var TestModule = godi.NewModule("test",
+    godi.AddSingleton(NewMockDB, godi.As[Database]()),
+    godi.AddSingleton(NewMockCache, godi.As[Cache]()),
+)
 
 // In tests
 services := godi.NewCollection()
-services.AddModule(TestModule())  // Use mocks
+services.AddModules(TestModule)  // Use mocks; errors surface at Build
 ```
 
 ## Common Mistakes

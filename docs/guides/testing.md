@@ -155,27 +155,25 @@ Create reusable test modules:
 // test/modules.go
 package test
 
-import "github.com/junioryono/godi/v4"
+import "github.com/junioryono/godi/v5"
 
 // MockInfrastructureModule provides mocks for all infrastructure
-func MockInfrastructureModule() godi.Module {
-    return func(services *godi.ServiceCollection) {
-        services.AddSingleton(func() *Config {
-            return &Config{Debug: true}
-        })
-        services.AddSingleton(func() Logger {
-            return &mockLogger{}
-        })
-    }
-}
+var MockInfrastructureModule = godi.NewModule("mock-infrastructure",
+    godi.AddSingleton(func() *Config {
+        return &Config{Debug: true}
+    }),
+    godi.AddSingleton(func() Logger {
+        return &mockLogger{}
+    }),
+)
 
 // TestDatabaseModule provides a test database
-func TestDatabaseModule(url string) godi.Module {
-    return func(services *godi.ServiceCollection) {
-        services.AddSingleton(func() (*Database, error) {
+func TestDatabaseModule(url string) godi.ModuleOption {
+    return godi.NewModule("test-database",
+        godi.AddSingleton(func() (*Database, error) {
             return NewDatabase(&Config{DatabaseURL: url})
-        })
-    }
+        }),
+    )
 }
 ```
 
@@ -184,11 +182,15 @@ Use in tests:
 ```go
 func TestWithModules(t *testing.T) {
     services := godi.NewCollection()
-    services.AddModule(test.MockInfrastructureModule())
-    services.AddModule(test.TestDatabaseModule("postgres://test@localhost/test"))
-    services.AddModule(users.Module())
+    services.AddModules(
+        test.MockInfrastructureModule,
+        test.TestDatabaseModule("postgres://test@localhost/test"),
+        users.Module,
+    )
 
-    provider, _ := services.Build()
+    // Registration errors surface here.
+    provider, err := services.Build()
+    require.NoError(t, err)
     defer provider.Close()
     // ...
 }

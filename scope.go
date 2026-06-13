@@ -9,7 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/junioryono/godi/v4/internal/reflection"
+	"github.com/junioryono/godi/v5/internal/reflection"
 )
 
 // Scope provides an isolated resolution context
@@ -32,12 +32,12 @@ type scope struct {
 	instances   map[instanceKey]any
 	instancesMu sync.RWMutex
 
-	// In-flight constructor invocations (single-flight by constructor identity).
+	// In-flight constructor invocations (single-flight per registration).
 	// Without this, two goroutines requesting the same Scoped service can both
 	// miss the cache and both run the constructor, violating the per-scope
 	// uniqueness guarantee. For multi-return / Out-struct constructors, the
-	// key is the constructor's function pointer so that all sister output
-	// types share one flight.
+	// key is the registration's canonical sibling descriptor so that all
+	// sister output types of one registration share one flight (see flightKey).
 	inflight sync.Map // map[any]*scopeFlight
 
 	// Track disposable scoped instances
@@ -49,7 +49,7 @@ type scope struct {
 	childrenMu sync.Mutex
 
 	// State
-	disposed int32 // atomic
+	disposed atomic.Int32
 }
 
 // scopeFlight coordinates a single-flight constructor invocation. The first
@@ -67,7 +67,7 @@ func newScope(rootProvider *provider, parent *scope, ctx context.Context, cancel
 	}
 
 	// Generate scope ID using provider's counter (scoped to this provider)
-	scopeNum := atomic.AddUint64(&rootProvider.scopeCounter, 1)
+	scopeNum := rootProvider.scopeCounter.Add(1)
 
 	s := &scope{
 		id:           "s" + strconv.FormatUint(scopeNum, 36),
@@ -75,8 +75,7 @@ func newScope(rootProvider *provider, parent *scope, ctx context.Context, cancel
 		parentScope:  parent,
 		cancel:       cancel,
 		instances:    make(map[instanceKey]any, 8), // Pre-size for typical usage
-		disposables:  make([]Disposable, 0, 4),
-		children:     make(map[*scope]struct{}, 2),
+		// disposables and children are lazily allocated on first use.
 	}
 
 	ctx = context.WithValue(ctx, scopeContextKey{}, s)
@@ -86,12 +85,15 @@ func newScope(rootProvider *provider, parent *scope, ctx context.Context, cancel
 	// These need to be called when the scope is created
 	for _, descriptor := range rootProvider.voidReturnScopedDescriptors {
 		if _, err := s.createInstance(descriptor); err != nil {
+			// Tear down the partially initialized scope: dispose instances
+			// created by earlier initializers and release the cancellable
+			// context so neither leaks.
+			_ = s.Close()
 			return nil, &ResolutionError{
 				ServiceType: descriptor.Type,
 				ServiceKey:  descriptor.Key,
 				Cause:       fmt.Errorf("failed to initialize scoped service: %w", err),
 			}
-
 		}
 	}
 
@@ -118,7 +120,7 @@ func (s *scope) ID() string {
 
 // Get resolves a service in this scope
 func (s *scope) Get(serviceType reflect.Type) (any, error) {
-	if atomic.LoadInt32(&s.disposed) != 0 {
+	if s.disposed.Load() != 0 {
 		return nil, ErrScopeDisposed
 	}
 
@@ -130,7 +132,7 @@ func (s *scope) Get(serviceType reflect.Type) (any, error) {
 	instance, err := s.resolve(key, nil)
 	// If Close ran while resolve was in flight, surface that as
 	// ErrScopeDisposed instead of a stale "not found" / dangling instance.
-	if atomic.LoadInt32(&s.disposed) != 0 {
+	if s.disposed.Load() != 0 {
 		return nil, ErrScopeDisposed
 	}
 	return instance, err
@@ -138,7 +140,7 @@ func (s *scope) Get(serviceType reflect.Type) (any, error) {
 
 // GetKeyed resolves a keyed service in this scope
 func (s *scope) GetKeyed(serviceType reflect.Type, serviceKey any) (any, error) {
-	if atomic.LoadInt32(&s.disposed) != 0 {
+	if s.disposed.Load() != 0 {
 		return nil, ErrScopeDisposed
 	}
 
@@ -150,9 +152,17 @@ func (s *scope) GetKeyed(serviceType reflect.Type, serviceKey any) (any, error) 
 		return nil, ErrServiceKeyNil
 	}
 
+	// Keys are used in map lookups; a non-comparable key would panic there.
+	if !reflect.TypeOf(serviceKey).Comparable() {
+		return nil, &ValidationError{
+			ServiceType: serviceType,
+			Cause:       fmt.Errorf("service key of type %T is not comparable and cannot be used as a key", serviceKey),
+		}
+	}
+
 	key := instanceKey{Type: serviceType, Key: serviceKey}
 	instance, err := s.resolve(key, nil)
-	if atomic.LoadInt32(&s.disposed) != 0 {
+	if s.disposed.Load() != 0 {
 		return nil, ErrScopeDisposed
 	}
 	return instance, err
@@ -160,7 +170,7 @@ func (s *scope) GetKeyed(serviceType reflect.Type, serviceKey any) (any, error) 
 
 // GetGroup resolves all services in a group
 func (s *scope) GetGroup(serviceType reflect.Type, group string) ([]any, error) {
-	if atomic.LoadInt32(&s.disposed) != 0 {
+	if s.disposed.Load() != 0 {
 		return nil, ErrScopeDisposed
 	}
 
@@ -186,6 +196,11 @@ func (s *scope) GetGroup(serviceType reflect.Type, group string) ([]any, error) 
 		key := instanceKey{Type: descriptor.Type, Key: descriptor.Key, Group: descriptor.Group}
 		instance, err := s.resolve(key, descriptor)
 		if err != nil {
+			// Normalize close-vs-resolve races to ErrScopeDisposed, the same
+			// way Get and GetKeyed do.
+			if s.disposed.Load() != 0 {
+				return nil, ErrScopeDisposed
+			}
 			return nil, &ResolutionError{
 				ServiceType: descriptor.Type,
 				ServiceKey:  descriptor.Key,
@@ -196,7 +211,7 @@ func (s *scope) GetGroup(serviceType reflect.Type, group string) ([]any, error) 
 		instances = append(instances, instance)
 	}
 
-	if atomic.LoadInt32(&s.disposed) != 0 {
+	if s.disposed.Load() != 0 {
 		return nil, ErrScopeDisposed
 	}
 	return instances, nil
@@ -204,7 +219,7 @@ func (s *scope) GetGroup(serviceType reflect.Type, group string) ([]any, error) 
 
 // CreateScope creates a child scope
 func (s *scope) CreateScope(ctx context.Context) (Scope, error) {
-	if atomic.LoadInt32(&s.disposed) != 0 {
+	if s.disposed.Load() != 0 {
 		return nil, ErrScopeDisposed
 	}
 
@@ -218,32 +233,55 @@ func (s *scope) CreateScope(ctx context.Context) (Scope, error) {
 		return nil, fmt.Errorf("failed to create child scope: %w", err)
 	}
 
-	// Track child
+	// Track child. Re-check disposal under the lock: Close may have run
+	// (and enumerated children) between the check at the top of this method
+	// and here, in which case the child must be torn down by us.
 	s.childrenMu.Lock()
+	if s.disposed.Load() != 0 {
+		s.childrenMu.Unlock()
+		_ = child.Close()
+		return nil, ErrScopeDisposed
+	}
+	if s.children == nil {
+		s.children = make(map[*scope]struct{}, 2)
+	}
 	s.children[child] = struct{}{}
 	s.childrenMu.Unlock()
 
-	// Track in provider
+	// Track in provider, re-checking both the provider's and this scope's
+	// disposal. The parent may have closed (and closed the child via the
+	// children map) between the tracking step above and here; inserting the
+	// already-closed child into provider.scopes would leak the entry forever
+	// and hand the caller a disposed scope with a nil error.
 	s.rootProvider.scopesMu.Lock()
+	if s.rootProvider.disposed.Load() != 0 {
+		s.rootProvider.scopesMu.Unlock()
+		_ = child.Close()
+		return nil, ErrProviderDisposed
+	}
+	if s.disposed.Load() != 0 {
+		s.rootProvider.scopesMu.Unlock()
+		_ = child.Close()
+		return nil, ErrScopeDisposed
+	}
 	s.rootProvider.scopes[child] = struct{}{}
 	s.rootProvider.scopesMu.Unlock()
 
-	// Auto-close on context cancellation
-	go func() {
-		<-ctx.Done()
-		if err := child.Close(); err != nil {
-			// Context cancellation cleanup errors are expected during shutdown
-			// and cannot be meaningfully handled, so we ignore them
-			_ = err
-		}
-	}()
+	// Auto-close on context cancellation. AfterFunc avoids dedicating a
+	// goroutine per scope; Close is idempotent, so the callback firing
+	// after an explicit Close (which cancels ctx) is harmless.
+	context.AfterFunc(ctx, func() {
+		// Context cancellation cleanup errors are expected during shutdown
+		// and cannot be meaningfully handled, so we ignore them.
+		_ = child.Close()
+	})
 
 	return child, nil
 }
 
 // Close disposes the scope and all its resources
 func (s *scope) Close() error {
-	if !atomic.CompareAndSwapInt32(&s.disposed, 0, 1) {
+	if !s.disposed.CompareAndSwap(0, 1) {
 		return nil // Already closed
 	}
 
@@ -328,7 +366,7 @@ func (s *scope) getInstance(key instanceKey) (any, bool) {
 // (if Disposable) and not cached. This is the fix for the close-vs-resolve
 // race: previously a write to s.instances after Close set it to nil would
 // panic with "assignment to entry in nil map".
-func (s *scope) setInstance(descriptor *Descriptor, key instanceKey, instance any) {
+func (s *scope) setInstance(descriptor *descriptor, key instanceKey, instance any) {
 	switch descriptor.Lifetime {
 	case Singleton:
 		s.rootProvider.setSingleton(key, instance)
@@ -356,7 +394,7 @@ func (s *scope) appendDisposable(instance any) {
 		return
 	}
 	s.disposablesMu.Lock()
-	if atomic.LoadInt32(&s.disposed) != 0 {
+	if s.disposed.Load() != 0 {
 		s.disposablesMu.Unlock()
 		closeOrphan(d)
 		return
@@ -394,22 +432,25 @@ func safeClose(d Disposable) (err error) {
 }
 
 // flightKey computes a single-flight key for a descriptor. Multi-return and
-// Out-struct constructors produce several descriptors that share the same
-// reflect.Value constructor; flightKey returns the constructor pointer in
-// that case so that one ctor invocation serves every sister descriptor.
-// Instance descriptors don't share constructors, so the descriptor pointer
-// itself is used.
-func flightKey(d *Descriptor) any {
-	if d.IsInstance {
-		return d
+// Out-struct constructors produce several sibling descriptors that share one
+// constructor invocation; flightKey returns the registration's canonical
+// sibling (siblings[0], a pointer shared by every descriptor of one Add*
+// call) so one in-flight call serves all of them. Every other descriptor is
+// its own flight: the same constructor function may be registered several
+// times (under different names, or in different groups), and each
+// registration must produce its own instances — which is why the constructor
+// pointer is NOT a valid key.
+func flightKey(d *descriptor) any {
+	if len(d.siblings) > 0 {
+		return d.siblings[0]
 	}
-	return d.Constructor.Pointer()
+	return d
 }
 
 // resolveScopedSingleFlight runs createInstance for a Scoped descriptor under
 // single-flight: concurrent resolutions of the same key (or of sister output
 // keys from the same multi-return ctor) share one constructor invocation.
-func (s *scope) resolveScopedSingleFlight(key instanceKey, descriptor *Descriptor) (any, error) {
+func (s *scope) resolveScopedSingleFlight(key instanceKey, descriptor *descriptor) (any, error) {
 	fkey := flightKey(descriptor)
 	newFlight := &scopeFlight{done: make(chan struct{})}
 	raw, loaded := s.inflight.LoadOrStore(fkey, newFlight)
@@ -448,15 +489,15 @@ func (s *scope) resolveScopedSingleFlight(key instanceKey, descriptor *Descripto
 }
 
 var (
-	contextType  = reflect.TypeOf((*context.Context)(nil)).Elem()
-	providerType = reflect.TypeOf((*Provider)(nil)).Elem()
-	scopeType    = reflect.TypeOf((*Scope)(nil)).Elem()
+	contextType  = reflect.TypeFor[context.Context]()
+	providerType = reflect.TypeFor[Provider]()
+	scopeType    = reflect.TypeFor[Scope]()
 )
 
 // resolve performs the actual service resolution using the appropriate lifetime strategy.
 // It handles singleton caching, scoped caching, and transient creation, while also
 // detecting circular dependencies during resolution.
-func (s *scope) resolve(key instanceKey, descriptor *Descriptor) (any, error) {
+func (s *scope) resolve(key instanceKey, descriptor *descriptor) (any, error) {
 	// Find descriptor if not provided
 	if descriptor == nil {
 		if key.Key == nil && key.Group == "" {
@@ -515,7 +556,7 @@ func (s *scope) resolve(key instanceKey, descriptor *Descriptor) (any, error) {
 // createInstance creates a new instance of a service using its constructor.
 // It handles regular constructors, result objects (Out structs), multi-return
 // constructors, and instance descriptors.
-func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
+func (s *scope) createInstance(descriptor *descriptor) (any, error) {
 	if descriptor == nil {
 		return nil, &ValidationError{
 			ServiceType: nil,
@@ -566,8 +607,7 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 	results, err := invoker.Invoke(info, s)
 	if err != nil {
 		// Check if it's a panic error and wrap appropriately
-		var panicErr *reflection.PanicError
-		if errors.As(err, &panicErr) {
+		if panicErr, ok := errors.AsType[*reflection.PanicError](err); ok {
 			return nil, &ConstructorPanicError{
 				Constructor: descriptor.ConstructorType,
 				Panic:       panicErr.Panic,
@@ -618,17 +658,30 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 		for _, reg := range registrations {
 			value := reg.Value
 
+			// Each field's registered descriptor is a sibling of the one
+			// being resolved, matched by field index. This works for keyed
+			// and grouped fields alike, whose registry keys differ from
+			// their struct tags.
 			// Convert empty string key to nil for consistent lookup
 			var regKey any
 			if reg.Key != "" {
 				regKey = reg.Key
 			}
 
-			if reg.Type == descriptor.Type && regKey == descriptor.Key {
-				primaryService = value
+			regDescriptor := descriptor.siblingForField(reg.Index)
+			if regDescriptor == nil {
+				if len(descriptor.siblings) > 0 {
+					// Sibling-linked registration with no sibling for this
+					// field: the field's registration was removed from the
+					// collection. Skip it rather than falling back to the
+					// registry, which could find (and wrongly shadow) a
+					// replacement registration of the same type.
+					continue
+				}
+				// Fallback for descriptors constructed outside the normal
+				// Add* path (no sibling links): registry lookup by type/key.
+				regDescriptor = s.rootProvider.findDescriptor(reg.Type, regKey)
 			}
-
-			regDescriptor := s.rootProvider.findDescriptor(reg.Type, regKey)
 			if regDescriptor == nil {
 				return nil, &ResolutionError{
 					ServiceType: reg.Type,
@@ -637,10 +690,15 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 				}
 			}
 
+			if regDescriptor == descriptor ||
+				(reg.Type == descriptor.Type && regDescriptor.Key == descriptor.Key && regDescriptor.Group == descriptor.Group) {
+				primaryService = value
+			}
+
 			key := instanceKey{
-				Type:  reg.Type,
-				Key:   regKey,
-				Group: reg.Group,
+				Type:  regDescriptor.Type,
+				Key:   regDescriptor.Key,
+				Group: regDescriptor.Group,
 			}
 
 			s.setInstance(regDescriptor, key, value)
@@ -658,30 +716,45 @@ func (s *scope) createInstance(descriptor *Descriptor) (any, error) {
 
 	// Handle multi-return constructors
 	if descriptor.MultiReturnIndex >= 0 {
-		for _, ret := range info.Returns {
-			if ret.IsError {
-				continue
-			}
-
-			value := results[ret.Index].Interface()
-
-			// Find the descriptor for this return type
-			serviceDescriptor := s.rootProvider.findDescriptor(ret.Type, nil)
-			if serviceDescriptor == nil {
-				return nil, &ResolutionError{
-					ServiceType: ret.Type,
-					ServiceKey:  nil,
-					Cause:       fmt.Errorf("no descriptor found for return type %v", ret.Type),
+		if len(descriptor.siblings) > 0 {
+			// Cache every return value under its sibling's registration
+			// (which carries the actual key or group assigned at Add time).
+			for _, sibling := range descriptor.siblings {
+				value := results[sibling.MultiReturnIndex].Interface()
+				key := instanceKey{
+					Type:  sibling.Type,
+					Key:   sibling.Key,
+					Group: sibling.Group,
 				}
+				s.setInstance(sibling, key, value)
 			}
+		} else {
+			// Fallback for descriptors constructed outside the normal Add*
+			// path (no sibling links): registry lookup per return type.
+			for _, ret := range info.Returns {
+				if ret.IsError {
+					continue
+				}
 
-			key := instanceKey{
-				Type:  ret.Type,
-				Key:   serviceDescriptor.Key,
-				Group: serviceDescriptor.Group,
+				value := results[ret.Index].Interface()
+
+				serviceDescriptor := s.rootProvider.findDescriptor(ret.Type, nil)
+				if serviceDescriptor == nil {
+					return nil, &ResolutionError{
+						ServiceType: ret.Type,
+						ServiceKey:  nil,
+						Cause:       fmt.Errorf("no descriptor found for return type %v", ret.Type),
+					}
+				}
+
+				key := instanceKey{
+					Type:  ret.Type,
+					Key:   serviceDescriptor.Key,
+					Group: serviceDescriptor.Group,
+				}
+
+				s.setInstance(serviceDescriptor, key, value)
 			}
-
-			s.setInstance(serviceDescriptor, key, value)
 		}
 
 		return results[descriptor.MultiReturnIndex].Interface(), nil

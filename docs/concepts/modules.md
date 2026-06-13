@@ -44,7 +44,7 @@ Use `godi.NewModule` to create a module with a name and service registrations:
 // users/module.go
 package users
 
-import "github.com/junioryono/godi/v4"
+import "github.com/junioryono/godi/v5"
 
 var Module = godi.NewModule("users",
     godi.AddScoped(NewUserRepository),
@@ -87,7 +87,7 @@ myapp/
 // infrastructure/module.go
 package infrastructure
 
-import "github.com/junioryono/godi/v4"
+import "github.com/junioryono/godi/v5"
 
 var Module = godi.NewModule("infrastructure",
     godi.AddSingleton(NewConfig),       // Configuration - load once, share everywhere
@@ -122,7 +122,7 @@ func NewConfig() *Config {
 // users/module.go
 package users
 
-import "github.com/junioryono/godi/v4"
+import "github.com/junioryono/godi/v5"
 
 var Module = godi.NewModule("users",
     godi.AddScoped(NewUserRepository),  // Repository - scoped, uses transaction
@@ -154,7 +154,7 @@ Main.go stays clean:
 package main
 
 import (
-    "github.com/junioryono/godi/v4"
+    "github.com/junioryono/godi/v5"
     "myapp/infrastructure"
     "myapp/users"
     "myapp/orders"

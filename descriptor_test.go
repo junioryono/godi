@@ -126,7 +126,7 @@ func TestDescriptor(t *testing.T) {
 			t.Parallel()
 			d, err := newDescriptor("not a function", Singleton)
 			require.NoError(t, err)
-			assert.Equal(t, reflect.TypeOf(""), d.ConstructorType)
+			assert.Equal(t, reflect.TypeFor[string](), d.ConstructorType)
 		})
 
 		t.Run("void_constructor", func(t *testing.T) {
@@ -237,9 +237,9 @@ func TestDescriptor(t *testing.T) {
 
 		t.Run("nil_type", func(t *testing.T) {
 			t.Parallel()
-			d := &Descriptor{
+			d := &descriptor{
 				Constructor:     reflect.ValueOf(NewTService),
-				ConstructorType: reflect.TypeOf(NewTService),
+				ConstructorType: reflect.TypeFor[func() *TService](),
 				Lifetime:        Singleton,
 			}
 			err := d.Validate()
@@ -251,10 +251,10 @@ func TestDescriptor(t *testing.T) {
 
 		t.Run("invalid_constructor", func(t *testing.T) {
 			t.Parallel()
-			d := &Descriptor{
+			d := &descriptor{
 				Type:            PtrTypeOf[TService](),
 				Constructor:     reflect.Value{},
-				ConstructorType: reflect.TypeOf(NewTService),
+				ConstructorType: reflect.TypeFor[func() *TService](),
 				Lifetime:        Singleton,
 			}
 			err := d.Validate()
@@ -264,7 +264,7 @@ func TestDescriptor(t *testing.T) {
 
 		t.Run("nil_constructor_type", func(t *testing.T) {
 			t.Parallel()
-			d := &Descriptor{
+			d := &descriptor{
 				Type:        PtrTypeOf[TService](),
 				Constructor: reflect.ValueOf(NewTService),
 				Lifetime:    Singleton,
@@ -290,7 +290,7 @@ func TestDescriptor(t *testing.T) {
 			d.Lifetime = Lifetime(999)
 			err := d.Validate()
 			require.Error(t, err)
-			assert.IsType(t, LifetimeError{}, err)
+			assert.IsType(t, &LifetimeError{}, err)
 		})
 	})
 

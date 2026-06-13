@@ -72,7 +72,7 @@ func main() {
 | -------------- | ---------------------------------------------- |
 | `fx.Provide`   | `services.AddSingleton/AddScoped/AddTransient` |
 | `fx.Invoke`    | Resolve after Build                            |
-| `fx.Module`    | `godi.Module`                                  |
+| `fx.Module`    | `godi.NewModule`                                |
 | `fx.In`        | `godi.In`                                      |
 | `fx.Out`       | `godi.Out`                                     |
 | `fx.Lifecycle` | `Close()` method                               |
@@ -194,7 +194,7 @@ Wire uses code generation; godi is runtime-based.
 | Wire               | godi                           |
 | ------------------ | ------------------------------ |
 | Provider functions | Constructor functions          |
-| `wire.NewSet`      | `godi.Module` or registrations |
+| `wire.NewSet`      | `godi.NewModule` or registrations |
 | `wire.Build`       | `services.Build()`             |
 | `wire.Bind`        | `godi.As[Interface]()`         |
 
@@ -276,9 +276,11 @@ services.AddSingleton(func() *OldService {
 ```go
 // Eventually, everything through godi
 services := godi.NewCollection()
-services.AddModule(infrastructure.Module())
-services.AddModule(users.Module())
-services.AddModule(orders.Module())
+services.AddModules(
+    infrastructure.Module,
+    users.Module,
+    orders.Module,
+)
 ```
 
 ## Common Migration Issues
@@ -341,4 +343,4 @@ func TestNew(t *testing.T) {
 
 ---
 
-**Need more help?** Check the [API reference](https://pkg.go.dev/github.com/junioryono/godi/v4) or open an issue on [GitHub](https://github.com/junioryono/godi/issues).
+**Need more help?** Check the [API reference](https://pkg.go.dev/github.com/junioryono/godi/v5) or open an issue on [GitHub](https://github.com/junioryono/godi/issues).

@@ -35,6 +35,13 @@ type ModuleOption func(Collection) error
 //	)
 func NewModule(name string, builders ...ModuleOption) ModuleOption {
 	return func(s Collection) error {
+		// Attribute registration errors recorded by the builders (whose Add*
+		// calls defer errors to Build) to this module by name.
+		if c, ok := s.(*collection); ok {
+			c.pushModule(name)
+			defer c.popModule()
+		}
+
 		// Execute all builders in order
 		for _, builder := range builders {
 			if builder == nil {
@@ -42,7 +49,7 @@ func NewModule(name string, builders ...ModuleOption) ModuleOption {
 			}
 
 			if err := builder(s); err != nil {
-				return ModuleError{Module: name, Cause: err}
+				return &ModuleError{Module: name, Cause: err}
 			}
 		}
 
@@ -51,23 +58,29 @@ func NewModule(name string, builders ...ModuleOption) ModuleOption {
 }
 
 // AddSingleton creates a ModuleBuilder for adding a singleton service.
+// Registration errors are recorded on the collection and reported by Build.
 func AddSingleton(service any, opts ...AddOption) ModuleOption {
 	return func(s Collection) error {
-		return s.AddSingleton(service, opts...)
+		s.AddSingleton(service, opts...)
+		return nil
 	}
 }
 
 // AddScoped creates a ModuleBuilder for adding a scoped service.
+// Registration errors are recorded on the collection and reported by Build.
 func AddScoped(service any, opts ...AddOption) ModuleOption {
 	return func(s Collection) error {
-		return s.AddScoped(service, opts...)
+		s.AddScoped(service, opts...)
+		return nil
 	}
 }
 
 // AddTransient creates a ModuleBuilder for adding a transient service.
+// Registration errors are recorded on the collection and reported by Build.
 func AddTransient(service any, opts ...AddOption) ModuleOption {
 	return func(s Collection) error {
-		return s.AddTransient(service, opts...)
+		s.AddTransient(service, opts...)
+		return nil
 	}
 }
 
@@ -189,17 +202,17 @@ func (o addGroupOption) applyAddOption(opt *addOptions) {
 }
 
 // As is an AddOption that specifies that the value produced by the
-// constructor implements one or more other interfaces and is provided
-// to the container as those interfaces.
+// constructor implements the interface T and is provided to the container
+// as that interface.
 //
-// As expects one or more pointers to the implemented interfaces. Values
-// produced by constructors will be then available in the container as
-// implementations of all of those interfaces, but not as the value itself.
+// The value will then be available in the container as an implementation of
+// T, but not as its concrete type. Pass As multiple times to register the
+// value under several interfaces.
 //
 // For example, the following will make io.Reader and io.Writer available
-// in the container, but not buffer.
+// in the container, but not the concrete buffer type.
 //
-//	c.AddSingleton(newBuffer, godi.As(new(io.Reader), new(io.Writer)))
+//	c.AddSingleton(newBuffer, godi.As[io.Reader](), godi.As[io.Writer]())
 //
 // That is, the above is equivalent to the following.
 //
@@ -208,10 +221,10 @@ func (o addGroupOption) applyAddOption(opt *addOptions) {
 //	  return b, b
 //	})
 //
-// If used with godi.Name, the type produced by the constructor and the types
-// specified with godi.As will all use the same name. For example,
+// If used with godi.Name, the types specified with godi.As will all use the
+// same name. For example,
 //
-//	c.AddSingleton(newFile, godi.As(new(io.Reader)), godi.Name("temp"))
+//	c.AddSingleton(newFile, godi.As[io.Reader](), godi.Name("temp"))
 //
 // The above is equivalent to the following.
 //
@@ -229,7 +242,8 @@ func (o addGroupOption) applyAddOption(opt *addOptions) {
 //	})
 //
 // This option cannot be provided for constructors which produce result
-// objects.
+// objects or have multiple non-error return values, and reserved types
+// (context.Context, godi.Provider, godi.Scope) cannot be registered this way.
 func As[T any]() AddOption {
 	return addAsOption{new(T)}
 }
@@ -258,14 +272,15 @@ func (o addAsOption) applyAddOption(opts *addOptions) {
 //
 // Example:
 //
-//	err := c.AddModules(
+//	c.AddModules(
 //	    godi.Remove[posthog.Client](),
 //	    godi.AddSingleton(infrastructure.NewPostHogClientMock),
 //	    // ... other modules
 //	)
+//	// Any registration errors surface from c.Build().
 func Remove[T any]() ModuleOption {
 	return func(c Collection) error {
-		c.Remove(reflect.TypeOf((*T)(nil)).Elem())
+		c.Remove(reflect.TypeFor[T]())
 		return nil
 	}
 }
@@ -275,14 +290,15 @@ func Remove[T any]() ModuleOption {
 //
 // Example:
 //
-//	err := c.AddModules(
+//	c.AddModules(
 //	    godi.RemoveKeyed[database.Connection]("primary"),
 //	    godi.AddSingleton(NewMockConnection, godi.Name("primary")),
 //	    // ... other modules
 //	)
+//	// Any registration errors surface from c.Build().
 func RemoveKeyed[T any](key any) ModuleOption {
 	return func(c Collection) error {
-		c.RemoveKeyed(reflect.TypeOf((*T)(nil)).Elem(), key)
+		c.RemoveKeyed(reflect.TypeFor[T](), key)
 		return nil
 	}
 }

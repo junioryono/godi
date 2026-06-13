@@ -18,7 +18,7 @@ import (
 	"log/slog"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/junioryono/godi/v4"
+	"github.com/junioryono/godi/v5"
 )
 
 // scopeKey is the key used to store the scope in fiber.Ctx.Locals
@@ -100,6 +100,15 @@ func ScopeMiddleware(provider godi.Provider, opts ...Option) fiber.Handler {
 			return cfg.ErrorHandler(c, err)
 		}
 
+		// Close via defer so the scope is released even when a handler
+		// panics (e.g. with the recover middleware installed above this
+		// one, which would otherwise swallow the panic and leak the scope).
+		defer func() {
+			if closeErr := scope.Close(); closeErr != nil {
+				cfg.CloseErrorHandler(closeErr)
+			}
+		}()
+
 		// Store scope in context and locals
 		c.SetUserContext(scope.Context())
 		c.Locals(scopeKey, scope)
@@ -107,20 +116,12 @@ func ScopeMiddleware(provider godi.Provider, opts ...Option) fiber.Handler {
 		// Run middlewares
 		for _, mw := range cfg.Middlewares {
 			if err := mw(scope, c); err != nil {
-				scope.Close()
 				return cfg.ErrorHandler(c, err)
 			}
 		}
 
 		// Execute handler chain
-		err = c.Next()
-
-		// Close scope after request completes
-		if closeErr := scope.Close(); closeErr != nil {
-			cfg.CloseErrorHandler(closeErr)
-		}
-
-		return err
+		return c.Next()
 	}
 }
 

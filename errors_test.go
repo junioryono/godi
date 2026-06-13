@@ -15,8 +15,8 @@ func TestErrors(t *testing.T) {
 	t.Parallel()
 
 	// Common types for error tests
-	svcType := reflect.TypeOf((*TService)(nil))
-	depType := reflect.TypeOf((*TDependency)(nil))
+	svcType := reflect.TypeFor[*TService]()
+	depType := reflect.TypeFor[*TDependency]()
 	baseCause := errors.New("base error")
 
 	t.Run("LifetimeError", func(t *testing.T) {
@@ -140,7 +140,7 @@ func TestErrors(t *testing.T) {
 		t.Parallel()
 		err := TypeMismatchError{
 			Expected: svcType,
-			Actual:   reflect.TypeOf(""),
+			Actual:   reflect.TypeFor[string](),
 			Context:  "type assertion",
 		}
 		errStr := err.Error()
@@ -196,7 +196,7 @@ func TestErrors(t *testing.T) {
 	t.Run("ConstructorInvocationError", func(t *testing.T) {
 		t.Parallel()
 		err := ConstructorInvocationError{
-			Constructor: reflect.TypeOf(func(*TService) *TDependency { return nil }),
+			Constructor: reflect.TypeFor[func(*TService) *TDependency](),
 			Parameters:  []reflect.Type{svcType},
 			Cause:       baseCause,
 		}
@@ -252,7 +252,7 @@ func TestErrors(t *testing.T) {
 	t.Run("ConstructorPanicError", func(t *testing.T) {
 		t.Parallel()
 		err := &ConstructorPanicError{
-			Constructor: reflect.TypeOf(func() *TService { return nil }),
+			Constructor: reflect.TypeFor[func() *TService](),
 			Panic:       "nil pointer",
 			Stack:       []byte("goroutine 1 [running]:"),
 		}
@@ -290,13 +290,13 @@ func TestFormatType(t *testing.T) {
 		contains string
 	}{
 		{"nil", nil, "<nil>"},
-		{"pointer", reflect.TypeOf((*TService)(nil)), "*TService"},
-		{"slice", reflect.TypeOf([]TService{}), "[]TService"},
-		{"map", reflect.TypeOf(map[string]int{}), "map[string]int"},
-		{"interface", reflect.TypeOf((*fmt.Stringer)(nil)).Elem(), "Stringer"},
-		{"struct", reflect.TypeOf(TService{}), "TService"},
-		{"func", reflect.TypeOf(func() {}), "func()"},
-		{"basic", reflect.TypeOf(42), "int"},
+		{"pointer", reflect.TypeFor[*TService](), "*TService"},
+		{"slice", reflect.TypeFor[[]TService](), "[]TService"},
+		{"map", reflect.TypeFor[map[string]int](), "map[string]int"},
+		{"interface", reflect.TypeFor[fmt.Stringer](), "Stringer"},
+		{"struct", reflect.TypeFor[TService](), "TService"},
+		{"func", reflect.TypeFor[func()](), "func()"},
+		{"basic", reflect.TypeFor[int](), "int"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

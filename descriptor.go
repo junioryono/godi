@@ -6,14 +6,16 @@ import (
 	"strconv"
 	"sync/atomic"
 
-	"github.com/junioryono/godi/v4/internal/reflection"
+	"github.com/junioryono/godi/v5/internal/reflection"
 )
 
 // Global atomic counter for fast void-return service key generation
-var voidKeyCounter uint64
+var voidKeyCounter atomic.Uint64
 
-// Descriptor represents services
-type Descriptor struct {
+// descriptor is the internal registration record for a service. It is not
+// exported: callers inspect registrations through the read-only ServiceInfo
+// view returned by Collection.ToSlice.
+type descriptor struct {
 	// Type is the service type this descriptor produces
 	Type reflect.Type
 
@@ -45,8 +47,9 @@ type Descriptor struct {
 	// Instance is the actual instance value when IsInstance is true
 	Instance any
 
-	// ReturnIndex indicates which return value this descriptor represents
-	// -1 for single returns or Out structs, >= 0 for specific return index in multi-return
+	// MultiReturnIndex indicates which return value this descriptor represents:
+	// -1 for single returns or Out structs, >= 0 for a specific return index
+	// in a multi-return constructor.
 	MultiReturnIndex int
 
 	// VoidReturn indicates if the constructor has no valid return values
@@ -63,15 +66,26 @@ type Descriptor struct {
 	// so the hot resolution path can skip a Lock + map lookup + interface
 	// boxing per resolve. Populated by newDescriptorWithAnalyzer.
 	info *reflection.ConstructorInfo
+
+	// siblings links every descriptor produced by the same constructor
+	// invocation (multi-return constructors and result objects, including
+	// this descriptor itself). One constructor call must cache an instance
+	// for each sibling, regardless of its key or group. Populated by
+	// collection.addService.
+	siblings []*descriptor
+
+	// resultFieldIndex is the Out-struct field index this descriptor was
+	// created from. -1 when the descriptor is not a result-object field.
+	resultFieldIndex int
 }
 
 // newDescriptor creates a new descriptor from a service with the given lifetime and options
-func newDescriptor(service any, lifetime Lifetime, opts ...AddOption) (*Descriptor, error) {
+func newDescriptor(service any, lifetime Lifetime, opts ...AddOption) (*descriptor, error) {
 	return newDescriptorWithAnalyzer(service, lifetime, nil, opts...)
 }
 
 // newDescriptorWithAnalyzer creates a new descriptor using the provided analyzer for caching
-func newDescriptorWithAnalyzer(service any, lifetime Lifetime, analyzer *reflection.Analyzer, opts ...AddOption) (*Descriptor, error) {
+func newDescriptorWithAnalyzer(service any, lifetime Lifetime, analyzer *reflection.Analyzer, opts ...AddOption) (*descriptor, error) {
 	if service == nil {
 		return nil, &ValidationError{
 			ServiceType: nil,
@@ -127,7 +141,7 @@ func newDescriptorWithAnalyzer(service any, lifetime Lifetime, analyzer *reflect
 	dependencies := info.Dependencies()
 
 	// Create descriptor
-	descriptor := &Descriptor{
+	descriptor := &descriptor{
 		Lifetime:         lifetime,
 		Constructor:      constructorValue,
 		ConstructorType:  constructorType,
@@ -136,6 +150,7 @@ func newDescriptorWithAnalyzer(service any, lifetime Lifetime, analyzer *reflect
 		IsInstance:       isInstance,
 		Instance:         nil,
 		MultiReturnIndex: -1,
+		resultFieldIndex: -1,
 	}
 
 	// Store the instance if it's not a function
@@ -150,7 +165,7 @@ func newDescriptorWithAnalyzer(service any, lifetime Lifetime, analyzer *reflect
 			// Check if there are only errors in returns
 			areAllErrors := true
 			for i := range numReturns {
-				if !constructorType.Out(i).Implements(reflect.TypeOf((*error)(nil)).Elem()) {
+				if !constructorType.Out(i).Implements(reflect.TypeFor[error]()) {
 					areAllErrors = false
 					break
 				}
@@ -160,10 +175,10 @@ func newDescriptorWithAnalyzer(service any, lifetime Lifetime, analyzer *reflect
 		}
 
 		if descriptor.VoidReturn {
-			descriptor.Type = reflect.TypeOf((*struct{})(nil)).Elem()
+			descriptor.Type = reflect.TypeFor[struct{}]()
 			if descriptor.Key == nil {
 				// Use fast atomic counter instead of UUID
-				descriptor.Key = "v" + strconv.FormatUint(atomic.AddUint64(&voidKeyCounter, 1), 36)
+				descriptor.Key = "v" + strconv.FormatUint(voidKeyCounter.Add(1), 36)
 			}
 		} else {
 			// Normal function with returns
@@ -216,38 +231,62 @@ func newDescriptorWithAnalyzer(service any, lifetime Lifetime, analyzer *reflect
 	return descriptor, nil
 }
 
+// clone returns a shallow copy of the descriptor with the sibling links
+// cleared. Registration paths that derive several descriptors from one
+// analyzed constructor (result-object fields, multi-return values, interface
+// bindings) clone the source and override only the fields that differ, so a
+// new descriptor field is inherited by every derived descriptor
+// automatically instead of having to be added to each construction site.
+func (d *descriptor) clone() *descriptor {
+	c := *d
+	c.siblings = nil
+	return &c
+}
+
+// siblingForField returns the sibling descriptor registered for the given
+// Out-struct field index, or nil when this descriptor has no sibling links
+// (e.g. it was constructed outside the normal Add* path).
+func (d *descriptor) siblingForField(index int) *descriptor {
+	for _, sibling := range d.siblings {
+		if sibling.resultFieldIndex == index {
+			return sibling
+		}
+	}
+	return nil
+}
+
 // GetType returns the service type this descriptor produces.
 // This method implements the Provider interface from the graph package,
 // enabling the descriptor to participate in dependency resolution.
-func (d *Descriptor) GetType() reflect.Type {
+func (d *descriptor) GetType() reflect.Type {
 	return d.Type
 }
 
 // GetKey returns the optional key for named/keyed services.
 // Returns nil for non-keyed services. This method implements the Provider
 // interface from the graph package for keyed service resolution.
-func (d *Descriptor) GetKey() any {
+func (d *descriptor) GetKey() any {
 	return d.Key
 }
 
 // GetGroup returns the group this provider belongs to.
 // Returns empty string if not part of a group. This method implements
 // the Provider interface from the graph package for group-based resolution.
-func (d *Descriptor) GetGroup() string {
+func (d *descriptor) GetGroup() string {
 	return d.Group
 }
 
 // GetDependencies returns the analyzed dependencies for this descriptor.
 // These dependencies must be resolved before this service can be created.
 // This method implements the Provider interface from the graph package.
-func (d *Descriptor) GetDependencies() []*reflection.Dependency {
+func (d *descriptor) GetDependencies() []*reflection.Dependency {
 	return d.Dependencies
 }
 
 // Validate validates the descriptor's configuration.
 // It checks that the descriptor has a valid type, constructor, and lifetime,
 // and ensures that key and group are not both set simultaneously.
-func (d *Descriptor) Validate() error {
+func (d *descriptor) Validate() error {
 	if d.Type == nil {
 		return &ValidationError{
 			ServiceType: nil,
@@ -281,7 +320,7 @@ func (d *Descriptor) Validate() error {
 	case Singleton, Scoped, Transient:
 		// Valid lifetimes
 	default:
-		return LifetimeError{Value: d.Lifetime}
+		return &LifetimeError{Value: d.Lifetime}
 	}
 
 	// For function constructors, validate return types
@@ -300,13 +339,30 @@ func (d *Descriptor) Validate() error {
 }
 
 // validateReturnTypes validates that constructor return types are valid
-func (d *Descriptor) validateReturnTypes() error {
+func (d *descriptor) validateReturnTypes() error {
 	if d.ConstructorType == nil || d.ConstructorType.Kind() != reflect.Func {
 		return nil
 	}
 
 	numOut := d.ConstructorType.NumOut()
-	for i := 0; i < numOut; i++ {
+
+	if d.isResultObject {
+		// Result objects may only be returned as (Out) or (Out, error).
+		if numOut > 2 {
+			return &ValidationError{
+				ServiceType: d.Type,
+				Cause:       fmt.Errorf("constructor returning a result object (godi.Out) can return at most (Out, error), got %d return values", numOut),
+			}
+		}
+		if numOut == 2 && !d.ConstructorType.Out(1).Implements(reflect.TypeFor[error]()) {
+			return &ValidationError{
+				ServiceType: d.Type,
+				Cause:       fmt.Errorf("constructor returning a result object (godi.Out) must have error as its second return value, got %s", d.ConstructorType.Out(1)),
+			}
+		}
+	}
+
+	for i := range numOut {
 		outType := d.ConstructorType.Out(i)
 
 		// Check for invalid types
@@ -317,8 +373,15 @@ func (d *Descriptor) validateReturnTypes() error {
 			}
 		}
 
-		// Skip error type validation
-		if outType.Implements(reflect.TypeOf((*error)(nil)).Elem()) {
+		// Error returns are only meaningful in the last position; anywhere
+		// else they would be silently registered as services of type error.
+		if outType.Implements(reflect.TypeFor[error]()) {
+			if i != numOut-1 {
+				return &ValidationError{
+					ServiceType: d.Type,
+					Cause:       fmt.Errorf("constructor error return must be the last return value, found error at index %d of %d", i, numOut),
+				}
+			}
 			continue
 		}
 
@@ -343,7 +406,32 @@ func (d *Descriptor) validateReturnTypes() error {
 }
 
 // validateParameterTypes validates that constructor parameter types are valid for DI
-func (d *Descriptor) validateParameterTypes() error {
+func (d *descriptor) validateParameterTypes() error {
+	if d.isParamObject {
+		// Group-tagged fields of an In struct must be slices: they receive
+		// every member of the group.
+		for _, pf := range d.paramFields {
+			if pf.Group != "" && pf.Type.Kind() != reflect.Slice {
+				return &ValidationError{
+					ServiceType: d.Type,
+					Cause:       fmt.Errorf("field %s has a group tag and must be a slice, got %s", pf.Name, pf.Type),
+				}
+			}
+		}
+	} else if d.isFunc && d.ConstructorType != nil {
+		// A parameter object (godi.In) is only recognized when it is the
+		// constructor's sole parameter. Reject In structs mixed with other
+		// parameters instead of silently resolving them as plain services.
+		for in := range d.ConstructorType.Ins() {
+			if reflection.HasEmbeddedIn(in) {
+				return &ValidationError{
+					ServiceType: d.Type,
+					Cause:       fmt.Errorf("parameter objects (godi.In) must be the constructor's only parameter"),
+				}
+			}
+		}
+	}
+
 	for _, dep := range d.Dependencies {
 		if dep == nil {
 			continue
