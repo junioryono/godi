@@ -19,7 +19,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/junioryono/godi/v4"
+	"github.com/junioryono/godi/v5"
 )
 
 // Config holds the configuration for the scope middleware.

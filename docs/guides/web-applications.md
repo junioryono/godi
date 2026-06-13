@@ -38,8 +38,8 @@ import (
     "syscall"
     "time"
 
-    "github.com/junioryono/godi/v4"
-    godihttp "github.com/junioryono/godi/v4/http"
+    "github.com/junioryono/godi/v5"
+    godihttp "github.com/junioryono/godi/v5/http"
     _ "github.com/lib/pq"
 )
 

@@ -5,8 +5,8 @@ Complete guide for using godi with Go's standard `net/http` package.
 ## Installation
 
 ```bash
-go get github.com/junioryono/godi/v4
-go get github.com/junioryono/godi/v4/http
+go get github.com/junioryono/godi/v5
+go get github.com/junioryono/godi/v5/http
 ```
 
 ## Quick Start
@@ -18,8 +18,8 @@ import (
     "encoding/json"
     "net/http"
 
-    "github.com/junioryono/godi/v4"
-    godihttp "github.com/junioryono/godi/v4/http"
+    "github.com/junioryono/godi/v5"
+    godihttp "github.com/junioryono/godi/v5/http"
 )
 
 type UserController struct{}
@@ -139,8 +139,8 @@ import (
     "time"
 
     "github.com/google/uuid"
-    "github.com/junioryono/godi/v4"
-    godihttp "github.com/junioryono/godi/v4/http"
+    "github.com/junioryono/godi/v5"
+    godihttp "github.com/junioryono/godi/v5/http"
 )
 
 // === Services ===

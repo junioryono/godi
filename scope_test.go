@@ -113,7 +113,7 @@ func TestScopeDisposal(t *testing.T) {
 	t.Run("provider_disposes_singletons", func(t *testing.T) {
 		t.Parallel()
 		c := NewCollection()
-		require.NoError(t, c.AddSingleton(NewTDisposable))
+		c.AddSingleton(NewTDisposable)
 		p, _ := c.Build()
 
 		svc, _ := p.Get(PtrTypeOf[TDisposable]())
@@ -243,9 +243,9 @@ func TestBuiltinServiceInjection(t *testing.T) {
 		type CtxService struct{ Ctx context.Context }
 
 		c := NewCollection()
-		require.NoError(t, c.AddScoped(func(ctx context.Context) *CtxService {
+		c.AddScoped(func(ctx context.Context) *CtxService {
 			return &CtxService{Ctx: ctx}
-		}))
+		})
 
 		p, _ := c.Build()
 		defer p.Close()
@@ -263,9 +263,9 @@ func TestBuiltinServiceInjection(t *testing.T) {
 		type ScopeSvc struct{ Scope Scope }
 
 		c := NewCollection()
-		require.NoError(t, c.AddScoped(func(s Scope) *ScopeSvc {
+		c.AddScoped(func(s Scope) *ScopeSvc {
 			return &ScopeSvc{Scope: s}
-		}))
+		})
 
 		p, _ := c.Build()
 		defer p.Close()
@@ -282,9 +282,9 @@ func TestBuiltinServiceInjection(t *testing.T) {
 		type ProvSvc struct{ Prov Provider }
 
 		c := NewCollection()
-		require.NoError(t, c.AddSingleton(func(p Provider) *ProvSvc {
+		c.AddSingleton(func(p Provider) *ProvSvc {
 			return &ProvSvc{Prov: p}
-		}))
+		})
 
 		p, _ := c.Build()
 		defer p.Close()
@@ -302,9 +302,9 @@ func TestConstructorErrors(t *testing.T) {
 		expectedErr := errors.New("initialization failed")
 
 		c := NewCollection()
-		require.NoError(t, c.AddSingleton(func() (*TService, error) {
+		c.AddSingleton(func() (*TService, error) {
 			return nil, expectedErr
-		}))
+		})
 
 		_, err := c.Build()
 		require.Error(t, err)
@@ -314,9 +314,9 @@ func TestConstructorErrors(t *testing.T) {
 	t.Run("recovers_from_panics", func(t *testing.T) {
 		t.Parallel()
 		c := NewCollection()
-		require.NoError(t, c.AddSingleton(func() *TService {
+		c.AddSingleton(func() *TService {
 			panic("constructor panic")
-		}))
+		})
 
 		_, err := c.Build()
 		require.Error(t, err)
@@ -326,9 +326,9 @@ func TestConstructorErrors(t *testing.T) {
 	t.Run("scoped_constructor_panic_recovered", func(t *testing.T) {
 		t.Parallel()
 		c := NewCollection()
-		require.NoError(t, c.AddScoped(func() *TService {
+		c.AddScoped(func() *TService {
 			panic("scoped panic")
-		}))
+		})
 
 		p, _ := c.Build()
 		defer p.Close()
@@ -384,9 +384,9 @@ func TestVoidAndErrorOnlyConstructors(t *testing.T) {
 		var initialized atomic.Bool
 
 		c := NewCollection()
-		require.NoError(t, c.AddSingleton(func() {
+		c.AddSingleton(func() {
 			initialized.Store(true)
-		}))
+		})
 
 		p, err := c.Build()
 		require.NoError(t, err)
@@ -399,9 +399,9 @@ func TestVoidAndErrorOnlyConstructors(t *testing.T) {
 	t.Run("error_only_constructor_success", func(t *testing.T) {
 		t.Parallel()
 		c := NewCollection()
-		require.NoError(t, c.AddSingleton(func() error {
+		c.AddSingleton(func() error {
 			return nil
-		}))
+		})
 
 		_, err := c.Build()
 		require.NoError(t, err)
@@ -410,9 +410,9 @@ func TestVoidAndErrorOnlyConstructors(t *testing.T) {
 	t.Run("error_only_constructor_failure", func(t *testing.T) {
 		t.Parallel()
 		c := NewCollection()
-		require.NoError(t, c.AddSingleton(func() error {
+		c.AddSingleton(func() error {
 			return errors.New("init failed")
-		}))
+		})
 
 		_, err := c.Build()
 		require.Error(t, err)
@@ -436,13 +436,13 @@ func TestComplexDependencyGraph(t *testing.T) {
 	)
 
 	c := NewCollection()
-	require.NoError(t, c.AddSingleton(func() *Config { return &Config{DSN: "postgres://..."} }))
-	require.NoError(t, c.AddSingleton(func(cfg *Config) *DB { return &DB{Config: cfg} }))
-	require.NoError(t, c.AddSingleton(func(db *DB) *Cache { return &Cache{DB: db} }))
-	require.NoError(t, c.AddScoped(func(db *DB) *UserRepo { return &UserRepo{DB: db} }))
-	require.NoError(t, c.AddScoped(func(repo *UserRepo, cache *Cache) *UserSvc {
+	c.AddSingleton(func() *Config { return &Config{DSN: "postgres://..."} })
+	c.AddSingleton(func(cfg *Config) *DB { return &DB{Config: cfg} })
+	c.AddSingleton(func(db *DB) *Cache { return &Cache{DB: db} })
+	c.AddScoped(func(db *DB) *UserRepo { return &UserRepo{DB: db} })
+	c.AddScoped(func(repo *UserRepo, cache *Cache) *UserSvc {
 		return &UserSvc{Repo: repo, Cache: cache}
-	}))
+	})
 
 	p, err := c.Build()
 	require.NoError(t, err)
@@ -481,10 +481,10 @@ func TestScopeCloseRaceWithResolve(t *testing.T) {
 
 	start := make(chan struct{})
 	c := NewCollection()
-	require.NoError(t, c.AddScoped(func() *slowScoped {
+	c.AddScoped(func() *slowScoped {
 		<-start
 		return &slowScoped{id: 1}
-	}))
+	})
 
 	p, err := c.Build()
 	require.NoError(t, err)
@@ -496,7 +496,7 @@ func TestScopeCloseRaceWithResolve(t *testing.T) {
 	resolverDone := make(chan struct{}, goroutines)
 	resolveErrs := make(chan error, goroutines)
 
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		go func() {
 			defer func() {
 				if r := recover(); r != nil {
@@ -523,7 +523,7 @@ func TestScopeCloseRaceWithResolve(t *testing.T) {
 
 	close(start)
 
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		<-resolverDone
 	}
 
@@ -548,9 +548,9 @@ func TestScopedSingleFlight(t *testing.T) {
 	var ctorCalls atomic.Int64
 
 	c := NewCollection()
-	require.NoError(t, c.AddScoped(func() *sfSvc {
+	c.AddScoped(func() *sfSvc {
 		return &sfSvc{id: ctorCalls.Add(1)}
-	}))
+	})
 
 	p, err := c.Build()
 	require.NoError(t, err)
@@ -564,7 +564,7 @@ func TestScopedSingleFlight(t *testing.T) {
 	results := make([]*sfSvc, goroutines)
 	start := make(chan struct{})
 
-	for i := 0; i < goroutines; i++ {
+	for i := range goroutines {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
@@ -597,10 +597,10 @@ func TestScopedMultiReturnSingleFlight(t *testing.T) {
 
 	var ctorCalls atomic.Int64
 	c := NewCollection()
-	require.NoError(t, c.AddScoped(func() (*sfLeft, *sfRight) {
+	c.AddScoped(func() (*sfLeft, *sfRight) {
 		n := ctorCalls.Add(1)
 		return &sfLeft{n: n}, &sfRight{n: n}
-	}))
+	})
 
 	p, err := c.Build()
 	require.NoError(t, err)
@@ -614,7 +614,7 @@ func TestScopedMultiReturnSingleFlight(t *testing.T) {
 	var wg sync.WaitGroup
 	start := make(chan struct{})
 
-	for i := 0; i < goroutines; i++ {
+	for i := range goroutines {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
@@ -651,10 +651,10 @@ func TestScopedOutStructSingleFlight(t *testing.T) {
 
 	var ctorCalls atomic.Int64
 	c := NewCollection()
-	require.NoError(t, c.AddScoped(func() sfOutResult {
+	c.AddScoped(func() sfOutResult {
 		n := ctorCalls.Add(1)
 		return sfOutResult{A: &sfOutA{n: n}, B: &sfOutB{n: n}}
-	}))
+	})
 
 	p, err := c.Build()
 	require.NoError(t, err)
@@ -667,7 +667,7 @@ func TestScopedOutStructSingleFlight(t *testing.T) {
 	const goroutines = 100
 	var wg sync.WaitGroup
 	start := make(chan struct{})
-	for i := 0; i < goroutines; i++ {
+	for i := range goroutines {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
@@ -710,12 +710,12 @@ func TestScopeCloseSurvivesDisposablePanic(t *testing.T) {
 	t.Parallel()
 
 	c := NewCollection()
-	require.NoError(t, c.AddTransient(func() *panickyDisposable {
+	c.AddTransient(func() *panickyDisposable {
 		return &panickyDisposable{name: "boom"}
-	}))
-	require.NoError(t, c.AddTransient(func() *recordingDisposable {
+	})
+	c.AddTransient(func() *recordingDisposable {
 		return &recordingDisposable{}
-	}))
+	})
 
 	p, err := c.Build()
 	require.NoError(t, err)
@@ -769,12 +769,12 @@ func TestTransientResolveArgsAreScratchPooled(t *testing.T) {
 	}
 
 	c := NewCollection()
-	require.NoError(t, c.AddSingleton(func() *leafA { return &leafA{} }))
-	require.NoError(t, c.AddSingleton(func() *leafB { return &leafB{} }))
-	require.NoError(t, c.AddSingleton(func() *leafC { return &leafC{} }))
-	require.NoError(t, c.AddTransient(func(a *leafA, b *leafB, cc *leafC) *composite {
+	c.AddSingleton(func() *leafA { return &leafA{} })
+	c.AddSingleton(func() *leafB { return &leafB{} })
+	c.AddSingleton(func() *leafC { return &leafC{} })
+	c.AddTransient(func(a *leafA, b *leafB, cc *leafC) *composite {
 		return &composite{a: a, b: b, c: cc}
-	}))
+	})
 
 	p, err := c.Build()
 	require.NoError(t, err)
@@ -810,7 +810,7 @@ func TestResolveDoesNotReanalyzeConstructor(t *testing.T) {
 	type svc struct{ n int }
 
 	col := NewCollection().(*collection)
-	require.NoError(t, col.AddTransient(func() *svc { return &svc{n: 1} }))
+	col.AddTransient(func() *svc { return &svc{n: 1} })
 
 	p, err := col.Build()
 	require.NoError(t, err)
@@ -826,7 +826,7 @@ func TestResolveDoesNotReanalyzeConstructor(t *testing.T) {
 
 	before := col.analyzer.AnalyzeCalls()
 	const iterations = 50
-	for i := 0; i < iterations; i++ {
+	for range iterations {
 		_, err := scope.Get(PtrTypeOf[svc]())
 		require.NoError(t, err)
 	}
@@ -834,4 +834,172 @@ func TestResolveDoesNotReanalyzeConstructor(t *testing.T) {
 
 	assert.Zero(t, delta,
 		"resolution must not re-Analyze the constructor (got %d extra calls)", delta)
+}
+
+func TestScopedSharedConstructorConcurrentNames(t *testing.T) {
+	t.Parallel()
+
+	for range 200 {
+		c := NewCollection()
+		c.AddScoped(NewTService, Name("one"))
+		c.AddScoped(NewTService, Name("two"))
+
+		p, err := c.Build()
+		require.NoError(t, err)
+
+		s, err := p.CreateScope(context.Background())
+		require.NoError(t, err)
+
+		var wg sync.WaitGroup
+		errs := make([]error, 2)
+		svcs := make([]*TService, 2)
+		wg.Add(2)
+		go func() { defer wg.Done(); svcs[0], errs[0] = ResolveKeyed[*TService](s, "one") }()
+		go func() { defer wg.Done(); svcs[1], errs[1] = ResolveKeyed[*TService](s, "two") }()
+		wg.Wait()
+
+		require.NoError(t, errs[0])
+		require.NoError(t, errs[1])
+		require.NotSame(t, svcs[0], svcs[1], "each named registration must produce its own instance")
+
+		_ = s.Close()
+		_ = p.Close()
+	}
+}
+
+func TestCreateChildScopeRacingParentClose(t *testing.T) {
+	t.Parallel()
+
+	for range 500 {
+		c := NewCollection()
+		c.AddScoped(NewTService)
+		p, err := c.Build()
+		require.NoError(t, err)
+
+		parent, err := p.CreateScope(context.Background())
+		require.NoError(t, err)
+
+		var wg sync.WaitGroup
+		var panicked any
+		var child Scope
+		var createErr error
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			defer func() { panicked = recover() }()
+			child, createErr = parent.CreateScope(context.Background())
+		}()
+		go func() { defer wg.Done(); _ = parent.Close() }()
+		wg.Wait()
+
+		require.Nil(t, panicked, "child CreateScope racing parent Close must not panic")
+
+		// Invariant: once parent.Close has returned, a successfully created
+		// child either was closed by the parent or is closed by us now; it
+		// must never leak half-tracked.
+		if createErr == nil {
+			require.NotNil(t, child)
+			_ = child.Close()
+			_, err := child.Get(PtrTypeOf[TService]())
+			require.ErrorIs(t, err, ErrScopeDisposed, "child must be disposed after parent close")
+		}
+
+		// The provider must not retain a leaked tracking entry: every scope
+		// is closed at this point, and closing removes the scope from the
+		// provider's map. (Checked before p.Close, which nils the map.)
+		prov := p.(*provider)
+		prov.scopesMu.Lock()
+		leaked := len(prov.scopes)
+		prov.scopesMu.Unlock()
+		require.Zero(t, leaked, "no scope may leak into provider tracking")
+
+		_ = p.Close()
+	}
+}
+
+func TestGetKeyedNonComparableKey(t *testing.T) {
+	t.Parallel()
+
+	c := NewCollection()
+	c.AddSingleton(NewTService, Name("a"))
+	p, err := c.Build()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = p.Close() })
+
+	require.NotPanics(t, func() {
+		_, err := p.GetKeyed(PtrTypeOf[TService](), []string{"not", "comparable"})
+		require.Error(t, err)
+	})
+}
+
+func TestScopeInitFailureCleansUpPartialState(t *testing.T) {
+	t.Parallel()
+
+	var captured *TDisposable
+	initCalls := 0
+
+	c := NewCollection()
+	c.AddScoped(NewTDisposable)
+	// First void-return initializer: resolves the disposable (gets tracked).
+	c.AddScoped(func(d *TDisposable) {
+		captured = d
+	})
+	// Second void-return initializer: succeeds for the root scope (build),
+	// fails for every subsequently created scope.
+	c.AddScoped(func() error {
+		initCalls++
+		if initCalls > 1 {
+			return errors.New("init failure")
+		}
+		return nil
+	})
+
+	p, err := c.Build()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = p.Close() })
+	captured = nil
+
+	ctx := t.Context()
+	s, err := p.CreateScope(ctx)
+	require.Error(t, err)
+	require.Nil(t, s)
+
+	require.NotNil(t, captured, "first initializer should have run")
+	assert.True(t, captured.IsClosed(), "instances created before the failing initializer must be disposed")
+	select {
+	case <-ctx.Done():
+		t.Error("parent context must not be cancelled by a failed CreateScope")
+	default:
+	}
+}
+
+func TestNewScopeFailureCancelsDerivedContext(t *testing.T) {
+	t.Parallel()
+
+	initCalls := 0
+	c := NewCollection()
+	c.AddScoped(func() error {
+		initCalls++
+		if initCalls > 1 {
+			return errors.New("init failure")
+		}
+		return nil
+	})
+
+	pAny, err := c.Build()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = pAny.Close() })
+	p := pAny.(*provider)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s, err := newScope(p, nil, ctx, cancel)
+	require.Error(t, err)
+	require.Nil(t, s)
+
+	select {
+	case <-ctx.Done():
+		// The derived (cancellable) context must be released on failure.
+	default:
+		t.Error("newScope failure leaked its cancellable context")
+	}
 }

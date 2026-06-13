@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/junioryono/godi/v4"
+	"github.com/junioryono/godi/v5"
 	"github.com/stretchr/testify/assert"
 )
 

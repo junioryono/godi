@@ -177,18 +177,18 @@ func BenchmarkResolution(b *testing.B) {
 		deps     int
 		target   reflect.Type
 	}{
-		{"Singleton/0deps", Singleton, 0, reflect.TypeOf((*BenchService)(nil))},
-		{"Singleton/1dep", Singleton, 1, reflect.TypeOf((*BenchServiceWith1Dep)(nil))},
-		{"Singleton/3deps", Singleton, 3, reflect.TypeOf((*BenchServiceWith3Deps)(nil))},
-		{"Singleton/5deps", Singleton, 5, reflect.TypeOf((*BenchServiceWith5Deps)(nil))},
-		{"Scoped/0deps", Scoped, 0, reflect.TypeOf((*BenchService)(nil))},
-		{"Scoped/1dep", Scoped, 1, reflect.TypeOf((*BenchServiceWith1Dep)(nil))},
-		{"Scoped/3deps", Scoped, 3, reflect.TypeOf((*BenchServiceWith3Deps)(nil))},
-		{"Scoped/5deps", Scoped, 5, reflect.TypeOf((*BenchServiceWith5Deps)(nil))},
-		{"Transient/0deps", Transient, 0, reflect.TypeOf((*BenchService)(nil))},
-		{"Transient/1dep", Transient, 1, reflect.TypeOf((*BenchServiceWith1Dep)(nil))},
-		{"Transient/3deps", Transient, 3, reflect.TypeOf((*BenchServiceWith3Deps)(nil))},
-		{"Transient/5deps", Transient, 5, reflect.TypeOf((*BenchServiceWith5Deps)(nil))},
+		{"Singleton/0deps", Singleton, 0, reflect.TypeFor[*BenchService]()},
+		{"Singleton/1dep", Singleton, 1, reflect.TypeFor[*BenchServiceWith1Dep]()},
+		{"Singleton/3deps", Singleton, 3, reflect.TypeFor[*BenchServiceWith3Deps]()},
+		{"Singleton/5deps", Singleton, 5, reflect.TypeFor[*BenchServiceWith5Deps]()},
+		{"Scoped/0deps", Scoped, 0, reflect.TypeFor[*BenchService]()},
+		{"Scoped/1dep", Scoped, 1, reflect.TypeFor[*BenchServiceWith1Dep]()},
+		{"Scoped/3deps", Scoped, 3, reflect.TypeFor[*BenchServiceWith3Deps]()},
+		{"Scoped/5deps", Scoped, 5, reflect.TypeFor[*BenchServiceWith5Deps]()},
+		{"Transient/0deps", Transient, 0, reflect.TypeFor[*BenchService]()},
+		{"Transient/1dep", Transient, 1, reflect.TypeFor[*BenchServiceWith1Dep]()},
+		{"Transient/3deps", Transient, 3, reflect.TypeFor[*BenchServiceWith3Deps]()},
+		{"Transient/5deps", Transient, 5, reflect.TypeFor[*BenchServiceWith5Deps]()},
 	}
 
 	for _, tc := range cases {
@@ -221,8 +221,8 @@ func BenchmarkConcurrentResolution(b *testing.B) {
 		deps     int
 		target   reflect.Type
 	}{
-		{"Singleton/5deps", Singleton, 5, reflect.TypeOf((*BenchServiceWith5Deps)(nil))},
-		{"Scoped/5deps", Scoped, 5, reflect.TypeOf((*BenchServiceWith5Deps)(nil))},
+		{"Singleton/5deps", Singleton, 5, reflect.TypeFor[*BenchServiceWith5Deps]()},
+		{"Scoped/5deps", Scoped, 5, reflect.TypeFor[*BenchServiceWith5Deps]()},
 	}
 
 	for _, tc := range cases {
@@ -281,8 +281,8 @@ func BenchmarkScopeWithResolution(b *testing.B) {
 		deps   int
 		target reflect.Type
 	}{
-		{"0deps", 0, reflect.TypeOf((*BenchService)(nil))},
-		{"5deps", 5, reflect.TypeOf((*BenchServiceWith5Deps)(nil))},
+		{"0deps", 0, reflect.TypeFor[*BenchService]()},
+		{"5deps", 5, reflect.TypeFor[*BenchServiceWith5Deps]()},
 	}
 
 	for _, tc := range cases {
@@ -381,7 +381,7 @@ func BenchmarkMapVsSyncMap(b *testing.B) {
 	}
 
 	// Setup test data
-	testType := reflect.TypeOf((*BenchService)(nil))
+	testType := reflect.TypeFor[*BenchService]()
 	testKey := key{t: testType, k: nil}
 	testValue := &BenchService{Name: "test"}
 

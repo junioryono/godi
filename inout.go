@@ -1,7 +1,7 @@
 package godi
 
 import (
-	"github.com/junioryono/godi/v4/internal/reflection"
+	"github.com/junioryono/godi/v5/internal/reflection"
 )
 
 // In embeds godi.In to leverage godi's parameter object functionality.

@@ -8,7 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/junioryono/godi/v4/internal/graph"
+	"github.com/junioryono/godi/v5/internal/graph"
+	"github.com/junioryono/godi/v5/internal/reflection"
 )
 
 // ========================================
@@ -19,7 +20,10 @@ import (
 
 var (
 	// Service resolution errors.
-	ErrServiceNotFound = errors.New("service not found")
+	// ErrServiceNotFound is shared with the internal reflection package so
+	// the parameter builder can distinguish "not registered" from
+	// "registered but failed to construct" for optional dependencies.
+	ErrServiceNotFound = reflection.ErrServiceNotFound
 	ErrServiceKeyNil   = errors.New("service key cannot be nil")
 	ErrServiceTypeNil  = errors.New("service type cannot be nil")
 
@@ -35,23 +39,29 @@ var (
 	ErrDescriptorNil           = errors.New("descriptor cannot be nil")
 )
 
+// All typed errors are returned as pointers. Match them with
+// errors.AsType (Go 1.26+) or errors.As using a pointer target:
+//
+//	if resErr, ok := errors.AsType[*godi.ResolutionError](err); ok {
+//	    log.Printf("failed to resolve %s", resErr.ServiceType)
+//	}
 var (
-	_ error = LifetimeError{}
-	_ error = LifetimeConflictError{}
-	_ error = AlreadyRegisteredError{}
-	_ error = ResolutionError{}
-	_ error = TimeoutError{}
-	_ error = RegistrationError{}
-	_ error = ValidationError{}
-	_ error = ModuleError{}
-	_ error = TypeMismatchError{}
-	_ error = ReflectionAnalysisError{}
-	_ error = GraphOperationError{}
-	_ error = ConstructorInvocationError{}
-	_ error = ConstructorPanicError{}
-	_ error = BuildError{}
-	_ error = DisposalError{}
-	_ error = CircularDependencyError{}
+	_ error = (*LifetimeError)(nil)
+	_ error = (*LifetimeConflictError)(nil)
+	_ error = (*AlreadyRegisteredError)(nil)
+	_ error = (*ResolutionError)(nil)
+	_ error = (*TimeoutError)(nil)
+	_ error = (*RegistrationError)(nil)
+	_ error = (*ValidationError)(nil)
+	_ error = (*ModuleError)(nil)
+	_ error = (*TypeMismatchError)(nil)
+	_ error = (*ReflectionAnalysisError)(nil)
+	_ error = (*GraphOperationError)(nil)
+	_ error = (*ConstructorInvocationError)(nil)
+	_ error = (*ConstructorPanicError)(nil)
+	_ error = (*BuildError)(nil)
+	_ error = (*DisposalError)(nil)
+	_ error = (*CircularDependencyError)(nil)
 )
 
 // ========================================
@@ -157,6 +167,14 @@ func (e ResolutionError) Error() string {
 
 func (e ResolutionError) Unwrap() error {
 	return e.Cause
+}
+
+// ServiceNotFound reports whether this error represents a direct "no provider
+// registered" failure (as opposed to a registered provider whose construction
+// failed). Used by the parameter builder to decide whether an optional
+// dependency may be skipped.
+func (e ResolutionError) ServiceNotFound() bool {
+	return e.Cause == ErrServiceNotFound
 }
 
 // findSimilarTypes finds types with similar names using a simple substring/prefix match

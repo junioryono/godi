@@ -14,7 +14,7 @@ godi is a dependency injection library that automatically wires up your Go appli
 
 You need:
 
-- Go 1.21 or later
+- Go 1.26 or later
 - A text editor
 - 5 minutes
 
@@ -38,7 +38,7 @@ package main
 
 import (
     "fmt"
-    "github.com/junioryono/godi/v4"
+    "github.com/junioryono/godi/v5"
 )
 
 // Your services - normal Go types

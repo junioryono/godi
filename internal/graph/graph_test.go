@@ -8,9 +8,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/junioryono/godi/v4"
-	"github.com/junioryono/godi/v4/internal/graph"
-	"github.com/junioryono/godi/v4/internal/reflection"
+	"github.com/junioryono/godi/v5"
+	"github.com/junioryono/godi/v5/internal/graph"
+	"github.com/junioryono/godi/v5/internal/reflection"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -33,20 +33,20 @@ func TestDependencyGraph_ConcurrentOperations(t *testing.T) {
 	errors := make(chan error, 100)
 
 	types := []reflect.Type{
-		reflect.TypeOf(Service0{}),
-		reflect.TypeOf(Service1{}),
-		reflect.TypeOf(Service2{}),
-		reflect.TypeOf(Service3{}),
-		reflect.TypeOf(Service4{}),
-		reflect.TypeOf(Service5{}),
-		reflect.TypeOf(Service6{}),
-		reflect.TypeOf(Service7{}),
-		reflect.TypeOf(Service8{}),
-		reflect.TypeOf(Service9{}),
+		reflect.TypeFor[Service0](),
+		reflect.TypeFor[Service1](),
+		reflect.TypeFor[Service2](),
+		reflect.TypeFor[Service3](),
+		reflect.TypeFor[Service4](),
+		reflect.TypeFor[Service5](),
+		reflect.TypeFor[Service6](),
+		reflect.TypeFor[Service7](),
+		reflect.TypeFor[Service8](),
+		reflect.TypeFor[Service9](),
 	}
 
 	// Concurrent additions
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
@@ -72,23 +72,19 @@ func TestDependencyGraph_ConcurrentOperations(t *testing.T) {
 	}
 
 	// Concurrent reads
-	for i := 0; i < 20; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 20 {
+		wg.Go(func() {
 
 			// Perform various read operations
 			g.Size()
-			g.IsAcyclic()
-			g.GetRoots()
-			g.GetLeaves()
+			_ = g.DetectCycles()
 
 			// Try topological sort
 			if _, err := g.TopologicalSort(); err != nil { //nolint:staticcheck // error expected in concurrent test
 				// This might fail if graph is being modified
 				// Don't treat as error in concurrent test
 			}
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -102,7 +98,7 @@ func TestDependencyGraph_ConcurrentOperations(t *testing.T) {
 	assert.Equal(t, 10, g.Size(), "Expected 10 nodes in graph after concurrent operations")
 
 	// Should be acyclic (linear chain)
-	assert.True(t, g.IsAcyclic(), "Graph should be acyclic")
+	assert.NoError(t, g.DetectCycles(), "Graph should be acyclic")
 }
 
 // Test complex cycle detection scenarios
@@ -118,7 +114,7 @@ func TestDependencyGraph_ComplexCycles(t *testing.T) {
 			setupGraph: func() (*graph.DependencyGraph, error) {
 				g := graph.NewDependencyGraph()
 				type SelfCycleService struct{}
-				type1 := reflect.TypeOf(SelfCycleService{})
+				type1 := reflect.TypeFor[SelfCycleService]()
 
 				provider := &godi.Descriptor{
 					Type: type1,
@@ -143,10 +139,10 @@ func TestDependencyGraph_ComplexCycles(t *testing.T) {
 				type DiamondB struct{}
 				type DiamondC struct{}
 				type DiamondD struct{}
-				typeA := reflect.TypeOf(DiamondA{})
-				typeB := reflect.TypeOf(DiamondB{})
-				typeC := reflect.TypeOf(DiamondC{})
-				typeD := reflect.TypeOf(DiamondD{})
+				typeA := reflect.TypeFor[DiamondA]()
+				typeB := reflect.TypeFor[DiamondB]()
+				typeC := reflect.TypeFor[DiamondC]()
+				typeD := reflect.TypeFor[DiamondD]()
 
 				providers := []*godi.Descriptor{
 					{Type: typeD, Dependencies: nil},
@@ -178,9 +174,9 @@ func TestDependencyGraph_ComplexCycles(t *testing.T) {
 				type CycleA struct{}
 				type CycleB struct{}
 				type CycleC struct{}
-				typeA := reflect.TypeOf(CycleA{})
-				typeB := reflect.TypeOf(CycleB{})
-				typeC := reflect.TypeOf(CycleC{})
+				typeA := reflect.TypeFor[CycleA]()
+				typeB := reflect.TypeFor[CycleB]()
+				typeC := reflect.TypeFor[CycleC]()
 
 				g.AddProvider(&godi.Descriptor{
 					Type:         typeB,
@@ -229,197 +225,10 @@ func TestDependencyGraph_ComplexCycles(t *testing.T) {
 				}
 			} else {
 				assert.NoError(t, err, "Unexpected error")
-				assert.True(t, g.IsAcyclic(), "Graph should be acyclic")
+				assert.NoError(t, g.DetectCycles(), "Graph should be acyclic")
 			}
 		})
 	}
-}
-
-// Test depth calculation with complex graphs
-func TestDependencyGraph_DepthCalculation(t *testing.T) {
-	// Test types for depth calculation test
-	type DepthA struct{}
-	type DepthB struct{}
-	type DepthC struct{}
-	type DepthD struct{}
-	type DepthE struct{}
-	type DepthF struct{}
-	type DepthG struct{}
-	type DepthH struct{}
-	type DepthI struct{}
-
-	g := graph.NewDependencyGraph()
-
-	// Create a more complex graph:
-	//     A
-	//    / \
-	//   B   C
-	//  /|   |\
-	// D E   F G
-	//  \|   |/
-	//    H I
-
-	types := map[string]reflect.Type{
-		"A": reflect.TypeOf(DepthA{}),
-		"B": reflect.TypeOf(DepthB{}),
-		"C": reflect.TypeOf(DepthC{}),
-		"D": reflect.TypeOf(DepthD{}),
-		"E": reflect.TypeOf(DepthE{}),
-		"F": reflect.TypeOf(DepthF{}),
-		"G": reflect.TypeOf(DepthG{}),
-		"H": reflect.TypeOf(DepthH{}),
-		"I": reflect.TypeOf(DepthI{}),
-	}
-
-	providers := []*godi.Descriptor{
-		// Root - no dependencies
-		{Type: types["A"], Dependencies: nil},
-
-		// Second layer - depends on A
-		{Type: types["B"], Dependencies: []*reflection.Dependency{{Type: types["A"]}}},
-		{Type: types["C"], Dependencies: []*reflection.Dependency{{Type: types["A"]}}},
-
-		// Middle layer - depends on B or C
-		{Type: types["D"], Dependencies: []*reflection.Dependency{{Type: types["B"]}}},
-		{Type: types["E"], Dependencies: []*reflection.Dependency{{Type: types["B"]}}},
-		{Type: types["F"], Dependencies: []*reflection.Dependency{{Type: types["C"]}}},
-		{Type: types["G"], Dependencies: []*reflection.Dependency{{Type: types["C"]}}},
-
-		// Leaves - depend on middle layer
-		{Type: types["H"], Dependencies: []*reflection.Dependency{
-			{Type: types["D"]},
-			{Type: types["E"]},
-		}},
-		{Type: types["I"], Dependencies: []*reflection.Dependency{
-			{Type: types["F"]},
-			{Type: types["G"]},
-		}},
-	}
-
-	for _, p := range providers {
-		err := g.AddProvider(p)
-		assert.NoError(t, err, "Failed to add provider: %v", p.Type)
-	}
-
-	g.CalculateDepths()
-
-	// Verify depths
-	expectations := map[string]int{
-		"A": 0,
-		"B": 1,
-		"C": 1,
-		"D": 2,
-		"E": 2,
-		"F": 2,
-		"G": 2,
-		"H": 3,
-		"I": 3,
-	}
-
-	for name, expectedDepth := range expectations {
-		node := g.GetNode(types[name], nil, "")
-		assert.NotNil(t, node, "Node %s not found", name)
-		if node != nil {
-			assert.Equal(t, expectedDepth, node.Depth, "Node %s: expected depth %d, got %d", name, expectedDepth, node.Depth)
-		}
-	}
-}
-
-// Test transitive dependencies with keyed services
-func TestDependencyGraph_TransitiveDependenciesWithKeys(t *testing.T) {
-	// Test types for transitive dependencies test
-	type Database struct{}
-	type Cache struct{}
-	type Service struct{}
-
-	g := graph.NewDependencyGraph()
-
-	dbType := reflect.TypeOf(Database{})
-	cacheType := reflect.TypeOf(Cache{})
-	serviceType := reflect.TypeOf(Service{})
-
-	// Create: Service[primary] -> Cache[primary] -> Database[primary]
-	//         Service[backup] -> Cache[backup] -> Database[backup]
-
-	providers := []*godi.Descriptor{
-		// Databases
-		{Type: dbType, Key: "primary", Dependencies: nil},
-		{Type: dbType, Key: "backup", Dependencies: nil},
-
-		// Caches
-		{Type: cacheType, Key: "primary", Dependencies: []*reflection.Dependency{
-			{Type: dbType, Key: "primary"},
-		}},
-		{Type: cacheType, Key: "backup", Dependencies: []*reflection.Dependency{
-			{Type: dbType, Key: "backup"},
-		}},
-
-		// Services
-		{Type: serviceType, Key: "primary", Dependencies: []*reflection.Dependency{
-			{Type: cacheType, Key: "primary"},
-		}},
-		{Type: serviceType, Key: "backup", Dependencies: []*reflection.Dependency{
-			{Type: cacheType, Key: "backup"},
-		}},
-	}
-
-	for _, p := range providers {
-		err := g.AddProvider(p)
-		assert.NoError(t, err, "Failed to add provider: %v", p.Type)
-	}
-
-	// Get transitive dependencies of primary service
-	deps := g.GetTransitiveDependencies(serviceType, "primary", "")
-
-	assert.Len(t, deps, 2, "Expected 2 transitive dependencies")
-
-	// Verify we only get primary chain, not backup
-	for _, dep := range deps {
-		if dep.Key != nil {
-			assert.Equal(t, "primary", dep.Key, "Should only have primary dependencies, got key %v", dep.Key)
-		}
-	}
-}
-
-// Test node removal and graph consistency
-func TestDependencyGraph_RemovalConsistency(t *testing.T) {
-	// Test types for removal consistency test
-	type RemovalService1 struct{}
-	type RemovalService2 struct{}
-	type RemovalService3 struct{}
-
-	g := graph.NewDependencyGraph()
-
-	type1 := reflect.TypeOf(RemovalService1{})
-	type2 := reflect.TypeOf(RemovalService2{})
-	type3 := reflect.TypeOf(RemovalService3{})
-
-	// Create chain: 3 -> 2 -> 1
-	providers := []*godi.Descriptor{
-		{Type: type1, Dependencies: nil},
-		{Type: type2, Dependencies: []*reflection.Dependency{{Type: type1}}},
-		{Type: type3, Dependencies: []*reflection.Dependency{{Type: type2}}},
-	}
-
-	for _, p := range providers {
-		g.AddProvider(p)
-	}
-
-	// Verify initial state
-	assert.Equal(t, 3, g.Size(), "Expected 3 nodes")
-
-	// Remove middle node
-	g.RemoveProvider(type2, nil, "")
-
-	assert.Equal(t, 2, g.Size(), "Expected 2 nodes after removal")
-
-	// Service3's dependencies should be updated
-	deps := g.GetDependencies(type3, nil, "")
-	assert.Empty(t, deps, "Service3 should have no dependencies after Service2 removal")
-
-	// Service1 should have no dependents
-	dependents := g.GetDependents(type1, nil, "")
-	assert.Empty(t, dependents, "Service1 should have no dependents after Service2 removal")
 }
 
 // Benchmark topological sort performance
@@ -430,12 +239,12 @@ func BenchmarkDependencyGraph_TopologicalSort(b *testing.B) {
 	numNodes := 100
 	types := make([]reflect.Type, numNodes)
 
-	for i := 0; i < numNodes; i++ {
+	for i := range numNodes {
 		types[i] = reflect.TypeOf(fmt.Sprintf("Service%d", i))
 	}
 
 	// Create a linear chain of dependencies
-	for i := 0; i < numNodes; i++ {
+	for i := range numNodes {
 		deps := []*reflection.Dependency{}
 		if i > 0 {
 			deps = append(deps, &reflection.Dependency{Type: types[i-1]})
@@ -455,54 +264,12 @@ func BenchmarkDependencyGraph_TopologicalSort(b *testing.B) {
 	}
 }
 
-// Test Clear function
-func TestDependencyGraph_Clear(t *testing.T) {
-	// Add some providers
-	type ClearTest1 struct{}
-	type ClearTest2 struct{}
-	type ClearTest3 struct{}
-
-	g := graph.NewDependencyGraph()
-
-	g.AddProvider(&godi.Descriptor{
-		Type:         reflect.TypeOf(ClearTest1{}),
-		Dependencies: nil,
-	})
-
-	g.AddProvider(&godi.Descriptor{
-		Type:         reflect.TypeOf(ClearTest2{}),
-		Dependencies: []*reflection.Dependency{{Type: reflect.TypeOf(ClearTest1{})}},
-	})
-
-	g.AddProvider(&godi.Descriptor{
-		Type:         reflect.TypeOf(ClearTest3{}),
-		Dependencies: []*reflection.Dependency{{Type: reflect.TypeOf(ClearTest2{})}},
-	})
-
-	// Verify graph has nodes
-	assert.Equal(t, 3, g.Size(), "Expected 3 nodes")
-
-	// Clear the graph
-	g.Clear()
-
-	// Verify graph is empty
-	assert.Equal(t, 0, g.Size(), "Expected 0 nodes after clear")
-
-	// Verify we can still add nodes after clearing
-	g.AddProvider(&godi.Descriptor{
-		Type:         reflect.TypeOf(ClearTest1{}),
-		Dependencies: nil,
-	})
-
-	assert.Equal(t, 1, g.Size(), "Expected 1 node after adding to cleared graph")
-}
-
 // Test HasNode function
 func TestDependencyGraph_HasNode(t *testing.T) {
 	g := graph.NewDependencyGraph()
 
 	type HasNodeTest struct{}
-	testType := reflect.TypeOf(HasNodeTest{})
+	testType := reflect.TypeFor[HasNodeTest]()
 
 	// Check node doesn't exist initially
 	assert.False(t, g.HasNode(testType, nil, ""), "HasNode should return false for non-existent node")
@@ -536,7 +303,7 @@ func TestDependencyGraph_StringMethods(t *testing.T) {
 
 	// Test NodeKey.String() without key
 	nodeKey := graph.NodeKey{
-		Type: reflect.TypeOf(StringTest{}),
+		Type: reflect.TypeFor[StringTest](),
 		Key:  nil,
 	}
 
@@ -545,7 +312,7 @@ func TestDependencyGraph_StringMethods(t *testing.T) {
 
 	// Test NodeKey.String() with key
 	nodeKeyWithKey := graph.NodeKey{
-		Type: reflect.TypeOf(StringTest{}),
+		Type: reflect.TypeFor[StringTest](),
 		Key:  "test-key",
 	}
 
@@ -558,20 +325,18 @@ func TestDependencyGraph_StringMethods(t *testing.T) {
 		Key:       nodeKey,
 		InDegree:  2,
 		OutDegree: 3,
-		Depth:     5,
 	}
 
 	nodeStr := node.String()
 	assert.Contains(t, nodeStr, "StringTest", "Node.String() should contain type name")
 	assert.Contains(t, nodeStr, "in:2", "Node.String() should contain InDegree")
 	assert.Contains(t, nodeStr, "out:3", "Node.String() should contain OutDegree")
-	assert.Contains(t, nodeStr, "depth:5", "Node.String() should contain Depth")
 }
 
 // Test CircularDependencyError.Error()
 func TestCircularDependencyError(t *testing.T) {
 	type ErrorTest struct{}
-	testType := reflect.TypeOf(ErrorTest{})
+	testType := reflect.TypeFor[ErrorTest]()
 
 	// Test with empty path
 	err1 := graph.CircularDependencyError{
@@ -587,9 +352,9 @@ func TestCircularDependencyError(t *testing.T) {
 	err2 := graph.CircularDependencyError{
 		Node: graph.NodeKey{Type: testType},
 		Path: []graph.NodeKey{
-			{Type: reflect.TypeOf("A")},
-			{Type: reflect.TypeOf("B")},
-			{Type: reflect.TypeOf("C")},
+			{Type: reflect.TypeFor[string]()},
+			{Type: reflect.TypeFor[string]()},
+			{Type: reflect.TypeFor[string]()},
 		},
 	}
 
@@ -602,15 +367,11 @@ func TestDependencyGraph_GetMethods_NonExistent(t *testing.T) {
 	g := graph.NewDependencyGraph()
 
 	type NonExistent struct{}
-	nonExistentType := reflect.TypeOf(NonExistent{})
+	nonExistentType := reflect.TypeFor[NonExistent]()
 
 	// GetDependencies on non-existent node should return nil
 	deps := g.GetDependencies(nonExistentType, nil, "")
 	assert.Nil(t, deps, "GetDependencies should return nil for non-existent node")
-
-	// GetDependents on non-existent node should return nil
-	dependents := g.GetDependents(nonExistentType, nil, "")
-	assert.Nil(t, dependents, "GetDependents should return nil for non-existent node")
 
 	// GetNode on non-existent node should return nil
 	node := g.GetNode(nonExistentType, nil, "")
@@ -626,21 +387,6 @@ func TestDependencyGraph_AddProvider_Nil(t *testing.T) {
 	assert.Contains(t, err.Error(), "nil", "Error should mention nil provider")
 }
 
-// Test removing non-existent provider
-func TestDependencyGraph_RemoveProvider_NonExistent(t *testing.T) {
-	g := graph.NewDependencyGraph()
-
-	type NonExistent struct{}
-
-	// Should not panic when removing non-existent provider
-	assert.NotPanics(t, func() {
-		g.RemoveProvider(reflect.TypeOf(NonExistent{}), nil, "")
-	}, "Should not panic when removing non-existent provider")
-
-	// Graph should still be empty
-	assert.Equal(t, 0, g.Size(), "Expected 0 nodes after removing non-existent provider")
-}
-
 // Test cache invalidation
 func TestDependencyGraph_CacheInvalidation(t *testing.T) {
 	// Test types for cache invalidation test
@@ -649,8 +395,8 @@ func TestDependencyGraph_CacheInvalidation(t *testing.T) {
 
 	g := graph.NewDependencyGraph()
 
-	type1 := reflect.TypeOf(CacheService1{})
-	type2 := reflect.TypeOf(CacheService2{})
+	type1 := reflect.TypeFor[CacheService1]()
+	type2 := reflect.TypeFor[CacheService2]()
 
 	// Add initial provider
 	g.AddProvider(&godi.Descriptor{
@@ -681,48 +427,14 @@ func TestDependencyGraph_CacheInvalidation(t *testing.T) {
 
 // Test complex scenarios for better coverage
 func TestDependencyGraph_ComplexScenarios(t *testing.T) {
-	t.Run("GetTransitiveDependencies with cycles", func(t *testing.T) {
-		g := graph.NewDependencyGraph()
-
-		type TransA struct{}
-		type TransB struct{}
-		type TransC struct{}
-
-		typeA := reflect.TypeOf(TransA{})
-		typeB := reflect.TypeOf(TransB{})
-		typeC := reflect.TypeOf(TransC{})
-
-		// Create A -> B -> C
-		g.AddProvider(&godi.Descriptor{
-			Type:         typeC,
-			Dependencies: nil,
-		})
-
-		g.AddProvider(&godi.Descriptor{
-			Type:         typeB,
-			Dependencies: []*reflection.Dependency{{Type: typeC}},
-		})
-
-		g.AddProvider(&godi.Descriptor{
-			Type:         typeA,
-			Dependencies: []*reflection.Dependency{{Type: typeB}},
-		})
-
-		// Get transitive dependencies of A
-		deps := g.GetTransitiveDependencies(typeA, nil, "")
-
-		// Should have B and C
-		assert.Len(t, deps, 2, "Expected 2 transitive dependencies")
-	})
-
 	t.Run("TopologicalSort with insufficient nodes", func(t *testing.T) {
 		g := graph.NewDependencyGraph()
 
 		type SortA struct{}
 		type SortB struct{}
 
-		typeA := reflect.TypeOf(SortA{})
-		typeB := reflect.TypeOf(SortB{})
+		typeA := reflect.TypeFor[SortA]()
+		typeB := reflect.TypeFor[SortB]()
 
 		// Add B depending on A, but don't add A as a provider
 		g.AddProvider(&godi.Descriptor{
@@ -748,10 +460,10 @@ func TestDependencyGraph_ComplexScenarios(t *testing.T) {
 		type PathC struct{}
 		type PathD struct{}
 
-		typeA := reflect.TypeOf(PathA{})
-		typeB := reflect.TypeOf(PathB{})
-		typeC := reflect.TypeOf(PathC{})
-		typeD := reflect.TypeOf(PathD{})
+		typeA := reflect.TypeFor[PathA]()
+		typeB := reflect.TypeFor[PathB]()
+		typeC := reflect.TypeFor[PathC]()
+		typeD := reflect.TypeFor[PathD]()
 
 		// Create: A -> B -> C -> D -> B (cycle)
 		g.AddProvider(&godi.Descriptor{
@@ -791,13 +503,13 @@ func TestDependencyGraph_ComplexScenarios(t *testing.T) {
 		type CycleTest2 struct{}
 
 		g.AddProvider(&godi.Descriptor{
-			Type:         reflect.TypeOf(CycleTest1{}),
+			Type:         reflect.TypeFor[CycleTest1](),
 			Dependencies: nil,
 		})
 
 		g.AddProvider(&godi.Descriptor{
-			Type:         reflect.TypeOf(CycleTest2{}),
-			Dependencies: []*reflection.Dependency{{Type: reflect.TypeOf(CycleTest1{})}},
+			Type:         reflect.TypeFor[CycleTest2](),
+			Dependencies: []*reflection.Dependency{{Type: reflect.TypeFor[CycleTest1]()}},
 		})
 
 		// First call - should build cache
@@ -807,58 +519,6 @@ func TestDependencyGraph_ComplexScenarios(t *testing.T) {
 		// Second call - should use cache
 		err2 := g.DetectCycles()
 		assert.NoError(t, err2, "No cycles should be detected (cached)")
-	})
-
-	t.Run("RemoveProvider with complex dependencies", func(t *testing.T) {
-		g := graph.NewDependencyGraph()
-
-		type RemoveA struct{}
-		type RemoveB struct{}
-		type RemoveC struct{}
-		type RemoveD struct{}
-
-		typeA := reflect.TypeOf(RemoveA{})
-		typeB := reflect.TypeOf(RemoveB{})
-		typeC := reflect.TypeOf(RemoveC{})
-		typeD := reflect.TypeOf(RemoveD{})
-
-		// Create diamond: D depends on B and C, both depend on A
-		g.AddProvider(&godi.Descriptor{
-			Type:         typeA,
-			Dependencies: nil,
-		})
-
-		g.AddProvider(&godi.Descriptor{
-			Type:         typeB,
-			Dependencies: []*reflection.Dependency{{Type: typeA}},
-		})
-
-		g.AddProvider(&godi.Descriptor{
-			Type:         typeC,
-			Dependencies: []*reflection.Dependency{{Type: typeA}},
-		})
-
-		g.AddProvider(&godi.Descriptor{
-			Type: typeD,
-			Dependencies: []*reflection.Dependency{
-				{Type: typeB},
-				{Type: typeC},
-			},
-		})
-
-		// Remove A - this should break the graph
-		g.RemoveProvider(typeA, nil, "")
-
-		// B and C should have no dependencies now
-		bDeps := g.GetDependencies(typeB, nil, "")
-		assert.Empty(t, bDeps, "B should have no dependencies after A removal")
-
-		cDeps := g.GetDependencies(typeC, nil, "")
-		assert.Empty(t, cDeps, "C should have no dependencies after A removal")
-
-		// D should still depend on B and C
-		dDeps := g.GetDependencies(typeD, nil, "")
-		assert.Len(t, dDeps, 2, "D should still have 2 dependencies")
 	})
 }
 
@@ -877,8 +537,8 @@ func TestTopologicalSort_DependencyOrder(t *testing.T) {
 			setupGraph: func() (*graph.DependencyGraph, error) {
 				g := graph.NewDependencyGraph()
 
-				typeNoDeps := reflect.TypeOf(ServiceNoDeps{})
-				typeWithOneDep := reflect.TypeOf(ServiceWithOneDep{})
+				typeNoDeps := reflect.TypeFor[ServiceNoDeps]()
+				typeWithOneDep := reflect.TypeFor[ServiceWithOneDep]()
 
 				// ServiceNoDeps has no dependencies
 				err := g.AddProvider(&godi.Descriptor{
@@ -909,9 +569,9 @@ func TestTopologicalSort_DependencyOrder(t *testing.T) {
 			setupGraph: func() (*graph.DependencyGraph, error) {
 				g := graph.NewDependencyGraph()
 
-				typeNoDeps := reflect.TypeOf(ServiceNoDeps{})
-				typeWithOneDep := reflect.TypeOf(ServiceWithOneDep{})
-				typeWithTwoDeps := reflect.TypeOf(ServiceWithTwoDeps{})
+				typeNoDeps := reflect.TypeFor[ServiceNoDeps]()
+				typeWithOneDep := reflect.TypeFor[ServiceWithOneDep]()
+				typeWithTwoDeps := reflect.TypeFor[ServiceWithTwoDeps]()
 
 				// ServiceNoDeps has no dependencies
 				err := g.AddProvider(&godi.Descriptor{
@@ -966,10 +626,10 @@ func TestTopologicalSort_DependencyOrder(t *testing.T) {
 				type C struct{}
 				type D struct{}
 
-				typeA := reflect.TypeOf(A{})
-				typeB := reflect.TypeOf(B{})
-				typeC := reflect.TypeOf(C{})
-				typeD := reflect.TypeOf(D{})
+				typeA := reflect.TypeFor[A]()
+				typeB := reflect.TypeFor[B]()
+				typeC := reflect.TypeFor[C]()
+				typeD := reflect.TypeFor[D]()
 
 				// A has no dependencies
 				g.AddProvider(&godi.Descriptor{
@@ -1099,8 +759,8 @@ func TestTopologicalSort_ForDependencyInjection(t *testing.T) {
 	type ResolutionTestService struct{}
 	type ResolutionServiceWithDep struct{}
 
-	typeTestService := reflect.TypeOf(&ResolutionTestService{})
-	typeServiceWithDep := reflect.TypeOf(&ResolutionServiceWithDep{})
+	typeTestService := reflect.TypeFor[*ResolutionTestService]()
+	typeServiceWithDep := reflect.TypeFor[*ResolutionServiceWithDep]()
 
 	// Add ResolutionTestService (no dependencies)
 	err := g.AddProvider(&godi.Descriptor{
@@ -1148,8 +808,8 @@ func TestResolveGroupDependencies(t *testing.T) {
 	t.Run("connects consumer to group members", func(t *testing.T) {
 		g := graph.NewDependencyGraph()
 
-		memberType := reflect.TypeOf(GroupMember{})
-		consumerType := reflect.TypeOf(GroupConsumer{})
+		memberType := reflect.TypeFor[GroupMember]()
+		consumerType := reflect.TypeFor[GroupConsumer]()
 
 		member1 := &godi.Descriptor{
 			Type:     memberType,
@@ -1206,8 +866,8 @@ func TestResolveGroupDependencies(t *testing.T) {
 	t.Run("handles empty groups", func(t *testing.T) {
 		g := graph.NewDependencyGraph()
 
-		memberType := reflect.TypeOf(GroupMember{})
-		consumerType := reflect.TypeOf(GroupConsumer{})
+		memberType := reflect.TypeFor[GroupMember]()
+		consumerType := reflect.TypeFor[GroupConsumer]()
 
 		consumer := &godi.Descriptor{
 			Type:     consumerType,
@@ -1232,8 +892,8 @@ func TestResolveGroupDependencies(t *testing.T) {
 	t.Run("consumer added before members", func(t *testing.T) {
 		g := graph.NewDependencyGraph()
 
-		memberType := reflect.TypeOf(GroupMember{})
-		consumerType := reflect.TypeOf(GroupConsumer{})
+		memberType := reflect.TypeFor[GroupMember]()
+		consumerType := reflect.TypeFor[GroupConsumer]()
 
 		consumer := &godi.Descriptor{
 			Type:     consumerType,
@@ -1268,7 +928,7 @@ func TestResolveGroupDependencies(t *testing.T) {
 	t.Run("no phantom nodes present", func(t *testing.T) {
 		g := graph.NewDependencyGraph()
 
-		memberType := reflect.TypeOf(GroupMember{})
+		memberType := reflect.TypeFor[GroupMember]()
 
 		member := &godi.Descriptor{
 			Type:     memberType,
@@ -1285,4 +945,32 @@ func TestResolveGroupDependencies(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Len(t, sorted, 1)
 	})
+}
+
+// AddProviderDeferred must fully replace a node's edges on re-registration,
+// not merge stale edges from a previous registration.
+func TestAddProviderDeferred_ReplacementClearsStaleEdges(t *testing.T) {
+	type ServiceA struct{}
+	type ServiceB struct{}
+
+	g := graph.NewDependencyGraph()
+
+	withDep := &godi.Descriptor{
+		Type:     reflect.TypeFor[ServiceA](),
+		Lifetime: godi.Singleton,
+		Dependencies: []*reflection.Dependency{
+			{Type: reflect.TypeFor[ServiceB]()},
+		},
+	}
+	assert.NoError(t, g.AddProviderDeferred(withDep))
+
+	noDeps := &godi.Descriptor{
+		Type:     reflect.TypeFor[ServiceA](),
+		Lifetime: godi.Singleton,
+	}
+	assert.NoError(t, g.AddProviderDeferred(noDeps))
+	assert.NoError(t, g.DetectCycles())
+
+	deps := g.GetDependencies(reflect.TypeFor[ServiceA](), nil, "")
+	assert.Empty(t, deps, "re-registration with no dependencies must clear stale edges")
 }

@@ -105,6 +105,10 @@ func NewService(params ServiceParams) *Service {
 }
 ```
 
+`optional:"true"` only forgives a dependency that is **not registered**. If
+the dependency is registered but its constructor fails, the error propagates
+instead of silently injecting nil.
+
 ### Named Dependencies
 
 ```go

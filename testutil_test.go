@@ -81,6 +81,10 @@ type TTransient struct {
 	Instance int
 }
 
+// TMultiA and TMultiB are produced together by multi-return constructors.
+type TMultiA struct{ N int }
+type TMultiB struct{ N int }
+
 // ============================================================================
 // Circular Dependency Test Types
 // ============================================================================
@@ -228,7 +232,7 @@ func BuildProvider(t *testing.T, opts ...ModuleOption) Provider {
 	t.Helper()
 	c := NewCollection()
 	if len(opts) > 0 {
-		require.NoError(t, c.AddModules(opts...))
+		c.AddModules(opts...)
 	}
 	p, err := c.Build()
 	require.NoError(t, err)
@@ -252,7 +256,7 @@ func BuildCollection(t *testing.T, opts ...ModuleOption) Collection {
 	t.Helper()
 	c := NewCollection()
 	if len(opts) > 0 {
-		require.NoError(t, c.AddModules(opts...))
+		c.AddModules(opts...)
 	}
 	return c
 }
@@ -283,10 +287,10 @@ func RequireResolveKeyed[T any](t *testing.T, p Provider, key any) T {
 
 // TypeOf returns the reflect.Type for a type parameter.
 func TypeOf[T any]() reflect.Type {
-	return reflect.TypeOf((*T)(nil)).Elem()
+	return reflect.TypeFor[T]()
 }
 
 // PtrTypeOf returns the reflect.Type for a pointer to the type parameter.
 func PtrTypeOf[T any]() reflect.Type {
-	return reflect.TypeOf((*T)(nil))
+	return reflect.TypeFor[*T]()
 }

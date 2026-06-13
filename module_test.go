@@ -39,9 +39,11 @@ func TestModule(t *testing.T) {
 				AddScoped(NewTService),
 			)
 			c := NewCollection()
-			err := module(c)
+			require.NoError(t, module(c), "Add errors are recorded, not returned")
+			err := c.Err()
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "already registered")
+			assert.Contains(t, err.Error(), `module "dup"`)
 		})
 
 		t.Run("keyed_services", func(t *testing.T) {
@@ -91,12 +93,13 @@ func TestModule(t *testing.T) {
 		t.Run("error_from_duplicate", func(t *testing.T) {
 			t.Parallel()
 			c := NewCollection()
-			require.NoError(t, c.AddSingleton(NewTService))
+			c.AddSingleton(NewTService)
 
 			module := NewModule("dup", AddSingleton(NewTService))
-			err := module(c)
+			require.NoError(t, module(c), "Add errors are recorded, not returned")
+			err := c.Err()
 			require.Error(t, err)
-			var moduleErr ModuleError
+			var moduleErr *ModuleError
 			assert.ErrorAs(t, err, &moduleErr)
 			assert.Equal(t, "dup", moduleErr.Module)
 		})
@@ -160,39 +163,39 @@ func TestModule(t *testing.T) {
 		t.Run("removes_service", func(t *testing.T) {
 			t.Parallel()
 			c := NewCollection()
-			require.NoError(t, c.AddSingleton(NewTService))
+			c.AddSingleton(NewTService)
 			assert.True(t, c.Contains(PtrTypeOf[TService]()))
 
-			require.NoError(t, c.AddModules(Remove[*TService]()))
+			c.AddModules(Remove[*TService]())
 			assert.False(t, c.Contains(PtrTypeOf[TService]()))
 		})
 
 		t.Run("removes_interface", func(t *testing.T) {
 			t.Parallel()
 			c := NewCollection()
-			require.NoError(t, c.AddSingleton(NewTService, As[TInterface]()))
+			c.AddSingleton(NewTService, As[TInterface]())
 			assert.True(t, c.Contains(TypeOf[TInterface]()))
 
-			require.NoError(t, c.AddModules(Remove[TInterface]()))
+			c.AddModules(Remove[TInterface]())
 			assert.False(t, c.Contains(TypeOf[TInterface]()))
 		})
 
 		t.Run("remove_and_replace", func(t *testing.T) {
 			t.Parallel()
 			c := NewCollection()
-			require.NoError(t, c.AddSingleton(NewTServiceWithID("original")))
+			c.AddSingleton(NewTServiceWithID("original"))
 
-			require.NoError(t, c.AddModules(
+			c.AddModules(
 				Remove[*TService](),
 				AddSingleton(NewTServiceWithID("replacement")),
-			))
+			)
 			assert.True(t, c.Contains(PtrTypeOf[TService]()))
 		})
 
 		t.Run("non_existent_is_noop", func(t *testing.T) {
 			t.Parallel()
 			c := NewCollection()
-			require.NoError(t, c.AddModules(Remove[*TService]()))
+			c.AddModules(Remove[*TService]())
 			assert.Equal(t, 0, c.Count())
 		})
 	})
@@ -203,10 +206,10 @@ func TestModule(t *testing.T) {
 		t.Run("removes_keyed", func(t *testing.T) {
 			t.Parallel()
 			c := NewCollection()
-			require.NoError(t, c.AddSingleton(NewTService, Name("primary")))
-			require.NoError(t, c.AddSingleton(NewTService, Name("secondary")))
+			c.AddSingleton(NewTService, Name("primary"))
+			c.AddSingleton(NewTService, Name("secondary"))
 
-			require.NoError(t, c.AddModules(RemoveKeyed[*TService]("primary")))
+			c.AddModules(RemoveKeyed[*TService]("primary"))
 			assert.False(t, c.ContainsKeyed(PtrTypeOf[TService](), "primary"))
 			assert.True(t, c.ContainsKeyed(PtrTypeOf[TService](), "secondary"))
 		})
@@ -214,19 +217,19 @@ func TestModule(t *testing.T) {
 		t.Run("nil_key_removes_default", func(t *testing.T) {
 			t.Parallel()
 			c := NewCollection()
-			require.NoError(t, c.AddSingleton(NewTService))
+			c.AddSingleton(NewTService)
 			assert.True(t, c.Contains(PtrTypeOf[TService]()))
 
-			require.NoError(t, c.AddModules(RemoveKeyed[*TService](nil)))
+			c.AddModules(RemoveKeyed[*TService](nil))
 			assert.False(t, c.Contains(PtrTypeOf[TService]()))
 		})
 
 		t.Run("non_existent_is_noop", func(t *testing.T) {
 			t.Parallel()
 			c := NewCollection()
-			require.NoError(t, c.AddSingleton(NewTService, Name("existing")))
+			c.AddSingleton(NewTService, Name("existing"))
 
-			require.NoError(t, c.AddModules(RemoveKeyed[*TService]("nonexistent")))
+			c.AddModules(RemoveKeyed[*TService]("nonexistent"))
 			assert.True(t, c.ContainsKeyed(PtrTypeOf[TService](), "existing"))
 			assert.Equal(t, 1, c.Count())
 		})
@@ -311,7 +314,7 @@ func TestModule(t *testing.T) {
 			)
 
 			c := NewCollection()
-			require.NoError(t, c.AddModules(module))
+			c.AddModules(module)
 			assert.Equal(t, 3, c.Count())
 		})
 
@@ -321,9 +324,10 @@ func TestModule(t *testing.T) {
 			module := NewModule("failing", ModuleOption(failing))
 
 			c := NewCollection()
-			err := c.AddModules(module)
+			c.AddModules(module)
+			err := c.Err()
 			require.Error(t, err)
-			var moduleErr ModuleError
+			var moduleErr *ModuleError
 			assert.ErrorAs(t, err, &moduleErr)
 			assert.Equal(t, "failing", moduleErr.Module)
 			assert.Contains(t, moduleErr.Cause.Error(), "intentional")
@@ -340,11 +344,11 @@ func TestModule(t *testing.T) {
 			)
 
 			c := NewCollection()
-			require.NoError(t, c.AddModules(module))
+			c.AddModules(module)
 			assert.Equal(t, 3, c.Count())
-			assert.True(t, c.Contains(reflect.TypeOf((*Logger)(nil))))
-			assert.True(t, c.ContainsKeyed(reflect.TypeOf((*Logger)(nil)), "debug"))
-			assert.True(t, c.ContainsKeyed(reflect.TypeOf((*Logger)(nil)), "audit"))
+			assert.True(t, c.Contains(reflect.TypeFor[*Logger]()))
+			assert.True(t, c.ContainsKeyed(reflect.TypeFor[*Logger](), "debug"))
+			assert.True(t, c.ContainsKeyed(reflect.TypeFor[*Logger](), "audit"))
 		})
 	})
 }

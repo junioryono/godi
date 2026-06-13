@@ -20,7 +20,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/junioryono/godi/v4"
+	"github.com/junioryono/godi/v5"
 )
 
 // Config holds the configuration for the scope middleware.

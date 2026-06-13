@@ -3,7 +3,7 @@
 ## Install godi
 
 ```bash
-go get github.com/junioryono/godi/v4
+go get github.com/junioryono/godi/v5
 ```
 
 ## Verify It Works
@@ -15,7 +15,7 @@ package main
 
 import (
     "fmt"
-    "github.com/junioryono/godi/v4"
+    "github.com/junioryono/godi/v5"
 )
 
 func main() {
@@ -38,7 +38,7 @@ godi is ready!
 
 ## Requirements
 
-- **Go 1.21+** - godi uses generics for type safety
+- **Go 1.26+** - godi uses generics for type safety
 - **No code generation** - godi works at runtime, no build steps needed
 - **No dependencies** - the core library has zero external dependencies
 
@@ -48,19 +48,19 @@ If you're using a web framework, install the corresponding integration:
 
 ```bash
 # For Gin
-go get github.com/junioryono/godi/v4/gin
+go get github.com/junioryono/godi/v5/gin
 
 # For Chi
-go get github.com/junioryono/godi/v4/chi
+go get github.com/junioryono/godi/v5/chi
 
 # For Echo
-go get github.com/junioryono/godi/v4/echo
+go get github.com/junioryono/godi/v5/echo
 
 # For Fiber
-go get github.com/junioryono/godi/v4/fiber
+go get github.com/junioryono/godi/v5/fiber
 
 # For net/http
-go get github.com/junioryono/godi/v4/http
+go get github.com/junioryono/godi/v5/http
 ```
 
 ---

@@ -18,7 +18,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/junioryono/godi/v4"
+	"github.com/junioryono/godi/v5"
 	"github.com/labstack/echo/v4"
 )
 

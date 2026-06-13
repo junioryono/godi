@@ -55,10 +55,12 @@ godi saw that `NewUserService` needs a `*Logger`, found `NewLogger`, and called 
 │         │                                              │
 │         └──depends on──▶ *Logger                       │
 ├────────────────────────────────────────────────────────┤
-│  When you resolve *UserService:                        │
+│  When you Build() (singletons are created eagerly):    │
 │    1. Create *Logger (no deps)                         │
 │    2. Create *UserService (pass *Logger)               │
-│    3. Return *UserService                              │
+│                                                        │
+│  When you resolve *UserService:                        │
+│    3. Return the cached *UserService                   │
 └────────────────────────────────────────────────────────┘
 ```
 
@@ -70,7 +72,7 @@ package main
 import (
     "fmt"
     "log"
-    "github.com/junioryono/godi/v4"
+    "github.com/junioryono/godi/v5"
 )
 
 // Logger - no dependencies

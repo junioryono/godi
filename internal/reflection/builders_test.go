@@ -3,10 +3,11 @@ package reflection_test
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"testing"
 
-	"github.com/junioryono/godi/v4/internal/reflection"
+	"github.com/junioryono/godi/v5/internal/reflection"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -176,8 +177,8 @@ func TestConstructorInvoker(t *testing.T) {
 	resolver := NewTestResolver()
 	db := &Database{ConnectionString: "test"}
 	logger := &ConsoleLogger{}
-	resolver.values[reflect.TypeOf((*Database)(nil))] = db
-	resolver.values[reflect.TypeOf((*Logger)(nil)).Elem()] = logger
+	resolver.values[reflect.TypeFor[*Database]()] = db
+	resolver.values[reflect.TypeFor[Logger]()] = logger
 	resolver.groups["handlers"] = []any{
 		func() { fmt.Println("handler1") },
 		func() { fmt.Println("handler2") },
@@ -194,7 +195,7 @@ func TestConstructorInvoker(t *testing.T) {
 			name:        "simple constructor",
 			constructor: NewDatabase,
 			setupResolver: func(r *TestResolver) {
-				r.values[reflect.TypeOf("")] = "connection-string"
+				r.values[reflect.TypeFor[string]()] = "connection-string"
 			},
 			wantErr: false,
 			validate: func(t *testing.T, results []reflect.Value) {
@@ -239,7 +240,7 @@ func TestConstructorInvoker(t *testing.T) {
 			name:        "constructor with error - nil database",
 			constructor: NewUserServiceWithError,
 			setupResolver: func(r *TestResolver) {
-				r.values[reflect.TypeOf((*Database)(nil))] = (*Database)(nil)
+				r.values[reflect.TypeFor[*Database]()] = (*Database)(nil)
 			},
 			wantErr: true, // Constructor returns error for nil database
 		},
@@ -287,15 +288,9 @@ func TestConstructorInvoker(t *testing.T) {
 			// Create a new resolver with copied data
 			testResolver := NewTestResolver()
 			// Copy base resolver's data
-			for k, v := range resolver.values {
-				testResolver.values[k] = v
-			}
-			for k, v := range resolver.keyedValues {
-				testResolver.keyedValues[k] = v
-			}
-			for k, v := range resolver.groups {
-				testResolver.groups[k] = v
-			}
+			maps.Copy(testResolver.values, resolver.values)
+			maps.Copy(testResolver.keyedValues, resolver.keyedValues)
+			maps.Copy(testResolver.groups, resolver.groups)
 
 			// Apply test-specific setup
 			tt.setupResolver(testResolver)
@@ -332,7 +327,7 @@ func TestConstructorInvoker_ResolveParameter(t *testing.T) {
 	handler1 := func() { fmt.Println("h1") }
 	handler2 := func() { fmt.Println("h2") }
 
-	resolver.values[reflect.TypeOf((*Database)(nil))] = db1
+	resolver.values[reflect.TypeFor[*Database]()] = db1
 	resolver.keyedValues["backup"] = db2
 	resolver.groups["handlers"] = []any{handler1, handler2}
 
@@ -400,7 +395,7 @@ func TestParamObjectBuilder_EdgeCases(t *testing.T) {
 	}{
 		{
 			name:      "nil resolver",
-			paramType: reflect.TypeOf(ServiceParams{}),
+			paramType: reflect.TypeFor[ServiceParams](),
 			resolver:  nil,
 			wantErr:   true,
 			errMsg:    "resolver cannot be nil",
@@ -414,17 +409,17 @@ func TestParamObjectBuilder_EdgeCases(t *testing.T) {
 		},
 		{
 			name:      "non-struct type",
-			paramType: reflect.TypeOf(42),
+			paramType: reflect.TypeFor[int](),
 			resolver:  NewTestResolver(),
 			wantErr:   true,
 			errMsg:    "param type must be struct",
 		},
 		{
 			name: "struct with invalid group field",
-			paramType: reflect.TypeOf(struct {
+			paramType: reflect.TypeFor[struct {
 				reflection.In
-				InvalidGroup string `group:"invalid"` // group on non-slice
-			}{}),
+				InvalidGroup string "group:\"invalid\""
+			}](),
 			resolver: NewTestResolver(),
 			wantErr:  true,
 			errMsg:   "group field must be slice",
@@ -454,7 +449,7 @@ func TestParamObjectBuilder_PointerTypes(t *testing.T) {
 
 	resolver := NewTestResolver()
 	db := &Database{ConnectionString: "test"}
-	resolver.values[reflect.TypeOf((*Database)(nil))] = db
+	resolver.values[reflect.TypeFor[*Database]()] = db
 
 	// Test with non-pointer struct type
 	type NonPointerParams struct {
@@ -463,7 +458,7 @@ func TestParamObjectBuilder_PointerTypes(t *testing.T) {
 	}
 
 	t.Run("non-pointer type", func(t *testing.T) {
-		nonPtrType := reflect.TypeOf(NonPointerParams{})
+		nonPtrType := reflect.TypeFor[NonPointerParams]()
 		val, err := builder.BuildParamObject(nonPtrType, resolver)
 		require.NoError(t, err, "Failed with non-pointer type")
 
@@ -478,7 +473,7 @@ func TestParamObjectBuilder_PointerTypes(t *testing.T) {
 
 	t.Run("pointer type", func(t *testing.T) {
 		// Test with pointer struct type
-		ptrType := reflect.TypeOf(&NonPointerParams{})
+		ptrType := reflect.TypeFor[*NonPointerParams]()
 		val, err := builder.BuildParamObject(ptrType, resolver)
 		require.NoError(t, err, "Failed with pointer type")
 
@@ -501,7 +496,7 @@ func TestParamObjectBuilder_MoreErrorScenarios(t *testing.T) {
 		resolver.shouldFail = true
 		resolver.failError = errors.New("group resolution failed")
 
-		paramType := reflect.TypeOf(GroupParams{})
+		paramType := reflect.TypeFor[GroupParams]()
 		_, err := builder.BuildParamObject(paramType, resolver)
 		assert.Error(t, err, "Expected error when group resolution fails")
 	})
@@ -517,7 +512,7 @@ func TestParamObjectBuilder_MoreErrorScenarios(t *testing.T) {
 		resolver.shouldFail = true
 		resolver.failError = errors.New("keyed resolution failed")
 
-		paramType := reflect.TypeOf(NamedParams{})
+		paramType := reflect.TypeFor[NamedParams]()
 		_, err := builder.BuildParamObject(paramType, resolver)
 		assert.Error(t, err, "Expected error when named field resolution fails")
 	})
@@ -536,13 +531,13 @@ func TestParamObjectBuilder_MoreErrorScenarios(t *testing.T) {
 		failingResolver.shouldFail = true
 		failingResolver.failError = errors.New("database not found")
 
-		paramType := reflect.TypeOf(MixedParams{})
+		paramType := reflect.TypeFor[MixedParams]()
 		_, err := builder.BuildParamObject(paramType, failingResolver)
 		assert.Error(t, err, "Expected error when required field resolution fails")
 
 		// Now test with only optional fields failing
 		resolver2 := NewTestResolver()
-		resolver2.values[reflect.TypeOf((*Database)(nil))] = &Database{ConnectionString: "test"}
+		resolver2.values[reflect.TypeFor[*Database]()] = &Database{ConnectionString: "test"}
 		resolver2.keyedValues["backup"] = &Database{ConnectionString: "backup"}
 		// Don't provide Logger and handlers - they're optional
 
@@ -587,20 +582,20 @@ func TestConstructorInvoker_MoreParamObjectEdgeCases(t *testing.T) {
 
 		// Manually create info with group parameter
 		info := &reflection.ConstructorInfo{
-			Type:   reflect.TypeOf(sliceConstructor),
+			Type:   reflect.TypeFor[func(handlers []func()) int](),
 			Value:  reflect.ValueOf(sliceConstructor),
 			IsFunc: true,
 			Parameters: []reflection.ParameterInfo{
 				{
-					Type:     reflect.TypeOf([]func(){}),
+					Type:     reflect.TypeFor[[]func()](),
 					Index:    0,
 					Group:    "handlers",
 					IsSlice:  true,
-					ElemType: reflect.TypeOf(func() {}),
+					ElemType: reflect.TypeFor[func()](),
 				},
 			},
 			Returns: []reflection.ReturnInfo{
-				{Type: reflect.TypeOf(0), Index: 0},
+				{Type: reflect.TypeFor[int](), Index: 0},
 			},
 		}
 
@@ -628,18 +623,18 @@ func TestConstructorInvoker_MoreParamObjectEdgeCases(t *testing.T) {
 		}
 
 		info := &reflection.ConstructorInfo{
-			Type:   reflect.TypeOf(keyedConstructor),
+			Type:   reflect.TypeFor[func(db *Database) string](),
 			Value:  reflect.ValueOf(keyedConstructor),
 			IsFunc: true,
 			Parameters: []reflection.ParameterInfo{
 				{
-					Type:  reflect.TypeOf((*Database)(nil)),
+					Type:  reflect.TypeFor[*Database](),
 					Index: 0,
 					Key:   "backup",
 				},
 			},
 			Returns: []reflection.ReturnInfo{
-				{Type: reflect.TypeOf(""), Index: 0},
+				{Type: reflect.TypeFor[string](), Index: 0},
 			},
 		}
 
@@ -670,7 +665,7 @@ func TestResultObjectProcessor_AdditionalEdgeCases(t *testing.T) {
 		}
 
 		val := reflect.ValueOf(EmbeddedOut{Service: &Database{ConnectionString: "test"}})
-		typ := reflect.TypeOf(EmbeddedOut{})
+		typ := reflect.TypeFor[EmbeddedOut]()
 
 		registrations, err := processor.ProcessResultObject(val, typ)
 		require.NoError(t, err, "ProcessResultObject failed")
@@ -699,7 +694,7 @@ func TestResultObjectProcessor_AdditionalEdgeCases(t *testing.T) {
 		}
 
 		val := reflect.ValueOf(out)
-		typ := reflect.TypeOf(out)
+		typ := reflect.TypeFor[InvalidOut]()
 
 		registrations, err := processor.ProcessResultObject(val, typ)
 		require.NoError(t, err, "ProcessResultObject failed")

@@ -107,11 +107,13 @@ func (b *ParamObjectBuilder) BuildParamObject(
 		// Resolve dependency for this field
 		fieldValue, err := b.resolveFieldDependency(&field, tagInfo, resolver)
 		if err != nil {
-			if !tagInfo.Optional {
-				return reflect.Value{}, fmt.Errorf("failed to resolve field %s: %w", field.Name, err)
+			// Optional only forgives "not registered". A registered
+			// dependency whose construction failed must propagate the
+			// error instead of silently injecting a zero value.
+			if tagInfo.Optional && isServiceNotFound(err) {
+				continue
 			}
-			// Optional field - leave as zero value
-			continue
+			return reflect.Value{}, fmt.Errorf("failed to resolve field %s: %w", field.Name, err)
 		}
 
 		// Set the field value
@@ -126,6 +128,19 @@ func (b *ParamObjectBuilder) BuildParamObject(
 		return structPtr, nil
 	}
 	return structValue, nil
+}
+
+// isServiceNotFound reports whether err is a direct "service not registered"
+// failure, as opposed to a registered service whose construction failed.
+// Only the top-level error is inspected deliberately: a missing transitive
+// dependency surfaces as a construction failure of the direct dependency and
+// must propagate even for optional fields.
+func isServiceNotFound(err error) bool {
+	if err == ErrServiceNotFound {
+		return true
+	}
+	nf, ok := err.(interface{ ServiceNotFound() bool })
+	return ok && nf.ServiceNotFound()
 }
 
 // resolveFieldDependency resolves a single field's dependency.
@@ -251,6 +266,7 @@ func (p *ResultObjectProcessor) ProcessResultObject(
 			Name:  field.Name,
 			Key:   tagInfo.Name,
 			Group: tagInfo.Group,
+			Index: i,
 		}
 
 		registrations = append(registrations, reg)
@@ -266,6 +282,7 @@ type ServiceRegistration struct {
 	Name  string // Field name
 	Key   string // From name tag
 	Group string // From group tag
+	Index int    // Field index in the Out struct
 }
 
 // DependencyResolver is the interface for resolving dependencies.

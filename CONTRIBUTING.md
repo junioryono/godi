@@ -34,7 +34,7 @@ Thank you for your interest in contributing to godi! This document provides guid
 
 ## Development Setup
 
-1. Ensure you have Go 1.23 or later installed
+1. Ensure you have Go 1.26 or later installed
 2. Install dependencies:
    ```bash
    go mod download

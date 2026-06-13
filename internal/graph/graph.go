@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"sync"
 
-	"github.com/junioryono/godi/v4/internal/reflection"
+	"github.com/junioryono/godi/v5/internal/reflection"
 )
 
 // Provider defines the interface for service providers that can be added to the graph.
@@ -34,8 +34,6 @@ type DependencyGraph struct {
 	// Cache for performance
 	sortedNodes      []*Node
 	sortedNodesDirty bool
-	cycleCache       map[NodeKey]bool
-	cycleCacheDirty  bool
 }
 
 // NodeKey uniquely identifies a node in the graph
@@ -51,11 +49,8 @@ type Node struct {
 	Provider Provider
 
 	// Graph metadata
-	InDegree  int  // number of dependencies
-	OutDegree int  // number of dependents
-	Visited   bool // for traversal algorithms
-	Visiting  bool // for cycle detection
-	Depth     int  // depth in dependency tree
+	InDegree  int // number of dependencies
+	OutDegree int // number of dependents
 
 	// Dependency information
 	Dependencies []NodeKey // services this node depends on
@@ -67,9 +62,7 @@ func NewDependencyGraph() *DependencyGraph {
 	return &DependencyGraph{
 		nodes:            make(map[NodeKey]*Node),
 		edges:            make(map[NodeKey][]NodeKey),
-		cycleCache:       make(map[NodeKey]bool),
 		sortedNodesDirty: true,
-		cycleCacheDirty:  true,
 	}
 }
 
@@ -78,9 +71,7 @@ func NewDependencyGraphWithCapacity(capacity int) *DependencyGraph {
 	return &DependencyGraph{
 		nodes:            make(map[NodeKey]*Node, capacity),
 		edges:            make(map[NodeKey][]NodeKey, capacity),
-		cycleCache:       make(map[NodeKey]bool, capacity),
 		sortedNodesDirty: true,
-		cycleCacheDirty:  true,
 	}
 }
 
@@ -144,10 +135,9 @@ func (g *DependencyGraph) AddProvider(provider Provider) error {
 
 	// Mark caches as dirty
 	g.sortedNodesDirty = true
-	g.cycleCacheDirty = true
 
 	// Check for cycles immediately
-	if err := g.detectCyclesFrom(nodeKey); err != nil {
+	if err := g.detectCyclesFrom(nodeKey, make(map[NodeKey]bool, len(g.nodes))); err != nil {
 		// Remove the node if it creates a cycle
 		delete(g.nodes, nodeKey)
 		delete(g.edges, nodeKey)
@@ -187,7 +177,9 @@ func (g *DependencyGraph) AddProviderDeferred(provider Provider) error {
 	}
 	node.Provider = provider
 
-	// Add edges based on dependencies
+	// Add edges based on dependencies. Edges are fully replaced so that
+	// re-registering a provider never merges in stale edges from a
+	// previous registration.
 	providerDeps := provider.GetDependencies()
 	if len(providerDeps) > 0 {
 		dependencies := make([]NodeKey, 0, len(providerDeps))
@@ -210,11 +202,13 @@ func (g *DependencyGraph) AddProviderDeferred(provider Provider) error {
 		}
 		node.Dependencies = dependencies
 		g.edges[nodeKey] = dependencies
+	} else {
+		node.Dependencies = nil
+		delete(g.edges, nodeKey)
 	}
 
 	// Mark caches as dirty (defer degree updates to DetectCycles)
 	g.sortedNodesDirty = true
-	g.cycleCacheDirty = true
 
 	return nil
 }
@@ -284,79 +278,7 @@ func (g *DependencyGraph) ResolveGroupDependencies() {
 	// Mark caches as dirty since edges changed
 	if len(phantomKeys) > 0 {
 		g.sortedNodesDirty = true
-		g.cycleCacheDirty = true
 	}
-}
-
-// RemoveProvider removes a provider from the graph
-func (g *DependencyGraph) RemoveProvider(serviceType reflect.Type, key any, group string) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-
-	nodeKey := NodeKey{
-		Type:  serviceType,
-		Key:   key,
-		Group: group,
-	}
-
-	// Store the node before removing for cleanup
-	removedNode, exists := g.nodes[nodeKey]
-	if !exists {
-		return // Node doesn't exist, nothing to remove
-	}
-
-	// Remove node and its edges
-	delete(g.nodes, nodeKey)
-	delete(g.edges, nodeKey)
-
-	// Remove edges pointing to this node and update dependent nodes
-	for k, edges := range g.edges {
-		filtered := make([]NodeKey, 0, len(edges))
-		modified := false
-
-		for _, edge := range edges {
-			if edge != nodeKey {
-				filtered = append(filtered, edge)
-			} else {
-				modified = true
-			}
-		}
-
-		if modified {
-			g.edges[k] = filtered
-
-			// Update the Dependencies field of the dependent node
-			if dependentNode, exists := g.nodes[k]; exists {
-				updatedDeps := make([]NodeKey, 0, len(dependentNode.Dependencies))
-				for _, dep := range dependentNode.Dependencies {
-					if dep != nodeKey {
-						updatedDeps = append(updatedDeps, dep)
-					}
-				}
-				dependentNode.Dependencies = updatedDeps
-			}
-		}
-	}
-
-	// Update Dependents field of nodes that this node depended on
-	for _, dependency := range removedNode.Dependencies {
-		if depNode, exists := g.nodes[dependency]; exists {
-			updatedDependents := make([]NodeKey, 0, len(depNode.Dependents))
-			for _, dependent := range depNode.Dependents {
-				if dependent != nodeKey {
-					updatedDependents = append(updatedDependents, dependent)
-				}
-			}
-			depNode.Dependents = updatedDependents
-		}
-	}
-
-	// Update degrees
-	g.updateDegrees()
-
-	// Mark caches as dirty
-	g.sortedNodesDirty = true
-	g.cycleCacheDirty = true
 }
 
 // updateDegrees recalculates in/out degrees for all nodes
@@ -464,45 +386,23 @@ func (g *DependencyGraph) DetectCycles() error {
 	// Update degrees first (may have been deferred from AddProviderDeferred)
 	g.updateDegrees()
 
-	// Check cache
-	if !g.cycleCacheDirty {
-		for key, hasCycle := range g.cycleCache {
-			if hasCycle {
-				path := g.findCyclePath(key)
-				return &CircularDependencyError{
-					Node: key,
-					Path: path,
-				}
-			}
-		}
-		return nil
-	}
-
-	// Clear visit flags
-	for _, node := range g.nodes {
-		node.Visited = false
-		node.Visiting = false
-	}
-
-	// Clear cycle cache
-	g.cycleCache = make(map[NodeKey]bool, len(g.nodes))
-
-	// Check each node for cycles using DFS
+	// Check each node for cycles using DFS, sharing the visited set across
+	// starting points so each node is explored at most once.
+	visited := make(map[NodeKey]bool, len(g.nodes))
 	for key := range g.nodes {
-		if !g.nodes[key].Visited {
-			if err := g.detectCyclesFrom(key); err != nil {
-				g.cycleCacheDirty = false
+		if !visited[key] {
+			if err := g.detectCyclesFrom(key, visited); err != nil {
 				return err
 			}
 		}
 	}
 
-	g.cycleCacheDirty = false
 	return nil
 }
 
-// detectCyclesFrom performs DFS cycle detection from a specific node
-func (g *DependencyGraph) detectCyclesFrom(start NodeKey) error {
+// detectCyclesFrom performs DFS cycle detection from a specific node.
+// The visited map is shared across calls so each node is explored once.
+func (g *DependencyGraph) detectCyclesFrom(start NodeKey, visited map[NodeKey]bool) error {
 	node := g.nodes[start]
 	if node == nil {
 		return nil
@@ -516,7 +416,6 @@ func (g *DependencyGraph) detectCyclesFrom(start NodeKey) error {
 
 	stack := []stackItem{{key: start, visiting: true}}
 	visiting := make(map[NodeKey]bool)
-	visited := make(map[NodeKey]bool)
 
 	for len(stack) > 0 {
 		item := stack[len(stack)-1]
@@ -526,7 +425,6 @@ func (g *DependencyGraph) detectCyclesFrom(start NodeKey) error {
 			stack = stack[:len(stack)-1]
 			delete(visiting, item.key)
 			visited[item.key] = true
-			g.cycleCache[item.key] = false
 			continue
 		}
 
@@ -534,7 +432,6 @@ func (g *DependencyGraph) detectCyclesFrom(start NodeKey) error {
 		if visiting[item.key] {
 			// Found a cycle
 			path := g.findCyclePath(item.key)
-			g.cycleCache[item.key] = true
 			return &CircularDependencyError{
 				Node: item.key,
 				Path: path,
@@ -634,51 +531,6 @@ func (g *DependencyGraph) GetDependencies(serviceType reflect.Type, key any, gro
 	return nil
 }
 
-// GetDependents returns services that depend on the given service
-func (g *DependencyGraph) GetDependents(serviceType reflect.Type, key any, group string) []NodeKey {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
-
-	nodeKey := NodeKey{Type: serviceType, Key: key, Group: group}
-	if node, exists := g.nodes[nodeKey]; exists {
-		result := make([]NodeKey, len(node.Dependents))
-		copy(result, node.Dependents)
-		return result
-	}
-
-	return nil
-}
-
-// GetTransitiveDependencies returns all dependencies (direct and indirect)
-func (g *DependencyGraph) GetTransitiveDependencies(serviceType reflect.Type, key any, group string) []NodeKey {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
-
-	nodeKey := NodeKey{Type: serviceType, Key: key, Group: group}
-	visited := make(map[NodeKey]bool)
-	result := make([]NodeKey, 0)
-
-	var collect func(current NodeKey)
-	collect = func(current NodeKey) {
-		if visited[current] {
-			return
-		}
-		visited[current] = true
-
-		if edges, exists := g.edges[current]; exists {
-			for _, dep := range edges {
-				if !visited[dep] {
-					result = append(result, dep)
-					collect(dep)
-				}
-			}
-		}
-	}
-
-	collect(nodeKey)
-	return result
-}
-
 // GetNode returns the node for a given service
 func (g *DependencyGraph) GetNode(serviceType reflect.Type, key any, group string) *Node {
 	g.mu.RLock()
@@ -698,97 +550,12 @@ func (g *DependencyGraph) HasNode(serviceType reflect.Type, key any, group strin
 	return exists
 }
 
-// Clear removes all nodes and edges from the graph
-func (g *DependencyGraph) Clear() {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-
-	g.nodes = make(map[NodeKey]*Node)
-	g.edges = make(map[NodeKey][]NodeKey)
-	g.sortedNodes = nil
-	g.sortedNodesDirty = true
-	g.cycleCache = make(map[NodeKey]bool)
-	g.cycleCacheDirty = true
-}
-
 // Size returns the number of nodes in the graph
 func (g *DependencyGraph) Size() int {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 
 	return len(g.nodes)
-}
-
-// IsAcyclic returns true if the graph has no cycles
-func (g *DependencyGraph) IsAcyclic() bool {
-	return g.DetectCycles() == nil
-}
-
-// GetRoots returns all nodes with no dependencies (in-degree = 0)
-func (g *DependencyGraph) GetRoots() []*Node {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
-
-	roots := make([]*Node, 0)
-	for _, node := range g.nodes {
-		if node.InDegree == 0 {
-			roots = append(roots, node)
-		}
-	}
-
-	return roots
-}
-
-// GetLeaves returns all nodes with no dependents (out-degree = 0)
-func (g *DependencyGraph) GetLeaves() []*Node {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
-
-	leaves := make([]*Node, 0)
-	for _, node := range g.nodes {
-		if node.OutDegree == 0 {
-			leaves = append(leaves, node)
-		}
-	}
-
-	return leaves
-}
-
-// CalculateDepths assigns depth levels to nodes based on their dependencies
-func (g *DependencyGraph) CalculateDepths() {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-
-	// Reset all depths
-	for _, node := range g.nodes {
-		node.Depth = -1
-	}
-
-	// Start from roots (nodes with no dependencies - those that don't depend on anything)
-	queue := make([]*Node, 0)
-	for _, node := range g.nodes {
-		if len(node.Dependencies) == 0 {
-			node.Depth = 0
-			queue = append(queue, node)
-		}
-	}
-
-	// BFS to assign depths
-	for len(queue) > 0 {
-		current := queue[0]
-		queue = queue[1:]
-
-		// Update depth of nodes that depend on this one (dependents)
-		for _, depKey := range current.Dependents {
-			if dep, exists := g.nodes[depKey]; exists {
-				newDepth := current.Depth + 1
-				if dep.Depth < newDepth {
-					dep.Depth = newDepth
-					queue = append(queue, dep)
-				}
-			}
-		}
-	}
 }
 
 // String returns a string representation of the node key
@@ -805,6 +572,6 @@ func (k NodeKey) String() string {
 
 // String returns a string representation of the node
 func (n *Node) String() string {
-	return fmt.Sprintf("Node{%s, in:%d, out:%d, depth:%d}",
-		n.Key.String(), n.InDegree, n.OutDegree, n.Depth)
+	return fmt.Sprintf("Node{%s, in:%d, out:%d}",
+		n.Key.String(), n.InDegree, n.OutDegree)
 }

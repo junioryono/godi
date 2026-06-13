@@ -6,6 +6,19 @@ When something goes wrong, godi provides detailed error messages to help you fix
 
 These errors occur when calling `services.Build()`.
 
+### Registration Errors
+
+The `Add*` methods do not return errors. Invalid registrations (nil
+constructors, duplicates, bad tags, ...) are recorded and reported all at
+once when you call `Build()`:
+
+```
+Error: build failed during registration phase: one or more service registrations failed: ...
+```
+
+Register everything first, then handle the single error from `Build()`. Use
+`Collection.Err()` if you need to inspect recorded errors before building.
+
 ### Circular Dependency Detected
 
 ```
@@ -62,6 +75,9 @@ Error: no registration found for type *DatabasePool required by *UserRepository
 ```
 
 **What it means:** A constructor needs a type that wasn't registered.
+
+**When it surfaces:** at `Build()` for singletons (they are constructed
+eagerly), and at first resolution for scoped and transient services.
 
 **How to fix:**
 
@@ -236,10 +252,15 @@ service := godi.MustResolve[*UserService](provider)
 service, err := godi.Resolve[*UserService](provider)
 if err != nil {
     log.Printf("Resolution failed: %v", err)
-    // Inspect error type
-    var notFound *godi.ServiceNotFoundError
-    if errors.As(err, &notFound) {
-        log.Printf("Missing service: %s", notFound.ServiceType)
+
+    // Check for "not registered" with the sentinel
+    if errors.Is(err, godi.ErrServiceNotFound) {
+        log.Print("service is not registered")
+    }
+
+    // Or extract the typed error for details (Go 1.26+)
+    if resErr, ok := errors.AsType[*godi.ResolutionError](err); ok {
+        log.Printf("failed to resolve: %s", resErr.ServiceType)
     }
 }
 ```
