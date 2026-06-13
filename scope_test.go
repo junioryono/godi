@@ -1003,3 +1003,27 @@ func TestNewScopeFailureCancelsDerivedContext(t *testing.T) {
 		t.Error("newScope failure leaked its cancellable context")
 	}
 }
+
+func TestScopeAccessors(t *testing.T) {
+	t.Parallel()
+
+	c := NewCollection()
+	c.AddScoped(NewTService)
+	p, err := c.Build()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = p.Close() })
+
+	s, err := p.CreateScope(context.Background())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+
+	// Provider() returns the owning provider.
+	assert.Same(t, p, s.Provider())
+
+	// ID() is non-empty and unique per scope.
+	assert.NotEmpty(t, s.ID())
+	s2, err := p.CreateScope(context.Background())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s2.Close() })
+	assert.NotEqual(t, s.ID(), s2.ID())
+}

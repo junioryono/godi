@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1100,5 +1101,71 @@ func TestDeferredRegistrationErrors(t *testing.T) {
 		c := NewCollection()
 		c.AddSingleton(nil)
 		require.ErrorIs(t, c.Err(), ErrConstructorNil)
+	})
+}
+
+// Covers unregisterDescriptors' group-member rollback branch: an Out struct
+// whose earlier field is grouped and whose later field duplicates a keyed
+// registration, so rollback must remove both a group member and a keyed
+// service.
+func TestFailedRegistrationRollsBackGroupMember(t *testing.T) {
+	t.Parallel()
+
+	type RollbackOut struct {
+		Out
+		Grouped *TService    `group:"g"`
+		First   *TDependency `name:"dup"`
+		Second  *TDependency `name:"dup"` // duplicate keyed -> registration fails
+	}
+
+	c := NewCollection()
+	c.AddSingleton(func() RollbackOut {
+		return RollbackOut{
+			Grouped: &TService{},
+			First:   &TDependency{},
+			Second:  &TDependency{},
+		}
+	})
+	require.Error(t, c.Err())
+
+	// Everything from the failed registration must be gone: no leftover
+	// group member, no leftover keyed service, nothing in allDescriptors.
+	assert.Equal(t, 0, c.Count(), "failed registration must leave no descriptors")
+	assert.False(t, c.ContainsKeyed(PtrTypeOf[TDependency](), "dup"))
+	assert.False(t, c.(*collection).HasGroup(PtrTypeOf[TService](), "g"))
+}
+
+func TestBuildWithOptions(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil_options_builds", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddSingleton(NewTService)
+		p, err := c.BuildWithOptions(nil)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+
+		svc, err := Resolve[*TService](p)
+		require.NoError(t, err)
+		assert.NotNil(t, svc)
+	})
+
+	t.Run("generous_timeout_builds", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddSingleton(NewTService)
+		p, err := c.BuildWithOptions(&ProviderOptions{BuildTimeout: time.Minute})
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+	})
+
+	t.Run("reports_registration_errors", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddSingleton(nil)
+		_, err := c.BuildWithOptions(&ProviderOptions{})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "constructor cannot be nil")
 	})
 }
