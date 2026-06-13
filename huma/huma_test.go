@@ -172,3 +172,28 @@ func TestEndToEnd_ScopePropagatesThroughHuma(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }
+
+func TestHandle_NilOptionsKeepDefaults(t *testing.T) {
+	ctx, cleanup := scopedContext(t)
+	defer cleanup()
+
+	// Passing nil options must not overwrite the defaults (the field docs
+	// promise nil-tolerant behavior) — and must not panic at request time.
+	h := godihuma.Handle((*userController).Fail,
+		godihuma.WithErrorMapper(nil),
+		godihuma.WithResolutionErrorHandler(nil))
+
+	require.NotPanics(t, func() {
+		_, err := h(ctx, &greetInput{Name: "x"})
+		// default ErrorMapper is identity, so the method's error passes through
+		assert.ErrorIs(t, err, errBoom)
+	})
+
+	// nil resolution handler keeps the default 500 on a missing scope.
+	require.NotPanics(t, func() {
+		_, err := h(context.Background(), &greetInput{Name: "x"})
+		var se huma.StatusError
+		require.ErrorAs(t, err, &se)
+		assert.Equal(t, http.StatusInternalServerError, se.GetStatus())
+	})
+}

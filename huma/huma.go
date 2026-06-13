@@ -25,7 +25,7 @@
 //	    OperationID: "get-user",
 //	    Method:      http.MethodGet,
 //	    Path:        "/users/{id}",
-//	}, godihuma.Handle(UserController.GetByID))
+//	}, godihuma.Handle((*UserController).GetByID))
 package huma
 
 import (
@@ -56,7 +56,9 @@ type HandlerOption func(*HandlerConfig)
 // or the controller cannot be resolved. The returned error is sent to Huma.
 func WithResolutionErrorHandler(h func(error) error) HandlerOption {
 	return func(c *HandlerConfig) {
-		c.ResolutionErrorHandler = h
+		if h != nil {
+			c.ResolutionErrorHandler = h
+		}
 	}
 }
 
@@ -65,7 +67,9 @@ func WithResolutionErrorHandler(h func(error) error) HandlerOption {
 // domain errors into huma.StatusError values (e.g. sql.ErrNoRows -> 404).
 func WithErrorMapper(m func(error) error) HandlerOption {
 	return func(c *HandlerConfig) {
-		c.ErrorMapper = m
+		if m != nil {
+			c.ErrorMapper = m
+		}
 	}
 }
 
@@ -88,11 +92,11 @@ func defaultHandlerConfig() *HandlerConfig {
 // the method as a method expression so its receiver becomes the first
 // parameter:
 //
-//	huma.Register(api, op, godihuma.Handle(UserController.GetByID))
+//	huma.Register(api, op, godihuma.Handle((*UserController).GetByID))
 //
 // where
 //
-//	func (c *userController) GetByID(ctx context.Context, in *GetInput) (*GetOutput, error)
+//	func (c *UserController) GetByID(ctx context.Context, in *GetInput) (*GetOutput, error)
 //
 // On a failure to resolve the scope or controller, the ResolutionErrorHandler
 // is used (default: 500). The controller's returned error is passed through

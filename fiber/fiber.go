@@ -76,8 +76,8 @@ func defaultConfig() *Config {
 }
 
 // ScopeMiddleware creates a Fiber middleware that creates a request-scoped
-// container for each request. The scope is stored in fiber.Ctx.Locals
-// and attached to the UserContext.
+// container for each request. The scope is attached to the request's
+// UserContext and can be retrieved with godi.FromContext(c.UserContext()).
 //
 // The scope is automatically closed when the request completes.
 //

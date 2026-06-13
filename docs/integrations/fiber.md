@@ -47,7 +47,7 @@ func main() {
 
 ## ScopeMiddleware
 
-Creates a request scope for each HTTP request. The scope is stored in `fiber.Ctx.Locals` and in the `UserContext`.
+Creates a request scope for each HTTP request. The scope is attached to the request's `UserContext`, which Fiber resets between requests.
 
 ```go
 app := fiber.New()

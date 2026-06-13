@@ -77,7 +77,7 @@ func main() {
         OperationID: "greet",
         Method:      http.MethodGet,
         Path:        "/greet/{name}",
-    }, godihuma.Handle(UserController.Greet))
+    }, godihuma.Handle((*UserController).Greet))
 
     g.Run(":8080")
 }
@@ -90,7 +90,7 @@ Pass the method as a **method expression** so the receiver becomes the first
 parameter:
 
 ```go
-huma.Register(api, op, godihuma.Handle(UserController.Greet))
+huma.Register(api, op, godihuma.Handle((*UserController).Greet))
 ```
 
 For each request it:
@@ -133,7 +133,7 @@ mapErr := func(err error) error {
     return err
 }
 
-huma.Register(api, op, godihuma.Handle(UserController.Greet, godihuma.WithErrorMapper(mapErr)))
+huma.Register(api, op, godihuma.Handle((*UserController).Greet, godihuma.WithErrorMapper(mapErr)))
 ```
 
 ## Huma-level middleware
