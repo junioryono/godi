@@ -272,11 +272,12 @@ func (o addAsOption) applyAddOption(opts *addOptions) {
 //
 // Example:
 //
-//	err := c.AddModules(
+//	c.AddModules(
 //	    godi.Remove[posthog.Client](),
 //	    godi.AddSingleton(infrastructure.NewPostHogClientMock),
 //	    // ... other modules
 //	)
+//	// Any registration errors surface from c.Build().
 func Remove[T any]() ModuleOption {
 	return func(c Collection) error {
 		c.Remove(reflect.TypeFor[T]())
@@ -289,11 +290,12 @@ func Remove[T any]() ModuleOption {
 //
 // Example:
 //
-//	err := c.AddModules(
+//	c.AddModules(
 //	    godi.RemoveKeyed[database.Connection]("primary"),
 //	    godi.AddSingleton(NewMockConnection, godi.Name("primary")),
 //	    // ... other modules
 //	)
+//	// Any registration errors surface from c.Build().
 func RemoveKeyed[T any](key any) ModuleOption {
 	return func(c Collection) error {
 		c.RemoveKeyed(reflect.TypeFor[T](), key)

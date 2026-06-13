@@ -154,7 +154,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Module | Tag | Go Get Command |" >> $GITHUB_STEP_SUMMARY
           echo "|--------|-----|----------------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Main (godi/v4) | \`$NEW_TAG\` | \`go get github.com/junioryono/godi/v5@$NEW_TAG\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Main (godi/v5) | \`$NEW_TAG\` | \`go get github.com/junioryono/godi/v5@$NEW_TAG\` |" >> $GITHUB_STEP_SUMMARY
           for submod in $SUBMODULES; do
             echo "| $submod | \`${submod}/$NEW_TAG\` | \`go get github.com/junioryono/godi/v5/${submod}@$NEW_TAG\` |" >> $GITHUB_STEP_SUMMARY
           done

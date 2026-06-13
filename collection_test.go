@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -463,7 +464,10 @@ func TestCollectionBuild(t *testing.T) {
 		// cycle as plain strings (no leaked internal node-key type).
 		var cycleErr *CircularDependencyError
 		require.ErrorAs(t, err, &cycleErr)
-		assert.NotEmpty(t, cycleErr.Path)
+		require.NotEmpty(t, cycleErr.Path)
+		joined := strings.Join(cycleErr.Path, " -> ")
+		assert.Contains(t, joined, "TCircular", "cycle path must name the involved types")
+		assert.NotEmpty(t, cycleErr.Node)
 	})
 
 	t.Run("detects_lifetime_violations", func(t *testing.T) {
@@ -1204,4 +1208,19 @@ func TestToSliceServiceInfo(t *testing.T) {
 
 	require.Contains(t, byLifetime, Transient)
 	assert.Equal(t, "grp", byLifetime[Transient].Group)
+
+	// The returned slice is a decoupled snapshot: mutating it must not affect
+	// the collection or a subsequent ToSlice call.
+	infos[0].ServiceType = nil
+	infos[0].Key = "tampered"
+	infos[0].Group = "tampered"
+	infos[0].Lifetime = Lifetime(99)
+
+	fresh := c.ToSlice()
+	require.Len(t, fresh, 3)
+	for _, info := range fresh {
+		assert.Equal(t, PtrTypeOf[TService](), info.ServiceType, "mutation leaked into the collection")
+		assert.NotEqual(t, "tampered", info.Key)
+		assert.NotEqual(t, "tampered", info.Group)
+	}
 }
