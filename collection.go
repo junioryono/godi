@@ -42,8 +42,8 @@ type Collection interface {
 	Build() (Provider, error)
 
 	// BuildWithContext creates a Provider with the given context.
-	// The context is checked before each singleton creation, allowing
-	// for graceful cancellation during the build process.
+	// Eager constructors can depend on context.Context and cooperate with
+	// cancellation; the context is also checked throughout construction.
 	BuildWithContext(ctx context.Context) (Provider, error)
 
 	// BuildWithOptions creates a Provider with custom options
@@ -62,11 +62,13 @@ type Collection interface {
 
 	// AddScoped registers a service with scoped lifetime.
 	// One instance is created per scope and shared within that scope.
+	// The service must be a constructor, not a pre-built instance.
 	// Registration errors are recorded and reported by Build (or Err).
 	AddScoped(service any, opts ...AddOption)
 
 	// AddTransient registers a service with transient lifetime.
 	// A new instance is created every time the service is resolved.
+	// The service must be a constructor that returns a service value.
 	// Registration errors are recorded and reported by Build (or Err).
 	AddTransient(service any, opts ...AddOption)
 
@@ -147,6 +149,8 @@ type ServiceInfo struct {
 	Lifetime Lifetime
 }
 
+type descriptorList []*descriptor
+
 // NewCollection creates a new empty Collection instance.
 //
 // Example:
@@ -168,9 +172,9 @@ func (sc *collection) Build() (Provider, error) {
 	return sc.BuildWithContext(context.Background())
 }
 
-// BuildWithContext creates a Provider with the given context.
-// The context is checked before each singleton creation, allowing
-// for graceful cancellation during the build process.
+// BuildWithContext creates a Provider with the given cooperative build context.
+// The context is available to eager constructors that depend on context.Context
+// and is checked throughout construction.
 func (sc *collection) BuildWithContext(ctx context.Context) (Provider, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -218,8 +222,14 @@ func (sc *collection) doBuild(ctx context.Context) (Provider, error) {
 		}
 	}
 
-	// Use pre-collected descriptors (no allocation needed)
-	allDescriptors := sc.allDescriptors
+	// Build a provider-owned snapshot. Collections remain reusable after Build,
+	// so providers must never retain the collection's mutable maps, slices, or
+	// sibling links.
+	allDescriptors, services, groups := snapshotRegistrations(
+		sc.allDescriptors,
+		sc.services,
+		sc.groups,
+	)
 
 	// Phase 1: Build dependency graph (validates cycles as part of build)
 	select {
@@ -294,14 +304,16 @@ func (sc *collection) doBuild(ctx context.Context) (Provider, error) {
 
 	p := &provider{
 		id:                          "p" + strconv.FormatUint(providerIDCounter.Add(1), 36),
-		services:                    sc.services,
-		groups:                      sc.groups,
+		services:                    services,
+		groups:                      groups,
 		graph:                       g,
 		analyzer:                    sc.analyzer, // Share analyzer from collection
 		singletonKeys:               make([]instanceKey, 0, len(allDescriptors)),
 		voidReturnScopedDescriptors: make([]*descriptor, 0, voidCount),
 		disposables:                 make([]Disposable, 0, 4),
+		disposableSet:               make(map[disposableIdentity]struct{}, 4),
 		scopes:                      make(map[*scope]struct{}, 4),
+		closeDone:                   make(chan struct{}),
 	}
 
 	for _, descriptor := range allDescriptors {
@@ -323,7 +335,7 @@ func (sc *collection) doBuild(ctx context.Context) (Provider, error) {
 
 	var err error
 	rootCtx := context.Background()
-	p.rootScope, err = newScope(p, nil, rootCtx, nil)
+	p.rootScope, err = newScopeWithoutInitialization(p, nil, rootCtx, nil)
 	if err != nil {
 		return nil, &BuildError{
 			Phase:   "scope-creation",
@@ -332,26 +344,58 @@ func (sc *collection) doBuild(ctx context.Context) (Provider, error) {
 		}
 	}
 
-	// Phase 6: Create singletons with context propagation
-	if err := p.createAllSingletonsWithContext(ctx); err != nil {
-		// Clean up partially created provider
-		closeErr := p.Close()
-		if closeErr != nil {
-			return nil, &BuildError{
-				Phase:   "cleanup",
-				Details: "failed to clean up partially created provider",
-				Cause:   closeErr,
-			}
-		}
+	// Phase 6: Create singletons with context propagation. Decorate the build
+	// context so FromContext works inside eager constructors, then clear the
+	// atomic override before returning the provider.
+	buildCtx := context.WithValue(ctx, scopeContextKey{}, p.rootScope)
+	p.rootScope.constructionContext.Store(&scopeConstructionContext{context: buildCtx})
+	defer func() {
+		p.rootScope.constructionContext.Store(nil)
+	}()
 
-		return nil, &BuildError{
+	if err := p.createAllSingletonsWithContext(ctx); err != nil {
+		buildErr := &BuildError{
 			Phase:   "singleton-creation",
 			Details: "failed to initialize singletons",
 			Cause:   err,
 		}
+		return nil, joinBuildCleanupError(buildErr, p.Close())
+	}
+
+	// Phase 7: Initialize root-scoped side-effect constructors only after all
+	// singletons exist. Request/child scopes still initialize them in newScope.
+	if err := p.rootScope.initializeScopedServices(); err != nil {
+		buildErr := &BuildError{
+			Phase:   "scope-initialization",
+			Details: "failed to initialize root scoped services",
+			Cause:   err,
+		}
+		return nil, joinBuildCleanupError(buildErr, p.Close())
+	}
+	if err := ctx.Err(); err != nil {
+		buildErr := &BuildError{
+			Phase:   "scope-initialization",
+			Details: "build deadline expired after root scope initialization",
+			Cause:   err,
+		}
+		return nil, joinBuildCleanupError(buildErr, p.Close())
 	}
 
 	return p, nil
+}
+
+func joinBuildCleanupError(buildErr, closeErr error) error {
+	if closeErr == nil {
+		return buildErr
+	}
+	return errors.Join(
+		buildErr,
+		&BuildError{
+			Phase:   "cleanup",
+			Details: "failed to clean up partially created provider",
+			Cause:   closeErr,
+		},
+	)
 }
 
 // AddModules applies one or more module configurations to the service collection.
@@ -454,6 +498,9 @@ func (r *collection) ContainsKeyed(t reflect.Type, key any) bool {
 	if t == nil {
 		return false
 	}
+	if key != nil && !reflect.TypeOf(key).Comparable() {
+		return false
+	}
 
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -510,6 +557,9 @@ func (r *collection) Remove(t reflect.Type) {
 // RemoveKeyed removes a specific keyed service
 func (r *collection) RemoveKeyed(t reflect.Type, key any) {
 	if t == nil {
+		return
+	}
+	if key != nil && !reflect.TypeOf(key).Comparable() {
 		return
 	}
 
@@ -684,6 +734,13 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 
 	// Handle result objects (Out structs)
 	if info.IsResultObject {
+		if options.Name != "" || options.Group != "" {
+			return &RegistrationError{
+				ServiceType: descriptor.Type,
+				Operation:   "register result object",
+				Cause:       fmt.Errorf("godi.Name and godi.Group cannot be applied to a result object (godi.Out) constructor; put name or group tags on its fields"),
+			}
+		}
 		// godi.As is ambiguous for result objects: it's unclear which field
 		// the interface should bind to. Reject explicitly rather than
 		// silently dropping the option.
@@ -715,9 +772,21 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 			}
 		}
 
-		// When As is specified, register the service under each interface type
+		// Validate every alias before committing any of them. A single Add call is
+		// transactional: either all requested interfaces are registered or none
+		// are.
+		interfaceDescriptors := make(descriptorList, 0, len(options.As))
+		seenInterfaces := make(map[reflect.Type]struct{}, len(options.As))
 		for _, iface := range options.As {
 			interfaceType := reflect.TypeOf(iface).Elem()
+			if _, duplicate := seenInterfaces[interfaceType]; duplicate {
+				return &RegistrationError{
+					ServiceType: interfaceType,
+					Operation:   "register as interface",
+					Cause:       fmt.Errorf("interface %s was specified more than once", formatType(interfaceType)),
+				}
+			}
+			seenInterfaces[interfaceType] = struct{}{}
 
 			// Reserved types are special-cased by the resolver and cannot be
 			// registered, not even via As.
@@ -729,7 +798,7 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 			}
 
 			// Validate that the service type implements the interface
-			if !descriptor.Type.Implements(interfaceType) && !reflect.PointerTo(descriptor.Type).Implements(interfaceType) {
+			if !descriptor.Type.Implements(interfaceType) {
 				return &TypeMismatchError{
 					Expected: interfaceType,
 					Actual:   descriptor.Type,
@@ -741,15 +810,25 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 			interfaceDescriptor := descriptor.clone()
 			interfaceDescriptor.Type = interfaceType
 			interfaceDescriptor.As = options.As
+			interfaceDescriptor.isAlias = true
+			interfaceDescriptors = append(interfaceDescriptors, interfaceDescriptor)
+		}
 
-			// Register the interface descriptor
+		for _, interfaceDescriptor := range interfaceDescriptors {
+			interfaceDescriptor.siblings = interfaceDescriptors
+		}
+
+		registered := make(descriptorList, 0, len(interfaceDescriptors))
+		for _, interfaceDescriptor := range interfaceDescriptors {
 			if err := r.registerDescriptor(interfaceDescriptor); err != nil {
+				r.unregisterDescriptors(registered)
 				return &RegistrationError{
-					ServiceType: interfaceType,
+					ServiceType: interfaceDescriptor.Type,
 					Operation:   "register as interface",
 					Cause:       err,
 				}
 			}
+			registered = append(registered, interfaceDescriptor)
 		}
 
 		// If As is specified, we only register under interface types, not the concrete type
@@ -758,6 +837,69 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 
 	// Register the descriptor normally
 	return r.registerDescriptor(descriptor)
+}
+
+// snapshotRegistrations clones the mutable registration graph owned by a
+// collection. Descriptor metadata and constructor analysis are immutable after
+// registration, but descriptors and their sibling slices are rewritten by
+// Remove, so those links must be remapped to provider-owned clones.
+func snapshotRegistrations(
+	all []*descriptor,
+	services map[TypeKey]*descriptor,
+	groups map[GroupKey][]*descriptor,
+) (
+	snapshotAll []*descriptor,
+	snapshotServices map[TypeKey]*descriptor,
+	snapshotGroups map[GroupKey][]*descriptor,
+) {
+	clones := make(map[*descriptor]*descriptor, len(all))
+	snapshotAll = make([]*descriptor, 0, len(all))
+
+	for _, original := range all {
+		if original == nil {
+			continue
+		}
+		clone := *original
+		clone.siblings = nil
+		clone.As = append([]any(nil), original.As...)
+		clone.Dependencies = append([]*reflection.Dependency(nil), original.Dependencies...)
+		clone.resultFields = append([]reflection.ResultField(nil), original.resultFields...)
+		clone.paramFields = append([]reflection.ParamField(nil), original.paramFields...)
+		clones[original] = &clone
+		snapshotAll = append(snapshotAll, &clone)
+	}
+
+	for original, clone := range clones {
+		if len(original.siblings) == 0 {
+			continue
+		}
+		clone.siblings = make([]*descriptor, 0, len(original.siblings))
+		for _, sibling := range original.siblings {
+			if siblingClone, ok := clones[sibling]; ok {
+				clone.siblings = append(clone.siblings, siblingClone)
+			}
+		}
+	}
+
+	snapshotServices = make(map[TypeKey]*descriptor, len(services))
+	for key, original := range services {
+		if clone, ok := clones[original]; ok {
+			snapshotServices[key] = clone
+		}
+	}
+
+	snapshotGroups = make(map[GroupKey][]*descriptor, len(groups))
+	for key, originals := range groups {
+		members := make([]*descriptor, 0, len(originals))
+		for _, original := range originals {
+			if clone, ok := clones[original]; ok {
+				members = append(members, clone)
+			}
+		}
+		snapshotGroups[key] = members
+	}
+
+	return snapshotAll, snapshotServices, snapshotGroups
 }
 
 // registerResultObjectFields registers each exported field of a result

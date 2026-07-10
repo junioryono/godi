@@ -41,10 +41,13 @@ coverage.html
 
 # Profiling data
 *.prof
-*.png
 
 # Benchmark results
 benchmark.txt
+benchmark-results.txt
+
+# Local aggregate coverage output
+.coverage/
 
 # Local environment files
 .env
@@ -53,6 +56,7 @@ benchmark.txt
 # Build directories
 dist/
 build/
+.tools/
 
 # Temporary files
 *.tmp

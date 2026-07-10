@@ -37,6 +37,7 @@
    :caption: Features
    :hidden:
 
+   features/index
    features/keyed-services
    features/service-groups
    features/parameter-objects
@@ -49,6 +50,7 @@
    :caption: Integrations
    :hidden:
 
+   integrations/index
    integrations/gin
    integrations/chi
    integrations/echo
@@ -82,7 +84,7 @@ godi automatically wires up your Go applications. Define your services, specify 
    provider, _ := services.Build()
    defer provider.Close()
 
-   userService := godi.MustResolve[UserService](provider)
+   userService := godi.MustResolve[*UserService](provider)
 
 Why godi?
 ---------

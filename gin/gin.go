@@ -43,14 +43,18 @@ type Option func(*Config)
 // WithErrorHandler sets the error handler for scope creation failures.
 func WithErrorHandler(h func(*gin.Context, error)) Option {
 	return func(c *Config) {
-		c.ErrorHandler = h
+		if h != nil {
+			c.ErrorHandler = h
+		}
 	}
 }
 
 // WithCloseErrorHandler sets the error handler for scope close failures.
 func WithCloseErrorHandler(h func(error)) Option {
 	return func(c *Config) {
-		c.CloseErrorHandler = h
+		if h != nil {
+			c.CloseErrorHandler = h
+		}
 	}
 }
 
@@ -68,7 +72,9 @@ func WithCloseErrorHandler(h func(error)) Option {
 //	)
 func WithMiddleware(mw func(godi.Scope, *gin.Context) error) Option {
 	return func(c *Config) {
-		c.Middlewares = append(c.Middlewares, mw)
+		if mw != nil {
+			c.Middlewares = append(c.Middlewares, mw)
+		}
 	}
 }
 
@@ -86,6 +92,23 @@ func defaultConfig() *Config {
 	}
 }
 
+func normalizeConfig(c *Config) {
+	defaults := defaultConfig()
+	if c.ErrorHandler == nil {
+		c.ErrorHandler = defaults.ErrorHandler
+	}
+	if c.CloseErrorHandler == nil {
+		c.CloseErrorHandler = defaults.CloseErrorHandler
+	}
+	middlewares := c.Middlewares[:0]
+	for _, middleware := range c.Middlewares {
+		if middleware != nil {
+			middlewares = append(middlewares, middleware)
+		}
+	}
+	c.Middlewares = middlewares
+}
+
 // ScopeMiddleware creates a gin.HandlerFunc that creates a request-scoped
 // container for each request. The scope is attached to the request context
 // and can be retrieved using godi.FromContext.
@@ -99,12 +122,16 @@ func defaultConfig() *Config {
 func ScopeMiddleware(provider godi.Provider, opts ...Option) gin.HandlerFunc {
 	cfg := defaultConfig()
 	for _, opt := range opts {
-		opt(cfg)
+		if opt != nil {
+			opt(cfg)
+		}
 	}
+	normalizeConfig(cfg)
 
 	return func(c *gin.Context) {
 		scope, err := provider.CreateScope(c.Request.Context())
 		if err != nil {
+			c.Abort()
 			cfg.ErrorHandler(c, err)
 			return
 		}
@@ -121,6 +148,7 @@ func ScopeMiddleware(provider godi.Provider, opts ...Option) gin.HandlerFunc {
 		// Run middlewares
 		for _, mw := range cfg.Middlewares {
 			if err := mw(scope, c); err != nil {
+				c.Abort()
 				cfg.ErrorHandler(c, err)
 				return
 			}
@@ -162,21 +190,27 @@ func WithPanicRecovery(enabled bool) HandlerOption {
 // WithPanicHandler sets the handler for panics (requires WithPanicRecovery(true)).
 func WithPanicHandler(h func(*gin.Context, any)) HandlerOption {
 	return func(c *HandlerConfig) {
-		c.PanicHandler = h
+		if h != nil {
+			c.PanicHandler = h
+		}
 	}
 }
 
 // WithScopeErrorHandler sets the error handler for scope retrieval failures.
 func WithScopeErrorHandler(h func(*gin.Context, error)) HandlerOption {
 	return func(c *HandlerConfig) {
-		c.ScopeErrorHandler = h
+		if h != nil {
+			c.ScopeErrorHandler = h
+		}
 	}
 }
 
 // WithResolutionErrorHandler sets the error handler for service resolution failures.
 func WithResolutionErrorHandler(h func(*gin.Context, error)) HandlerOption {
 	return func(c *HandlerConfig) {
-		c.ResolutionErrorHandler = h
+		if h != nil {
+			c.ResolutionErrorHandler = h
+		}
 	}
 }
 
@@ -204,6 +238,19 @@ func defaultHandlerConfig() *HandlerConfig {
 	}
 }
 
+func normalizeHandlerConfig(c *HandlerConfig) {
+	defaults := defaultHandlerConfig()
+	if c.PanicHandler == nil {
+		c.PanicHandler = defaults.PanicHandler
+	}
+	if c.ScopeErrorHandler == nil {
+		c.ScopeErrorHandler = defaults.ScopeErrorHandler
+	}
+	if c.ResolutionErrorHandler == nil {
+		c.ResolutionErrorHandler = defaults.ResolutionErrorHandler
+	}
+}
+
 // Handle wraps a controller method for type-safe resolution from the request scope.
 // The controller type T is resolved from the scope attached to the request context.
 //
@@ -219,13 +266,17 @@ func defaultHandlerConfig() *HandlerConfig {
 func Handle[T any](method func(T, *gin.Context), opts ...HandlerOption) gin.HandlerFunc {
 	cfg := defaultHandlerConfig()
 	for _, opt := range opts {
-		opt(cfg)
+		if opt != nil {
+			opt(cfg)
+		}
 	}
+	normalizeHandlerConfig(cfg)
 
 	return func(c *gin.Context) {
 		if cfg.PanicRecovery {
 			defer func() {
 				if r := recover(); r != nil {
+					c.Abort()
 					cfg.PanicHandler(c, r)
 				}
 			}()
@@ -233,12 +284,14 @@ func Handle[T any](method func(T, *gin.Context), opts ...HandlerOption) gin.Hand
 
 		scope, err := godi.FromContext(c.Request.Context())
 		if err != nil {
+			c.Abort()
 			cfg.ScopeErrorHandler(c, err)
 			return
 		}
 
 		controller, err := godi.Resolve[T](scope)
 		if err != nil {
+			c.Abort()
 			cfg.ResolutionErrorHandler(c, err)
 			return
 		}

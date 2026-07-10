@@ -3,6 +3,7 @@ package godi
 import (
 	"context"
 	"reflect"
+	"strconv"
 	"sync"
 	"testing"
 )
@@ -339,21 +340,23 @@ func BenchmarkProviderBuild(b *testing.B) {
 				for j := 0; j < tc.singletons; j++ {
 					c.AddSingleton(func() *BenchService {
 						return &BenchService{Name: "singleton"}
-					})
+					}, Name("singleton-"+strconv.Itoa(j)))
 				}
 
 				// Add scoped services
 				for j := 0; j < tc.services-tc.singletons; j++ {
 					c.AddScoped(func() *BenchDep1 {
 						return &BenchDep1{Value: j}
-					})
+					}, Name("scoped-"+strconv.Itoa(j)))
 				}
 
 				p, err := c.Build()
 				if err != nil {
 					b.Fatalf("failed to build: %v", err)
 				}
-				p.Close()
+				if err := p.Close(); err != nil {
+					b.Fatalf("failed to close provider: %v", err)
+				}
 			}
 		})
 	}

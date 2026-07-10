@@ -61,7 +61,7 @@ func TestScopeMiddleware(t *testing.T) {
 			return c.SendStatus(http.StatusOK)
 		})
 
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
 		resp, err := app.Test(req)
 		assert.NoError(t, err)
 		defer resp.Body.Close()
@@ -86,16 +86,17 @@ func TestScopeMiddleware(t *testing.T) {
 		app := fiber.New()
 		app.Use(ScopeMiddleware(provider))
 		app.Get("/test", func(c *fiber.Ctx) error {
-			scope, err := godi.FromContext(c.UserContext())
-			assert.NoError(t, err)
+			scope, scopeErr := godi.FromContext(c.UserContext())
+			assert.NoError(t, scopeErr)
 
-			resolvedService, err = godi.Resolve[*testService](scope)
-			assert.NoError(t, err)
+			var resolveErr error
+			resolvedService, resolveErr = godi.Resolve[*testService](scope)
+			assert.NoError(t, resolveErr)
 
 			return c.SendStatus(http.StatusOK)
 		})
 
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
 		resp, err := app.Test(req)
 		assert.NoError(t, err)
 		defer resp.Body.Close()
@@ -123,7 +124,7 @@ func TestScopeMiddleware(t *testing.T) {
 			return c.SendStatus(http.StatusOK)
 		})
 
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
 		resp, err := app.Test(req)
 		assert.NoError(t, err)
 		defer resp.Body.Close()
@@ -159,7 +160,7 @@ func TestScopeMiddleware(t *testing.T) {
 			return c.SendStatus(http.StatusOK)
 		})
 
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
 		resp, err := app.Test(req)
 		assert.NoError(t, err)
 		defer resp.Body.Close()
@@ -195,7 +196,7 @@ func TestScopeMiddleware(t *testing.T) {
 			return c.SendStatus(http.StatusOK)
 		})
 
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
 		resp, err := app.Test(req)
 		assert.NoError(t, err)
 		defer resp.Body.Close()
@@ -221,7 +222,7 @@ func TestHandle(t *testing.T) {
 		app.Use(ScopeMiddleware(provider))
 		app.Get("/value", Handle((*testController).GetValue))
 
-		req := httptest.NewRequest(http.MethodGet, "/value", nil)
+		req := httptest.NewRequest(http.MethodGet, "/value", http.NoBody)
 		resp, err := app.Test(req)
 		assert.NoError(t, err)
 		defer resp.Body.Close()
@@ -242,7 +243,7 @@ func TestHandle(t *testing.T) {
 			}),
 		))
 
-		req := httptest.NewRequest(http.MethodGet, "/value", nil)
+		req := httptest.NewRequest(http.MethodGet, "/value", http.NoBody)
 		resp, err := app.Test(req)
 		assert.NoError(t, err)
 		defer resp.Body.Close()
@@ -272,7 +273,7 @@ func TestHandle(t *testing.T) {
 			}),
 		))
 
-		req := httptest.NewRequest(http.MethodGet, "/value", nil)
+		req := httptest.NewRequest(http.MethodGet, "/value", http.NoBody)
 		resp, err := app.Test(req)
 		assert.NoError(t, err)
 		defer resp.Body.Close()
@@ -305,7 +306,7 @@ func TestHandle(t *testing.T) {
 			}),
 		))
 
-		req := httptest.NewRequest(http.MethodGet, "/panic", nil)
+		req := httptest.NewRequest(http.MethodGet, "/panic", http.NoBody)
 		resp, err := app.Test(req)
 		assert.NoError(t, err)
 		defer resp.Body.Close()
@@ -325,7 +326,7 @@ func TestScopeFromUserContext(t *testing.T) {
 			return c.SendStatus(http.StatusOK)
 		})
 
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
 		resp, err := app.Test(req)
 		assert.NoError(t, err)
 		defer resp.Body.Close()
@@ -353,7 +354,7 @@ func TestScopeFromUserContext(t *testing.T) {
 			return c.SendStatus(http.StatusOK)
 		})
 
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
 		resp, err := app.Test(req)
 		assert.NoError(t, err)
 		defer resp.Body.Close()
@@ -371,7 +372,7 @@ func TestDefaultConfig(t *testing.T) {
 			return cfg.ErrorHandler(c, errors.New("test error"))
 		})
 
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
 		resp, err := app.Test(req)
 		assert.NoError(t, err)
 		defer resp.Body.Close()
@@ -385,6 +386,103 @@ func TestDefaultHandlerConfig(t *testing.T) {
 		cfg := defaultHandlerConfig()
 		assert.False(t, cfg.PanicRecovery)
 	})
+}
+
+func TestNilOptionsKeepDefaults(t *testing.T) {
+	assert.NotPanics(t, func() { ScopeMiddleware(nil, Option(nil)) })
+	assert.NotPanics(t, func() { Handle((*testController).GetValue, HandlerOption(nil)) })
+
+	var normalizedCfg *Config
+	ScopeMiddleware(nil, func(cfg *Config) {
+		cfg.ErrorHandler = nil
+		cfg.CloseErrorHandler = nil
+		normalizedCfg = cfg
+	})
+	assert.NotNil(t, normalizedCfg.ErrorHandler)
+	assert.NotNil(t, normalizedCfg.CloseErrorHandler)
+
+	var normalizedHandlerCfg *HandlerConfig
+	Handle((*testController).GetValue, func(cfg *HandlerConfig) {
+		cfg.PanicHandler = nil
+		cfg.ScopeErrorHandler = nil
+		cfg.ResolutionErrorHandler = nil
+		normalizedHandlerCfg = cfg
+	})
+	assert.NotNil(t, normalizedHandlerCfg.PanicHandler)
+	assert.NotNil(t, normalizedHandlerCfg.ScopeErrorHandler)
+	assert.NotNil(t, normalizedHandlerCfg.ResolutionErrorHandler)
+
+	cfg := defaultConfig()
+	WithErrorHandler(nil)(cfg)
+	WithCloseErrorHandler(nil)(cfg)
+	WithMiddleware(nil)(cfg)
+	assert.NotNil(t, cfg.ErrorHandler)
+	assert.NotNil(t, cfg.CloseErrorHandler)
+	assert.Empty(t, cfg.Middlewares)
+
+	handlerCfg := defaultHandlerConfig()
+	WithPanicHandler(nil)(handlerCfg)
+	WithScopeErrorHandler(nil)(handlerCfg)
+	WithResolutionErrorHandler(nil)(handlerCfg)
+	assert.NotNil(t, handlerCfg.PanicHandler)
+	assert.NotNil(t, handlerCfg.ScopeErrorHandler)
+	assert.NotNil(t, handlerCfg.ResolutionErrorHandler)
+}
+
+func TestScopeRemainsAvailableToErrorHandler(t *testing.T) {
+	collection := godi.NewCollection()
+	collection.AddScoped(func() *testService { return &testService{ID: "error-handler"} })
+	provider, err := collection.Build()
+	assert.NoError(t, err)
+	defer provider.Close()
+
+	var requestScope godi.Scope
+	errorHandlerCalls := 0
+	app := fiber.New(fiber.Config{ErrorHandler: func(c *fiber.Ctx, err error) error {
+		errorHandlerCalls++
+		scope, scopeErr := godi.FromContext(c.UserContext())
+		assert.NoError(t, scopeErr)
+		requestScope = scope
+		service, resolveErr := godi.Resolve[*testService](scope)
+		if assert.NoError(t, resolveErr) {
+			assert.Equal(t, "error-handler", service.ID)
+		}
+		return c.SendStatus(http.StatusTeapot)
+	}})
+	app.Use(ScopeMiddleware(provider))
+	app.Get("/test", func(*fiber.Ctx) error { return errors.New("controller failed") })
+
+	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/test", http.NoBody))
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusTeapot, resp.StatusCode)
+	assert.Equal(t, 1, errorHandlerCalls)
+	assert.NotNil(t, requestScope)
+	_, err = godi.Resolve[*testService](requestScope)
+	assert.ErrorIs(t, err, godi.ErrScopeDisposed)
+}
+
+func TestConfiguredErrorHandlerFailureIsSanitized(t *testing.T) {
+	collection := godi.NewCollection()
+	provider, err := collection.Build()
+	assert.NoError(t, err)
+	defer provider.Close()
+
+	const secret = "database-password=correct-horse-battery-staple"
+	app := fiber.New(fiber.Config{ErrorHandler: func(*fiber.Ctx, error) error {
+		return errors.New(secret)
+	}})
+	app.Use(ScopeMiddleware(provider))
+	app.Get("/test", func(*fiber.Ctx) error { return errors.New("controller failed") })
+
+	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/test", http.NoBody))
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+	body, readErr := io.ReadAll(resp.Body)
+	assert.NoError(t, readErr)
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	assert.NotContains(t, string(body), secret)
+	assert.Contains(t, string(body), http.StatusText(http.StatusInternalServerError))
 }
 
 func TestIntegration(t *testing.T) {
@@ -413,7 +511,7 @@ func TestIntegration(t *testing.T) {
 			return c.SendString("OK")
 		}))
 
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
 		resp, err := app.Test(req)
 		assert.NoError(t, err)
 		defer resp.Body.Close()
@@ -452,11 +550,20 @@ func TestScopeClosedWhenHandlerPanics(t *testing.T) {
 	// fails if the middleware stops closing the scope on panic, even though
 	// the auto-close would eventually dispose the instance anyway.
 	var closeErr error
-	app := fiber.New()
-	app.Use(fiberrecover.New())
+	errorHandlerSawScope := false
+	app := fiber.New(fiber.Config{ErrorHandler: func(c *fiber.Ctx, _ error) error {
+		scope, scopeErr := godi.FromContext(c.UserContext())
+		assert.NoError(t, scopeErr)
+		_, resolveErr := godi.Resolve[*testDisposable](scope)
+		errorHandlerSawScope = resolveErr == nil
+		return c.SendStatus(http.StatusInternalServerError)
+	}})
+	// ScopeMiddleware must wrap recovery so the recovered error is rendered
+	// before the request scope closes.
 	app.Use(ScopeMiddleware(provider,
 		WithCloseErrorHandler(func(err error) { closeErr = err }),
 	))
+	app.Use(fiberrecover.New())
 	app.Get("/panic", func(c *fiber.Ctx) error {
 		scope, scopeErr := godi.FromContext(c.UserContext())
 		assert.NoError(t, scopeErr)
@@ -473,5 +580,6 @@ func TestScopeClosedWhenHandlerPanics(t *testing.T) {
 	assert.NotNil(t, disposable)
 	assert.Error(t, closeErr, "the middleware itself must close the scope when the handler panics")
 	assert.Contains(t, closeErr.Error(), "close failed")
+	assert.True(t, errorHandlerSawScope, "panic error handling must run while the scope is alive")
 	assert.True(t, disposable.closed, "scope must be closed even when the handler panics")
 }

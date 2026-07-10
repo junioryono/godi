@@ -74,6 +74,11 @@ type descriptor struct {
 	// collection.addService.
 	siblings []*descriptor
 
+	// isAlias marks descriptors registered through godi.As. Alias siblings
+	// advertise one produced value under several interface types and therefore
+	// share singleton/scoped construction and cache identity.
+	isAlias bool
+
 	// resultFieldIndex is the Out-struct field index this descriptor was
 	// created from. -1 when the descriptor is not a result-object field.
 	resultFieldIndex int
@@ -321,6 +326,28 @@ func (d *descriptor) Validate() error {
 		// Valid lifetimes
 	default:
 		return &LifetimeError{Value: d.Lifetime}
+	}
+
+	// A pre-built value cannot provide scoped or transient semantics: resolving
+	// it would return the same object for every scope or resolution. Require a
+	// constructor whenever the container is responsible for creating instances.
+	if d.IsInstance && d.Lifetime != Singleton {
+		return &ValidationError{
+			ServiceType: d.Type,
+			Cause:       fmt.Errorf("instance values can only be registered with singleton lifetime; use a constructor for %s", d.Lifetime),
+		}
+	}
+	if d.VoidReturn && d.Lifetime == Transient {
+		return &ValidationError{
+			ServiceType: d.Type,
+			Cause:       fmt.Errorf("transient constructors must return a service value"),
+		}
+	}
+	if d.isFunc && d.ConstructorType.IsVariadic() {
+		return &ValidationError{
+			ServiceType: d.Type,
+			Cause:       fmt.Errorf("variadic constructors are not supported; use a parameter object or slice dependency"),
+		}
 	}
 
 	// For function constructors, validate return types

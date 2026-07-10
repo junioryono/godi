@@ -44,14 +44,18 @@ type Option func(*Config)
 // WithErrorHandler sets the error handler for scope creation failures.
 func WithErrorHandler(h func(http.ResponseWriter, *http.Request, error)) Option {
 	return func(c *Config) {
-		c.ErrorHandler = h
+		if h != nil {
+			c.ErrorHandler = h
+		}
 	}
 }
 
 // WithCloseErrorHandler sets the error handler for scope close failures.
 func WithCloseErrorHandler(h func(error)) Option {
 	return func(c *Config) {
-		c.CloseErrorHandler = h
+		if h != nil {
+			c.CloseErrorHandler = h
+		}
 	}
 }
 
@@ -59,7 +63,9 @@ func WithCloseErrorHandler(h func(error)) Option {
 // Multiple middlewares are executed in the order they are added.
 func WithMiddleware(mw func(godi.Scope, *http.Request) error) Option {
 	return func(c *Config) {
-		c.Middlewares = append(c.Middlewares, mw)
+		if mw != nil {
+			c.Middlewares = append(c.Middlewares, mw)
+		}
 	}
 }
 
@@ -73,6 +79,23 @@ func defaultConfig() *Config {
 		},
 		Middlewares: nil,
 	}
+}
+
+func normalizeConfig(c *Config) {
+	defaults := defaultConfig()
+	if c.ErrorHandler == nil {
+		c.ErrorHandler = defaults.ErrorHandler
+	}
+	if c.CloseErrorHandler == nil {
+		c.CloseErrorHandler = defaults.CloseErrorHandler
+	}
+	middlewares := c.Middlewares[:0]
+	for _, middleware := range c.Middlewares {
+		if middleware != nil {
+			middlewares = append(middlewares, middleware)
+		}
+	}
+	c.Middlewares = middlewares
 }
 
 // ScopeMiddleware creates a middleware that creates a request-scoped
@@ -89,8 +112,11 @@ func defaultConfig() *Config {
 func ScopeMiddleware(provider godi.Provider, opts ...Option) func(http.Handler) http.Handler {
 	cfg := defaultConfig()
 	for _, opt := range opts {
-		opt(cfg)
+		if opt != nil {
+			opt(cfg)
+		}
 	}
+	normalizeConfig(cfg)
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -150,21 +176,27 @@ func WithPanicRecovery(enabled bool) HandlerOption {
 // WithPanicHandler sets the handler for panics.
 func WithPanicHandler(h func(http.ResponseWriter, *http.Request, any)) HandlerOption {
 	return func(c *HandlerConfig) {
-		c.PanicHandler = h
+		if h != nil {
+			c.PanicHandler = h
+		}
 	}
 }
 
 // WithScopeErrorHandler sets the error handler for scope retrieval failures.
 func WithScopeErrorHandler(h func(http.ResponseWriter, *http.Request, error)) HandlerOption {
 	return func(c *HandlerConfig) {
-		c.ScopeErrorHandler = h
+		if h != nil {
+			c.ScopeErrorHandler = h
+		}
 	}
 }
 
 // WithResolutionErrorHandler sets the error handler for service resolution failures.
 func WithResolutionErrorHandler(h func(http.ResponseWriter, *http.Request, error)) HandlerOption {
 	return func(c *HandlerConfig) {
-		c.ResolutionErrorHandler = h
+		if h != nil {
+			c.ResolutionErrorHandler = h
+		}
 	}
 }
 
@@ -186,6 +218,19 @@ func defaultHandlerConfig() *HandlerConfig {
 	}
 }
 
+func normalizeHandlerConfig(c *HandlerConfig) {
+	defaults := defaultHandlerConfig()
+	if c.PanicHandler == nil {
+		c.PanicHandler = defaults.PanicHandler
+	}
+	if c.ScopeErrorHandler == nil {
+		c.ScopeErrorHandler = defaults.ScopeErrorHandler
+	}
+	if c.ResolutionErrorHandler == nil {
+		c.ResolutionErrorHandler = defaults.ResolutionErrorHandler
+	}
+}
+
 // Handle wraps a controller method for type-safe resolution from the request scope.
 // The controller type T is resolved from the scope attached to the request context.
 //
@@ -201,8 +246,11 @@ func defaultHandlerConfig() *HandlerConfig {
 func Handle[T any](method func(T, http.ResponseWriter, *http.Request), opts ...HandlerOption) http.HandlerFunc {
 	cfg := defaultHandlerConfig()
 	for _, opt := range opts {
-		opt(cfg)
+		if opt != nil {
+			opt(cfg)
+		}
 	}
+	normalizeHandlerConfig(cfg)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		if cfg.PanicRecovery {

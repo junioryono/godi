@@ -57,7 +57,7 @@ func TestScopeMiddleware(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 		}))
 
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
 		rec := httptest.NewRecorder()
 
 		handler.ServeHTTP(rec, req)
@@ -84,7 +84,7 @@ func TestScopeMiddleware(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 		}))
 
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
 		rec := httptest.NewRecorder()
 
 		handler.ServeHTTP(rec, req)
@@ -118,7 +118,7 @@ func TestScopeMiddleware(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 		}))
 
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
 		rec := httptest.NewRecorder()
 
 		handler.ServeHTTP(rec, req)
@@ -152,7 +152,7 @@ func TestScopeMiddleware(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 		}))
 
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
 		rec := httptest.NewRecorder()
 
 		handler.ServeHTTP(rec, req)
@@ -179,7 +179,7 @@ func TestHandle(t *testing.T) {
 
 		handler := ScopeMiddleware(provider)(mux)
 
-		req := httptest.NewRequest(http.MethodGet, "/value", nil)
+		req := httptest.NewRequest(http.MethodGet, "/value", http.NoBody)
 		rec := httptest.NewRecorder()
 
 		handler.ServeHTTP(rec, req)
@@ -200,7 +200,7 @@ func TestHandle(t *testing.T) {
 			}),
 		)
 
-		req := httptest.NewRequest(http.MethodGet, "/value", nil)
+		req := httptest.NewRequest(http.MethodGet, "/value", http.NoBody)
 		rec := httptest.NewRecorder()
 
 		handler.ServeHTTP(rec, req)
@@ -227,7 +227,7 @@ func TestHandle(t *testing.T) {
 			}),
 		))
 
-		req := httptest.NewRequest(http.MethodGet, "/value", nil)
+		req := httptest.NewRequest(http.MethodGet, "/value", http.NoBody)
 		rec := httptest.NewRecorder()
 
 		handler.ServeHTTP(rec, req)
@@ -258,7 +258,7 @@ func TestHandle(t *testing.T) {
 			}),
 		))
 
-		req := httptest.NewRequest(http.MethodGet, "/panic", nil)
+		req := httptest.NewRequest(http.MethodGet, "/panic", http.NoBody)
 		rec := httptest.NewRecorder()
 
 		handler.ServeHTTP(rec, req)
@@ -282,7 +282,7 @@ func TestHandle(t *testing.T) {
 			WithPanicRecovery(false),
 		))
 
-		req := httptest.NewRequest(http.MethodGet, "/panic", nil)
+		req := httptest.NewRequest(http.MethodGet, "/panic", http.NoBody)
 		rec := httptest.NewRecorder()
 
 		assert.Panics(t, func() {
@@ -296,7 +296,7 @@ func TestDefaultConfig(t *testing.T) {
 		cfg := defaultConfig()
 
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
 
 		cfg.ErrorHandler(rec, req, errors.New("test error"))
 
@@ -314,10 +314,51 @@ func TestDefaultHandlerConfig(t *testing.T) {
 		cfg := defaultHandlerConfig()
 
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
 
 		cfg.PanicHandler(rec, req, "panic value")
 
 		assert.Equal(t, http.StatusInternalServerError, rec.Code)
 	})
+}
+
+func TestNilOptionsKeepDefaults(t *testing.T) {
+	assert.NotPanics(t, func() { ScopeMiddleware(nil, Option(nil)) })
+	assert.NotPanics(t, func() { Handle((*testController).GetValue, HandlerOption(nil)) })
+
+	var normalizedCfg *Config
+	ScopeMiddleware(nil, func(cfg *Config) {
+		cfg.ErrorHandler = nil
+		cfg.CloseErrorHandler = nil
+		normalizedCfg = cfg
+	})
+	assert.NotNil(t, normalizedCfg.ErrorHandler)
+	assert.NotNil(t, normalizedCfg.CloseErrorHandler)
+
+	var normalizedHandlerCfg *HandlerConfig
+	Handle((*testController).GetValue, func(cfg *HandlerConfig) {
+		cfg.PanicHandler = nil
+		cfg.ScopeErrorHandler = nil
+		cfg.ResolutionErrorHandler = nil
+		normalizedHandlerCfg = cfg
+	})
+	assert.NotNil(t, normalizedHandlerCfg.PanicHandler)
+	assert.NotNil(t, normalizedHandlerCfg.ScopeErrorHandler)
+	assert.NotNil(t, normalizedHandlerCfg.ResolutionErrorHandler)
+
+	cfg := defaultConfig()
+	WithErrorHandler(nil)(cfg)
+	WithCloseErrorHandler(nil)(cfg)
+	WithMiddleware(nil)(cfg)
+	assert.NotNil(t, cfg.ErrorHandler)
+	assert.NotNil(t, cfg.CloseErrorHandler)
+	assert.Empty(t, cfg.Middlewares)
+
+	handlerCfg := defaultHandlerConfig()
+	WithPanicHandler(nil)(handlerCfg)
+	WithScopeErrorHandler(nil)(handlerCfg)
+	WithResolutionErrorHandler(nil)(handlerCfg)
+	assert.NotNil(t, handlerCfg.PanicHandler)
+	assert.NotNil(t, handlerCfg.ScopeErrorHandler)
+	assert.NotNil(t, handlerCfg.ResolutionErrorHandler)
 }

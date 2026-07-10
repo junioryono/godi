@@ -306,4 +306,4 @@ var Module = godi.NewModule("orders",
 
 ---
 
-**Next:** Explore [framework integrations](../integrations/) or [advanced features](../features/)
+**Next:** Explore [framework integrations](../integrations/index.md) or [advanced features](../features/index.md)

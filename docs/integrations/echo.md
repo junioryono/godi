@@ -56,6 +56,18 @@ e := echo.New()
 e.Use(godiecho.ScopeMiddleware(provider))
 ```
 
+The scope middleware dispatches downstream errors through Echo's configured
+`HTTPErrorHandler` before closing the request scope, then consumes the error to
+avoid a second dispatch. Middleware that needs the returned error must be
+registered after the scope middleware so it runs inside the scope. The same
+ordering applies to panic recovery:
+
+```go
+e.Use(godiecho.ScopeMiddleware(provider))
+e.Use(middleware.Logger())
+e.Use(middleware.Recover())
+```
+
 ### Configuration Options
 
 ```go
@@ -225,11 +237,7 @@ func main() {
     // Create Echo instance
     e := echo.New()
 
-    // Echo middleware
-    e.Use(middleware.Logger())
-    e.Use(middleware.Recover())
-
-    // godi scope middleware
+    // The scope wraps error observation and recovery so they run before close.
     e.Use(godiecho.ScopeMiddleware(provider,
         godiecho.WithMiddleware(func(scope godi.Scope, c echo.Context) error {
             reqCtx := godi.MustResolve[*RequestContext](scope)
@@ -237,6 +245,8 @@ func main() {
             return nil
         }),
     ))
+    e.Use(middleware.Logger())
+    e.Use(middleware.Recover())
 
     // Routes
     e.GET("/users", godiecho.Handle((*UserController).List))

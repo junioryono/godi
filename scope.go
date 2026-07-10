@@ -26,7 +26,11 @@ type scope struct {
 	rootProvider *provider
 	parentScope  *scope
 	context      context.Context
-	cancel       context.CancelFunc
+	// constructionContext atomically overrides context.Context resolution while
+	// Build invokes eager constructors. Constructors can receive Provider and
+	// resolve from other goroutines, so the override must be race-safe.
+	constructionContext atomic.Pointer[scopeConstructionContext]
+	cancel              context.CancelFunc
 
 	// Scoped instances (isolated per scope)
 	instances   map[instanceKey]any
@@ -42,6 +46,7 @@ type scope struct {
 
 	// Track disposable scoped instances
 	disposables   []Disposable
+	disposableSet map[disposableIdentity]struct{}
 	disposablesMu sync.Mutex
 
 	// Child scopes for hierarchical cleanup
@@ -49,7 +54,9 @@ type scope struct {
 	childrenMu sync.Mutex
 
 	// State
-	disposed atomic.Int32
+	disposed  atomic.Int32
+	closeDone chan struct{}
+	closeErr  error
 }
 
 // scopeFlight coordinates a single-flight constructor invocation. The first
@@ -61,43 +68,81 @@ type scopeFlight struct {
 	err      error
 }
 
+type scopeConstructionContext struct {
+	context context.Context
+}
+
 func newScope(rootProvider *provider, parent *scope, ctx context.Context, cancel context.CancelFunc) (*scope, error) {
+	return newScopeWithInitialization(rootProvider, parent, ctx, cancel, true)
+}
+
+func newScopeWithoutInitialization(
+	rootProvider *provider,
+	parent *scope,
+	ctx context.Context,
+	cancel context.CancelFunc,
+) (*scope, error) {
+	return newScopeWithInitialization(rootProvider, parent, ctx, cancel, false)
+}
+
+func newScopeWithInitialization(
+	rootProvider *provider,
+	parent *scope,
+	ctx context.Context,
+	cancel context.CancelFunc,
+	initialize bool,
+) (*scope, error) {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		if cancel != nil {
+			cancel()
+		}
+		return nil, err
 	}
 
 	// Generate scope ID using provider's counter (scoped to this provider)
 	scopeNum := rootProvider.scopeCounter.Add(1)
 
 	s := &scope{
-		id:           "s" + strconv.FormatUint(scopeNum, 36),
-		rootProvider: rootProvider,
-		parentScope:  parent,
-		cancel:       cancel,
-		instances:    make(map[instanceKey]any, 8), // Pre-size for typical usage
+		id:            "s" + strconv.FormatUint(scopeNum, 36),
+		rootProvider:  rootProvider,
+		parentScope:   parent,
+		cancel:        cancel,
+		instances:     make(map[instanceKey]any, 8), // Pre-size for typical usage
+		disposableSet: make(map[disposableIdentity]struct{}, 4),
+		closeDone:     make(chan struct{}),
 		// disposables and children are lazily allocated on first use.
 	}
 
 	ctx = context.WithValue(ctx, scopeContextKey{}, s)
 	s.context = ctx
 
-	// Initialize scoped services with no returns (initialization functions)
-	// These need to be called when the scope is created
-	for _, descriptor := range rootProvider.voidReturnScopedDescriptors {
-		if _, err := s.createInstance(descriptor); err != nil {
+	if initialize {
+		if err := s.initializeScopedServices(); err != nil {
 			// Tear down the partially initialized scope: dispose instances
 			// created by earlier initializers and release the cancellable
 			// context so neither leaks.
 			_ = s.Close()
-			return nil, &ResolutionError{
+			return nil, err
+		}
+	}
+
+	return s, nil
+}
+
+func (s *scope) initializeScopedServices() error {
+	for _, descriptor := range s.rootProvider.voidReturnScopedDescriptors {
+		if _, err := s.createInstance(descriptor); err != nil {
+			return &ResolutionError{
 				ServiceType: descriptor.Type,
 				ServiceKey:  descriptor.Key,
 				Cause:       fmt.Errorf("failed to initialize scoped service: %w", err),
 			}
 		}
 	}
-
-	return s, nil
+	return nil
 }
 
 // Provider returns the parent provider that created this scope.
@@ -113,7 +158,7 @@ func (s *scope) Context() context.Context {
 }
 
 // ID returns the unique identifier for this scope.
-// This ID is a UUID generated when the scope is created.
+// The ID is generated when the scope is created and is unique within its provider.
 func (s *scope) ID() string {
 	return s.id
 }
@@ -226,11 +271,18 @@ func (s *scope) CreateScope(ctx context.Context) (Scope, error) {
 	if ctx == nil {
 		ctx = s.context
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	ctx, cancel := context.WithCancel(ctx)
 	child, err := newScope(s.rootProvider, s, ctx, cancel)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create child scope: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		_ = child.Close()
+		return nil, err
 	}
 
 	// Track child. Re-check disposal under the lock: Close may have run
@@ -280,10 +332,15 @@ func (s *scope) CreateScope(ctx context.Context) (Scope, error) {
 }
 
 // Close disposes the scope and all its resources
-func (s *scope) Close() error {
+func (s *scope) Close() (result error) {
 	if !s.disposed.CompareAndSwap(0, 1) {
-		return nil // Already closed
+		<-s.closeDone
+		return s.closeErr
 	}
+	defer func() {
+		s.closeErr = result
+		close(s.closeDone)
+	}()
 
 	var errs []error
 
@@ -311,6 +368,7 @@ func (s *scope) Close() error {
 	s.disposablesMu.Lock()
 	disposables := s.disposables
 	s.disposables = nil
+	s.disposableSet = nil
 	s.disposablesMu.Unlock()
 
 	for i := len(disposables) - 1; i >= 0; i-- {
@@ -398,6 +456,16 @@ func (s *scope) appendDisposable(instance any) {
 		s.disposablesMu.Unlock()
 		closeOrphan(d)
 		return
+	}
+	if identity, identifiable := identifyDisposable(d); identifiable {
+		if _, exists := s.disposableSet[identity]; exists {
+			s.disposablesMu.Unlock()
+			return
+		}
+		if s.disposableSet == nil {
+			s.disposableSet = make(map[disposableIdentity]struct{}, 4)
+		}
+		s.disposableSet[identity] = struct{}{}
 	}
 	s.disposables = append(s.disposables, d)
 	s.disposablesMu.Unlock()
@@ -503,6 +571,9 @@ func (s *scope) resolve(key instanceKey, descriptor *descriptor) (any, error) {
 		if key.Key == nil && key.Group == "" {
 			switch key.Type {
 			case contextType:
+				if override := s.constructionContext.Load(); override != nil {
+					return override.context, nil
+				}
 				return s.context, nil
 			case providerType:
 				return s.rootProvider, nil
@@ -579,7 +650,7 @@ func (s *scope) createInstance(descriptor *descriptor) (any, error) {
 			Group: descriptor.Group,
 		}
 
-		s.setInstance(descriptor, key, instance)
+		s.setAliasedInstance(descriptor, key, instance)
 		return instance, nil
 	}
 
@@ -639,6 +710,14 @@ func (s *scope) createInstance(descriptor *descriptor) (any, error) {
 			Parameters:  nil,
 			Cause:       fmt.Errorf("constructor returned no values"),
 		}
+	}
+
+	// Reject typed nil service results before caching any sibling output. A
+	// typed nil stored in an interface is not equal to nil, so checking the
+	// boxed value after Interface() would incorrectly report a successful
+	// resolution.
+	if err := validateServiceResults(info, results); err != nil {
+		return nil, err
 	}
 
 	// Handle result objects (Out structs)
@@ -774,8 +853,82 @@ func (s *scope) createInstance(descriptor *descriptor) (any, error) {
 		Group: descriptor.Group,
 	}
 
-	s.setInstance(descriptor, key, instance)
+	s.setAliasedInstance(descriptor, key, instance)
 	return instance, nil
+}
+
+func isNilServiceResult(value reflect.Value) bool {
+	if !value.IsValid() {
+		return true
+	}
+	for value.Kind() == reflect.Interface {
+		if value.IsNil() {
+			return true
+		}
+		value = value.Elem()
+	}
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Map, reflect.Pointer, reflect.Slice:
+		return value.IsNil()
+	default:
+		return false
+	}
+}
+
+func validateServiceResults(info *reflection.ConstructorInfo, results []reflect.Value) error {
+	if info.IsResultObject {
+		return nil
+	}
+	for _, ret := range info.Returns {
+		if ret.IsError {
+			continue
+		}
+		if isNilServiceResult(results[ret.Index]) {
+			return &ValidationError{
+				ServiceType: ret.Type,
+				Cause:       fmt.Errorf("constructor returned nil service value at index %d", ret.Index),
+			}
+		}
+	}
+	return nil
+}
+
+// setAliasedInstance stores one produced value under every interface alias for
+// cacheable lifetimes. Transients deliberately store only the requested alias:
+// each resolution is a distinct constructor invocation.
+func (s *scope) setAliasedInstance(descriptor *descriptor, key instanceKey, instance any) {
+	if !descriptor.isAlias || descriptor.Lifetime == Transient || len(descriptor.siblings) == 0 {
+		s.setInstance(descriptor, key, instance)
+		return
+	}
+
+	switch descriptor.Lifetime {
+	case Singleton:
+		for _, alias := range descriptor.siblings {
+			s.rootProvider.cacheSingleton(descriptorInstanceKey(alias), instance)
+		}
+		s.rootProvider.trackDisposable(instance)
+	case Scoped:
+		s.instancesMu.Lock()
+		if s.instances == nil {
+			s.instancesMu.Unlock()
+			closeOrphan(instance)
+			return
+		}
+		for _, alias := range descriptor.siblings {
+			s.instances[descriptorInstanceKey(alias)] = instance
+		}
+		s.instancesMu.Unlock()
+		s.appendDisposable(instance)
+	}
+}
+
+func descriptorInstanceKey(descriptor *descriptor) instanceKey {
+	return instanceKey{
+		Type:  descriptor.Type,
+		Key:   descriptor.Key,
+		Group: descriptor.Group,
+	}
 }
 
 // FromContext retrieves a Scope from the context.

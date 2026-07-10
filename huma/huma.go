@@ -30,6 +30,8 @@ package huma
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/junioryono/godi/v5"
@@ -43,9 +45,9 @@ type HandlerConfig struct {
 	ResolutionErrorHandler func(error) error
 
 	// ErrorMapper maps the error returned by the controller method before it
-	// is handed back to Huma. If nil, the error is returned unchanged (Huma
-	// renders huma.StatusError values directly and treats any other error as
-	// a 500). Use it to translate domain errors into huma.StatusError values.
+	// is handed back to Huma. huma.StatusError values are preserved and other
+	// mapped errors become a generic 500. Use it to translate domain errors into
+	// huma.StatusError values; plain internal errors are never exposed.
 	ErrorMapper func(error) error
 }
 
@@ -65,6 +67,7 @@ func WithResolutionErrorHandler(h func(error) error) HandlerOption {
 // WithErrorMapper sets a function that maps the controller method's returned
 // error before it is handed back to Huma. This is the place to translate
 // domain errors into huma.StatusError values (e.g. sql.ErrNoRows -> 404).
+// Plain mapped errors are sanitized to a generic 500 response.
 func WithErrorMapper(m func(error) error) HandlerOption {
 	return func(c *HandlerConfig) {
 		if m != nil {
@@ -76,12 +79,44 @@ func WithErrorMapper(m func(error) error) HandlerOption {
 func defaultHandlerConfig() *HandlerConfig {
 	return &HandlerConfig{
 		ResolutionErrorHandler: func(err error) error {
-			return huma.Error500InternalServerError("internal server error", err)
+			slog.Error("failed to resolve request controller", "error", err)
+			return huma.Error500InternalServerError("internal server error")
 		},
-		ErrorMapper: func(err error) error {
-			return err
-		},
+		ErrorMapper: sanitizeControllerError,
 	}
+}
+
+func normalizeHandlerConfig(c *HandlerConfig) {
+	defaults := defaultHandlerConfig()
+	if c.ResolutionErrorHandler == nil {
+		c.ResolutionErrorHandler = defaults.ResolutionErrorHandler
+	}
+	if c.ErrorMapper == nil {
+		c.ErrorMapper = defaults.ErrorMapper
+	}
+}
+
+func sanitizeControllerError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var statusErr huma.StatusError
+	if errors.As(err, &statusErr) {
+		if _, ok := statusErr.(huma.HeadersError); ok {
+			return statusErr
+		}
+
+		var headersErr huma.HeadersError
+		if errors.As(err, &headersErr) {
+			return huma.ErrorWithHeaders(statusErr, headersErr.GetHeaders().Clone())
+		}
+
+		// Return the status error itself so an outer wrapper cannot add internal
+		// context to the client-visible message.
+		return statusErr
+	}
+	slog.Error("unexpected error in handler", "error", err)
+	return huma.Error500InternalServerError("internal server error")
 }
 
 // Handle adapts a controller method for registration with huma.Register.
@@ -100,15 +135,18 @@ func defaultHandlerConfig() *HandlerConfig {
 //
 // On a failure to resolve the scope or controller, the ResolutionErrorHandler
 // is used (default: 500). The controller's returned error is passed through
-// ErrorMapper (default: unchanged).
+// ErrorMapper (default: preserve status errors and sanitize unexpected errors).
 func Handle[C, I, O any](
 	method func(C, context.Context, *I) (*O, error),
 	opts ...HandlerOption,
 ) func(context.Context, *I) (*O, error) {
 	cfg := defaultHandlerConfig()
 	for _, opt := range opts {
-		opt(cfg)
+		if opt != nil {
+			opt(cfg)
+		}
 	}
+	normalizeHandlerConfig(cfg)
 
 	return func(ctx context.Context, in *I) (*O, error) {
 		scope, err := godi.FromContext(ctx)
@@ -123,7 +161,7 @@ func Handle[C, I, O any](
 
 		out, err := method(controller, ctx, in)
 		if err != nil {
-			return nil, cfg.ErrorMapper(err)
+			return nil, sanitizeControllerError(cfg.ErrorMapper(err))
 		}
 
 		return out, nil

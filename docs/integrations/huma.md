@@ -8,7 +8,7 @@ Huma is router-agnostic: it runs on top of an adapter (`humago`, `humachi`,
 scope is created by the **router's** `ScopeMiddleware`, and Huma carries it
 through, so `godi.FromContext` works inside Huma handlers.
 
-So the `godi/v5/huma` package provides only the Huma-specific piece: a type-safe
+So the `godi/huma/v5` package provides only the Huma-specific piece: a type-safe
 controller wrapper for `huma.Register`. Scope creation comes from the router
 integration (`godigin`, `godichi`, `godihttp`, `godiecho`, `godifiber`).
 
@@ -99,9 +99,9 @@ For each request it:
 2. Resolves the controller `C` from that scope.
 3. Calls `method(controller, ctx, in)`.
 
-A failure to resolve the scope or controller returns a 500 by default; the
-controller's returned error is passed through unchanged (Huma renders
-`huma.StatusError` values directly).
+A failure to resolve the scope or controller returns a generic 500 by default.
+For controller errors, `huma.StatusError` values are preserved and unexpected
+plain errors are logged server-side and sanitized to a generic 500.
 
 ## Resolving services directly
 
@@ -135,6 +135,10 @@ mapErr := func(err error) error {
 
 huma.Register(api, op, godihuma.Handle((*UserController).Greet, godihuma.WithErrorMapper(mapErr)))
 ```
+
+Only mapped `huma.StatusError` values are sent to clients. A mapper result that
+is still a plain error is treated as internal, logged, and replaced with a
+generic 500 response.
 
 ## Huma-level middleware
 

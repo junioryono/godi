@@ -4,6 +4,26 @@ on:
   push:
     tags:
       - "v*"
+  workflow_call:
+    inputs:
+      tag:
+        description: Strict release tag
+        required: true
+        type: string
+      commit:
+        description: Commit shared by the complete release tag set
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Strict release tag to recover or recreate
+        required: true
+        type: string
+      commit:
+        description: Exact commit shared by the release tag set
+        required: true
+        type: string
 
 jobs:
   release:
@@ -11,37 +31,35 @@ jobs:
     runs-on: ubuntu-latest
 
     concurrency:
-      group: release
+      group: release-${{ inputs.tag || github.ref_name }}
       cancel-in-progress: false
 
     permissions:
       contents: write
-      pull-requests: write
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
+          ref: ${{ inputs.commit || github.sha }}
           fetch-depth: 0
-          token: ${{ secrets.RELEASE_TOKEN }}
 
-      - name: Setup Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: 1.26.x
-
-      - name: Configure Git
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email 'github-actions[bot]@users.noreply.github.com'
+      - name: Validate release tag set
+        id: validate
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: scripts/validate-release-set.sh "$RELEASE_TAG"
 
       - name: Generate Release Notes
         id: changelog
+        env:
+          MODULE_PATH: ${{ steps.validate.outputs.module_path }}
+          RELEASE_TAG: ${{ steps.validate.outputs.tag }}
         run: |
           # Get current and previous tags
-          CURRENT_TAG=${GITHUB_REF#refs/tags/}
+          CURRENT_TAG=$RELEASE_TAG
           VERSION=${CURRENT_TAG#v}
-          PREVIOUS_TAG=$(git describe --tags --abbrev=0 ${CURRENT_TAG}^ 2>/dev/null || echo "")
+          PREVIOUS_TAG=$(git describe --tags --match 'v[0-9]*' --abbrev=0 "${CURRENT_TAG}^" 2>/dev/null || echo "")
 
           echo "current_tag=$CURRENT_TAG" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT
@@ -130,7 +148,7 @@ jobs:
           echo "## Installation" >> $RELEASE_NOTES
           echo "" >> $RELEASE_NOTES
           echo '```bash' >> $RELEASE_NOTES
-          echo "go get github.com/junioryono/godi/v5@$CURRENT_TAG" >> $RELEASE_NOTES
+          echo "go get $MODULE_PATH@$CURRENT_TAG" >> $RELEASE_NOTES
           echo '```' >> $RELEASE_NOTES
 
           # Add commit list
@@ -143,16 +161,13 @@ jobs:
             git log $CURRENT_TAG --pretty=format:"* %s" >> $RELEASE_NOTES
           fi
 
-      - name: Create Release
-        uses: ncipollo/release-action@v1
-        with:
-          tag: ${{ steps.changelog.outputs.current_tag }}
-          name: ${{ steps.changelog.outputs.current_tag }}
-          bodyFile: release_notes.md
-          token: ${{ secrets.RELEASE_TOKEN }}
-          draft: false
-
-      - name: Create release branch
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          git checkout -b release/${{ steps.changelog.outputs.current_tag }}
-          git push origin release/${{ steps.changelog.outputs.current_tag }}
+          tag="${{ steps.changelog.outputs.current_tag }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release edit "$tag" --title "$tag" --notes-file release_notes.md
+          else
+            gh release create "$tag" --verify-tag --title "$tag" --notes-file release_notes.md
+          fi

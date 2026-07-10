@@ -1,10 +1,81 @@
 version: 2
 updates:
-  - package-ecosystem: "github-actions"
-    directory: "/"
+  - package-ecosystem: github-actions
+    directory: /
     schedule:
-      interval: "weekly"
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
     commit-message:
-      prefix: "chore"
-      prefix-development: "chore"
-      include: "scope"
+      prefix: chore
+      include: scope
+
+  - package-ecosystem: gomod
+    directory: /
+    schedule: &weekly
+      interval: weekly
+    groups: &go_groups
+      go-dependencies:
+        patterns: ["*"]
+    commit-message: &go_commit
+      prefix: chore
+      include: scope
+
+  - package-ecosystem: gomod
+    directory: /http
+    schedule: *weekly
+    groups: *go_groups
+    commit-message: *go_commit
+
+  - package-ecosystem: gomod
+    directory: /chi
+    schedule: *weekly
+    groups: *go_groups
+    commit-message: *go_commit
+
+  - package-ecosystem: gomod
+    directory: /echo
+    schedule: *weekly
+    groups: *go_groups
+    commit-message: *go_commit
+
+  - package-ecosystem: gomod
+    directory: /fiber
+    schedule: *weekly
+    groups: *go_groups
+    commit-message: *go_commit
+
+  - package-ecosystem: gomod
+    directory: /gin
+    schedule: *weekly
+    groups: *go_groups
+    commit-message: *go_commit
+
+  - package-ecosystem: gomod
+    directory: /huma
+    schedule: *weekly
+    groups: *go_groups
+    commit-message: *go_commit
+
+  - package-ecosystem: gomod
+    directory: /benchmarks
+    schedule: *weekly
+    groups: *go_groups
+    commit-message: *go_commit
+
+  - package-ecosystem: gomod
+    directory: /integrationtests
+    schedule: *weekly
+    groups: *go_groups
+    commit-message: *go_commit
+
+  - package-ecosystem: pip
+    directory: /docs
+    schedule: *weekly
+    groups:
+      documentation:
+        patterns: ["*"]
+    commit-message:
+      prefix: chore
+      include: scope

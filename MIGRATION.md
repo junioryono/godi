@@ -20,8 +20,12 @@ The full guide with before/after examples lives at
 | `Remove[T]()` removes keyed + grouped registrations too | Use `RemoveKeyed[T](key)` for surgical removal |
 | `optional:"true"` propagates construction failures | Only *unregistered* deps are forgiven; fix the failing constructor |
 | Stricter registration validation | Previously-broken constructor shapes now fail at `Build` with a descriptive error |
+| Instance values are singleton-only | Use constructors for scoped and transient services |
+| Repeated shutdown returns one stable result | Do not recursively close the owning provider or scope from `Disposable.Close` |
+| Build deadlines are cooperative | Accept `context.Context` in eager constructors that need prompt cancellation |
 | `godihttp.Wrap` removed | Use `godihttp.Handle` (its `http.HandlerFunc` result already satisfies `http.Handler`) |
 | `godifiber.FromContext` removed | Use `godi.FromContext(c.UserContext())` (Fiber now stores the scope on `UserContext`, not `Locals`) |
+| Integration errors are handled before scope close | Follow the Echo/Fiber middleware ordering guide; Huma sanitizes unexpected plain errors |
 
 ## The one that touches the most code
 
