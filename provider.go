@@ -274,11 +274,13 @@ func (p *provider) Close() (result error) {
 		}
 	}
 
-	// Dispose all singleton disposables
+	// Dispose all singleton disposables.
+	// disposableSet is deliberately retained: trackDisposable consults it
+	// after close so a singleton constructed concurrently with Close is
+	// closed eagerly, exactly once, instead of leaking.
 	p.disposablesMu.Lock()
 	disposables := p.disposables
 	p.disposables = nil
-	p.disposableSet = nil
 	p.disposablesMu.Unlock()
 
 	// Dispose in reverse order of creation; panic-isolate each Close so one
@@ -351,6 +353,13 @@ func (p *provider) trackDisposable(instance any) {
 				p.disposableSet = make(map[disposableIdentity]struct{}, 4)
 			}
 			p.disposableSet[identity] = struct{}{}
+		}
+		if p.disposed.Load() != 0 {
+			// The provider was closed while the constructor was running;
+			// close the orphan eagerly instead of leaking it.
+			p.disposablesMu.Unlock()
+			closeOrphan(d)
+			return
 		}
 		p.disposables = append(p.disposables, d)
 		p.disposablesMu.Unlock()

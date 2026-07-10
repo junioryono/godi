@@ -225,6 +225,64 @@ func TestHandle_ErrorMapperPreservesStatusErrorHeaders(t *testing.T) {
 	assert.Equal(t, expectedHeaders, headersErr.GetHeaders())
 }
 
+// statusWithWrappedHeaders is a StatusError whose chain (not its own type)
+// carries a HeadersError, mimicking a domain error wrapping
+// huma.ErrorWithHeaders.
+type statusWithWrappedHeaders struct{ inner error }
+
+func (e *statusWithWrappedHeaders) Error() string  { return e.inner.Error() }
+func (e *statusWithWrappedHeaders) GetStatus() int { return http.StatusTooManyRequests }
+func (e *statusWithWrappedHeaders) Unwrap() error  { return e.inner }
+
+func TestHandle_StatusErrorCarryingHeadersIsNotMutated(t *testing.T) {
+	ctx, cleanup := scopedContext(t)
+	defer cleanup()
+
+	// A package-level sentinel error reused across requests: sanitization
+	// must not merge cloned headers back into its map on every request.
+	sentinel := &statusWithWrappedHeaders{
+		inner: huma.ErrorWithHeaders(huma.Error429TooManyRequests("slow down"), http.Header{
+			"Retry-After": {"30"},
+		}),
+	}
+	h := godihuma.Handle((*userController).Fail,
+		godihuma.WithErrorMapper(func(error) error { return sentinel }))
+
+	for range 3 {
+		_, err := h(ctx, &greetInput{Name: "x"})
+		require.Error(t, err)
+
+		var headersErr huma.HeadersError
+		require.ErrorAs(t, err, &headersErr)
+		assert.Equal(t, []string{"30"}, headersErr.GetHeaders()["Retry-After"],
+			"sentinel headers must not accumulate across requests")
+	}
+}
+
+func TestHandle_PlainErrorHeadersSurviveSanitization(t *testing.T) {
+	ctx, cleanup := scopedContext(t)
+	defer cleanup()
+
+	h := godihuma.Handle((*userController).Fail,
+		godihuma.WithErrorMapper(func(error) error {
+			return huma.ErrorWithHeaders(errors.New("internal detail"), http.Header{
+				"Retry-After": {"30"},
+			})
+		}))
+
+	_, err := h(ctx, &greetInput{Name: "x"})
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "internal detail")
+
+	var statusErr huma.StatusError
+	require.ErrorAs(t, err, &statusErr)
+	assert.Equal(t, http.StatusInternalServerError, statusErr.GetStatus())
+
+	var headersErr huma.HeadersError
+	require.ErrorAs(t, err, &headersErr)
+	assert.Equal(t, []string{"30"}, headersErr.GetHeaders()["Retry-After"])
+}
+
 // --- end-to-end: real Huma (humago) propagates the scope context to handlers ---
 
 func TestEndToEnd_ScopePropagatesThroughHuma(t *testing.T) {

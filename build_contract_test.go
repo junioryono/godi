@@ -15,76 +15,68 @@ import (
 func TestBuildCancellation(t *testing.T) {
 	t.Parallel()
 
-	t.Run("timeout_after_slow_final_constructor", func(t *testing.T) {
+	// The build context is cancelled by the constructors themselves rather
+	// than by racing a wall-clock deadline against Build's setup, so these
+	// tests cannot flake on a loaded runner.
+
+	t.Run("cancellation_fails_build_after_constructor_returns", func(t *testing.T) {
 		t.Parallel()
+		ctx, cancel := context.WithCancel(context.Background())
+		constructorReturned := false
 		c := NewCollection()
 		c.AddSingleton(func() *TService {
-			time.Sleep(30 * time.Millisecond)
+			cancel()
+			constructorReturned = true
 			return NewTService()
 		})
 
-		started := time.Now()
-		p, err := c.BuildWithOptions(&ProviderOptions{BuildTimeout: 5 * time.Millisecond})
-		elapsed := time.Since(started)
+		p, err := c.BuildWithContext(ctx)
 
-		require.ErrorIs(t, err, context.DeadlineExceeded)
+		// Build waits for the non-cooperative constructor and still fails on
+		// the cancellation it cannot deliver mid-flight.
+		require.ErrorIs(t, err, context.Canceled)
 		assert.Nil(t, p)
-		assert.GreaterOrEqual(t, elapsed, 30*time.Millisecond)
+		assert.True(t, constructorReturned)
 	})
 
-	t.Run("constructor_observes_cancellation", func(t *testing.T) {
+	t.Run("constructor_observes_deadline_cancellation", func(t *testing.T) {
 		t.Parallel()
-		observedCancellation := make(chan struct{})
+		observedCancellation := false
 		c := NewCollection()
 		c.AddSingleton(func(ctx context.Context) (*TService, error) {
+			// Cooperative constructor: block until the build deadline fires.
 			<-ctx.Done()
-			close(observedCancellation)
+			observedCancellation = true
 			return nil, ctx.Err()
 		})
 
-		type buildResult struct {
-			provider Provider
-			err      error
-		}
-		result := make(chan buildResult, 1)
-		go func() {
-			p, err := c.BuildWithOptions(&ProviderOptions{BuildTimeout: 10 * time.Millisecond})
-			result <- buildResult{provider: p, err: err}
-		}()
+		p, err := c.BuildWithOptions(&ProviderOptions{BuildTimeout: 200 * time.Millisecond})
 
-		select {
-		case <-observedCancellation:
-		case <-time.After(2 * time.Second):
-			t.Fatal("constructor did not observe build-context cancellation")
-		}
-
-		select {
-		case got := <-result:
-			require.ErrorIs(t, got.err, context.DeadlineExceeded)
-			assert.Nil(t, got.provider)
-		case <-time.After(2 * time.Second):
-			t.Fatal("Build did not return after constructor cancellation")
-		}
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.Nil(t, p)
+		assert.True(t, observedCancellation)
 	})
 
-	t.Run("timeout_cleans_partial_singletons", func(t *testing.T) {
+	t.Run("cancellation_cleans_partial_singletons", func(t *testing.T) {
 		t.Parallel()
+		ctx, cancel := context.WithCancel(context.Background())
 		resource := NewTDisposable()
 		c := NewCollection()
 		c.AddSingleton(func() *TDisposable { return resource })
 		c.AddSingleton(func(*TDisposable) *TService {
-			time.Sleep(30 * time.Millisecond)
+			cancel()
 			return NewTService()
 		})
 
-		p, err := c.BuildWithOptions(&ProviderOptions{BuildTimeout: 5 * time.Millisecond})
-		require.ErrorIs(t, err, context.DeadlineExceeded)
+		p, err := c.BuildWithContext(ctx)
+		require.ErrorIs(t, err, context.Canceled)
 		assert.Nil(t, p)
 		assert.True(t, resource.IsClosed())
 	})
 
-	t.Run("timeout_error_remains_primary_when_cleanup_fails", func(t *testing.T) {
+	t.Run("cancellation_error_remains_primary_when_cleanup_fails", func(t *testing.T) {
 		t.Parallel()
+		ctx, cancel := context.WithCancel(context.Background())
 		cleanupErr := errors.New("cleanup failed")
 		c := NewCollection()
 		c.AddSingleton(func() *TDisposable {
@@ -93,14 +85,14 @@ func TestBuildCancellation(t *testing.T) {
 			return d
 		})
 		c.AddSingleton(func(*TDisposable) *TService {
-			time.Sleep(30 * time.Millisecond)
+			cancel()
 			return NewTService()
 		})
 
-		p, err := c.BuildWithOptions(&ProviderOptions{BuildTimeout: 5 * time.Millisecond})
+		p, err := c.BuildWithContext(ctx)
 		require.Error(t, err)
 		assert.Nil(t, p)
-		assert.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.ErrorIs(t, err, context.Canceled)
 		assert.ErrorIs(t, err, cleanupErr)
 	})
 }

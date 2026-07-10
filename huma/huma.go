@@ -102,21 +102,36 @@ func sanitizeControllerError(err error) error {
 	if err == nil {
 		return nil
 	}
-	if statusErr, ok := errors.AsType[huma.StatusError](err); ok {
-		if _, ok := statusErr.(huma.HeadersError); ok {
+	statusErr, hasStatus := errors.AsType[huma.StatusError](err)
+	headersErr, hasHeaders := errors.AsType[huma.HeadersError](err)
+	if hasStatus {
+		// Return the status error itself so an outer wrapper cannot add
+		// internal context to the client-visible message.
+		if !hasHeaders {
 			return statusErr
 		}
 
-		if headersErr, ok := errors.AsType[huma.HeadersError](err); ok {
-			return huma.ErrorWithHeaders(statusErr, headersErr.GetHeaders().Clone())
+		// If the status error's own chain carries the headers, Huma already
+		// finds them with errors.As. Re-attaching via ErrorWithHeaders would
+		// merge the clone back into the original header map, mutating the
+		// caller's error and duplicating values on every request.
+		if _, carried := errors.AsType[huma.HeadersError](error(statusErr)); carried {
+			return statusErr
 		}
 
-		// Return the status error itself so an outer wrapper cannot add internal
-		// context to the client-visible message.
-		return statusErr
+		// The headers wrapper sits outside the status error and would be
+		// dropped by returning statusErr alone; re-attach a clone.
+		return huma.ErrorWithHeaders(statusErr, headersErr.GetHeaders().Clone())
 	}
 	slog.Error("unexpected error in handler", "error", err)
-	return huma.Error500InternalServerError("internal server error")
+	sanitized := huma.Error500InternalServerError("internal server error")
+	if hasHeaders {
+		// Headers attached via huma.ErrorWithHeaders are deliberate response
+		// metadata (Retry-After, cache control); keep them on the sanitized
+		// error like native Huma would.
+		return huma.ErrorWithHeaders(sanitized, headersErr.GetHeaders().Clone())
+	}
+	return sanitized
 }
 
 // Handle adapts a controller method for registration with huma.Register.

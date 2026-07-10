@@ -19,12 +19,16 @@ func TestCollectionSnapshotIsolation(t *testing.T) {
 		t.Parallel()
 		c := NewCollection()
 		c.AddSingleton(NewTServiceWithID("one"))
+		// Transient: resolution consults the descriptor snapshot every time,
+		// so it cannot be masked by a pre-materialized singleton instance.
+		c.AddTransient(NewTDependency)
 
 		first, err := c.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = first.Close() })
 
 		c.Remove(PtrTypeOf[TService]())
+		c.Remove(PtrTypeOf[TDependency]())
 		c.AddSingleton(NewTServiceWithID("two"))
 
 		second, err := c.Build()
@@ -36,6 +40,12 @@ func TestCollectionSnapshotIsolation(t *testing.T) {
 
 		assert.Equal(t, "one", firstValue.ID)
 		assert.Equal(t, "two", secondValue.ID)
+
+		// The first provider's snapshot still contains the removed transient;
+		// the second provider must not know it.
+		_ = RequireResolve[*TDependency](t, first)
+		_, err = Resolve[*TDependency](second)
+		require.Error(t, err)
 	})
 
 	t.Run("resolution_does_not_race_collection_mutation", func(t *testing.T) {
@@ -261,14 +271,22 @@ func TestCollectionKeyedNonComparableKey(t *testing.T) {
 
 	c := NewCollection()
 	c.AddSingleton(NewTService, Name("one"))
-	nonComparable := []string{"one"}
 
-	require.NotPanics(t, func() {
-		assert.False(t, c.ContainsKeyed(PtrTypeOf[TService](), nonComparable))
-	})
-	require.NotPanics(t, func() {
-		c.RemoveKeyed(PtrTypeOf[TService](), nonComparable)
-	})
+	// Both a directly non-comparable key and a comparable struct wrapping a
+	// non-comparable value in an interface field (which passes a type-level
+	// comparability check but panics as a map key).
+	keys := []any{
+		[]string{"one"},
+		struct{ V any }{V: []int{1}},
+	}
+	for _, key := range keys {
+		require.NotPanics(t, func() {
+			assert.False(t, c.ContainsKeyed(PtrTypeOf[TService](), key))
+		})
+		require.NotPanics(t, func() {
+			c.RemoveKeyed(PtrTypeOf[TService](), key)
+		})
+	}
 	assert.Equal(t, 1, c.Count())
 }
 

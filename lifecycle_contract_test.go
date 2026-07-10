@@ -92,6 +92,58 @@ func TestDisposableCloseDeduplication(t *testing.T) {
 		assert.Equal(t, int64(2), closeCalls.Load())
 	})
 
+	t.Run("orphaned_shared_value_closes_once", func(t *testing.T) {
+		t.Parallel()
+		disposable := &countedAliasDisposable{}
+		ctorStarted := make(chan struct{})
+		release := make(chan struct{})
+
+		c := NewCollection()
+		c.AddScoped(func() (closeAliasA, closeAliasB) {
+			close(ctorStarted)
+			<-release
+			return disposable, disposable
+		})
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+
+		s, err := p.CreateScope(context.Background())
+		require.NoError(t, err)
+
+		resolveDone := make(chan struct{})
+		go func() {
+			defer close(resolveDone)
+			_, _ = Resolve[closeAliasA](s)
+		}()
+
+		// Close the scope while the constructor is still running, then let it
+		// finish: both sibling registrations orphan the same value, which must
+		// still be closed exactly once.
+		<-ctorStarted
+		require.NoError(t, s.Close())
+		close(release)
+		<-resolveDone
+
+		assert.Equal(t, int64(1), disposable.closeCalls.Load())
+	})
+
+	t.Run("disposable_tracked_after_provider_close_is_closed_once", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		p, err := c.Build()
+		require.NoError(t, err)
+		require.NoError(t, p.Close())
+
+		// A constructor that outlives a cancelled Build registers its result
+		// after Close; the orphan must be closed eagerly, and only once.
+		disposable := &countedAliasDisposable{}
+		p.(*provider).trackDisposable(disposable)
+		assert.Equal(t, int64(1), disposable.closeCalls.Load())
+		p.(*provider).trackDisposable(disposable)
+		assert.Equal(t, int64(1), disposable.closeCalls.Load())
+	})
+
 	t.Run("aliased_value_closes_once", func(t *testing.T) {
 		t.Parallel()
 		var closeCalls atomic.Int64

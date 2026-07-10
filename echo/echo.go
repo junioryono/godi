@@ -88,7 +88,9 @@ func normalizeConfig(c *Config) {
 	if c.CloseErrorHandler == nil {
 		c.CloseErrorHandler = defaults.CloseErrorHandler
 	}
-	middlewares := c.Middlewares[:0]
+	// Copy while filtering nils: reslicing in place would mutate a
+	// caller-owned slice assigned via a custom option.
+	middlewares := make([]func(godi.Scope, echo.Context) error, 0, len(c.Middlewares))
 	for _, middleware := range c.Middlewares {
 		if middleware != nil {
 			middlewares = append(middlewares, middleware)
@@ -266,6 +268,12 @@ func Handle[T any](method func(T, echo.Context) error, opts ...HandlerOption) ec
 		if cfg.PanicRecovery {
 			defer func() {
 				if v := recover(); v != nil {
+					// http.ErrAbortHandler is the net/http contract for aborting a
+					// response mid-write; suppressing it would send a bogus 500 on
+					// a deliberately aborted connection.
+					if v == http.ErrAbortHandler { //nolint:errorlint // sentinel panic value, compared by identity
+						panic(v)
+					}
 					err = cfg.PanicHandler(c, v)
 				}
 			}()

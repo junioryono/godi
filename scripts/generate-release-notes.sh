@@ -25,9 +25,9 @@ if [[ -n ${GITHUB_OUTPUT:-} ]]; then
 fi
 
 if [[ -n "$previous_tag" ]]; then
-	commits=$(git log "$previous_tag..$current_tag" --pretty=format:'%s|%h')
+	commits=$(git log "$previous_tag..$current_tag" --pretty=format:'%h|%s')
 else
-	commits=$(git log "$current_tag" --pretty=format:'%s|%h')
+	commits=$(git log "$current_tag" --pretty=format:'%h|%s')
 fi
 
 breaking_pattern='^[a-z]+(\([^)]+\))?!:'
@@ -39,21 +39,23 @@ scoped_feature_pattern='^feat\([^)]+\):'
 breaking=""
 fixes=""
 features=""
-while IFS='|' read -r message hash; do
+# Hash first: %h never contains '|', and read assigns the rest of the
+# line (embedded pipes included) to the final variable.
+while IFS='|' read -r hash message; do
 	if [[ "$message" =~ $breaking_pattern ]] || [[ "$message" == *"BREAKING CHANGE"* ]]; then
 		clean_message=$(printf '%s\n' "$message" | sed -E 's/^[a-z]+(\([^)]+\))?!?: ?//')
-		breaking="${breaking}* ${clean_message} (${hash})\n"
+		breaking="${breaking}* ${clean_message} (${hash})"$'\n'
 	fi
 
 	if [[ "$message" =~ $fix_pattern ]]; then
 		if [[ "$message" =~ $scoped_fix_pattern ]]; then
 			scope=$(printf '%s\n' "$message" | sed -E 's/^fix\(([^)]+)\):.*/\1/')
 			clean_message=$(printf '%s\n' "$message" | sed -E 's/^fix\([^)]+\): ?//')
-			fixes="${fixes}* **${scope}:** ${clean_message} ([${hash}](https://github.com/junioryono/godi/commit/${hash}))\n"
+			fixes="${fixes}* **${scope}:** ${clean_message} ([${hash}](https://github.com/junioryono/godi/commit/${hash}))"$'\n'
 		else
 			clean_message=${message#fix:}
 			clean_message=${clean_message# }
-			fixes="${fixes}* ${clean_message} ([${hash}](https://github.com/junioryono/godi/commit/${hash}))\n"
+			fixes="${fixes}* ${clean_message} ([${hash}](https://github.com/junioryono/godi/commit/${hash}))"$'\n'
 		fi
 	fi
 
@@ -61,11 +63,11 @@ while IFS='|' read -r message hash; do
 		if [[ "$message" =~ $scoped_feature_pattern ]]; then
 			scope=$(printf '%s\n' "$message" | sed -E 's/^feat\(([^)]+)\):.*/\1/')
 			clean_message=$(printf '%s\n' "$message" | sed -E 's/^feat\([^)]+\): ?//')
-			features="${features}* **${scope}:** ${clean_message} ([${hash}](https://github.com/junioryono/godi/commit/${hash}))\n"
+			features="${features}* **${scope}:** ${clean_message} ([${hash}](https://github.com/junioryono/godi/commit/${hash}))"$'\n'
 		else
 			clean_message=${message#feat:}
 			clean_message=${clean_message# }
-			features="${features}* ${clean_message} ([${hash}](https://github.com/junioryono/godi/commit/${hash}))\n"
+			features="${features}* ${clean_message} ([${hash}](https://github.com/junioryono/godi/commit/${hash}))"$'\n'
 		fi
 	fi
 done <<< "$commits"
@@ -73,13 +75,13 @@ done <<< "$commits"
 {
 	printf '# Release %s\n\n' "$version"
 	if [[ -n "$breaking" ]]; then
-		printf '## BREAKING CHANGES\n\n%b\n' "$breaking"
+		printf '## BREAKING CHANGES\n\n%s\n' "$breaking"
 	fi
 	if [[ -n "$fixes" ]]; then
-		printf '## Bug Fixes\n\n%b\n' "$fixes"
+		printf '## Bug Fixes\n\n%s\n' "$fixes"
 	fi
 	if [[ -n "$features" ]]; then
-		printf '## Features\n\n%b\n' "$features"
+		printf '## Features\n\n%s\n' "$features"
 	fi
 	printf '## Installation\n\n```bash\ngo get %s@%s\n```\n' "$module_path" "$current_tag"
 	printf '\n## All Changes\n\n'

@@ -283,6 +283,39 @@ func TestHandle(t *testing.T) {
 		assert.Contains(t, string(body), "service not found")
 	})
 
+	t.Run("does not mutate caller-owned middleware slice", func(t *testing.T) {
+		collection := godi.NewCollection()
+		provider, err := collection.Build()
+		assert.NoError(t, err)
+		defer provider.Close()
+
+		var calls []string
+		shared := []func(godi.Scope, *http.Request) error{
+			func(godi.Scope, *http.Request) error { calls = append(calls, "A"); return nil },
+			nil, // e.g. a conditionally-disabled middleware
+			func(godi.Scope, *http.Request) error { calls = append(calls, "B"); return nil },
+		}
+
+		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+		useShared := func(c *Config) { c.Middlewares = shared }
+		handler1 := ScopeMiddleware(provider, useShared)(next)
+		handler2 := ScopeMiddleware(provider, useShared)(next)
+
+		for _, handler := range []http.Handler{handler1, handler2} {
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/test", http.NoBody))
+			assert.Equal(t, http.StatusOK, rec.Code)
+		}
+
+		// Nil filtering must copy: compacting in place rewrites the caller's
+		// backing array, and the second middleware chain then runs an entry
+		// twice.
+		assert.Equal(t, []string{"A", "B", "A", "B"}, calls)
+		assert.Nil(t, shared[1], "caller-owned slice was mutated by normalizeConfig")
+	})
+
 	t.Run("recovers from panic when enabled", func(t *testing.T) {
 		panicHandlerCalled := false
 
@@ -313,6 +346,35 @@ func TestHandle(t *testing.T) {
 
 		assert.True(t, panicHandlerCalled)
 		assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	})
+
+	t.Run("re-panics on http.ErrAbortHandler even when recovery is enabled", func(t *testing.T) {
+		collection := godi.NewCollection()
+		collection.AddScoped(func() *testService {
+			return &testService{ID: "test", Value: 1}
+		})
+
+		provider, err := collection.Build()
+		assert.NoError(t, err)
+		defer provider.Close()
+
+		handler := ScopeMiddleware(provider)(Handle(func(svc *testService, w http.ResponseWriter, r *http.Request) {
+			panic(http.ErrAbortHandler)
+		},
+			WithPanicRecovery(true),
+			WithPanicHandler(func(w http.ResponseWriter, r *http.Request, v any) {
+				t.Error("panic handler must not run for http.ErrAbortHandler")
+			}),
+		))
+
+		req := httptest.NewRequest(http.MethodGet, "/abort", http.NoBody)
+		rec := httptest.NewRecorder()
+
+		// net/http aborts the response on this sentinel; swallowing it would
+		// turn a deliberately aborted connection into a fake 500.
+		assert.PanicsWithValue(t, http.ErrAbortHandler, func() {
+			handler.ServeHTTP(rec, req)
+		})
 	})
 
 	t.Run("does not recover from panic when disabled", func(t *testing.T) {

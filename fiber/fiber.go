@@ -89,7 +89,9 @@ func normalizeConfig(c *Config) {
 	if c.CloseErrorHandler == nil {
 		c.CloseErrorHandler = defaults.CloseErrorHandler
 	}
-	middlewares := c.Middlewares[:0]
+	// Copy while filtering nils: reslicing in place would mutate a
+	// caller-owned slice assigned via a custom option.
+	middlewares := make([]func(godi.Scope, *fiber.Ctx) error, 0, len(c.Middlewares))
 	for _, middleware := range c.Middlewares {
 		if middleware != nil {
 			middlewares = append(middlewares, middleware)

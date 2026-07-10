@@ -206,7 +206,7 @@ func main() {
 | Fiber     | `github.com/junioryono/godi/fiber/v5` | `go get github.com/junioryono/godi/fiber/v5` |
 | Huma      | `github.com/junioryono/godi/huma/v5`  | `go get github.com/junioryono/godi/huma/v5`  |
 
-Huma runs on top of a router, so pair `godi/v5/huma` with the matching router
+Huma runs on top of a router, so pair `godi/huma/v5` with the matching router
 integration above — the router middleware owns the request scope, and Huma
 propagates it to your typed operation handlers.
 

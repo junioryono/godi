@@ -496,7 +496,9 @@ func (r *collection) ContainsKeyed(t reflect.Type, key any) bool {
 	if t == nil {
 		return false
 	}
-	if key != nil && !reflect.TypeOf(key).Comparable() {
+	// Value-level comparability: a comparable static type can still wrap a
+	// non-comparable value in an interface field and panic as a map key.
+	if key != nil && !reflect.ValueOf(key).Comparable() {
 		return false
 	}
 
@@ -557,7 +559,9 @@ func (r *collection) RemoveKeyed(t reflect.Type, key any) {
 	if t == nil {
 		return
 	}
-	if key != nil && !reflect.TypeOf(key).Comparable() {
+	// Value-level comparability: a comparable static type can still wrap a
+	// non-comparable value in an interface field and panic as a map key.
+	if key != nil && !reflect.ValueOf(key).Comparable() {
 		return
 	}
 

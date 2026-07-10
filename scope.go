@@ -360,11 +360,13 @@ func (s *scope) Close() (result error) {
 		}
 	}
 
-	// Dispose all disposable scoped instances in reverse order
+	// Dispose all disposable scoped instances in reverse order.
+	// disposableSet is deliberately retained: appendDisposable consults it
+	// after close so orphaned constructor results shared across sibling
+	// registrations are still closed exactly once.
 	s.disposablesMu.Lock()
 	disposables := s.disposables
 	s.disposables = nil
-	s.disposableSet = nil
 	s.disposablesMu.Unlock()
 
 	for i := len(disposables) - 1; i >= 0; i-- {
@@ -428,7 +430,10 @@ func (s *scope) setInstance(descriptor *descriptor, key instanceKey, instance an
 		s.instancesMu.Lock()
 		if s.instances == nil {
 			s.instancesMu.Unlock()
-			closeOrphan(instance)
+			// The scope was closed while the constructor was running.
+			// appendDisposable closes the orphan with identity dedup so a
+			// value shared across sibling registrations closes only once.
+			s.appendDisposable(instance)
 			return
 		}
 		s.instances[key] = instance
@@ -448,11 +453,6 @@ func (s *scope) appendDisposable(instance any) {
 		return
 	}
 	s.disposablesMu.Lock()
-	if s.disposed.Load() != 0 {
-		s.disposablesMu.Unlock()
-		closeOrphan(d)
-		return
-	}
 	if identity, identifiable := identifyDisposable(d); identifiable {
 		if _, exists := s.disposableSet[identity]; exists {
 			s.disposablesMu.Unlock()
@@ -462,6 +462,11 @@ func (s *scope) appendDisposable(instance any) {
 			s.disposableSet = make(map[disposableIdentity]struct{}, 4)
 		}
 		s.disposableSet[identity] = struct{}{}
+	}
+	if s.disposed.Load() != 0 {
+		s.disposablesMu.Unlock()
+		closeOrphan(d)
+		return
 	}
 	s.disposables = append(s.disposables, d)
 	s.disposablesMu.Unlock()
