@@ -15,6 +15,11 @@ else
 	while IFS= read -r file; do files+=("$file"); done < <(git -C "$root" ls-files '*.go')
 fi
 
+if (( ${#files[@]} == 0 )); then
+	echo "No Go files to check"
+	exit 0
+fi
+
 unformatted=$(cd "$root" && gofmt -s -l "${files[@]}")
 if [[ -n "$unformatted" ]]; then
 	echo "Go files need gofmt -s:" >&2

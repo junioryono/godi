@@ -21,6 +21,7 @@ The full guide with before/after examples lives at
 | `optional:"true"` propagates construction failures | Only *unregistered* deps are forgiven; fix the failing constructor |
 | Stricter registration validation | Previously-broken constructor shapes now fail at `Build` with a descriptive error |
 | Instance values are singleton-only | Use constructors for scoped and transient services |
+| `As` requires the constructor's returned type to implement the interface | Return `*T` from the constructor when only `*T` implements it |
 | Repeated shutdown returns one stable result | Do not recursively close the owning provider or scope from `Disposable.Close` |
 | Build deadlines are cooperative | Accept `context.Context` in eager constructors that need prompt cancellation |
 | `godihttp.Wrap` removed | Use `godihttp.Handle` (its `http.HandlerFunc` result already satisfies `http.Handler`) |

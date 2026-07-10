@@ -149,8 +149,6 @@ type ServiceInfo struct {
 	Lifetime Lifetime
 }
 
-type descriptorList []*descriptor
-
 // NewCollection creates a new empty Collection instance.
 //
 // Example:
@@ -335,7 +333,7 @@ func (sc *collection) doBuild(ctx context.Context) (Provider, error) {
 
 	var err error
 	rootCtx := context.Background()
-	p.rootScope, err = newScopeWithoutInitialization(p, nil, rootCtx, nil)
+	p.rootScope, err = newUninitializedScope(p, nil, rootCtx, nil)
 	if err != nil {
 		return nil, &BuildError{
 			Phase:   "scope-creation",
@@ -759,84 +757,92 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 		return err
 	}
 
-	// Handle As option - register under interface types
+	// Handle As option - register under interface types.
+	// If As is specified, we only register under interface types, not the concrete type.
 	if len(options.As) > 0 {
-		// A void or error-only constructor produces no service value to bind
-		// to an interface. Reject rather than registering an empty struct
-		// placeholder under the interface type.
-		if descriptor.VoidReturn {
-			return &RegistrationError{
-				ServiceType: descriptor.Type,
-				Operation:   "register as interface",
-				Cause:       fmt.Errorf("godi.As cannot be combined with a constructor that returns no service value"),
-			}
-		}
-
-		// Validate every alias before committing any of them. A single Add call is
-		// transactional: either all requested interfaces are registered or none
-		// are.
-		interfaceDescriptors := make(descriptorList, 0, len(options.As))
-		seenInterfaces := make(map[reflect.Type]struct{}, len(options.As))
-		for _, iface := range options.As {
-			interfaceType := reflect.TypeOf(iface).Elem()
-			if _, duplicate := seenInterfaces[interfaceType]; duplicate {
-				return &RegistrationError{
-					ServiceType: interfaceType,
-					Operation:   "register as interface",
-					Cause:       fmt.Errorf("interface %s was specified more than once", formatType(interfaceType)),
-				}
-			}
-			seenInterfaces[interfaceType] = struct{}{}
-
-			// Reserved types are special-cased by the resolver and cannot be
-			// registered, not even via As.
-			if _, isReserved := reservedTypes[interfaceType]; isReserved {
-				return &ValidationError{
-					ServiceType: interfaceType,
-					Cause:       fmt.Errorf("service type %s is reserved and cannot be registered", formatType(interfaceType)),
-				}
-			}
-
-			// Validate that the service type implements the interface
-			if !descriptor.Type.Implements(interfaceType) {
-				return &TypeMismatchError{
-					Expected: interfaceType,
-					Actual:   descriptor.Type,
-					Context:  "interface implementation",
-				}
-			}
-
-			// Create a new descriptor for the interface type
-			interfaceDescriptor := descriptor.clone()
-			interfaceDescriptor.Type = interfaceType
-			interfaceDescriptor.As = options.As
-			interfaceDescriptor.isAlias = true
-			interfaceDescriptors = append(interfaceDescriptors, interfaceDescriptor)
-		}
-
-		for _, interfaceDescriptor := range interfaceDescriptors {
-			interfaceDescriptor.siblings = interfaceDescriptors
-		}
-
-		registered := make(descriptorList, 0, len(interfaceDescriptors))
-		for _, interfaceDescriptor := range interfaceDescriptors {
-			if err := r.registerDescriptor(interfaceDescriptor); err != nil {
-				r.unregisterDescriptors(registered)
-				return &RegistrationError{
-					ServiceType: interfaceDescriptor.Type,
-					Operation:   "register as interface",
-					Cause:       err,
-				}
-			}
-			registered = append(registered, interfaceDescriptor)
-		}
-
-		// If As is specified, we only register under interface types, not the concrete type
-		return nil
+		return r.registerAliases(descriptor, options)
 	}
 
 	// Register the descriptor normally
 	return r.registerDescriptor(descriptor)
+}
+
+// registerAliases registers a descriptor under each interface type in
+// options.As instead of its concrete type. The aliases are linked as siblings
+// so one constructor invocation caches every interface entry. Caller must hold
+// r.mu.
+func (r *collection) registerAliases(d *descriptor, options *addOptions) error {
+	// A void or error-only constructor produces no service value to bind
+	// to an interface. Reject rather than registering an empty struct
+	// placeholder under the interface type.
+	if d.VoidReturn {
+		return &RegistrationError{
+			ServiceType: d.Type,
+			Operation:   "register as interface",
+			Cause:       fmt.Errorf("godi.As cannot be combined with a constructor that returns no service value"),
+		}
+	}
+
+	// Validate every alias before committing any of them. A single Add call is
+	// transactional: either all requested interfaces are registered or none
+	// are.
+	interfaceDescriptors := make([]*descriptor, 0, len(options.As))
+	seenInterfaces := make(map[reflect.Type]struct{}, len(options.As))
+	for _, iface := range options.As {
+		interfaceType := reflect.TypeOf(iface).Elem()
+		if _, duplicate := seenInterfaces[interfaceType]; duplicate {
+			return &RegistrationError{
+				ServiceType: interfaceType,
+				Operation:   "register as interface",
+				Cause:       fmt.Errorf("interface %s was specified more than once", formatType(interfaceType)),
+			}
+		}
+		seenInterfaces[interfaceType] = struct{}{}
+
+		// Reserved types are special-cased by the resolver and cannot be
+		// registered, not even via As.
+		if _, isReserved := reservedTypes[interfaceType]; isReserved {
+			return &ValidationError{
+				ServiceType: interfaceType,
+				Cause:       fmt.Errorf("service type %s is reserved and cannot be registered", formatType(interfaceType)),
+			}
+		}
+
+		// Validate that the service type implements the interface
+		if !d.Type.Implements(interfaceType) {
+			return &TypeMismatchError{
+				Expected: interfaceType,
+				Actual:   d.Type,
+				Context:  "interface implementation",
+			}
+		}
+
+		// Create a new descriptor for the interface type
+		interfaceDescriptor := d.clone()
+		interfaceDescriptor.Type = interfaceType
+		interfaceDescriptor.As = options.As
+		interfaceDescriptor.isAlias = true
+		interfaceDescriptors = append(interfaceDescriptors, interfaceDescriptor)
+	}
+
+	for _, interfaceDescriptor := range interfaceDescriptors {
+		interfaceDescriptor.siblings = interfaceDescriptors
+	}
+
+	registered := make([]*descriptor, 0, len(interfaceDescriptors))
+	for _, interfaceDescriptor := range interfaceDescriptors {
+		if err := r.registerDescriptor(interfaceDescriptor); err != nil {
+			r.unregisterDescriptors(registered)
+			return &RegistrationError{
+				ServiceType: interfaceDescriptor.Type,
+				Operation:   "register as interface",
+				Cause:       err,
+			}
+		}
+		registered = append(registered, interfaceDescriptor)
+	}
+
+	return nil
 }
 
 // snapshotRegistrations clones the mutable registration graph owned by a

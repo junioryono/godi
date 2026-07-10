@@ -2,6 +2,7 @@ package integrationtests
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -57,7 +58,13 @@ func (c *greetingController) Greet(_ context.Context, input *greetingInput) (*gr
 	return output, nil
 }
 
-type compositionRunner func(*testing.T, godi.Provider) (int, string)
+type failInput struct{}
+
+func (c *greetingController) Fail(_ context.Context, _ *failInput) (*greetingOutput, error) {
+	return nil, errors.New("sensitive internal detail")
+}
+
+type compositionRunner func(*testing.T, godi.Provider, *http.Request) (int, string)
 
 func buildRequestProvider(t *testing.T) (provider godi.Provider, getResource func() *requestResource) {
 	t.Helper()
@@ -85,9 +92,14 @@ func registerGreeting(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/greet/{name}",
 	}, godihuma.Handle((*greetingController).Greet))
+	huma.Register(api, huma.Operation{
+		OperationID: "fail",
+		Method:      http.MethodGet,
+		Path:        "/fail",
+	}, godihuma.Handle((*greetingController).Fail))
 }
 
-func runNetHTTP(t *testing.T, provider godi.Provider) (status int, body string) {
+func runNetHTTP(t *testing.T, provider godi.Provider, req *http.Request) (status int, body string) {
 	t.Helper()
 	mux := http.NewServeMux()
 	api := humago.New(mux, huma.DefaultConfig("Integration", "1.0.0"))
@@ -95,50 +107,50 @@ func runNetHTTP(t *testing.T, provider godi.Provider) (status int, body string) 
 
 	handler := godihttp.ScopeMiddleware(provider)(mux)
 	recorder := httptest.NewRecorder()
-	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/greet/world", http.NoBody))
+	handler.ServeHTTP(recorder, req)
 	return recorder.Code, recorder.Body.String()
 }
 
-func runChi(t *testing.T, provider godi.Provider) (status int, body string) {
+func runChi(t *testing.T, provider godi.Provider, req *http.Request) (status int, body string) {
 	t.Helper()
 	router := chi.NewRouter()
 	router.Use(godichi.ScopeMiddleware(provider))
 	registerGreeting(humachi.New(router, huma.DefaultConfig("Integration", "1.0.0")))
 
 	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/greet/world", http.NoBody))
+	router.ServeHTTP(recorder, req)
 	return recorder.Code, recorder.Body.String()
 }
 
-func runGin(t *testing.T, provider godi.Provider) (status int, body string) {
+func runGin(t *testing.T, provider godi.Provider, req *http.Request) (status int, body string) {
 	t.Helper()
 	engine := gin.New()
 	engine.Use(godigin.ScopeMiddleware(provider))
 	registerGreeting(humagin.New(engine, huma.DefaultConfig("Integration", "1.0.0")))
 
 	recorder := httptest.NewRecorder()
-	engine.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/greet/world", http.NoBody))
+	engine.ServeHTTP(recorder, req)
 	return recorder.Code, recorder.Body.String()
 }
 
-func runEcho(t *testing.T, provider godi.Provider) (status int, body string) {
+func runEcho(t *testing.T, provider godi.Provider, req *http.Request) (status int, body string) {
 	t.Helper()
 	engine := echo.New()
 	engine.Use(godiecho.ScopeMiddleware(provider))
 	registerGreeting(humaecho.New(engine, huma.DefaultConfig("Integration", "1.0.0")))
 
 	recorder := httptest.NewRecorder()
-	engine.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/greet/world", http.NoBody))
+	engine.ServeHTTP(recorder, req)
 	return recorder.Code, recorder.Body.String()
 }
 
-func runFiber(t *testing.T, provider godi.Provider) (status int, body string) {
+func runFiber(t *testing.T, provider godi.Provider, req *http.Request) (status int, body string) {
 	t.Helper()
 	app := fiber.New()
 	app.Use(godifiber.ScopeMiddleware(provider))
 	registerGreeting(humafiber.New(app, huma.DefaultConfig("Integration", "1.0.0")))
 
-	response, err := app.Test(httptest.NewRequest(http.MethodGet, "/greet/world", http.NoBody), -1)
+	response, err := app.Test(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,9 +162,11 @@ func runFiber(t *testing.T, provider godi.Provider) (status int, body string) {
 	return response.StatusCode, string(responseBody)
 }
 
-func TestHumaRouterCompositions(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	tests := []struct {
+func compositionTargets() []struct {
+	name string
+	run  compositionRunner
+} {
+	return []struct {
 		name string
 		run  compositionRunner
 	}{
@@ -162,18 +176,51 @@ func TestHumaRouterCompositions(t *testing.T) {
 		{name: "echo", run: runEcho},
 		{name: "fiber", run: runFiber},
 	}
+}
 
-	for _, test := range tests {
+func TestHumaRouterCompositions(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	for _, test := range compositionTargets() {
 		t.Run(test.name, func(t *testing.T) {
 			provider, getResource := buildRequestProvider(t)
 			defer provider.Close()
 
-			status, body := test.run(t, provider)
+			req := httptest.NewRequest(http.MethodGet, "/greet/world", http.NoBody)
+			status, body := test.run(t, provider, req)
 			if status != http.StatusOK {
 				t.Fatalf("status = %d, want %d; body = %s", status, http.StatusOK, body)
 			}
 			if !strings.Contains(body, "hello world") {
 				t.Fatalf("response body does not contain greeting: %s", body)
+			}
+
+			resource := getResource()
+			if resource == nil {
+				t.Fatal("scoped resource was not constructed")
+			}
+			if calls := resource.closeCalls.Load(); calls != 1 {
+				t.Fatalf("resource Close calls = %d, want 1", calls)
+			}
+		})
+	}
+}
+
+func TestHumaRouterCompositionsSanitizeErrors(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	for _, test := range compositionTargets() {
+		t.Run(test.name, func(t *testing.T) {
+			provider, getResource := buildRequestProvider(t)
+			defer provider.Close()
+
+			req := httptest.NewRequest(http.MethodGet, "/fail", http.NoBody)
+			status, body := test.run(t, provider, req)
+			if status != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want %d; body = %s", status, http.StatusInternalServerError, body)
+			}
+			if strings.Contains(body, "sensitive internal detail") {
+				t.Fatalf("response leaked internal error detail: %s", body)
 			}
 
 			resource := getResource()

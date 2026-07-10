@@ -215,6 +215,12 @@ with what the v4 docs already promised.
   from one singleton or scoped registration now returns the same constructed
   value and disposes it once. Transient aliases still construct per resolve.
 
+- **`As` requires the constructor's return type itself to implement the
+  interface.** A value-returning constructor whose *pointer* type implements
+  the interface is now rejected at registration: the container produces a
+  non-addressable value, so the pointer method set was never actually
+  callable. Return the pointer type from the constructor instead.
+
 - **Shutdown is deterministic and non-reentrant.** Concurrent or repeated
   `Provider.Close` and `Scope.Close` calls wait for the first cleanup and return
   its same aggregated error. A resource's `Close` method must not recursively

@@ -73,24 +73,30 @@ type scopeConstructionContext struct {
 }
 
 func newScope(rootProvider *provider, parent *scope, ctx context.Context, cancel context.CancelFunc) (*scope, error) {
-	return newScopeWithInitialization(rootProvider, parent, ctx, cancel, true)
+	s, err := newUninitializedScope(rootProvider, parent, ctx, cancel)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.initializeScopedServices(); err != nil {
+		// Tear down the partially initialized scope: dispose instances
+		// created by earlier initializers and release the cancellable
+		// context so neither leaks.
+		_ = s.Close()
+		return nil, err
+	}
+
+	return s, nil
 }
 
-func newScopeWithoutInitialization(
+// newUninitializedScope creates a scope without running scoped initializers.
+// Build uses it for the root scope so initializers run after singletons are
+// created; every other caller should use newScope.
+func newUninitializedScope(
 	rootProvider *provider,
 	parent *scope,
 	ctx context.Context,
 	cancel context.CancelFunc,
-) (*scope, error) {
-	return newScopeWithInitialization(rootProvider, parent, ctx, cancel, false)
-}
-
-func newScopeWithInitialization(
-	rootProvider *provider,
-	parent *scope,
-	ctx context.Context,
-	cancel context.CancelFunc,
-	initialize bool,
 ) (*scope, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -118,16 +124,6 @@ func newScopeWithInitialization(
 
 	ctx = context.WithValue(ctx, scopeContextKey{}, s)
 	s.context = ctx
-
-	if initialize {
-		if err := s.initializeScopedServices(); err != nil {
-			// Tear down the partially initialized scope: dispose instances
-			// created by earlier initializers and release the cancellable
-			// context so neither leaks.
-			_ = s.Close()
-			return nil, err
-		}
-	}
 
 	return s, nil
 }
@@ -905,7 +901,8 @@ func (s *scope) setAliasedInstance(descriptor *descriptor, key instanceKey, inst
 	switch descriptor.Lifetime {
 	case Singleton:
 		for _, alias := range descriptor.siblings {
-			s.rootProvider.cacheSingleton(descriptorInstanceKey(alias), instance)
+			key := instanceKey{Type: alias.Type, Key: alias.Key, Group: alias.Group}
+			s.rootProvider.cacheSingleton(key, instance)
 		}
 		s.rootProvider.trackDisposable(instance)
 	case Scoped:
@@ -916,18 +913,11 @@ func (s *scope) setAliasedInstance(descriptor *descriptor, key instanceKey, inst
 			return
 		}
 		for _, alias := range descriptor.siblings {
-			s.instances[descriptorInstanceKey(alias)] = instance
+			key := instanceKey{Type: alias.Type, Key: alias.Key, Group: alias.Group}
+			s.instances[key] = instance
 		}
 		s.instancesMu.Unlock()
 		s.appendDisposable(instance)
-	}
-}
-
-func descriptorInstanceKey(descriptor *descriptor) instanceKey {
-	return instanceKey{
-		Type:  descriptor.Type,
-		Key:   descriptor.Key,
-		Group: descriptor.Group,
 	}
 }
 

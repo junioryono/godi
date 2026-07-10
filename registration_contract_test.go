@@ -3,7 +3,7 @@ package godi
 import (
 	"context"
 	"fmt"
-	"reflect"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -12,82 +12,71 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type snapshotService struct {
-	value string
-}
+func TestCollectionSnapshotIsolation(t *testing.T) {
+	t.Parallel()
 
-func newSnapshotServiceOne() *snapshotService {
-	return &snapshotService{value: "one"}
-}
+	t.Run("provider_uses_immutable_snapshot", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddSingleton(NewTServiceWithID("one"))
 
-func newSnapshotServiceTwo() *snapshotService {
-	return &snapshotService{value: "two"}
-}
+		first, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = first.Close() })
 
-func TestBuiltProviderUsesImmutableCollectionSnapshot(t *testing.T) {
-	c := NewCollection()
-	c.AddSingleton(newSnapshotServiceOne)
+		c.Remove(PtrTypeOf[TService]())
+		c.AddSingleton(NewTServiceWithID("two"))
 
-	first, err := c.Build()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = first.Close() })
+		second, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = second.Close() })
 
-	c.Remove(reflect.TypeFor[*snapshotService]())
-	c.AddSingleton(newSnapshotServiceTwo)
+		firstValue := RequireResolve[*TService](t, first)
+		secondValue := RequireResolve[*TService](t, second)
 
-	second, err := c.Build()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = second.Close() })
+		assert.Equal(t, "one", firstValue.ID)
+		assert.Equal(t, "two", secondValue.ID)
+	})
 
-	firstValue, err := Resolve[*snapshotService](first)
-	require.NoError(t, err)
-	secondValue, err := Resolve[*snapshotService](second)
-	require.NoError(t, err)
+	t.Run("resolution_does_not_race_collection_mutation", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddSingleton(NewTServiceWithID("one"))
 
-	assert.Equal(t, "one", firstValue.value)
-	assert.Equal(t, "two", secondValue.value)
-}
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
 
-func TestBuiltProviderDoesNotRaceCollectionMutation(t *testing.T) {
-	c := NewCollection()
-	c.AddSingleton(newSnapshotServiceOne)
+		const iterations = 100
+		var wg sync.WaitGroup
+		resolveErrs := make(chan error, iterations)
 
-	p, err := c.Build()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = p.Close() })
-
-	const iterations = 100
-	var wg sync.WaitGroup
-	resolveErrs := make(chan error, iterations)
-	wg.Add(2)
-
-	go func() {
-		defer wg.Done()
-		for range iterations {
-			c.Remove(reflect.TypeFor[*snapshotService]())
-			c.AddSingleton(newSnapshotServiceOne)
-		}
-	}()
-
-	go func() {
-		defer wg.Done()
-		for range iterations {
-			value, resolveErr := Resolve[*snapshotService](p)
-			if resolveErr != nil {
-				resolveErrs <- resolveErr
-				continue
+		wg.Go(func() {
+			for range iterations {
+				c.Remove(PtrTypeOf[TService]())
+				c.AddSingleton(NewTServiceWithID("one"))
 			}
-			if value.value != "one" {
-				resolveErrs <- fmt.Errorf("resolved snapshot value %q, want %q", value.value, "one")
-			}
-		}
-	}()
+		})
 
-	wg.Wait()
-	close(resolveErrs)
-	for resolveErr := range resolveErrs {
-		assert.NoError(t, resolveErr)
-	}
+		wg.Go(func() {
+			for range iterations {
+				value, resolveErr := Resolve[*TService](p)
+				if resolveErr != nil {
+					resolveErrs <- resolveErr
+					continue
+				}
+				if value.ID != "one" {
+					resolveErrs <- fmt.Errorf("resolved service ID %q, want %q", value.ID, "one")
+				}
+			}
+		})
+
+		wg.Wait()
+		close(resolveErrs)
+		for resolveErr := range resolveErrs {
+			assert.NoError(t, resolveErr)
+		}
+	})
 }
 
 type aliasReader interface {
@@ -110,57 +99,13 @@ func (s *aliasService) WriteAlias() string {
 	return s.id
 }
 
-var aliasConstructorCalls atomic.Int64
-
-func newAliasService() *aliasService {
-	call := aliasConstructorCalls.Add(1)
-	return &aliasService{id: "alias-" + string(rune('0'+call))}
-}
-
-func TestMultipleAsSingletonUsesOneCanonicalInstance(t *testing.T) {
-	aliasConstructorCalls.Store(0)
-	c := NewCollection()
-	c.AddSingleton(newAliasService, As[aliasReader](), As[aliasWriter]())
-
-	p, err := c.Build()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = p.Close() })
-
-	reader, err := Resolve[aliasReader](p)
-	require.NoError(t, err)
-	writer, err := Resolve[aliasWriter](p)
-	require.NoError(t, err)
-
-	assert.Same(t, reader.(*aliasService), writer.(*aliasService))
-	assert.Equal(t, int64(1), aliasConstructorCalls.Load())
-}
-
-func TestMultipleAsScopedSharesWithinScope(t *testing.T) {
-	aliasConstructorCalls.Store(0)
-	c := NewCollection()
-	c.AddScoped(newAliasService, As[aliasReader](), As[aliasWriter]())
-
-	p, err := c.Build()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = p.Close() })
-
-	first, err := p.CreateScope(context.Background())
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = first.Close() })
-	second, err := p.CreateScope(context.Background())
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = second.Close() })
-
-	reader, err := Resolve[aliasReader](first)
-	require.NoError(t, err)
-	writer, err := Resolve[aliasWriter](first)
-	require.NoError(t, err)
-	other, err := Resolve[aliasReader](second)
-	require.NoError(t, err)
-
-	assert.Same(t, reader.(*aliasService), writer.(*aliasService))
-	assert.NotSame(t, reader.(*aliasService), other.(*aliasService))
-	assert.Equal(t, int64(2), aliasConstructorCalls.Load())
+// newAliasServiceCounter returns a constructor that stamps each instance with
+// the invocation count, so tests can assert how many times it ran.
+func newAliasServiceCounter() (func() *aliasService, *atomic.Int64) {
+	calls := &atomic.Int64{}
+	return func() *aliasService {
+		return &aliasService{id: "alias-" + strconv.FormatInt(calls.Add(1), 10)}
+	}, calls
 }
 
 type pointerOnlyAlias interface {
@@ -171,47 +116,102 @@ type pointerOnlyValue struct{}
 
 func (*pointerOnlyValue) PointerOnly() {}
 
-func TestAsRejectsValueImplementedOnlyByPointer(t *testing.T) {
-	c := NewCollection()
-	c.AddSingleton(func() pointerOnlyValue { return pointerOnlyValue{} }, As[pointerOnlyAlias]())
+func TestMultipleAsRegistration(t *testing.T) {
+	t.Parallel()
 
-	require.Error(t, c.Err())
-	_, err := c.Build()
-	require.Error(t, err)
-}
-
-func TestAsRegistrationRollsBackAllAliases(t *testing.T) {
-	c := NewCollection()
-	c.AddSingleton(func() aliasWriter { return &aliasService{} })
-	require.NoError(t, c.Err())
-
-	c.AddSingleton(newAliasService, As[aliasReader](), As[aliasWriter]())
-	require.Error(t, c.Err())
-
-	assert.False(t, c.Contains(reflect.TypeFor[aliasReader]()))
-	assert.True(t, c.Contains(reflect.TypeFor[aliasWriter]()))
-	assert.Equal(t, 1, c.Count())
-}
-
-func TestInstanceRegistrationRequiresSingletonLifetime(t *testing.T) {
-	t.Run("scoped", func(t *testing.T) {
+	t.Run("singleton_uses_one_canonical_instance", func(t *testing.T) {
+		t.Parallel()
+		newAliasService, calls := newAliasServiceCounter()
 		c := NewCollection()
-		c.AddScoped(&snapshotService{value: "shared"})
+		c.AddSingleton(newAliasService, As[aliasReader](), As[aliasWriter]())
+
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+
+		reader := RequireResolve[aliasReader](t, p)
+		writer := RequireResolve[aliasWriter](t, p)
+
+		assert.Same(t, reader.(*aliasService), writer.(*aliasService))
+		assert.Equal(t, int64(1), calls.Load())
+	})
+
+	t.Run("scoped_shares_within_scope", func(t *testing.T) {
+		t.Parallel()
+		newAliasService, calls := newAliasServiceCounter()
+		c := NewCollection()
+		c.AddScoped(newAliasService, As[aliasReader](), As[aliasWriter]())
+
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+
+		first, err := p.CreateScope(context.Background())
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = first.Close() })
+		second, err := p.CreateScope(context.Background())
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = second.Close() })
+
+		reader := RequireResolveFrom[aliasReader](t, first)
+		writer := RequireResolveFrom[aliasWriter](t, first)
+		other := RequireResolveFrom[aliasReader](t, second)
+
+		assert.Same(t, reader.(*aliasService), writer.(*aliasService))
+		assert.NotSame(t, reader.(*aliasService), other.(*aliasService))
+		assert.Equal(t, int64(2), calls.Load())
+	})
+
+	t.Run("rejects_value_implemented_only_by_pointer", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddSingleton(func() pointerOnlyValue { return pointerOnlyValue{} }, As[pointerOnlyAlias]())
+
 		require.Error(t, c.Err())
 		_, err := c.Build()
 		require.Error(t, err)
 	})
 
-	t.Run("transient", func(t *testing.T) {
+	t.Run("rolls_back_all_aliases_on_conflict", func(t *testing.T) {
+		t.Parallel()
+		newAliasService, _ := newAliasServiceCounter()
 		c := NewCollection()
-		c.AddTransient(&snapshotService{value: "shared"})
+		c.AddSingleton(func() aliasWriter { return &aliasService{} })
+		require.NoError(t, c.Err())
+
+		c.AddSingleton(newAliasService, As[aliasReader](), As[aliasWriter]())
+		require.Error(t, c.Err())
+
+		assert.False(t, c.Contains(TypeOf[aliasReader]()))
+		assert.True(t, c.Contains(TypeOf[aliasWriter]()))
+		assert.Equal(t, 1, c.Count())
+	})
+}
+
+func TestInstanceRegistrationLifetime(t *testing.T) {
+	t.Parallel()
+
+	t.Run("scoped_rejected", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddScoped(&TService{ID: "shared"})
 		require.Error(t, c.Err())
 		_, err := c.Build()
 		require.Error(t, err)
 	})
 
-	t.Run("singleton", func(t *testing.T) {
-		instance := &snapshotService{value: "shared"}
+	t.Run("transient_rejected", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddTransient(&TService{ID: "shared"})
+		require.Error(t, c.Err())
+		_, err := c.Build()
+		require.Error(t, err)
+	})
+
+	t.Run("singleton_allowed", func(t *testing.T) {
+		t.Parallel()
+		instance := &TService{ID: "shared"}
 		c := NewCollection()
 		c.AddSingleton(instance)
 		require.NoError(t, c.Err())
@@ -219,70 +219,69 @@ func TestInstanceRegistrationRequiresSingletonLifetime(t *testing.T) {
 		p, err := c.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = p.Close() })
-		resolved, err := Resolve[*snapshotService](p)
-		require.NoError(t, err)
+		resolved := RequireResolve[*TService](t, p)
 		assert.Same(t, instance, resolved)
 	})
 }
 
-func TestUnsupportedConstructorShapesFailAtRegistration(t *testing.T) {
-	t.Run("transient void constructor", func(t *testing.T) {
+func TestUnsupportedConstructorShapes(t *testing.T) {
+	t.Parallel()
+
+	t.Run("transient_void_constructor", func(t *testing.T) {
+		t.Parallel()
 		c := NewCollection()
-		c.AddTransient(func() {})
+		c.AddTransient(NewTVoid)
 		require.Error(t, c.Err())
 	})
 
-	t.Run("variadic constructor", func(t *testing.T) {
+	t.Run("variadic_constructor", func(t *testing.T) {
+		t.Parallel()
 		c := NewCollection()
-		c.AddSingleton(func(_ ...*snapshotService) *aliasService { return &aliasService{} })
+		c.AddSingleton(func(_ ...*TService) *TDependency { return NewTDependency() })
 		require.Error(t, c.Err())
 	})
 
-	t.Run("result object with name option", func(t *testing.T) {
-		type result struct {
-			Out
-			Service *snapshotService
-		}
+	t.Run("result_object_with_name_option", func(t *testing.T) {
+		t.Parallel()
 		c := NewCollection()
-		c.AddSingleton(func() result { return result{Service: newSnapshotServiceOne()} }, Name("named"))
+		c.AddSingleton(NewTResult, Name("named"))
 		require.Error(t, c.Err())
 	})
 
-	t.Run("result object with group option", func(t *testing.T) {
-		type result struct {
-			Out
-			Service *snapshotService
-		}
+	t.Run("result_object_with_group_option", func(t *testing.T) {
+		t.Parallel()
 		c := NewCollection()
-		c.AddSingleton(func() result { return result{Service: newSnapshotServiceOne()} }, Group("services"))
+		c.AddSingleton(NewTResult, Group("services"))
 		require.Error(t, c.Err())
 	})
 }
 
-func TestCollectionKeyOperationsRejectNonComparableKeys(t *testing.T) {
+func TestCollectionKeyedNonComparableKey(t *testing.T) {
+	t.Parallel()
+
 	c := NewCollection()
-	c.AddSingleton(newSnapshotServiceOne, Name("one"))
+	c.AddSingleton(NewTService, Name("one"))
 	nonComparable := []string{"one"}
 
 	require.NotPanics(t, func() {
-		assert.False(t, c.ContainsKeyed(reflect.TypeFor[*snapshotService](), nonComparable))
+		assert.False(t, c.ContainsKeyed(PtrTypeOf[TService](), nonComparable))
 	})
 	require.NotPanics(t, func() {
-		c.RemoveKeyed(reflect.TypeFor[*snapshotService](), nonComparable)
+		c.RemoveKeyed(PtrTypeOf[TService](), nonComparable)
 	})
 	assert.Equal(t, 1, c.Count())
 }
 
-type typedNilService struct{}
+func TestTypedNilConstructorResult(t *testing.T) {
+	t.Parallel()
 
-func TestTypedNilConstructorResultIsRejected(t *testing.T) {
 	c := NewCollection()
-	c.AddTransient(func() *typedNilService { return nil })
+	c.AddTransient(func() *TService { return nil })
 	p, err := c.Build()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = p.Close() })
 
-	service, err := Resolve[*typedNilService](p)
+	service, err := Resolve[*TService](p)
 	require.Error(t, err)
 	assert.Nil(t, service)
 }

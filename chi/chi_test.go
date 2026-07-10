@@ -67,6 +67,41 @@ func TestScopeMiddleware(t *testing.T) {
 		assert.Equal(t, "scoped", resolvedService.ID)
 	})
 
+	t.Run("scope is closed after request", func(t *testing.T) {
+		closeCalled := false
+		var requestScope godi.Scope
+
+		collection := godi.NewCollection()
+		collection.AddScoped(func() *testService {
+			return &testService{ID: "test", Value: 1}
+		})
+
+		provider, err := collection.Build()
+		assert.NoError(t, err)
+		defer provider.Close()
+
+		handler := ScopeMiddleware(provider,
+			WithCloseErrorHandler(func(err error) {
+				closeCalled = true
+			}),
+		)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestScope, err = godi.FromContext(r.Context())
+			assert.NoError(t, err)
+			w.WriteHeader(http.StatusOK)
+		}))
+
+		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		// Scope close is successful, so error handler is not called
+		assert.False(t, closeCalled)
+		assert.NotNil(t, requestScope)
+		_, err = godi.Resolve[*testService](requestScope)
+		assert.ErrorIs(t, err, godi.ErrScopeDisposed)
+	})
+
 	t.Run("calls error handler on scope creation failure", func(t *testing.T) {
 		errorHandlerCalled := false
 

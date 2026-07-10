@@ -1,9 +1,10 @@
 name: Release
 
+# Releases are created by tag.yml (via workflow_call) after it pushes the
+# atomic tag set, or manually via workflow_dispatch for recovery. There is
+# deliberately no push-tag trigger: it would run this workflow a second time
+# for the same tag.
 on:
-  push:
-    tags:
-      - "v*"
   workflow_call:
     inputs:
       tag:
@@ -31,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
 
     concurrency:
-      group: release-${{ inputs.tag || github.ref_name }}
+      group: release-${{ inputs.tag }}
       cancel-in-progress: false
 
     permissions:
@@ -41,13 +42,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
-          ref: ${{ inputs.commit || github.sha }}
+          ref: ${{ inputs.commit }}
           fetch-depth: 0
 
       - name: Validate release tag set
         id: validate
         env:
-          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          RELEASE_TAG: ${{ inputs.tag }}
         run: scripts/validate-release-set.sh "$RELEASE_TAG"
 
       - name: Generate Release Notes

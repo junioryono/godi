@@ -113,7 +113,11 @@ func normalizeConfig(c *Config) {
 // container for each request. The scope is attached to the request context
 // and can be retrieved using godi.FromContext.
 //
-// The scope is automatically closed when the request completes.
+// The scope is automatically closed when the request completes. Terminal
+// errors (scope creation or configured middleware failures) abort the handler
+// chain before the configured ErrorHandler renders the response, so later
+// handlers never run without a scope. Error handlers run while the scope is
+// still alive.
 //
 // Example:
 //

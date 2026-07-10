@@ -27,7 +27,10 @@ var (
 // Analyzer performs reflection-based analysis of constructors and types.
 // It caches analysis results for performance.
 type Analyzer struct {
-	mu    sync.RWMutex
+	mu sync.RWMutex
+	// cache keys retain the analyzed function values (and any closure
+	// captures) until Clear is called, trading that retention for correct
+	// identity: entry-point pointers cannot distinguish closures.
 	cache map[reflect.Value]*ConstructorInfo
 
 	// invoker is the shared ConstructorInvoker for this analyzer. Invokers

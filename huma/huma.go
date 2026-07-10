@@ -82,7 +82,9 @@ func defaultHandlerConfig() *HandlerConfig {
 			slog.Error("failed to resolve request controller", "error", err)
 			return huma.Error500InternalServerError("internal server error")
 		},
-		ErrorMapper: sanitizeControllerError,
+		// The mapped error is always sanitized in Handle, so the default
+		// mapper passes the error through untouched.
+		ErrorMapper: func(err error) error { return err },
 	}
 }
 
@@ -100,14 +102,12 @@ func sanitizeControllerError(err error) error {
 	if err == nil {
 		return nil
 	}
-	var statusErr huma.StatusError
-	if errors.As(err, &statusErr) {
+	if statusErr, ok := errors.AsType[huma.StatusError](err); ok {
 		if _, ok := statusErr.(huma.HeadersError); ok {
 			return statusErr
 		}
 
-		var headersErr huma.HeadersError
-		if errors.As(err, &headersErr) {
+		if headersErr, ok := errors.AsType[huma.HeadersError](err); ok {
 			return huma.ErrorWithHeaders(statusErr, headersErr.GetHeaders().Clone())
 		}
 
@@ -135,7 +135,8 @@ func sanitizeControllerError(err error) error {
 //
 // On a failure to resolve the scope or controller, the ResolutionErrorHandler
 // is used (default: 500). The controller's returned error is passed through
-// ErrorMapper (default: preserve status errors and sanitize unexpected errors).
+// ErrorMapper and then sanitized: status errors are preserved and unexpected
+// errors become a generic 500.
 func Handle[C, I, O any](
 	method func(C, context.Context, *I) (*O, error),
 	opts ...HandlerOption,
