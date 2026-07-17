@@ -21,7 +21,10 @@ while read -r directory kind; do
 			[[ "$kind" != "integration" ]] && continue
 			;;
 		published)
-			[[ "$kind" != "integration" && "$kind" != "test" ]] && continue
+			# Integration modules only: test modules compose the sibling
+			# adapters and assert this branch's behavior, which published
+			# adapter versions cannot satisfy until after a release.
+			[[ "$kind" != "integration" ]] && continue
 			;;
 		*)
 			echo "unknown module selection: $selection" >&2
