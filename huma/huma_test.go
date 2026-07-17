@@ -143,9 +143,9 @@ func TestHandle_DefaultErrorMapperSanitizesUnexpectedError(t *testing.T) {
 	var se huma.StatusError
 	require.ErrorAs(t, err, &se)
 	assert.Equal(t, http.StatusInternalServerError, se.GetStatus())
-	if model, ok := se.(*huma.ErrorModel); ok {
-		assert.Empty(t, model.Errors)
-	}
+	model, ok := se.(*huma.ErrorModel)
+	require.True(t, ok, "sanitized error should be huma's default *huma.ErrorModel, got %T", se)
+	assert.Empty(t, model.Errors)
 }
 
 func TestHandle_DefaultErrorMapperPreservesStatusError(t *testing.T) {
@@ -175,9 +175,9 @@ func TestHandle_CustomErrorMapperSanitizesPlainResult(t *testing.T) {
 	var se huma.StatusError
 	require.ErrorAs(t, err, &se)
 	assert.Equal(t, http.StatusInternalServerError, se.GetStatus())
-	if model, ok := se.(*huma.ErrorModel); ok {
-		assert.Empty(t, model.Errors)
-	}
+	model, ok := se.(*huma.ErrorModel)
+	require.True(t, ok, "sanitized error should be huma's default *huma.ErrorModel, got %T", se)
+	assert.Empty(t, model.Errors)
 }
 
 func TestHandle_ErrorMapperStripsInternalStatusErrorWrapper(t *testing.T) {
