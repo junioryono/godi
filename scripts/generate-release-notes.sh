@@ -42,7 +42,9 @@ features=""
 # Hash first: %h never contains '|', and read assigns the rest of the
 # line (embedded pipes included) to the final variable.
 while IFS='|' read -r hash message; do
-	if [[ "$message" =~ $breaking_pattern ]] || [[ "$message" == *"BREAKING CHANGE"* ]]; then
+	# BREAKING CHANGE footers live in the commit body, which the subject-only
+	# log format above cannot carry; check the full message per commit.
+	if [[ "$message" =~ $breaking_pattern ]] || git log -1 --format=%B "$hash" | grep -q 'BREAKING CHANGE'; then
 		clean_message=$(printf '%s\n' "$message" | sed -E 's/^[a-z]+(\([^)]+\))?!?: ?//')
 		breaking="${breaking}* ${clean_message} (${hash})"$'\n'
 	fi
