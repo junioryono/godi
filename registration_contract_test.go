@@ -293,13 +293,38 @@ func TestCollectionKeyedNonComparableKey(t *testing.T) {
 func TestTypedNilConstructorResult(t *testing.T) {
 	t.Parallel()
 
-	c := NewCollection()
-	c.AddTransient(func() *TService { return nil })
-	p, err := c.Build()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = p.Close() })
+	t.Run("transient_rejected_at_resolution", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddTransient(func() *TService { return nil })
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
 
-	service, err := Resolve[*TService](p)
-	require.Error(t, err)
-	assert.Nil(t, service)
+		service, err := Resolve[*TService](p)
+		require.Error(t, err)
+		assert.Nil(t, service)
+	})
+
+	t.Run("result_object_interface_field_not_cached", func(t *testing.T) {
+		t.Parallel()
+		// A typed-nil pointer stored in an interface field reports IsNil() ==
+		// false on the interface itself; it must still be treated as "not
+		// provided" like a directly nil field, not cached as a valid service.
+		type nilResult struct {
+			Out
+			Iface TInterface
+		}
+		c := NewCollection()
+		c.AddScoped(func() nilResult {
+			return nilResult{Iface: (*TService)(nil)}
+		})
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+
+		service, err := Resolve[TInterface](p)
+		require.Error(t, err)
+		assert.Nil(t, service)
+	})
 }

@@ -251,10 +251,16 @@ func (p *ResultObjectProcessor) ProcessResultObject(
 			continue
 		}
 
-		// Skip nil values for types that can be nil
-		switch fieldValue.Kind() {
+		// Skip nil values for types that can be nil, unwrapping interfaces so
+		// a typed-nil pointer stored in an interface field is also treated as
+		// "not provided" rather than cached as a valid service.
+		nilCheck := fieldValue
+		for nilCheck.Kind() == reflect.Interface && !nilCheck.IsNil() {
+			nilCheck = nilCheck.Elem()
+		}
+		switch nilCheck.Kind() {
 		case reflect.Pointer, reflect.Interface, reflect.Slice, reflect.Map, reflect.Chan, reflect.Func:
-			if fieldValue.IsNil() {
+			if nilCheck.IsNil() {
 				continue
 			}
 		}
