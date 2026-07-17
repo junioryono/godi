@@ -194,7 +194,9 @@ func (s *scope) GetKeyed(serviceType reflect.Type, serviceKey any) (any, error) 
 	}
 
 	// Keys are used in map lookups; a non-comparable key would panic there.
-	if !reflect.TypeOf(serviceKey).Comparable() {
+	// Value-level comparability: a comparable static type can still wrap a
+	// non-comparable value in an interface field and panic as a map key.
+	if !reflect.ValueOf(serviceKey).Comparable() {
 		return nil, &ValidationError{
 			ServiceType: serviceType,
 			Cause:       fmt.Errorf("service key of type %T is not comparable and cannot be used as a key", serviceKey),

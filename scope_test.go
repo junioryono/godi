@@ -926,10 +926,19 @@ func TestGetKeyedNonComparableKey(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = p.Close() })
 
-	require.NotPanics(t, func() {
-		_, err := p.GetKeyed(PtrTypeOf[TService](), []string{"not", "comparable"})
-		require.Error(t, err)
-	})
+	// Both a directly non-comparable key and a comparable struct wrapping a
+	// non-comparable value in an interface field (which passes a type-level
+	// comparability check but panics as a map key).
+	keys := []any{
+		[]string{"not", "comparable"},
+		struct{ V any }{V: []int{1}},
+	}
+	for _, key := range keys {
+		require.NotPanics(t, func() {
+			_, err := p.GetKeyed(PtrTypeOf[TService](), key)
+			require.Error(t, err)
+		})
+	}
 }
 
 func TestScopeInitFailureCleansUpPartialState(t *testing.T) {
