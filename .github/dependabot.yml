@@ -13,66 +13,107 @@ updates:
 
   - package-ecosystem: gomod
     directory: /
-    schedule: &weekly
+    schedule:
       interval: weekly
-    groups: &go_groups
+    groups:
       go-dependencies:
         patterns: ["*"]
-    commit-message: &go_commit
+    commit-message:
       prefix: chore
       include: scope
 
   - package-ecosystem: gomod
     directory: /http
-    schedule: *weekly
-    groups: *go_groups
-    commit-message: *go_commit
+    schedule:
+      interval: weekly
+    groups:
+      go-dependencies:
+        patterns: ["*"]
+    commit-message:
+      prefix: chore
+      include: scope
 
   - package-ecosystem: gomod
     directory: /chi
-    schedule: *weekly
-    groups: *go_groups
-    commit-message: *go_commit
+    schedule:
+      interval: weekly
+    groups:
+      go-dependencies:
+        patterns: ["*"]
+    commit-message:
+      prefix: chore
+      include: scope
 
   - package-ecosystem: gomod
     directory: /echo
-    schedule: *weekly
-    groups: *go_groups
-    commit-message: *go_commit
+    schedule:
+      interval: weekly
+    groups:
+      go-dependencies:
+        patterns: ["*"]
+    commit-message:
+      prefix: chore
+      include: scope
 
   - package-ecosystem: gomod
     directory: /fiber
-    schedule: *weekly
-    groups: *go_groups
-    commit-message: *go_commit
+    schedule:
+      interval: weekly
+    groups:
+      go-dependencies:
+        patterns: ["*"]
+    commit-message:
+      prefix: chore
+      include: scope
 
   - package-ecosystem: gomod
     directory: /gin
-    schedule: *weekly
-    groups: *go_groups
-    commit-message: *go_commit
+    schedule:
+      interval: weekly
+    groups:
+      go-dependencies:
+        patterns: ["*"]
+    commit-message:
+      prefix: chore
+      include: scope
 
   - package-ecosystem: gomod
     directory: /huma
-    schedule: *weekly
-    groups: *go_groups
-    commit-message: *go_commit
+    schedule:
+      interval: weekly
+    groups:
+      go-dependencies:
+        patterns: ["*"]
+    commit-message:
+      prefix: chore
+      include: scope
 
   - package-ecosystem: gomod
     directory: /benchmarks
-    schedule: *weekly
-    groups: *go_groups
-    commit-message: *go_commit
+    schedule:
+      interval: weekly
+    groups:
+      go-dependencies:
+        patterns: ["*"]
+    commit-message:
+      prefix: chore
+      include: scope
 
   - package-ecosystem: gomod
     directory: /integrationtests
-    schedule: *weekly
-    groups: *go_groups
-    commit-message: *go_commit
+    schedule:
+      interval: weekly
+    groups:
+      go-dependencies:
+        patterns: ["*"]
+    commit-message:
+      prefix: chore
+      include: scope
 
   - package-ecosystem: pip
     directory: /docs
-    schedule: *weekly
+    schedule:
+      interval: weekly
     groups:
       documentation:
         patterns: ["*"]
