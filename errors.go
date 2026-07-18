@@ -407,6 +407,11 @@ func (e DisposalError) Error() string {
 	return sb.String()
 }
 
+// Unwrap exposes every cleanup failure to errors.Is and errors.As.
+func (e DisposalError) Unwrap() []error {
+	return e.Errors
+}
+
 // formatType formats a reflect.Type for error messages.
 func formatType(t reflect.Type) string {
 	if t == nil {

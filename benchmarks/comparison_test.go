@@ -1,6 +1,6 @@
 // Package benchmarks provides comparative benchmarks between godi and other DI libraries.
 //
-// Run benchmarks with: go test -bench=. -benchmem ./benchmarks/
+// Run benchmarks from the repository root with: make benchmark
 package benchmarks
 
 import (
@@ -77,10 +77,10 @@ func NewUserService(logger *Logger, config *Config, db *Database, cache *Cache, 
 }
 
 // =============================================================================
-// Container/Provider Build Benchmarks
+// Registration Benchmarks
 // =============================================================================
 
-func BenchmarkBuild_Godi(b *testing.B) {
+func BenchmarkRegistration_Godi(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		c := godi.NewCollection()
@@ -90,25 +90,35 @@ func BenchmarkBuild_Godi(b *testing.B) {
 		c.AddSingleton(NewCache)
 		c.AddSingleton(NewDep5)
 		c.AddSingleton(NewUserService)
-		p, _ := c.Build()
-		p.Close()
 	}
 }
 
-func BenchmarkBuild_Dig(b *testing.B) {
+func BenchmarkRegistration_Dig(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		c := dig.New()
-		c.Provide(NewLogger)
-		c.Provide(NewConfig)
-		c.Provide(NewDatabase)
-		c.Provide(NewCache)
-		c.Provide(NewDep5)
-		c.Provide(NewUserService)
+		if err := c.Provide(NewLogger); err != nil {
+			b.Fatal(err)
+		}
+		if err := c.Provide(NewConfig); err != nil {
+			b.Fatal(err)
+		}
+		if err := c.Provide(NewDatabase); err != nil {
+			b.Fatal(err)
+		}
+		if err := c.Provide(NewCache); err != nil {
+			b.Fatal(err)
+		}
+		if err := c.Provide(NewDep5); err != nil {
+			b.Fatal(err)
+		}
+		if err := c.Provide(NewUserService); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
-func BenchmarkBuild_Do(b *testing.B) {
+func BenchmarkRegistration_Do(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		injector := do.New()
@@ -134,7 +144,6 @@ func BenchmarkBuild_Do(b *testing.B) {
 			dep5 := do.MustInvoke[*Dep5](i)
 			return NewUserService(logger, config, db, cache, dep5), nil
 		})
-		injector.Shutdown()
 	}
 }
 

@@ -3,36 +3,60 @@ name: Tag
 on:
   workflow_dispatch:
     inputs:
-      version_bump:
-        description: "Version bump type"
+      version:
+        description: Exact release version (for example v5.0.2)
         required: true
-        type: choice
-        options:
-          - Patch
-          - Minor
-          - Major
+        type: string
+      confirm_major:
+        description: Type MAJOR for a migrated major-version release
+        required: false
+        type: string
+
+concurrency:
+  group: release-tags
+  cancel-in-progress: false
+
+permissions:
+  contents: read
 
 jobs:
+  guard:
+    name: Validate Release Ref
+    runs-on: ubuntu-latest
+    outputs:
+      dispatch_sha: ${{ steps.sha.outputs.dispatch_sha }}
+    steps:
+      - name: Require main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "Releases must be dispatched from main, not $GITHUB_REF" >&2
+          exit 1
+
+      - name: Record tested commit
+        id: sha
+        run: echo "dispatch_sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
   run-tests:
     name: Run Tests
+    needs: guard
     uses: ./.github/workflows/test.yml
-    permissions:
-      contents: read
-      security-events: write
+    secrets: inherit
 
   tag:
-    name: Create Tag
+    name: Create Tags
+    needs: [guard, run-tests]
     runs-on: ubuntu-latest
-    needs: run-tests
-    if: success()
-
+    environment: release
+    outputs:
+      release_tag: ${{ steps.release.outputs.new_tag }}
+      release_commit: ${{ steps.release.outputs.commit }}
     permissions:
       contents: write
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
+      - name: Checkout main
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
+          ref: ${{ needs.guard.outputs.dispatch_sha }}
           fetch-depth: 0
           token: ${{ secrets.RELEASE_TOKEN }}
 
@@ -41,122 +65,40 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
 
-      - name: Get current version
-        id: current_version
-        run: |
-          # Get the highest semantic version tag (not just reachable from HEAD)
-          LATEST_TAG=$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -t. -k1,1Vr -k2,2nr -k3,3nr | head -n1)
-          LATEST_TAG=${LATEST_TAG:-v0.0.0}
-          echo "Latest tag: $LATEST_TAG"
-
-          # Extract version numbers
-          VERSION=${LATEST_TAG#v}
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
-
-          # Default to 0 if empty
-          MAJOR=${MAJOR:-0}
-          MINOR=${MINOR:-0}
-          PATCH=${PATCH:-0}
-
-          echo "Current version: $MAJOR.$MINOR.$PATCH"
-          echo "major=$MAJOR" >> $GITHUB_OUTPUT
-          echo "minor=$MINOR" >> $GITHUB_OUTPUT
-          echo "patch=$PATCH" >> $GITHUB_OUTPUT
-          echo "current_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
-
-      - name: Calculate new version
-        id: new_version
-        run: |
-          MAJOR=${{ steps.current_version.outputs.major }}
-          MINOR=${{ steps.current_version.outputs.minor }}
-          PATCH=${{ steps.current_version.outputs.patch }}
-
-          VERSION_BUMP="${{ github.event.inputs.version_bump }}"
-
-          case "$VERSION_BUMP" in
-            Major)
-              MAJOR=$((MAJOR + 1))
-              MINOR=0
-              PATCH=0
-              ;;
-            Minor)
-              MINOR=$((MINOR + 1))
-              PATCH=0
-              ;;
-            Patch)
-              PATCH=$((PATCH + 1))
-              ;;
-            *)
-              echo "Invalid version bump type: $VERSION_BUMP"
-              exit 1
-              ;;
-          esac
-
-          NEW_VERSION="v$MAJOR.$MINOR.$PATCH"
-          echo "New version: $NEW_VERSION"
-          echo "new_tag=$NEW_VERSION" >> $GITHUB_OUTPUT
-          echo "version=$MAJOR.$MINOR.$PATCH" >> $GITHUB_OUTPUT
-
-      - name: Create and push tags
-        run: |
-          NEW_TAG="${{ steps.new_version.outputs.new_tag }}"
-
-          # Check if main tag already exists
-          if git rev-parse "$NEW_TAG" >/dev/null 2>&1; then
-            echo "❌ Error: Tag $NEW_TAG already exists!"
-            echo "This may indicate a version calculation issue. Please check existing tags."
-            git tag -l 'v*' | sort -V | tail -5
-            exit 1
-          fi
-
-          # Define submodules that need their own tags
-          SUBMODULES="gin chi echo fiber http huma"
-
-          # Check if any submodule tag already exists
-          for submod in $SUBMODULES; do
-            SUBMOD_TAG="${submod}/${NEW_TAG}"
-            if git rev-parse "$SUBMOD_TAG" >/dev/null 2>&1; then
-              echo "❌ Error: Tag $SUBMOD_TAG already exists!"
-              exit 1
-            fi
-          done
-
-          # Create annotated tag for main module
-          git tag -a "$NEW_TAG" -m "Release $NEW_TAG - ${{ github.event.inputs.version_bump }} version bump"
-          echo "✅ Created main module tag: $NEW_TAG"
-
-          # Create annotated tags for each submodule
-          for submod in $SUBMODULES; do
-            SUBMOD_TAG="${submod}/${NEW_TAG}"
-            git tag -a "$SUBMOD_TAG" -m "Release $SUBMOD_TAG - ${{ github.event.inputs.version_bump }} version bump"
-            echo "✅ Created submodule tag: $SUBMOD_TAG"
-          done
-
-          # Push all tags at once
-          git push origin "$NEW_TAG"
-          for submod in $SUBMODULES; do
-            git push origin "${submod}/${NEW_TAG}"
-          done
-
-          echo "✅ Successfully pushed all tags"
+      - name: Create and push the atomic tag set
+        id: release
+        env:
+          CONFIRM_MAJOR: ${{ inputs.confirm_major }}
+          RELEASE_REMOTE: origin
+        run: scripts/release-tags.sh "${{ inputs.version }}"
 
       - name: Summary
         run: |
-          NEW_TAG="${{ steps.new_version.outputs.new_tag }}"
-          SUBMODULES="gin chi echo fiber http huma"
+          new_tag="${{ steps.release.outputs.new_tag }}"
+          current_tag="${{ steps.release.outputs.current_tag }}"
+          {
+            echo "## Tag Creation Summary"
+            echo
+            echo "- **Version bump:** ${{ steps.release.outputs.bump }}"
+            echo "- **Previous tag:** $current_tag"
+            echo "- **New tag:** $new_tag"
+            echo
+            echo "| Module | Tag | Go command |"
+            echo "| --- | --- | --- |"
+            root_module=$(awk '$1 == "module" { print $2; exit }' go.mod)
+            echo "| godi | \`$new_tag\` | \`go get $root_module@$new_tag\` |"
+            while IFS= read -r module; do
+              module_path=$(awk '$1 == "module" { print $2; exit }' "$module/go.mod")
+              echo "| $module | \`$module/$new_tag\` | \`go get $module_path@$new_tag\` |"
+            done < <(scripts/module-matrix.sh release | tr -d '[]"' | tr ',' '\n')
+          } >> "$GITHUB_STEP_SUMMARY"
 
-          echo "## Tag Creation Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Version Bump Type:** ${{ github.event.inputs.version_bump }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Previous Tag:** ${{ steps.current_version.outputs.current_tag }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Created Tags" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Module | Tag | Go Get Command |" >> $GITHUB_STEP_SUMMARY
-          echo "|--------|-----|----------------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Main (godi/v5) | \`$NEW_TAG\` | \`go get github.com/junioryono/godi/v5@$NEW_TAG\` |" >> $GITHUB_STEP_SUMMARY
-          for submod in $SUBMODULES; do
-            echo "| $submod | \`${submod}/$NEW_TAG\` | \`go get github.com/junioryono/godi/v5/${submod}@$NEW_TAG\` |" >> $GITHUB_STEP_SUMMARY
-          done
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "✅ All tests passed and all tags have been created successfully!" >> $GITHUB_STEP_SUMMARY
+  github-release:
+    name: Create GitHub Release
+    needs: tag
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.tag.outputs.release_tag }}
+      commit: ${{ needs.tag.outputs.release_commit }}

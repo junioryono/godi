@@ -43,14 +43,18 @@ type Option func(*Config)
 // WithErrorHandler sets the error handler for scope creation failures.
 func WithErrorHandler(h func(echo.Context, error) error) Option {
 	return func(c *Config) {
-		c.ErrorHandler = h
+		if h != nil {
+			c.ErrorHandler = h
+		}
 	}
 }
 
 // WithCloseErrorHandler sets the error handler for scope close failures.
 func WithCloseErrorHandler(h func(error)) Option {
 	return func(c *Config) {
-		c.CloseErrorHandler = h
+		if h != nil {
+			c.CloseErrorHandler = h
+		}
 	}
 }
 
@@ -58,7 +62,9 @@ func WithCloseErrorHandler(h func(error)) Option {
 // Multiple middlewares are executed in the order they are added.
 func WithMiddleware(mw func(godi.Scope, echo.Context) error) Option {
 	return func(c *Config) {
-		c.Middlewares = append(c.Middlewares, mw)
+		if mw != nil {
+			c.Middlewares = append(c.Middlewares, mw)
+		}
 	}
 }
 
@@ -74,11 +80,34 @@ func defaultConfig() *Config {
 	}
 }
 
+func normalizeConfig(c *Config) {
+	defaults := defaultConfig()
+	if c.ErrorHandler == nil {
+		c.ErrorHandler = defaults.ErrorHandler
+	}
+	if c.CloseErrorHandler == nil {
+		c.CloseErrorHandler = defaults.CloseErrorHandler
+	}
+	// Copy while filtering nils: reslicing in place would mutate a
+	// caller-owned slice assigned via a custom option.
+	middlewares := make([]func(godi.Scope, echo.Context) error, 0, len(c.Middlewares))
+	for _, middleware := range c.Middlewares {
+		if middleware != nil {
+			middlewares = append(middlewares, middleware)
+		}
+	}
+	c.Middlewares = middlewares
+}
+
 // ScopeMiddleware creates an Echo middleware that creates a request-scoped
 // container for each request. The scope is attached to the request context
 // and can be retrieved using godi.FromContext.
 //
 // The scope is automatically closed when the request completes.
+// Downstream errors are dispatched through Echo's HTTPErrorHandler while the
+// scope is alive, then consumed to prevent duplicate handling. Middleware that
+// must inspect returned errors, including panic recovery, must run inside this
+// middleware in the request chain.
 //
 // Example:
 //
@@ -87,8 +116,11 @@ func defaultConfig() *Config {
 func ScopeMiddleware(provider godi.Provider, opts ...Option) echo.MiddlewareFunc {
 	cfg := defaultConfig()
 	for _, opt := range opts {
-		opt(cfg)
+		if opt != nil {
+			opt(cfg)
+		}
 	}
+	normalizeConfig(cfg)
 
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
@@ -109,13 +141,23 @@ func ScopeMiddleware(provider godi.Provider, opts ...Option) echo.MiddlewareFunc
 			// Run middlewares
 			for _, mw := range cfg.Middlewares {
 				if err := mw(scope, c); err != nil {
-					return cfg.ErrorHandler(c, err)
+					return dispatchError(c, cfg.ErrorHandler(c, err))
 				}
 			}
 
-			return next(c)
+			return dispatchError(c, next(c))
 		}
 	}
+}
+
+func dispatchError(c echo.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	// Render while request-scoped services are still alive, then consume the
+	// error so Echo does not invoke the same handler again after scope teardown.
+	c.Echo().HTTPErrorHandler(err, c)
+	return nil
 }
 
 // HandlerConfig holds configuration for the Handle wrapper.
@@ -146,21 +188,27 @@ func WithPanicRecovery(enabled bool) HandlerOption {
 // WithPanicHandler sets the handler for panics.
 func WithPanicHandler(h func(echo.Context, any) error) HandlerOption {
 	return func(c *HandlerConfig) {
-		c.PanicHandler = h
+		if h != nil {
+			c.PanicHandler = h
+		}
 	}
 }
 
 // WithScopeErrorHandler sets the error handler for scope retrieval failures.
 func WithScopeErrorHandler(h func(echo.Context, error) error) HandlerOption {
 	return func(c *HandlerConfig) {
-		c.ScopeErrorHandler = h
+		if h != nil {
+			c.ScopeErrorHandler = h
+		}
 	}
 }
 
 // WithResolutionErrorHandler sets the error handler for service resolution failures.
 func WithResolutionErrorHandler(h func(echo.Context, error) error) HandlerOption {
 	return func(c *HandlerConfig) {
-		c.ResolutionErrorHandler = h
+		if h != nil {
+			c.ResolutionErrorHandler = h
+		}
 	}
 }
 
@@ -182,6 +230,19 @@ func defaultHandlerConfig() *HandlerConfig {
 	}
 }
 
+func normalizeHandlerConfig(c *HandlerConfig) {
+	defaults := defaultHandlerConfig()
+	if c.PanicHandler == nil {
+		c.PanicHandler = defaults.PanicHandler
+	}
+	if c.ScopeErrorHandler == nil {
+		c.ScopeErrorHandler = defaults.ScopeErrorHandler
+	}
+	if c.ResolutionErrorHandler == nil {
+		c.ResolutionErrorHandler = defaults.ResolutionErrorHandler
+	}
+}
+
 // Handle wraps a controller method for type-safe resolution from the request scope.
 // The controller type T is resolved from the scope attached to the request context.
 //
@@ -197,13 +258,22 @@ func defaultHandlerConfig() *HandlerConfig {
 func Handle[T any](method func(T, echo.Context) error, opts ...HandlerOption) echo.HandlerFunc {
 	cfg := defaultHandlerConfig()
 	for _, opt := range opts {
-		opt(cfg)
+		if opt != nil {
+			opt(cfg)
+		}
 	}
+	normalizeHandlerConfig(cfg)
 
 	return func(c echo.Context) (err error) {
 		if cfg.PanicRecovery {
 			defer func() {
 				if v := recover(); v != nil {
+					// http.ErrAbortHandler is the net/http contract for aborting a
+					// response mid-write; suppressing it would send a bogus 500 on
+					// a deliberately aborted connection.
+					if v == http.ErrAbortHandler { //nolint:errorlint // sentinel panic value, compared by identity
+						panic(v)
+					}
 					err = cfg.PanicHandler(c, v)
 				}
 			}()

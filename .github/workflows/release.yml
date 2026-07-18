@@ -1,9 +1,30 @@
 name: Release
 
+# Releases are created by tag.yml (via workflow_call) after it pushes the
+# atomic tag set, or manually via workflow_dispatch for recovery. There is
+# deliberately no push-tag trigger: it would run this workflow a second time
+# for the same tag.
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_call:
+    inputs:
+      tag:
+        description: Strict release tag
+        required: true
+        type: string
+      commit:
+        description: Commit shared by the complete release tag set
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Strict release tag to recover or recreate
+        required: true
+        type: string
+      commit:
+        description: Exact commit shared by the release tag set
+        required: true
+        type: string
 
 jobs:
   release:
@@ -11,148 +32,39 @@ jobs:
     runs-on: ubuntu-latest
 
     concurrency:
-      group: release
+      group: release-${{ inputs.tag }}
       cancel-in-progress: false
 
     permissions:
       contents: write
-      pull-requests: write
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
+          ref: ${{ inputs.commit }}
           fetch-depth: 0
-          token: ${{ secrets.RELEASE_TOKEN }}
 
-      - name: Setup Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: 1.26.x
-
-      - name: Configure Git
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email 'github-actions[bot]@users.noreply.github.com'
+      - name: Validate release tag set
+        id: validate
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: scripts/validate-release-set.sh "$RELEASE_TAG"
 
       - name: Generate Release Notes
         id: changelog
+        env:
+          MODULE_PATH: ${{ steps.validate.outputs.module_path }}
+          RELEASE_TAG: ${{ steps.validate.outputs.tag }}
+        run: scripts/generate-release-notes.sh "$RELEASE_TAG" "$MODULE_PATH"
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          # Get current and previous tags
-          CURRENT_TAG=${GITHUB_REF#refs/tags/}
-          VERSION=${CURRENT_TAG#v}
-          PREVIOUS_TAG=$(git describe --tags --abbrev=0 ${CURRENT_TAG}^ 2>/dev/null || echo "")
-
-          echo "current_tag=$CURRENT_TAG" >> $GITHUB_OUTPUT
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "previous_tag=$PREVIOUS_TAG" >> $GITHUB_OUTPUT
-
-          # Create release notes for GitHub release
-          RELEASE_NOTES="release_notes.md"
-          echo "# Release $VERSION" > $RELEASE_NOTES
-          echo "" >> $RELEASE_NOTES
-
-          # Collect commits by type
-          if [ -n "$PREVIOUS_TAG" ]; then
-            COMMITS=$(git log $PREVIOUS_TAG..$CURRENT_TAG --pretty=format:"%s|%h")
+          tag="${{ steps.changelog.outputs.current_tag }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release edit "$tag" --title "$tag" --notes-file release_notes.md
           else
-            COMMITS=$(git log $CURRENT_TAG --pretty=format:"%s|%h")
+            gh release create "$tag" --verify-tag --title "$tag" --notes-file release_notes.md
           fi
-
-          # Parse breaking changes
-          BREAKING=""
-          while IFS='|' read -r msg hash; do
-            # Check for breaking changes (commits with ! or BREAKING CHANGE)
-            if echo "$msg" | grep -qE '^[a-z]+(\([^)]+\))?!:' || echo "$msg" | grep -q 'BREAKING.CHANGE'; then
-              # Extract the actual message after the type
-              CLEAN_MSG=$(echo "$msg" | sed -E 's/^[a-z]+(\([^)]+\))?!?: ?//')
-              BREAKING="${BREAKING}* ${CLEAN_MSG}\n"
-            fi
-          done <<< "$COMMITS"
-
-          if [ -n "$BREAKING" ]; then
-            echo "## ⚠ BREAKING CHANGES" >> $RELEASE_NOTES
-            echo "" >> $RELEASE_NOTES
-            echo -e "$BREAKING" >> $RELEASE_NOTES
-            echo "" >> $RELEASE_NOTES
-          fi
-
-          # Parse bug fixes
-          FIXES=""
-          while IFS='|' read -r msg hash; do
-            # Check for fix commits
-            if echo "$msg" | grep -qE '^fix(\([^)]+\))?:'; then
-              # Extract scope and message
-              if echo "$msg" | grep -qE '^fix\([^)]+\):'; then
-                SCOPE=$(echo "$msg" | sed -E 's/^fix\(([^)]+)\):.*/\1/')
-                CLEAN_MSG=$(echo "$msg" | sed -E 's/^fix\([^)]+\): ?//')
-                FIXES="${FIXES}* **${SCOPE}:** ${CLEAN_MSG} ([${hash}](https://github.com/junioryono/godi/commit/${hash}))\n"
-              else
-                CLEAN_MSG=$(echo "$msg" | sed -E 's/^fix: ?//')
-                FIXES="${FIXES}* ${CLEAN_MSG} ([${hash}](https://github.com/junioryono/godi/commit/${hash}))\n"
-              fi
-            fi
-          done <<< "$COMMITS"
-
-          if [ -n "$FIXES" ]; then
-            echo "## Bug Fixes" >> $RELEASE_NOTES
-            echo "" >> $RELEASE_NOTES
-            echo -e "$FIXES" >> $RELEASE_NOTES
-            echo "" >> $RELEASE_NOTES
-          fi
-
-          # Parse features
-          FEATURES=""
-          while IFS='|' read -r msg hash; do
-            # Check for feature commits
-            if echo "$msg" | grep -qE '^feat(\([^)]+\))?:'; then
-              # Extract scope and message
-              if echo "$msg" | grep -qE '^feat\([^)]+\):'; then
-                SCOPE=$(echo "$msg" | sed -E 's/^feat\(([^)]+)\):.*/\1/')
-                CLEAN_MSG=$(echo "$msg" | sed -E 's/^feat\([^)]+\): ?//')
-                FEATURES="${FEATURES}* **${SCOPE}:** ${CLEAN_MSG} ([${hash}](https://github.com/junioryono/godi/commit/${hash}))\n"
-              else
-                CLEAN_MSG=$(echo "$msg" | sed -E 's/^feat: ?//')
-                FEATURES="${FEATURES}* ${CLEAN_MSG} ([${hash}](https://github.com/junioryono/godi/commit/${hash}))\n"
-              fi
-            fi
-          done <<< "$COMMITS"
-
-          if [ -n "$FEATURES" ]; then
-            echo "## Features" >> $RELEASE_NOTES
-            echo "" >> $RELEASE_NOTES
-            echo -e "$FEATURES" >> $RELEASE_NOTES
-            echo "" >> $RELEASE_NOTES
-          fi
-
-          # Add installation instructions
-          echo "" >> $RELEASE_NOTES
-          echo "## Installation" >> $RELEASE_NOTES
-          echo "" >> $RELEASE_NOTES
-          echo '```bash' >> $RELEASE_NOTES
-          echo "go get github.com/junioryono/godi/v5@$CURRENT_TAG" >> $RELEASE_NOTES
-          echo '```' >> $RELEASE_NOTES
-
-          # Add commit list
-          echo "" >> $RELEASE_NOTES
-          echo "## All Changes" >> $RELEASE_NOTES
-          echo "" >> $RELEASE_NOTES
-          if [ -n "$PREVIOUS_TAG" ]; then
-            git log $PREVIOUS_TAG..$CURRENT_TAG --pretty=format:"* %s" >> $RELEASE_NOTES
-          else
-            git log $CURRENT_TAG --pretty=format:"* %s" >> $RELEASE_NOTES
-          fi
-
-      - name: Create Release
-        uses: ncipollo/release-action@v1
-        with:
-          tag: ${{ steps.changelog.outputs.current_tag }}
-          name: ${{ steps.changelog.outputs.current_tag }}
-          bodyFile: release_notes.md
-          token: ${{ secrets.RELEASE_TOKEN }}
-          draft: false
-
-      - name: Create release branch
-        run: |
-          git checkout -b release/${{ steps.changelog.outputs.current_tag }}
-          git push origin release/${{ steps.changelog.outputs.current_tag }}

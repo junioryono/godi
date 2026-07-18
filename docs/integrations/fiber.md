@@ -54,6 +54,18 @@ app := fiber.New()
 app.Use(godifiber.ScopeMiddleware(provider))
 ```
 
+The scope middleware dispatches downstream errors through Fiber's configured
+`ErrorHandler` before closing the request scope, then consumes the error to
+avoid a second dispatch. Middleware that needs the returned error must be
+registered after the scope middleware so it runs inside the scope. Register
+panic recovery in that position as well:
+
+```go
+app.Use(godifiber.ScopeMiddleware(provider))
+app.Use(logger.New())
+app.Use(recover.New())
+```
+
 ### Configuration Options
 
 ```go
@@ -232,16 +244,12 @@ func main() {
     app := fiber.New(fiber.Config{
         ErrorHandler: func(c *fiber.Ctx, err error) error {
             return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-                "error": err.Error(),
+                "error": "internal server error",
             })
         },
     })
 
-    // Fiber middleware
-    app.Use(logger.New())
-    app.Use(recover.New())
-
-    // godi scope middleware
+    // The scope wraps error observation and recovery so they run before close.
     app.Use(godifiber.ScopeMiddleware(provider,
         godifiber.WithMiddleware(func(scope godi.Scope, c *fiber.Ctx) error {
             reqCtx := godi.MustResolve[*RequestContext](scope)
@@ -249,6 +257,8 @@ func main() {
             return nil
         }),
     ))
+    app.Use(logger.New())
+    app.Use(recover.New())
 
     // Routes
     app.Get("/users", godifiber.Handle((*UserController).List))

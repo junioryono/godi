@@ -27,8 +27,11 @@ var (
 // Analyzer performs reflection-based analysis of constructors and types.
 // It caches analysis results for performance.
 type Analyzer struct {
-	mu    sync.RWMutex
-	cache map[uintptr]*ConstructorInfo
+	mu sync.RWMutex
+	// cache keys retain the analyzed function values (and any closure
+	// captures) until Clear is called, trading that retention for correct
+	// identity: entry-point pointers cannot distinguish closures.
+	cache map[reflect.Value]*ConstructorInfo
 
 	// invoker is the shared ConstructorInvoker for this analyzer. Invokers
 	// are stateless, so a single instance serves every resolution.
@@ -131,7 +134,7 @@ type ParamField struct {
 // New creates a new Analyzer.
 func New() *Analyzer {
 	a := &Analyzer{
-		cache: make(map[uintptr]*ConstructorInfo),
+		cache: make(map[reflect.Value]*ConstructorInfo),
 	}
 	a.invoker = NewConstructorInvoker(a)
 	return a
@@ -167,9 +170,12 @@ func (a *Analyzer) Analyze(constructor any) (*ConstructorInfo, error) {
 		}, nil
 	}
 
-	// For functions, the function pointer keys the cache so different
-	// functions with the same signature are cached separately.
-	cacheKey := val.Pointer()
+	// A function's entry-point pointer does not identify a function value:
+	// closures and bound methods with different captured state can share the
+	// same code pointer. reflect.Value is comparable and includes the function
+	// value's closure/receiver identity, while repeated analysis of the same
+	// function value still hits the cache.
+	cacheKey := val
 
 	// Check cache first
 	a.mu.RLock()
@@ -532,8 +538,12 @@ func (a *Analyzer) getSliceElemType(t reflect.Type) reflect.Type {
 }
 
 // cacheAndReturn caches the analysis result and returns it.
-func (a *Analyzer) cacheAndReturn(key uintptr, info *ConstructorInfo) (*ConstructorInfo, error) {
+func (a *Analyzer) cacheAndReturn(key reflect.Value, info *ConstructorInfo) (*ConstructorInfo, error) {
 	a.mu.Lock()
+	if cached, ok := a.cache[key]; ok {
+		a.mu.Unlock()
+		return cached, nil
+	}
 	a.cache[key] = info
 	a.mu.Unlock()
 
@@ -543,7 +553,7 @@ func (a *Analyzer) cacheAndReturn(key uintptr, info *ConstructorInfo) (*Construc
 // Clear clears the analysis cache.
 func (a *Analyzer) Clear() {
 	a.mu.Lock()
-	a.cache = make(map[uintptr]*ConstructorInfo)
+	a.cache = make(map[reflect.Value]*ConstructorInfo)
 	a.mu.Unlock()
 }
 

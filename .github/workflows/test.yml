@@ -2,232 +2,308 @@ name: Test
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   pull_request:
   workflow_call:
 
+permissions:
+  contents: read
+
+# Tool versions (golangci-lint, gosec, govulncheck, actionlint) are
+# single-sourced from the Makefile.
 env:
-  GO_VERSION: "1.26"
+  GO_VERSION: "1.26.5"
+  COVERAGE_THRESHOLD: "80"
 
 jobs:
-  test:
-    name: Test
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        go: ["1.26"]
-
+  inventory:
+    name: Module Inventory
+    runs-on: ubuntu-latest
+    outputs:
+      all: ${{ steps.matrix.outputs.all }}
+      coverage: ${{ steps.matrix.outputs.coverage }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Validate module inventory
+        run: scripts/check-modules.sh
+
+      - name: Build matrices
+        id: matrix
+        run: |
+          echo "all=$(scripts/module-matrix.sh all)" >> "$GITHUB_OUTPUT"
+          echo "coverage=$(scripts/module-matrix.sh coverage)" >> "$GITHUB_OUTPUT"
+
+  # Ubuntu root tests already run in module-test; this job exists for the
+  # other operating systems.
+  platform-test:
+    name: Root Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Setup Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version: ${{ matrix.go }}
+          go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Get dependencies
-        run: go mod download
+      - name: Run root tests
+        run: go test -race ./...
 
-      - name: Run tests
-        run: go test -v -race -coverprofile coverage.txt -covermode atomic ./...
-
-      - name: Upload coverage to Codecov
-        if: matrix.os == 'ubuntu-latest' && matrix.go == env.GO_VERSION
-        uses: codecov/codecov-action@v7
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-
-  submodules:
-    name: Submodule Tests
+  module-test:
+    name: Module Test (${{ matrix.module }})
+    needs: inventory
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        module: [http, chi, echo, fiber, gin, huma]
-
+        module: ${{ fromJSON(needs.inventory.outputs.all) }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Setup Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-          cache-dependency-path: ${{ matrix.module }}/go.sum
-
-      - name: Verify ${{ matrix.module }} module
-        working-directory: ${{ matrix.module }}
-        run: |
-          go mod verify
-          go mod tidy
-          git diff --exit-code go.mod go.sum
-
-      - name: Vet ${{ matrix.module }}
-        working-directory: ${{ matrix.module }}
-        run: go vet ./...
-
-      - name: Test ${{ matrix.module }}
-        working-directory: ${{ matrix.module }}
-        run: go test -race ./...
-
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-
-      - name: Setup Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v9
-        with:
-          version: latest
-
-  build:
-    name: Build
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-
-      - name: Setup Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
+          cache-dependency-path: ${{ matrix.module == '.' && 'go.sum' || format('{0}/go.sum', matrix.module) }}
 
       - name: Verify module
+        working-directory: ${{ matrix.module }}
         run: |
           go mod verify
-          go mod tidy
-          git diff --exit-code go.mod go.sum
+          go mod tidy -diff
+          go vet ./...
+          go build ./...
+          go test -race ./...
 
-      - name: Build
-        run: go build -v ./...
+  lint:
+    name: Lint (${{ matrix.module }})
+    needs: inventory
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ${{ fromJSON(needs.inventory.outputs.all) }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
-      - name: Check formatting
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: ${{ matrix.module == '.' && 'go.sum' || format('{0}/go.sum', matrix.module) }}
+
+      - name: Read golangci-lint version from Makefile
+        id: tools
         run: |
-          if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
-            echo "Code is not formatted. Please run 'gofmt -s -w .'"
-            gofmt -s -d .
+          version=$(awk -F'[ \t]*\\?=[ \t]*' '$1 == "GOLANGCI_LINT_VERSION" { print $2 }' Makefile)
+          if [[ -z "$version" ]]; then
+            echo "GOLANGCI_LINT_VERSION not found in Makefile" >&2
             exit 1
           fi
+          echo "golangci_lint=$version" >> "$GITHUB_OUTPUT"
 
-  benchmark:
-    name: Benchmark
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
+        with:
+          version: ${{ steps.tools.outputs.golangci_lint }}
+          working-directory: ${{ matrix.module }}
+
+  quality:
+    name: Repository Quality
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Setup Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
+          cache-dependency-path: |
+            go.sum
+            */go.sum
 
-      - name: Run benchmarks
-        run: go test -bench=. -benchmem -run=^$ ./... | tee benchmark.txt
+      - name: Check inventory, formatting, and module metadata
+        run: |
+          make module-check
+          make dependency-check
+          make format-check
+          make tidy-check
 
-      - name: Upload benchmark results
-        uses: actions/upload-artifact@v7
-        with:
-          name: benchmark-results
-          path: benchmark.txt
+      - name: Validate workflows
+        run: make workflow-check
 
-  security:
-    name: Security Scan
+  docs:
+    name: Documentation
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      security-events: write
-
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
-
-      - name: Setup Go
-        uses: actions/setup-go@v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
+          fetch-depth: 0
 
-      - name: Run gosec
-        uses: securego/gosec@master
+      - name: Setup Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          args: "-exclude-dir=fiber -exclude-dir=echo -exclude-dir=gin -exclude-dir=chi -exclude-dir=huma -fmt sarif -out gosec-results.sarif ./..."
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: docs/requirements.txt
 
-      - name: Upload SARIF file
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: gosec-results.sarif
+      - name: Install documentation dependencies
+        run: python -m pip install --requirement docs/requirements.txt
+
+      - name: Build documentation with strict warnings
+        env:
+          SPHINXBUILD: sphinx-build
+        run: make docs
 
   coverage:
-    name: Coverage Report
+    name: Coverage (${{ matrix.module }})
+    needs: inventory
     runs-on: ubuntu-latest
-    needs: test
-
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ${{ fromJSON(needs.inventory.outputs.coverage) }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Setup Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
+          cache-dependency-path: ${{ matrix.module == '.' && 'go.sum' || format('{0}/go.sum', matrix.module) }}
 
-      - name: Generate coverage report
+      - name: Generate and enforce coverage
+        id: coverage
+        shell: bash
+        env:
+          COVERAGE_DIR: coverage
         run: |
-          go test -coverprofile=coverage.out ./...
-          go tool cover -html=coverage.out -o coverage.html
+          scripts/check-coverage.sh "${{ matrix.module }}"
+          name="${{ matrix.module }}"
+          name=${name//\//-}
+          if [[ "$name" == "." ]]; then name=root; fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
 
-      - name: Upload coverage report
-        uses: actions/upload-artifact@v7
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: coverage-report
-          path: |
-            coverage.out
-            coverage.html
+          name: coverage-${{ steps.coverage.outputs.name }}
+          path: coverage/${{ steps.coverage.outputs.name }}.out
 
-      - name: Check coverage threshold
-        run: |
-          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
-          echo "Total coverage: $COVERAGE%"
-          if (( $(echo "$COVERAGE < 80" | bc -l) )); then
-            echo "Coverage is below 80% threshold"
-            exit 1
-          fi
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
+        with:
+          files: coverage/${{ steps.coverage.outputs.name }}.out
+          flags: ${{ steps.coverage.outputs.name }}
+          name: ${{ steps.coverage.outputs.name }}
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  # Tests integration modules against the *published* core module, so it
+  # cannot exercise PR changes; it gates main pushes and releases only.
+  published-compatibility:
+    name: Published Module Compatibility
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            */go.sum
+
+      - name: Test integrations without local replacements
+        run: scripts/check-published-modules.sh
+
+  benchmark:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            benchmarks/go.sum
+
+      - name: Run package and comparison benchmarks
+        env:
+          BENCH_COUNT: "3"
+        run: scripts/run-benchmarks.sh | tee benchmark-results.txt
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: benchmark-results
+          path: benchmark-results.txt
+
+  security:
+    name: Security
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            */go.sum
+
+      - name: Scan every module
+        run: make security
 
   all-checks:
     name: All checks passed
-    runs-on: ubuntu-latest
-    needs: [test, submodules, lint, build, security]
     if: always()
-
+    runs-on: ubuntu-latest
+    needs:
+      - inventory
+      - platform-test
+      - module-test
+      - lint
+      - quality
+      - docs
+      - coverage
+      - published-compatibility
+      - benchmark
+      - security
     steps:
-      - name: Verify all checks passed
+      - name: Verify all required jobs passed
+        env:
+          JOB_RESULTS: ${{ toJSON(needs) }}
         run: |
-          if [[ "${{ needs.test.result }}" != "success" || "${{ needs.submodules.result }}" != "success" || "${{ needs.lint.result }}" != "success" || "${{ needs.build.result }}" != "success" || "${{ needs.security.result }}" != "success" ]]; then
-            echo "One or more checks failed"
-            echo "Test: ${{ needs.test.result }}"
-            echo "Submodules: ${{ needs.submodules.result }}"
-            echo "Lint: ${{ needs.lint.result }}"
-            echo "Build: ${{ needs.build.result }}"
-            echo "Security: ${{ needs.security.result }}"
-            exit 1
-          fi
-          echo "All checks passed successfully"
+          echo "$JOB_RESULTS" | jq .
+          echo "$JOB_RESULTS" | jq -e 'all(.[]; .result == "success" or .result == "skipped")'

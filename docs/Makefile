@@ -6,9 +6,15 @@
 SPHINXOPTS    ?=
 VENVDIR       = _venv
 BINDIR        = $(VENVDIR)/bin
-SPHINXBUILD   = $(BINDIR)/sphinx-build
+SPHINXBUILD   ?= $(BINDIR)/sphinx-build
 SOURCEDIR     = .
 BUILDDIR      = _build
+
+# Bootstrap the local venv only when building with its sphinx-build; CI
+# overrides SPHINXBUILD to use an already-provisioned interpreter.
+ifeq ($(SPHINXBUILD),$(BINDIR)/sphinx-build)
+SPHINXDEPS = $(SPHINXBUILD)
+endif
 
 # Put it first so that "make" without argument is like "make help".
 help: $(SPHINXBUILD)
@@ -28,5 +34,5 @@ clean:
 
 # Catch-all target: route all unknown targets to Sphinx using the new
 # "make mode" option.  $(O) is meant as a shortcut for $(SPHINXOPTS).
-%: Makefile
+%: Makefile $(SPHINXDEPS)
 	@$(SPHINXBUILD) -M $@ "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)

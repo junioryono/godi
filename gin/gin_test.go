@@ -63,7 +63,7 @@ func TestScopeMiddleware(t *testing.T) {
 			c.Status(http.StatusOK)
 		})
 
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
 		rec := httptest.NewRecorder()
 
 		g.ServeHTTP(rec, req)
@@ -92,7 +92,7 @@ func TestScopeMiddleware(t *testing.T) {
 			c.Status(http.StatusOK)
 		})
 
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
 		rec := httptest.NewRecorder()
 
 		g.ServeHTTP(rec, req)
@@ -128,7 +128,7 @@ func TestScopeMiddleware(t *testing.T) {
 			c.Status(http.StatusOK)
 		})
 
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
 		rec := httptest.NewRecorder()
 
 		g.ServeHTTP(rec, req)
@@ -164,7 +164,7 @@ func TestScopeMiddleware(t *testing.T) {
 			c.Status(http.StatusOK)
 		})
 
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
 		rec := httptest.NewRecorder()
 
 		g.ServeHTTP(rec, req)
@@ -190,7 +190,7 @@ func TestHandle(t *testing.T) {
 		g.Use(ScopeMiddleware(provider))
 		g.GET("/value", Handle((*testController).GetValue))
 
-		req := httptest.NewRequest(http.MethodGet, "/value", nil)
+		req := httptest.NewRequest(http.MethodGet, "/value", http.NoBody)
 		rec := httptest.NewRecorder()
 
 		g.ServeHTTP(rec, req)
@@ -211,7 +211,7 @@ func TestHandle(t *testing.T) {
 			}),
 		))
 
-		req := httptest.NewRequest(http.MethodGet, "/value", nil)
+		req := httptest.NewRequest(http.MethodGet, "/value", http.NoBody)
 		rec := httptest.NewRecorder()
 
 		g.ServeHTTP(rec, req)
@@ -241,7 +241,7 @@ func TestHandle(t *testing.T) {
 			}),
 		))
 
-		req := httptest.NewRequest(http.MethodGet, "/value", nil)
+		req := httptest.NewRequest(http.MethodGet, "/value", http.NoBody)
 		rec := httptest.NewRecorder()
 
 		g.ServeHTTP(rec, req)
@@ -274,7 +274,7 @@ func TestHandle(t *testing.T) {
 			}),
 		))
 
-		req := httptest.NewRequest(http.MethodGet, "/panic", nil)
+		req := httptest.NewRequest(http.MethodGet, "/panic", http.NoBody)
 		rec := httptest.NewRecorder()
 
 		g.ServeHTTP(rec, req)
@@ -300,7 +300,7 @@ func TestHandle(t *testing.T) {
 			WithPanicRecovery(false),
 		))
 
-		req := httptest.NewRequest(http.MethodGet, "/panic", nil)
+		req := httptest.NewRequest(http.MethodGet, "/panic", http.NoBody)
 		rec := httptest.NewRecorder()
 
 		assert.Panics(t, func() {
@@ -318,7 +318,7 @@ func TestDefaultConfig(t *testing.T) {
 			cfg.ErrorHandler(c, errors.New("test error"))
 		})
 
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
 		rec := httptest.NewRecorder()
 
 		g.ServeHTTP(rec, req)
@@ -331,6 +331,145 @@ func TestDefaultHandlerConfig(t *testing.T) {
 	t.Run("panic recovery disabled by default", func(t *testing.T) {
 		cfg := defaultHandlerConfig()
 		assert.False(t, cfg.PanicRecovery)
+	})
+}
+
+func TestNilOptionsKeepDefaults(t *testing.T) {
+	assert.NotPanics(t, func() { ScopeMiddleware(nil, Option(nil)) })
+	assert.NotPanics(t, func() { Handle((*testController).GetValue, HandlerOption(nil)) })
+
+	var normalizedCfg *Config
+	ScopeMiddleware(nil, func(cfg *Config) {
+		cfg.ErrorHandler = nil
+		cfg.CloseErrorHandler = nil
+		normalizedCfg = cfg
+	})
+	assert.NotNil(t, normalizedCfg.ErrorHandler)
+	assert.NotNil(t, normalizedCfg.CloseErrorHandler)
+
+	var normalizedHandlerCfg *HandlerConfig
+	Handle((*testController).GetValue, func(cfg *HandlerConfig) {
+		cfg.PanicHandler = nil
+		cfg.ScopeErrorHandler = nil
+		cfg.ResolutionErrorHandler = nil
+		normalizedHandlerCfg = cfg
+	})
+	assert.NotNil(t, normalizedHandlerCfg.PanicHandler)
+	assert.NotNil(t, normalizedHandlerCfg.ScopeErrorHandler)
+	assert.NotNil(t, normalizedHandlerCfg.ResolutionErrorHandler)
+
+	cfg := defaultConfig()
+	WithErrorHandler(nil)(cfg)
+	WithCloseErrorHandler(nil)(cfg)
+	WithMiddleware(nil)(cfg)
+	assert.NotNil(t, cfg.ErrorHandler)
+	assert.NotNil(t, cfg.CloseErrorHandler)
+	assert.Empty(t, cfg.Middlewares)
+
+	handlerCfg := defaultHandlerConfig()
+	WithPanicHandler(nil)(handlerCfg)
+	WithScopeErrorHandler(nil)(handlerCfg)
+	WithResolutionErrorHandler(nil)(handlerCfg)
+	assert.NotNil(t, handlerCfg.PanicHandler)
+	assert.NotNil(t, handlerCfg.ScopeErrorHandler)
+	assert.NotNil(t, handlerCfg.ResolutionErrorHandler)
+}
+
+func TestTerminalErrorsAbortHandlerChain(t *testing.T) {
+	t.Run("scope creation failure", func(t *testing.T) {
+		collection := godi.NewCollection()
+		provider, err := collection.Build()
+		assert.NoError(t, err)
+		assert.NoError(t, provider.Close())
+
+		nextCalled := false
+		g := gin.New()
+		g.Use(ScopeMiddleware(provider, WithErrorHandler(func(c *gin.Context, err error) {
+			c.Status(http.StatusServiceUnavailable)
+		})))
+		g.GET("/test", func(c *gin.Context) { nextCalled = true })
+		g.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/test", http.NoBody))
+		assert.False(t, nextCalled)
+	})
+
+	t.Run("scope initializer failure", func(t *testing.T) {
+		collection := godi.NewCollection()
+		provider, err := collection.Build()
+		assert.NoError(t, err)
+		defer provider.Close()
+
+		nextCalled := false
+		var requestScope godi.Scope
+		g := gin.New()
+		g.Use(ScopeMiddleware(provider,
+			WithMiddleware(func(scope godi.Scope, _ *gin.Context) error {
+				requestScope = scope
+				return errors.New("stop")
+			}),
+			WithErrorHandler(func(c *gin.Context, err error) { c.Status(http.StatusBadRequest) }),
+		))
+		g.GET("/test", func(c *gin.Context) { nextCalled = true })
+		g.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/test", http.NoBody))
+		assert.False(t, nextCalled)
+		assert.NotNil(t, requestScope)
+		_, err = godi.Resolve[*testService](requestScope)
+		assert.ErrorIs(t, err, godi.ErrScopeDisposed)
+	})
+
+	t.Run("missing scope", func(t *testing.T) {
+		nextCalled := false
+		g := gin.New()
+		g.GET("/test",
+			Handle((*testController).GetValue, WithScopeErrorHandler(func(c *gin.Context, err error) {
+				c.Status(http.StatusInternalServerError)
+			})),
+			func(c *gin.Context) { nextCalled = true },
+		)
+		g.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/test", http.NoBody))
+		assert.False(t, nextCalled)
+	})
+
+	t.Run("resolution failure", func(t *testing.T) {
+		collection := godi.NewCollection()
+		provider, err := collection.Build()
+		assert.NoError(t, err)
+		defer provider.Close()
+
+		nextCalled := false
+		g := gin.New()
+		g.Use(ScopeMiddleware(provider))
+		g.GET("/test",
+			Handle((*testController).GetValue, WithResolutionErrorHandler(func(c *gin.Context, err error) {
+				c.Status(http.StatusInternalServerError)
+			})),
+			func(c *gin.Context) { nextCalled = true },
+		)
+		g.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/test", http.NoBody))
+		assert.False(t, nextCalled)
+	})
+
+	t.Run("recovered panic", func(t *testing.T) {
+		collection := godi.NewCollection()
+		collection.AddScoped(func() *testService { return &testService{} })
+		collection.AddScoped(newTestController)
+		provider, err := collection.Build()
+		assert.NoError(t, err)
+		defer provider.Close()
+
+		nextCalled := false
+		g := gin.New()
+		g.Use(ScopeMiddleware(provider))
+		g.GET("/test",
+			Handle((*testController).Panic,
+				WithPanicRecovery(true),
+				WithPanicHandler(func(c *gin.Context, recovered any) {
+					c.Status(http.StatusInternalServerError)
+				}),
+			),
+			func(c *gin.Context) { nextCalled = true },
+		)
+		g.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/test", http.NoBody))
+		assert.False(t, nextCalled)
 	})
 }
 
@@ -360,7 +499,7 @@ func TestIntegration(t *testing.T) {
 			c.String(http.StatusOK, "OK")
 		}))
 
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
 		rec := httptest.NewRecorder()
 
 		g.ServeHTTP(rec, req)

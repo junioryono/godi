@@ -206,7 +206,7 @@ func main() {
 | Fiber     | `github.com/junioryono/godi/fiber/v5` | `go get github.com/junioryono/godi/fiber/v5` |
 | Huma      | `github.com/junioryono/godi/huma/v5`  | `go get github.com/junioryono/godi/huma/v5`  |
 
-Huma runs on top of a router, so pair `godi/v5/huma` with the matching router
+Huma runs on top of a router, so pair `godi/huma/v5` with the matching router
 integration above — the router middleware owns the request scope, and Huma
 propagates it to your typed operation handlers.
 
@@ -377,58 +377,20 @@ func TestUserService(t *testing.T) {
 
 ## Performance
 
-Benchmarks comparing godi with [dig](https://github.com/uber-go/dig) (Uber's DI, powers Fx) and [do](https://github.com/samber/do) (samber's DI).
-
-Run on Apple M2 Max (Go 1.26). 🏆 marks the fastest in each benchmark.
-[Source code](benchmarks/comparison_test.go).
-
-### Singleton Resolution
-
-| Library  | ns/op | B/op | allocs/op | vs fastest  |
-| -------- | ----: | ---: | --------: | ----------- |
-| godi 🏆  |    55 |    0 |         0 | fastest     |
-| do       |   180 |  192 |         6 | 3.3x slower |
-| dig      |   640 |  736 |        20 | 12x slower  |
-
-godi uses a lock-free cache with **zero allocations**. Singletons are created at build time, so every resolution is a fast cache lookup.
-
-### Concurrent Resolution
-
-| Library  | ns/op | B/op | allocs/op | vs fastest  |
-| -------- | ----: | ---: | --------: | ----------- |
-| godi 🏆  |     7 |    0 |         0 | fastest     |
-| do       |   297 |  224 |         6 | 42x slower  |
-| dig      |   366 |  736 |        20 | 52x slower  |
-
-Under high concurrency, godi is **40-50x faster** with zero contention.
-
-### Transient Resolution
-
-| Library  | ns/op | B/op | allocs/op | vs fastest  |
-| -------- | ----: | ---: | --------: | ----------- |
-| godi 🏆  |   176 |   40 |         2 | fastest     |
-| do       |   188 |  208 |         7 | 1.1x slower |
-
-New instance created on each call.
-
-### Cold Start
-
-| Library  |  ns/op |   B/op | allocs/op | vs fastest  |
-| -------- | -----: | -----: | --------: | ----------- |
-| godi 🏆  | 17,500 | 21,064 |       155 | fastest     |
-| dig      | 36,000 | 37,665 |       549 | 2.1x slower |
-| do       | 47,000 | 30,511 |       351 | 2.7x slower |
-
-Full cycle: create container, register services, build, resolve. godi is **2x faster** than dig.
-
-<details>
-<summary>Run benchmarks yourself</summary>
+The repository includes package-level benchmarks and a separate comparison suite for
+[dig](https://github.com/uber-go/dig) and [do](https://github.com/samber/do). Dependency
+versions are locked in [benchmarks/go.mod](benchmarks/go.mod), and every run records the
+commit, timestamp, Go version, OS, and architecture alongside the raw results.
 
 ```bash
-cd benchmarks && go test -bench=. -benchmem
+make benchmark
 ```
 
-</details>
+Benchmark results depend on the machine, toolchain, and system load. CI publishes the
+raw `benchmark-results` artifact for each run; compare repeated samples with
+[`benchstat`](https://pkg.go.dev/golang.org/x/perf/cmd/benchstat) instead of treating a
+single run as a stable product claim. See the [comparison source](benchmarks/comparison_test.go)
+for the exact workloads.
 
 ## Documentation
 
@@ -440,6 +402,7 @@ cd benchmarks && go test -bench=. -benchmem
 - [Integrations](https://godi.readthedocs.io/en/latest/integrations/) - Gin, Chi, Echo, Fiber, net/http, Huma
 - [Guides](https://godi.readthedocs.io/en/latest/guides/) - Web apps, testing, error handling
 - [API Reference](https://pkg.go.dev/github.com/junioryono/godi/v5)
+- [Executable Quick Start](docs/examples/quickstart/main.go)
 
 ## Contributing
 

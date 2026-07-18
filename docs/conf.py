@@ -7,6 +7,7 @@
 
 import subprocess
 from datetime import datetime
+from pathlib import Path
 
 # -- Project information -----------------------------------------------------
 
@@ -14,14 +15,15 @@ project = 'godi'
 author = 'junioryono'
 copyright = f'{datetime.now().year}, {author}'
 
-# Read version from git tags
+# Read the latest root-module version from git tags.
 def get_version():
     try:
         result = subprocess.run(
-            ['git', 'describe', '--tags', '--abbrev=0'],
+            ['git', 'describe', '--tags', '--match', 'v[0-9]*', '--abbrev=0'],
             capture_output=True,
             text=True,
-            cwd='..'
+            cwd=Path(__file__).resolve().parent.parent,
+            check=False,
         )
         if result.returncode == 0:
             return result.stdout.strip()
@@ -39,7 +41,6 @@ version = release
 extensions = [
     'myst_parser',
     'sphinx_rtd_theme',
-    'sphinx_favicon',
     'sphinxext.rediraffe',
     'sphinx_copybutton',
 ]
@@ -60,9 +61,7 @@ html_theme = 'sphinx_rtd_theme'
 # relative to this directory.
 html_static_path = ['_static']
 
-html_logo = "_static/logo.png"
 html_theme_options = {
-    'logo_only': True,
     'prev_next_buttons_location': 'both',
     'style_external_links': False,
     'style_nav_header_background': '#2980B9',
@@ -84,11 +83,6 @@ html_context = {
 
 def setup(app):
     app.add_css_file('customize.css')
-
-# Favicons
-favicons = [
-    "favicon.png",
-]
 
 # MyST parser configuration
 myst_enable_extensions = [

@@ -25,6 +25,21 @@ type ConsoleLogger struct{}
 
 func (c *ConsoleLogger) Log(msg string) {}
 
+type databaseConstructor struct {
+	connectionString string
+}
+
+func (c *databaseConstructor) New() *Database {
+	return &Database{ConnectionString: c.connectionString}
+}
+
+//go:noinline
+func capturedDatabaseConstructor(connectionString string) func() *Database {
+	return func() *Database {
+		return &Database{ConnectionString: connectionString}
+	}
+}
+
 type UserService struct {
 	DB     *Database
 	Logger Logger
@@ -889,6 +904,26 @@ func TestAnalyzer_Methods(t *testing.T) {
 	assert.True(t, info2.IsFunc, "Expected method2 to be recognized as function")
 }
 
+func TestAnalyzer_BoundMethodsKeepReceiver(t *testing.T) {
+	analyzer := reflection.New()
+
+	constructor1 := (&databaseConstructor{connectionString: "db1"}).New
+	constructor2 := (&databaseConstructor{connectionString: "db2"}).New
+	require.Equal(t, reflect.ValueOf(constructor1).Pointer(), reflect.ValueOf(constructor2).Pointer(),
+		"regression requires method values with the same code pointer")
+
+	info1, err := analyzer.Analyze(constructor1)
+	require.NoError(t, err)
+	info2, err := analyzer.Analyze(constructor2)
+	require.NoError(t, err)
+
+	require.NotSame(t, info1, info2)
+	result1 := info1.Value.Call(nil)[0].Interface().(*Database)
+	result2 := info2.Value.Call(nil)[0].Interface().(*Database)
+	assert.Equal(t, "db1", result1.ConnectionString)
+	assert.Equal(t, "db2", result2.ConnectionString)
+}
+
 // Test edge case: nil function
 func TestAnalyzer_NilFunction(t *testing.T) {
 	analyzer := reflection.New()
@@ -1103,6 +1138,28 @@ func TestAnalyzer_Closures(t *testing.T) {
 	results3 := info3.Value.Call([]reflect.Value{})
 	db3 := results3[0].Interface().(*Database)
 	assert.Equal(t, "db3", db3.ConnectionString, "Constructor 3 result mismatch")
+}
+
+func TestAnalyzer_NonInlinedClosuresKeepCapturedValue(t *testing.T) {
+	analyzer := reflection.New()
+
+	constructors := make([]func() *Database, 0, 2)
+	for _, connectionString := range []string{"db1", "db2"} {
+		constructors = append(constructors, capturedDatabaseConstructor(connectionString))
+	}
+	require.Equal(t, reflect.ValueOf(constructors[0]).Pointer(), reflect.ValueOf(constructors[1]).Pointer(),
+		"regression requires closures with the same code pointer")
+
+	info1, err := analyzer.Analyze(constructors[0])
+	require.NoError(t, err)
+	info2, err := analyzer.Analyze(constructors[1])
+	require.NoError(t, err)
+
+	require.NotSame(t, info1, info2)
+	result1 := info1.Value.Call(nil)[0].Interface().(*Database)
+	result2 := info2.Value.Call(nil)[0].Interface().(*Database)
+	assert.Equal(t, "db1", result1.ConnectionString)
+	assert.Equal(t, "db2", result2.ConnectionString)
 }
 
 // Benchmark to ensure caching performance isn't degraded

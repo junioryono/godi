@@ -12,9 +12,38 @@ import (
 	"github.com/junioryono/godi/v5/internal/reflection"
 )
 
-// Disposable interface for resources that need cleanup
+// Disposable is implemented by resources that need cleanup.
+//
+// Close must not recursively call Close on the Provider or Scope that owns the
+// resource. Shutdown is serialized so concurrent callers receive the same
+// final result, which makes recursive owner shutdown deadlock by definition.
 type Disposable interface {
 	Close() error
+}
+
+type disposableIdentity struct {
+	typ   reflect.Type
+	value any
+}
+
+// identifyDisposable returns a stable identity for reference-backed disposable
+// values. Equal struct values are not deduplicated because they may represent
+// independently produced resources that must each be closed.
+func identifyDisposable(d Disposable) (disposableIdentity, bool) {
+	if d == nil {
+		return disposableIdentity{}, false
+	}
+	value := reflect.ValueOf(d)
+	if !value.IsValid() {
+		return disposableIdentity{}, false
+	}
+	if value.Kind() != reflect.Pointer && value.Kind() != reflect.Chan {
+		return disposableIdentity{}, false
+	}
+	if value.IsNil() {
+		return disposableIdentity{}, false
+	}
+	return disposableIdentity{typ: value.Type(), value: d}, true
 }
 
 // Provider is the main dependency injection container interface
@@ -38,8 +67,10 @@ type Provider interface {
 }
 
 type ProviderOptions struct {
-	// BuildTimeout specifies the maximum time allowed for building the provider.
-	// If building takes longer than this duration, it will timeout with an error.
+	// BuildTimeout specifies a cooperative deadline for building the provider.
+	// Constructors that accept context.Context can stop promptly when it is
+	// cancelled. Other constructors cannot be preempted, but an expired deadline
+	// is checked after they return and can never produce a successful provider.
 	BuildTimeout time.Duration
 }
 
@@ -71,6 +102,7 @@ type provider struct {
 
 	// Track disposable instances for cleanup
 	disposables   []Disposable
+	disposableSet map[disposableIdentity]struct{}
 	disposablesMu sync.Mutex
 
 	// Root scope for provider-level resolution
@@ -84,7 +116,9 @@ type provider struct {
 	scopeCounter atomic.Uint64
 
 	// State
-	disposed atomic.Int32
+	disposed  atomic.Int32
+	closeDone chan struct{}
+	closeErr  error
 }
 
 // instanceKey uniquely identifies a service instance
@@ -95,7 +129,7 @@ type instanceKey struct {
 }
 
 // ID returns the unique identifier for the provider.
-// This ID is a UUID generated when the provider is created during the build process.
+// The ID is generated when the provider is built and is unique within the process.
 func (p *provider) ID() string {
 	return p.id
 }
@@ -159,11 +193,18 @@ func (p *provider) CreateScope(ctx context.Context) (Scope, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	// Create scope with cancellable context
 	ctx, cancel := context.WithCancel(ctx)
 	s, err := newScope(p, nil, ctx, cancel)
 	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		_ = s.Close()
 		return nil, err
 	}
 
@@ -193,10 +234,15 @@ func (p *provider) CreateScope(ctx context.Context) (Scope, error) {
 }
 
 // Close disposes the provider and all its resources
-func (p *provider) Close() error {
+func (p *provider) Close() (result error) {
 	if !p.disposed.CompareAndSwap(0, 1) {
-		return nil // Already disposed
+		<-p.closeDone
+		return p.closeErr
 	}
+	defer func() {
+		p.closeErr = result
+		close(p.closeDone)
+	}()
 
 	var errors []error
 
@@ -204,7 +250,9 @@ func (p *provider) Close() error {
 	p.scopesMu.Lock()
 	scopes := make([]*scope, 0, len(p.scopes))
 	for s := range p.scopes {
-		scopes = append(scopes, s)
+		if s.parentScope == nil {
+			scopes = append(scopes, s)
+		}
 	}
 	p.scopes = nil
 	p.scopesMu.Unlock()
@@ -226,7 +274,10 @@ func (p *provider) Close() error {
 		}
 	}
 
-	// Dispose all singleton disposables
+	// Dispose all singleton disposables.
+	// disposableSet is deliberately retained: trackDisposable consults it
+	// after close so a singleton constructed concurrently with Close is
+	// closed eagerly, exactly once, instead of leaking.
 	p.disposablesMu.Lock()
 	disposables := p.disposables
 	p.disposables = nil
@@ -276,6 +327,11 @@ func (p *provider) setSingleton(key instanceKey, instance any) {
 		return
 	}
 
+	p.cacheSingleton(key, instance)
+	p.trackDisposable(instance)
+}
+
+func (p *provider) cacheSingleton(key instanceKey, instance any) {
 	p.singletons.Store(key, instance)
 
 	// Track key for iteration during disposal
@@ -283,9 +339,28 @@ func (p *provider) setSingleton(key instanceKey, instance any) {
 	p.singletonKeys = append(p.singletonKeys, key)
 	p.singletonKeysMu.Unlock()
 
-	// Track if disposable
+}
+
+func (p *provider) trackDisposable(instance any) {
 	if d, ok := instance.(Disposable); ok {
 		p.disposablesMu.Lock()
+		if identity, identifiable := identifyDisposable(d); identifiable {
+			if _, exists := p.disposableSet[identity]; exists {
+				p.disposablesMu.Unlock()
+				return
+			}
+			if p.disposableSet == nil {
+				p.disposableSet = make(map[disposableIdentity]struct{}, 4)
+			}
+			p.disposableSet[identity] = struct{}{}
+		}
+		if p.disposed.Load() != 0 {
+			// The provider was closed while the constructor was running;
+			// close the orphan eagerly instead of leaking it.
+			p.disposablesMu.Unlock()
+			closeOrphan(d)
+			return
+		}
 		p.disposables = append(p.disposables, d)
 		p.disposablesMu.Unlock()
 	}
@@ -376,6 +451,21 @@ func (p *provider) createAllSingletonsWithContext(ctx context.Context) error {
 				ServiceKey:  descriptor.Key,
 				Cause:       err,
 			}
+		}
+		if err := ctx.Err(); err != nil {
+			return &BuildError{
+				Phase:   "singleton-creation",
+				Details: "build deadline expired after singleton creation",
+				Cause:   err,
+			}
+		}
+	}
+
+	if err := ctx.Err(); err != nil {
+		return &BuildError{
+			Phase:   "singleton-creation",
+			Details: "build deadline expired after singleton creation",
+			Cause:   err,
 		}
 	}
 

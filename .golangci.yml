@@ -1,6 +1,7 @@
 version: "2"
 run:
-  go: 1.26.0
+  # Language version only; the CI toolchain is pinned in test.yml.
+  go: "1.26"
 linters:
   enable:
     - copyloopvar

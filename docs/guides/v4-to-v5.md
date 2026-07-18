@@ -19,6 +19,8 @@ so nothing updates until you opt in.
 | `CircularDependencyError` fields are strings | Read `.Node` / `.Path` as strings |
 | `Remove` removes keyed + grouped too | Use `RemoveKeyed` for surgical removal |
 | `optional:"true"` propagates construction failures | Fix the failing constructor, or make it non-optional |
+| Instance values are singleton-only | Use a constructor for scoped or transient services |
+| Shutdown returns one stable result | Do not recursively close an owning provider or scope |
 
 ---
 
@@ -199,6 +201,36 @@ with what the v4 docs already promised.
   If `Build` newly fails, the constructor was already broken; the error message
   names the fix.
 
+- **Instance values are singleton-only.** `AddScoped(value)` and
+  `AddTransient(value)` cannot provide their advertised lifetime because the
+  same pre-built value would be returned every time. Register a constructor
+  when the container must create one value per scope or resolution.
+
+- **Transient side-effect and variadic constructors are rejected.** A
+  transient constructor must return a service value, and constructors cannot
+  be variadic. Replace a side-effect-only transient with a scoped initializer;
+  replace variadic parameters with a slice dependency or `godi.In` object.
+
+- **Multiple `As` aliases share one cache entry.** Resolving two interfaces
+  from one singleton or scoped registration now returns the same constructed
+  value and disposes it once. Transient aliases still construct per resolve.
+
+- **`As` requires the constructor's return type itself to implement the
+  interface.** A value-returning constructor whose *pointer* type implements
+  the interface is now rejected at registration: the container produces a
+  non-addressable value, so the pointer method set was never actually
+  callable. Return the pointer type from the constructor instead.
+
+- **Shutdown is deterministic and non-reentrant.** Concurrent or repeated
+  `Provider.Close` and `Scope.Close` calls wait for the first cleanup and return
+  its same aggregated error. A resource's `Close` method must not recursively
+  close the provider or scope that owns it.
+
+- **Build deadlines are cooperative.** Eager constructors can accept
+  `context.Context` and stop when it is cancelled. Constructors that ignore
+  the context cannot be preempted; after they return, an expired build still
+  fails and any partially built resources are cleaned up.
+
 ## 8. Framework integration changes
 
 If you use the framework integration packages, two helpers were removed:
@@ -231,6 +263,19 @@ source-compatible (beyond the `/v5` import path).
 
 New in v5: a [Huma](https://github.com/danielgtaylor/huma) integration
 (`github.com/junioryono/godi/huma/v5`) for typed, OpenAPI-backed APIs.
+
+The current v5 integrations also tighten failure handling:
+
+- Gin aborts the remaining handler chain after scope, resolution, or recovered
+  panic failures.
+- Echo and Fiber dispatch downstream errors through the framework error handler
+  before closing the request scope, then consume the error to prevent a second
+  dispatch. Register error observers and panic recovery inside the godi scope
+  middleware; the integration guides show the required ordering.
+- Huma preserves explicit `huma.StatusError` values but logs and sanitizes
+  unexpected plain errors, including plain errors left over after a custom
+  mapper.
+- Nil built-in or custom options cannot erase required default callbacks.
 
 ---
 

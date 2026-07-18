@@ -5,7 +5,7 @@ You now understand the fundamentals of godi. Here's where to go next based on wh
 ## Building a Web Application?
 
 1. **[Web Applications Guide](../guides/web-applications.md)** - Complete patterns for production web apps
-2. **[Framework Integration](../integrations/)** - Dedicated guides for Gin, Chi, Echo, Fiber, and net/http
+2. **[Framework Integration](../integrations/index.md)** - Dedicated guides for Gin, Chi, Echo, Fiber, net/http, and Huma
 3. **[Scopes & Isolation](../concepts/scopes.md)** - Deep dive into request isolation
 
 ## Organizing a Large Application?

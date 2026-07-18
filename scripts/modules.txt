@@ -1,0 +1,10 @@
+# directory kind
+. core
+http integration
+chi integration
+echo integration
+fiber integration
+gin integration
+huma integration
+integrationtests test
+benchmarks benchmark

@@ -57,7 +57,7 @@ func TestScopeMiddleware(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 		}))
 
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
 		rec := httptest.NewRecorder()
 
 		handler.ServeHTTP(rec, req)
@@ -69,6 +69,7 @@ func TestScopeMiddleware(t *testing.T) {
 
 	t.Run("scope is closed after request", func(t *testing.T) {
 		closeCalled := false
+		var requestScope godi.Scope
 
 		collection := godi.NewCollection()
 		collection.AddScoped(func() *testService {
@@ -84,16 +85,21 @@ func TestScopeMiddleware(t *testing.T) {
 				closeCalled = true
 			}),
 		)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestScope, err = godi.FromContext(r.Context())
+			assert.NoError(t, err)
 			w.WriteHeader(http.StatusOK)
 		}))
 
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
 		rec := httptest.NewRecorder()
 
 		handler.ServeHTTP(rec, req)
 
 		// Scope close is successful, so error handler is not called
 		assert.False(t, closeCalled)
+		assert.NotNil(t, requestScope)
+		_, err = godi.Resolve[*testService](requestScope)
+		assert.ErrorIs(t, err, godi.ErrScopeDisposed)
 	})
 
 	t.Run("calls error handler on scope creation failure", func(t *testing.T) {
@@ -115,7 +121,7 @@ func TestScopeMiddleware(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 		}))
 
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
 		rec := httptest.NewRecorder()
 
 		handler.ServeHTTP(rec, req)
@@ -154,7 +160,7 @@ func TestScopeMiddleware(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 		}))
 
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
 		rec := httptest.NewRecorder()
 
 		handler.ServeHTTP(rec, req)
@@ -188,7 +194,7 @@ func TestScopeMiddleware(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 		}))
 
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
 		rec := httptest.NewRecorder()
 
 		handler.ServeHTTP(rec, req)
@@ -215,7 +221,7 @@ func TestHandle(t *testing.T) {
 
 		handler := ScopeMiddleware(provider)(mux)
 
-		req := httptest.NewRequest(http.MethodGet, "/value", nil)
+		req := httptest.NewRequest(http.MethodGet, "/value", http.NoBody)
 		rec := httptest.NewRecorder()
 
 		handler.ServeHTTP(rec, req)
@@ -236,7 +242,7 @@ func TestHandle(t *testing.T) {
 			}),
 		)
 
-		req := httptest.NewRequest(http.MethodGet, "/value", nil)
+		req := httptest.NewRequest(http.MethodGet, "/value", http.NoBody)
 		rec := httptest.NewRecorder()
 
 		handler.ServeHTTP(rec, req)
@@ -267,7 +273,7 @@ func TestHandle(t *testing.T) {
 			}),
 		))
 
-		req := httptest.NewRequest(http.MethodGet, "/value", nil)
+		req := httptest.NewRequest(http.MethodGet, "/value", http.NoBody)
 		rec := httptest.NewRecorder()
 
 		handler.ServeHTTP(rec, req)
@@ -275,6 +281,39 @@ func TestHandle(t *testing.T) {
 		assert.True(t, errorHandlerCalled)
 		body, _ := io.ReadAll(rec.Body)
 		assert.Contains(t, string(body), "service not found")
+	})
+
+	t.Run("does not mutate caller-owned middleware slice", func(t *testing.T) {
+		collection := godi.NewCollection()
+		provider, err := collection.Build()
+		assert.NoError(t, err)
+		defer provider.Close()
+
+		var calls []string
+		shared := []func(godi.Scope, *http.Request) error{
+			func(godi.Scope, *http.Request) error { calls = append(calls, "A"); return nil },
+			nil, // e.g. a conditionally-disabled middleware
+			func(godi.Scope, *http.Request) error { calls = append(calls, "B"); return nil },
+		}
+
+		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+		useShared := func(c *Config) { c.Middlewares = shared }
+		handler1 := ScopeMiddleware(provider, useShared)(next)
+		handler2 := ScopeMiddleware(provider, useShared)(next)
+
+		for _, handler := range []http.Handler{handler1, handler2} {
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/test", http.NoBody))
+			assert.Equal(t, http.StatusOK, rec.Code)
+		}
+
+		// Nil filtering must copy: compacting in place rewrites the caller's
+		// backing array, and the second middleware chain then runs an entry
+		// twice.
+		assert.Equal(t, []string{"A", "B", "A", "B"}, calls)
+		assert.Nil(t, shared[1], "caller-owned slice was mutated by normalizeConfig")
 	})
 
 	t.Run("recovers from panic when enabled", func(t *testing.T) {
@@ -300,13 +339,42 @@ func TestHandle(t *testing.T) {
 			}),
 		))
 
-		req := httptest.NewRequest(http.MethodGet, "/panic", nil)
+		req := httptest.NewRequest(http.MethodGet, "/panic", http.NoBody)
 		rec := httptest.NewRecorder()
 
 		handler.ServeHTTP(rec, req)
 
 		assert.True(t, panicHandlerCalled)
 		assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	})
+
+	t.Run("re-panics on http.ErrAbortHandler even when recovery is enabled", func(t *testing.T) {
+		collection := godi.NewCollection()
+		collection.AddScoped(func() *testService {
+			return &testService{ID: "test", Value: 1}
+		})
+
+		provider, err := collection.Build()
+		assert.NoError(t, err)
+		defer provider.Close()
+
+		handler := ScopeMiddleware(provider)(Handle(func(svc *testService, w http.ResponseWriter, r *http.Request) {
+			panic(http.ErrAbortHandler)
+		},
+			WithPanicRecovery(true),
+			WithPanicHandler(func(w http.ResponseWriter, r *http.Request, v any) {
+				t.Error("panic handler must not run for http.ErrAbortHandler")
+			}),
+		))
+
+		req := httptest.NewRequest(http.MethodGet, "/abort", http.NoBody)
+		rec := httptest.NewRecorder()
+
+		// net/http aborts the response on this sentinel; swallowing it would
+		// turn a deliberately aborted connection into a fake 500.
+		assert.PanicsWithValue(t, http.ErrAbortHandler, func() {
+			handler.ServeHTTP(rec, req)
+		})
 	})
 
 	t.Run("does not recover from panic when disabled", func(t *testing.T) {
@@ -324,7 +392,7 @@ func TestHandle(t *testing.T) {
 			WithPanicRecovery(false),
 		))
 
-		req := httptest.NewRequest(http.MethodGet, "/panic", nil)
+		req := httptest.NewRequest(http.MethodGet, "/panic", http.NoBody)
 		rec := httptest.NewRecorder()
 
 		assert.Panics(t, func() {
@@ -350,7 +418,7 @@ func TestHandleInlineFunc(t *testing.T) {
 			w.Write([]byte("wrapped: " + ctrl.Service.ID))
 		}))
 
-		req := httptest.NewRequest(http.MethodGet, "/wrapped", nil)
+		req := httptest.NewRequest(http.MethodGet, "/wrapped", http.NoBody)
 		rec := httptest.NewRecorder()
 
 		handler.ServeHTTP(rec, req)
@@ -366,7 +434,7 @@ func TestDefaultConfig(t *testing.T) {
 		cfg := defaultConfig()
 
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
 
 		cfg.ErrorHandler(rec, req, errors.New("test error"))
 
@@ -385,7 +453,7 @@ func TestDefaultHandlerConfig(t *testing.T) {
 		cfg := defaultHandlerConfig()
 
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
 
 		cfg.PanicHandler(rec, req, "panic value")
 
@@ -396,7 +464,7 @@ func TestDefaultHandlerConfig(t *testing.T) {
 		cfg := defaultHandlerConfig()
 
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
 
 		cfg.ScopeErrorHandler(rec, req, errors.New("scope error"))
 
@@ -407,7 +475,7 @@ func TestDefaultHandlerConfig(t *testing.T) {
 		cfg := defaultHandlerConfig()
 
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
 
 		cfg.ResolutionErrorHandler(rec, req, errors.New("resolution error"))
 
@@ -418,6 +486,47 @@ func TestDefaultHandlerConfig(t *testing.T) {
 		cfg := defaultHandlerConfig()
 		assert.False(t, cfg.PanicRecovery)
 	})
+}
+
+func TestNilOptionsKeepDefaults(t *testing.T) {
+	assert.NotPanics(t, func() { ScopeMiddleware(nil, Option(nil)) })
+	assert.NotPanics(t, func() { Handle((*testController).GetValue, HandlerOption(nil)) })
+
+	var normalizedCfg *Config
+	ScopeMiddleware(nil, func(cfg *Config) {
+		cfg.ErrorHandler = nil
+		cfg.CloseErrorHandler = nil
+		normalizedCfg = cfg
+	})
+	assert.NotNil(t, normalizedCfg.ErrorHandler)
+	assert.NotNil(t, normalizedCfg.CloseErrorHandler)
+
+	var normalizedHandlerCfg *HandlerConfig
+	Handle((*testController).GetValue, func(cfg *HandlerConfig) {
+		cfg.PanicHandler = nil
+		cfg.ScopeErrorHandler = nil
+		cfg.ResolutionErrorHandler = nil
+		normalizedHandlerCfg = cfg
+	})
+	assert.NotNil(t, normalizedHandlerCfg.PanicHandler)
+	assert.NotNil(t, normalizedHandlerCfg.ScopeErrorHandler)
+	assert.NotNil(t, normalizedHandlerCfg.ResolutionErrorHandler)
+
+	cfg := defaultConfig()
+	WithErrorHandler(nil)(cfg)
+	WithCloseErrorHandler(nil)(cfg)
+	WithMiddleware(nil)(cfg)
+	assert.NotNil(t, cfg.ErrorHandler)
+	assert.NotNil(t, cfg.CloseErrorHandler)
+	assert.Empty(t, cfg.Middlewares)
+
+	handlerCfg := defaultHandlerConfig()
+	WithPanicHandler(nil)(handlerCfg)
+	WithScopeErrorHandler(nil)(handlerCfg)
+	WithResolutionErrorHandler(nil)(handlerCfg)
+	assert.NotNil(t, handlerCfg.PanicHandler)
+	assert.NotNil(t, handlerCfg.ScopeErrorHandler)
+	assert.NotNil(t, handlerCfg.ResolutionErrorHandler)
 }
 
 func TestIntegration(t *testing.T) {
@@ -449,7 +558,7 @@ func TestIntegration(t *testing.T) {
 		)(mux)
 
 		// First request
-		req1 := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req1 := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
 		rec1 := httptest.NewRecorder()
 		handler.ServeHTTP(rec1, req1)
 
@@ -459,7 +568,7 @@ func TestIntegration(t *testing.T) {
 
 		// Second request gets fresh scope
 		requestValues = make(map[string]string)
-		req2 := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req2 := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
 		rec2 := httptest.NewRecorder()
 		handler.ServeHTTP(rec2, req2)
 
