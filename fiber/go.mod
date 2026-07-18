@@ -3,7 +3,7 @@ module github.com/junioryono/godi/fiber/v5
 go 1.26.0
 
 require (
-	github.com/gofiber/fiber/v2 v2.52.6
+	github.com/gofiber/fiber/v2 v2.52.14
 	github.com/junioryono/godi/v5 v5.0.0
 	github.com/stretchr/testify v1.11.1
 )
