@@ -1036,3 +1036,50 @@ func TestScopeAccessors(t *testing.T) {
 	t.Cleanup(func() { _ = s2.Close() })
 	assert.NotEqual(t, s.ID(), s2.ID())
 }
+
+func TestScopeCancellationCleanup(t *testing.T) {
+	t.Parallel()
+
+	t.Run("close_error_remains_observable", func(t *testing.T) {
+		t.Parallel()
+		closeErr := errors.New("cancel cleanup failed")
+		disposable := NewTDisposable()
+		disposable.SetCloseError(closeErr)
+
+		c := NewCollection()
+		c.AddScoped(func() *TDisposable { return disposable })
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+
+		ctx, cancel := context.WithCancel(context.Background())
+		s, err := p.CreateScope(ctx)
+		require.NoError(t, err)
+		_, err = Resolve[*TDisposable](s)
+		require.NoError(t, err)
+
+		cancel()
+		select {
+		case <-disposable.closeChan:
+		case <-time.After(time.Second):
+			t.Fatal("scope was not closed after cancellation")
+		}
+
+		require.ErrorIs(t, s.Close(), closeErr)
+	})
+
+	t.Run("create_scope_rejects_canceled_context", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		s, err := p.CreateScope(ctx)
+		require.ErrorIs(t, err, context.Canceled)
+		assert.Nil(t, s)
+	})
+}

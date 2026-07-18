@@ -44,6 +44,7 @@ Run `make verify` during development. Before opening or updating a pull request,
 
 - Use `gofmt` and standard Go conventions.
 - Add focused tests for new behavior, failure paths, and concurrency where relevant.
+- Keep test files paired with the source file they cover: tests for `scope.go` belong in `scope_test.go`. Place a test next to the file that implements the behavior rather than creating a new test file named after a theme. Shared helpers and fixtures live in `testutil_test.go`.
 - Update Go documentation and user guides when behavior or public APIs change.
 - Keep unrelated refactors out of feature and bug-fix pull requests.
 - Do not edit generated benchmark results into the README. CI publishes raw results for comparison with `benchstat`.
