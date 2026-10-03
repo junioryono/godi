@@ -210,6 +210,23 @@ func TestScopeContextCancellation(t *testing.T) {
 	assert.ErrorIs(t, err, ErrScopeDisposed)
 }
 
+func TestScopeContextWatchIsUnregistered(t *testing.T) {
+	t.Parallel()
+
+	p := BuildProvider(t)
+	parent, err := p.CreateScope(context.Background())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = parent.Close() })
+	child, err := parent.CreateScope(context.Background())
+	require.NoError(t, err)
+
+	// Close must be able to unregister the context watch; otherwise its own
+	// cancel() starts the AfterFunc goroutine on every explicit Close.
+	for name, s := range map[string]Scope{"top_level": parent, "child": child} {
+		assert.NotNil(t, s.(*scope).stopContextWatch.Load(), "%s scope must keep its context-watch stop func", name)
+	}
+}
+
 func TestNestedScopes(t *testing.T) {
 	t.Parallel()
 

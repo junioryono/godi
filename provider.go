@@ -238,14 +238,7 @@ func (p *provider) CreateScope(ctx context.Context) (Scope, error) {
 	p.scopes[s] = struct{}{}
 	p.scopesMu.Unlock()
 
-	// Auto-close on context cancellation. AfterFunc avoids dedicating a
-	// goroutine per scope; Close is idempotent, so the callback firing
-	// after an explicit Close (which cancels ctx) is harmless.
-	context.AfterFunc(ctx, func() {
-		// Context cancellation cleanup errors are expected during shutdown
-		// and cannot be meaningfully handled, so we ignore them.
-		_ = s.Close()
-	})
+	s.closeOnContextDone(ctx)
 
 	return s, nil
 }
