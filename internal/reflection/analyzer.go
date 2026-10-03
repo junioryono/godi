@@ -394,8 +394,9 @@ func (a *Analyzer) analyzeResultObject(info *ConstructorInfo, structType reflect
 
 	info.Returns = returns
 
-	// Check if function also returns error
-	if info.Type.NumOut() == 2 {
+	// Check if function also returns error (info.Type is nil when only the
+	// struct's fields are being analyzed).
+	if info.Type != nil && info.Type.NumOut() == 2 {
 		secondReturn := info.Type.Out(1)
 		if implementsError(secondReturn) {
 			info.HasErrorReturn = true

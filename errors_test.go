@@ -55,12 +55,12 @@ func TestErrors(t *testing.T) {
 			err := ResolutionError{
 				ServiceType: svcType,
 				ServiceKey:  nil,
-				Cause:       baseCause,
+				Cause:       ErrServiceNotFound,
 			}
 			errStr := err.Error()
 			assert.Contains(t, errStr, "service not found")
 			assert.NotContains(t, errStr, "key:")
-			assert.ErrorIs(t, err, baseCause)
+			assert.ErrorIs(t, err, ErrServiceNotFound)
 		})
 
 		t.Run("with_key", func(t *testing.T) {
@@ -68,12 +68,38 @@ func TestErrors(t *testing.T) {
 			err := ResolutionError{
 				ServiceType: svcType,
 				ServiceKey:  "primary",
-				Cause:       baseCause,
+				Cause:       ErrServiceNotFound,
 			}
 			errStr := err.Error()
 			assert.Contains(t, errStr, "key: primary")
 			assert.Contains(t, errStr, "service not found")
+			assert.ErrorIs(t, err, ErrServiceNotFound)
+		})
+
+		t.Run("other_cause_is_not_reported_as_not_found", func(t *testing.T) {
+			t.Parallel()
+			err := ResolutionError{
+				ServiceType: svcType,
+				ServiceKey:  "primary",
+				Cause:       baseCause,
+			}
+			// A registered service whose construction failed was found.
+			errStr := err.Error()
+			assert.NotContains(t, errStr, "service not found")
+			assert.Contains(t, errStr, "failed to resolve")
+			assert.Contains(t, errStr, "key: primary")
+			assert.Contains(t, errStr, "base error")
 			assert.ErrorIs(t, err, baseCause)
+		})
+
+		t.Run("build_failure_is_not_reported_as_not_found", func(t *testing.T) {
+			t.Parallel()
+			c := NewCollection()
+			c.AddSingleton(func() (*TService, error) { return nil, baseCause })
+
+			_, err := c.Build()
+			assert.ErrorIs(t, err, baseCause)
+			assert.NotContains(t, err.Error(), "service not found")
 		})
 
 		t.Run("actionable_message", func(t *testing.T) {

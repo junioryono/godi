@@ -82,6 +82,11 @@ type descriptor struct {
 	// resultFieldIndex is the Out-struct field index this descriptor was
 	// created from. -1 when the descriptor is not a result-object field.
 	resultFieldIndex int
+
+	// injectsContainer reports whether the constructor receives the
+	// container itself (godi.Scope or godi.Provider) and so can resolve
+	// services outside the static dependency graph.
+	injectsContainer bool
 }
 
 // newDescriptor creates a new descriptor from a service with the given lifetime and options
@@ -201,6 +206,12 @@ func newDescriptorWithAnalyzer(service any, lifetime Lifetime, analyzer *reflect
 	descriptor.isResultObject = info.IsResultObject
 	descriptor.isParamObject = info.IsParamObject
 	descriptor.info = info
+	for _, param := range info.Parameters {
+		if param.Key == nil && (param.Type == scopeType || param.Type == providerType) {
+			descriptor.injectsContainer = true
+			break
+		}
+	}
 
 	// Store param fields if it's a param object
 	if info.IsParamObject && len(info.Parameters) > 0 {
@@ -248,16 +259,43 @@ func (d *descriptor) clone() *descriptor {
 	return &c
 }
 
+// instanceKey returns the cache key of the instances this descriptor produces.
+func (d *descriptor) instanceKey() instanceKey {
+	return instanceKey{Type: d.Type, Key: d.Key, Group: d.Group}
+}
+
 // siblingForField returns the sibling descriptor registered for the given
-// Out-struct field index, or nil when this descriptor has no sibling links
-// (e.g. it was constructed outside the normal Add* path).
-func (d *descriptor) siblingForField(index int) *descriptor {
-	for _, sibling := range d.siblings {
-		if sibling.resultFieldIndex == index {
-			return sibling
+// Out-struct field index, or nil when there is none (the field's registration
+// was removed, or this descriptor has no sibling links). Siblings are ordered
+// by field index, so callers walking fields in order pass the returned cursor
+// as the next call's start, making a whole walk linear; an out-of-order
+// lookup falls back to a full scan.
+func (d *descriptor) siblingForField(index, start int) (sibling *descriptor, next int) {
+	for i := start; i < len(d.siblings); i++ {
+		if d.siblings[i].resultFieldIndex == index {
+			return d.siblings[i], i + 1
+		}
+		if d.siblings[i].resultFieldIndex > index {
+			break
 		}
 	}
-	return nil
+	for _, s := range d.siblings {
+		if s.resultFieldIndex == index {
+			return s, start
+		}
+	}
+	return nil, start
+}
+
+// hasSiblingForReturn reports whether a sibling is registered for the given
+// multi-return constructor return index.
+func (d *descriptor) hasSiblingForReturn(index int) bool {
+	for _, sibling := range d.siblings {
+		if sibling.MultiReturnIndex == index {
+			return true
+		}
+	}
+	return false
 }
 
 // GetType returns the service type this descriptor produces.
@@ -350,8 +388,9 @@ func (d *descriptor) Validate() error {
 		}
 	}
 
-	// For function constructors, validate return types
-	if d.isFunc && !d.VoidReturn {
+	// For function constructors, validate return types. Error-only
+	// constructors are included: (error, error) would drop the first error.
+	if d.isFunc {
 		if err := d.validateReturnTypes(); err != nil {
 			return err
 		}
@@ -409,6 +448,14 @@ func (d *descriptor) validateReturnTypes() error {
 					Cause:       fmt.Errorf("constructor error return must be the last return value, found error at index %d of %d", i, numOut),
 				}
 			}
+			// An error of a kind that cannot be nil (e.g. a struct
+			// implementing error) can never signal success.
+			if !reflection.CanBeNil(outType) {
+				return &ValidationError{
+					ServiceType: d.Type,
+					Cause:       fmt.Errorf("constructor error return type %s cannot be nil; use the error interface or a pointer type", outType),
+				}
+			}
 			continue
 		}
 
@@ -438,6 +485,14 @@ func (d *descriptor) validateParameterTypes() error {
 		// Group-tagged fields of an In struct must be slices: they receive
 		// every member of the group.
 		for _, pf := range d.paramFields {
+			// Resolution would use the group while validation and the
+			// dependency graph would use the name, so a field cannot have both.
+			if pf.Key != nil && pf.Group != "" {
+				return &ValidationError{
+					ServiceType: d.Type,
+					Cause:       fmt.Errorf("field %s cannot have both name and group tags", pf.Name),
+				}
+			}
 			if pf.Group != "" && pf.Type.Kind() != reflect.Slice {
 				return &ValidationError{
 					ServiceType: d.Type,

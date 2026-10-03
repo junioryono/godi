@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/junioryono/godi/v5/internal/graph"
 	"github.com/junioryono/godi/v5/internal/reflection"
@@ -172,29 +173,34 @@ func (sc *collection) Build() (Provider, error) {
 
 // BuildWithContext creates a Provider with the given cooperative build context.
 // The context is available to eager constructors that depend on context.Context
-// and is checked throughout construction.
+// and is checked throughout construction. It also parents the provider's root
+// context, so its values remain visible and its cancellation propagates.
 func (sc *collection) BuildWithContext(ctx context.Context) (Provider, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return sc.doBuild(ctx)
+	return sc.doBuild(ctx, ctx)
 }
 
 // BuildWithOptions creates a Provider with custom options for validation and behavior configuration.
 func (sc *collection) BuildWithOptions(options *ProviderOptions) (Provider, error) {
 	ctx := context.Background()
 
-	// Handle build timeout if specified
+	// Handle build timeout if specified. The timeout bounds Build only: the
+	// provider's root context is detached from it once Build succeeds.
 	if options != nil && options.BuildTimeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, options.BuildTimeout)
 		defer cancel()
 	}
 
-	return sc.doBuild(ctx)
+	return sc.doBuild(context.Background(), ctx)
 }
 
-func (sc *collection) doBuild(ctx context.Context) (Provider, error) {
+// doBuild builds a provider. parent becomes the parent of the provider's root
+// context; ctx bounds the build itself and is visible (deadline and
+// cancellation) to constructors that run during Build.
+func (sc *collection) doBuild(parent, ctx context.Context) (Provider, error) {
 	// Check context before starting
 	select {
 	case <-ctx.Done():
@@ -206,17 +212,21 @@ func (sc *collection) doBuild(ctx context.Context) (Provider, error) {
 	default:
 	}
 
+	// Hold the collection lock only to read it. Constructors run later in
+	// this method and may call collection methods (Count, Contains, ...),
+	// which would deadlock against a lock held for the whole build.
 	sc.mu.Lock()
-	defer sc.mu.Unlock()
 
 	// Surface every recorded registration error before doing any work:
 	// the Add* methods defer their errors to Build so callers can register
 	// services without per-call error checks.
 	if len(sc.errs) > 0 {
+		err := errors.Join(sc.errs...)
+		sc.mu.Unlock()
 		return nil, &BuildError{
 			Phase:   "registration",
 			Details: "one or more service registrations failed",
-			Cause:   errors.Join(sc.errs...),
+			Cause:   err,
 		}
 	}
 
@@ -228,6 +238,7 @@ func (sc *collection) doBuild(ctx context.Context) (Provider, error) {
 		sc.services,
 		sc.groups,
 	)
+	sc.mu.Unlock()
 
 	// Phase 1: Build dependency graph (validates cycles as part of build)
 	select {
@@ -283,10 +294,18 @@ func (sc *collection) doBuild(ctx context.Context) (Provider, error) {
 	default:
 	}
 
-	if err := sc.validateLifetimes(); err != nil {
+	if err := validateLifetimes(services, groups); err != nil {
 		return nil, &BuildError{
 			Phase:   "validation",
 			Details: "lifetime validation failed",
+			Cause:   err,
+		}
+	}
+
+	if err := validateDependencies(allDescriptors, services); err != nil {
+		return nil, &BuildError{
+			Phase:   "validation",
+			Details: "missing dependencies",
 			Cause:   err,
 		}
 	}
@@ -332,8 +351,8 @@ func (sc *collection) doBuild(ctx context.Context) (Provider, error) {
 	}
 
 	var err error
-	rootCtx := context.Background()
-	p.rootScope, err = newUninitializedScope(p, nil, rootCtx, nil)
+	rootCtx := newProviderContext(parent, ctx)
+	p.rootScope, err = newUninitializedScope(p, nil, rootCtx, rootCtx.cancel)
 	if err != nil {
 		return nil, &BuildError{
 			Phase:   "scope-creation",
@@ -341,16 +360,11 @@ func (sc *collection) doBuild(ctx context.Context) (Provider, error) {
 			Cause:   err,
 		}
 	}
+	p.rootScope.isRoot = true
 
-	// Phase 6: Create singletons with context propagation. Decorate the build
-	// context so FromContext works inside eager constructors, then clear the
-	// atomic override before returning the provider.
-	buildCtx := context.WithValue(ctx, scopeContextKey{}, p.rootScope)
-	p.rootScope.constructionContext.Store(&scopeConstructionContext{context: buildCtx})
-	defer func() {
-		p.rootScope.constructionContext.Store(nil)
-	}()
-
+	// Phase 6: Create singletons. Eager constructors receive the root scope's
+	// context, which reports the build context's deadline and cancellation
+	// until Build succeeds.
 	if err := p.createAllSingletonsWithContext(ctx); err != nil {
 		buildErr := &BuildError{
 			Phase:   "singleton-creation",
@@ -379,7 +393,74 @@ func (sc *collection) doBuild(ctx context.Context) (Provider, error) {
 		return nil, joinBuildCleanupError(buildErr, p.Close())
 	}
 
+	// Detach the root context from the build context. If the build context
+	// was cancelled first, the root context is already cancelled too, so the
+	// provider must not be returned.
+	if !rootCtx.finishBuild() {
+		buildErr := &BuildError{
+			Phase:   "scope-initialization",
+			Details: "build cancelled while finishing",
+			Cause:   ctx.Err(),
+		}
+		return nil, joinBuildCleanupError(buildErr, p.Close())
+	}
+
 	return p, nil
+}
+
+// providerContext is the root scope's context. It is cancelled by
+// Provider.Close (or by the BuildWithContext parent). While Build runs it is
+// also cancelled by the build context and reports that context's deadline and
+// error, so eager constructors observe a build timeout; once Build succeeds it
+// is detached from the build context, so the timeout cannot cancel the
+// context that singletons keep.
+type providerContext struct {
+	context.Context
+	cancel context.CancelFunc
+
+	build     context.Context
+	stopBuild func() bool
+	building  atomic.Bool
+}
+
+func newProviderContext(parent, build context.Context) *providerContext {
+	ctx, cancel := context.WithCancel(parent)
+	c := &providerContext{Context: ctx, cancel: cancel, build: build}
+	c.building.Store(true)
+	if build != parent {
+		c.stopBuild = context.AfterFunc(build, cancel)
+	}
+	return c
+}
+
+// finishBuild detaches the context from the build context. It reports false
+// when the build context was cancelled first (and so cancelled this context).
+func (c *providerContext) finishBuild() bool {
+	if c.stopBuild != nil && !c.stopBuild() {
+		return false
+	}
+	c.building.Store(false)
+	return true
+}
+
+func (c *providerContext) Deadline() (time.Time, bool) {
+	if c.building.Load() {
+		if deadline, ok := c.build.Deadline(); ok {
+			return deadline, true
+		}
+	}
+	return c.Context.Deadline()
+}
+
+func (c *providerContext) Err() error {
+	err := c.Context.Err()
+	if err != nil && c.building.Load() {
+		// Report why the build was cancelled (e.g. DeadlineExceeded).
+		if buildErr := c.build.Err(); buildErr != nil {
+			return buildErr
+		}
+	}
+	return err
 }
 
 func joinBuildCleanupError(buildErr, closeErr error) error {
@@ -1121,19 +1202,19 @@ func (r *collection) registerDescriptor(descriptor *descriptor) error {
 // This validation prevents runtime errors where:
 // - A singleton (created once) would incorrectly hold a reference to a scoped service
 // - A transient (created per request) could outlive and hold a reference to a disposed scoped service
-func (c *collection) validateLifetimes() error {
+func validateLifetimes(services map[TypeKey]*descriptor, groups map[GroupKey][]*descriptor) error {
 	// Create a map of service lifetimes
 	lifetimes := make(map[instanceKey]Lifetime)
 
 	// Populate lifetimes from all services
-	for serviceType, descriptor := range c.services {
+	for serviceType, descriptor := range services {
 		if descriptor != nil {
 			key := instanceKey{Type: serviceType.Type, Key: descriptor.Key}
 			lifetimes[key] = descriptor.Lifetime
 		}
 	}
 
-	for groupKey, descriptors := range c.groups {
+	for groupKey, descriptors := range groups {
 		for _, descriptor := range descriptors {
 			if descriptor != nil {
 				key := instanceKey{Type: groupKey.Type, Key: descriptor.Key, Group: groupKey.Group}
@@ -1162,7 +1243,7 @@ func (c *collection) validateLifetimes() error {
 			// Check each member's lifetime individually.
 			if dep.Group != "" && dep.Key == nil {
 				groupKey := GroupKey{Type: dep.Type, Group: dep.Group}
-				for _, memberDesc := range c.groups[groupKey] {
+				for _, memberDesc := range groups[groupKey] {
 					if memberDesc != nil && memberDesc.Lifetime == Scoped {
 						return &LifetimeConflictError{
 							ServiceType:        descriptor.Type,
@@ -1195,13 +1276,13 @@ func (c *collection) validateLifetimes() error {
 	}
 
 	// Check all services
-	for _, descriptor := range c.services {
+	for _, descriptor := range services {
 		if err := checkDescriptor(descriptor); err != nil {
 			return err
 		}
 	}
 
-	for _, descriptors := range c.groups {
+	for _, descriptors := range groups {
 		for _, descriptor := range descriptors {
 			if err := checkDescriptor(descriptor); err != nil {
 				return err
@@ -1210,4 +1291,50 @@ func (c *collection) validateLifetimes() error {
 	}
 
 	return nil
+}
+
+// validateDependencies reports every required constructor dependency that has
+// no registration, for all lifetimes. Without it, a scoped or transient
+// service with a missing dependency would only fail at its first resolution.
+// Optional and group dependencies may legitimately be empty, and reserved
+// types (context.Context, Provider, Scope) are supplied by the container.
+func validateDependencies(all []*descriptor, services map[TypeKey]*descriptor) error {
+	var errs []error
+	// Descriptors derived from one constructor (multi-return values, result
+	// object fields, interface aliases) share its dependencies: report once.
+	checked := make(map[any]struct{}, len(all))
+	for _, d := range all {
+		if d == nil {
+			continue
+		}
+		fkey := flightKey(d)
+		if _, done := checked[fkey]; done {
+			continue
+		}
+		checked[fkey] = struct{}{}
+
+		serviceType := d.Type
+		if d.VoidReturn {
+			serviceType = d.ConstructorType
+		}
+		for _, dep := range d.Dependencies {
+			if dep == nil || dep.Optional || dep.Group != "" {
+				continue
+			}
+			if dep.Key == nil {
+				if _, reserved := reservedTypes[dep.Type]; reserved {
+					continue
+				}
+			}
+			if _, ok := services[TypeKey{Type: dep.Type, Key: dep.Key}]; ok {
+				continue
+			}
+			errs = append(errs, &MissingDependencyError{
+				ServiceType:    serviceType,
+				DependencyType: dep.Type,
+				DependencyKey:  dep.Key,
+			})
+		}
+	}
+	return errors.Join(errs...)
 }

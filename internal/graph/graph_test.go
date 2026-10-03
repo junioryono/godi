@@ -939,6 +939,48 @@ func TestResolveGroupDependencies(t *testing.T) {
 		assert.Equal(t, consumerType, sorted[1].Key.Type)
 	})
 
+	t.Run("consumer of several groups keeps every edge", func(t *testing.T) {
+		g := graph.NewDependencyGraph()
+
+		memberType := reflect.TypeFor[GroupMember]()
+		consumerType := reflect.TypeFor[GroupConsumer]()
+		plainType := reflect.TypeFor[string]()
+
+		providers := []*testProvider{
+			{Type: memberType, Key: 1, Group: "a", Lifetime: testSingleton},
+			{Type: memberType, Key: 2, Group: "a", Lifetime: testSingleton},
+			{Type: memberType, Key: 1, Group: "b", Lifetime: testSingleton},
+			{Type: plainType, Lifetime: testSingleton},
+			{
+				Type:     consumerType,
+				Lifetime: testSingleton,
+				Dependencies: []*reflection.Dependency{
+					{Type: plainType},
+					{Type: memberType, Group: "a"},
+					{Type: memberType, Group: "b"},
+					{Type: memberType, Group: "missing"},
+				},
+			},
+		}
+		for _, p := range providers {
+			assert.NoError(t, g.AddProviderDeferred(p))
+		}
+
+		g.ResolveGroupDependencies()
+		assert.NoError(t, g.DetectCycles())
+
+		deps := g.GetDependencies(consumerType, nil, "")
+		assert.ElementsMatch(t, []graph.NodeKey{
+			{Type: plainType},
+			{Type: memberType, Key: 1, Group: "a"},
+			{Type: memberType, Key: 2, Group: "a"},
+			{Type: memberType, Key: 1, Group: "b"},
+		}, deps)
+		for _, group := range []string{"a", "b", "missing"} {
+			assert.False(t, g.HasNode(memberType, nil, group), "phantom for group %q must be removed", group)
+		}
+	})
+
 	t.Run("no phantom nodes present", func(t *testing.T) {
 		g := graph.NewDependencyGraph()
 
@@ -959,6 +1001,38 @@ func TestResolveGroupDependencies(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Len(t, sorted, 1)
 	})
+}
+
+// BenchmarkResolveGroupDependencies measures expanding group dependencies when
+// many consumers each depend on their own value group.
+func BenchmarkResolveGroupDependencies(b *testing.B) {
+	const groups = 500
+	memberType := reflect.TypeFor[GroupMember]()
+	consumerType := reflect.TypeFor[GroupConsumer]()
+
+	providers := make([]*testProvider, 0, 2*groups)
+	for i := range groups {
+		group := fmt.Sprintf("g%d", i)
+		providers = append(providers,
+			&testProvider{Type: memberType, Key: 1, Group: group},
+			&testProvider{
+				Type:         consumerType,
+				Key:          group,
+				Dependencies: []*reflection.Dependency{{Type: memberType, Group: group}},
+			},
+		)
+	}
+
+	b.ReportAllocs()
+	for b.Loop() {
+		g := graph.NewDependencyGraphWithCapacity(len(providers))
+		for _, p := range providers {
+			if err := g.AddProviderDeferred(p); err != nil {
+				b.Fatal(err)
+			}
+		}
+		g.ResolveGroupDependencies()
+	}
 }
 
 // AddProviderDeferred must fully replace a node's edges on re-registration,

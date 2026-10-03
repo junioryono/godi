@@ -538,6 +538,73 @@ func TestDisposableCloseDeduplication(t *testing.T) {
 	})
 }
 
+// orderedWriter and orderedBuffer model a singleton that flushes into its
+// dependency when closed.
+type orderedWriter struct{ TDisposable }
+
+type orderedBuffer struct {
+	w                 *orderedWriter
+	writerOpenAtClose bool
+}
+
+func (b *orderedBuffer) Close() error {
+	b.writerOpenAtClose = !b.w.IsClosed()
+	return nil
+}
+
+func TestProviderDisposalOwnership(t *testing.T) {
+	t.Parallel()
+
+	t.Run("singleton_closes_before_its_transient_dependency", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddTransient(func() *orderedWriter { return &orderedWriter{} })
+		c.AddSingleton(func(w *orderedWriter) *orderedBuffer { return &orderedBuffer{w: w} })
+
+		p, err := c.Build()
+		require.NoError(t, err)
+		buf, err := Resolve[*orderedBuffer](p)
+		require.NoError(t, err)
+
+		// The root scope (holding the transient) used to be closed before
+		// the singletons that depend on it.
+		require.NoError(t, p.Close())
+		assert.True(t, buf.writerOpenAtClose, "a singleton's dependency must still be open when the singleton closes")
+		assert.True(t, buf.w.IsClosed(), "the dependency is closed after its consumer")
+	})
+
+	t.Run("transients_resolved_from_provider_are_caller_owned", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddTransient(NewTDisposable)
+		p, err := c.Build()
+		require.NoError(t, err)
+
+		resolved := make([]*TDisposable, 0, 100)
+		for range 100 {
+			d, err := Resolve[*TDisposable](p)
+			require.NoError(t, err)
+			resolved = append(resolved, d)
+		}
+
+		// Tracking them for provider shutdown retained every resolution for
+		// the provider's lifetime: an unbounded leak in a long-running app.
+		pp := p.(*provider)
+		pp.disposablesMu.Lock()
+		tracked := len(pp.disposables)
+		pp.disposablesMu.Unlock()
+		pp.rootScope.disposablesMu.Lock()
+		tracked += len(pp.rootScope.disposables)
+		pp.rootScope.disposablesMu.Unlock()
+		assert.Zero(t, tracked, "transients resolved from the provider must not accumulate")
+
+		require.NoError(t, p.Close())
+		for _, d := range resolved {
+			assert.False(t, d.IsClosed(), "the caller owns transients it resolved from the provider")
+		}
+	})
+}
+
 // blockingDisposable blocks Close until released so tests can observe
 // concurrent Close calls waiting on the same in-flight cleanup.
 type blockingDisposable struct {

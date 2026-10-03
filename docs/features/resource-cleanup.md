@@ -92,6 +92,38 @@ file2 := godi.MustResolve[*TempFile](scope)  // Created
 scope.Close()  // Both file1.Close() and file2.Close() called
 ```
 
+Transients resolved **directly from the provider** are owned by the caller,
+who must close them. The provider lives for the whole application, so tracking
+them would retain every resolution until shutdown:
+
+```go
+file := godi.MustResolve[*TempFile](provider)
+defer file.Close()  // Your responsibility
+```
+
+A transient that a singleton (or a root-level scoped service) depends on is
+still tracked, and closed after the service that holds it.
+
+### Borrowed Values
+
+Each value is closed once, by its longest-lived owner. A scoped or transient
+service that returns a singleton (or a value its parent scope already owns)
+only borrows it, so closing the scope does not close it:
+
+```go
+services.AddSingleton(NewDatabase)
+services.AddScoped(func(db *Database) io.Closer { return db })
+
+scope.Close()     // Database stays open
+provider.Close()  // Database.Close() called here, once
+```
+
+### Contexts
+
+Closing a scope cancels its context before disposing its services. The
+provider's root context (passed to singletons and to services resolved directly
+from the provider) is cancelled when the provider closes.
+
 ## Disposal Order
 
 Resources are disposed in reverse creation order:

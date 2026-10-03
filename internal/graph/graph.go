@@ -241,44 +241,50 @@ func (g *DependencyGraph) ResolveGroupDependencies() {
 	}
 
 	// Step 2: Find phantom group nodes (Group != "", Key == nil, no Provider)
-	phantomKeys := make([]NodeKey, 0)
+	phantoms := make(map[NodeKey]struct{})
 	for key, node := range g.nodes {
-		if key.Group != "" && key.Key == nil && node.Provider == nil {
-			phantomKeys = append(phantomKeys, key)
+		if isPhantomGroupNode(key, node) {
+			phantoms[key] = struct{}{}
+		}
+	}
+	if len(phantoms) == 0 {
+		return
+	}
+
+	// Step 3: Rewire consumers in a single pass over the edges, expanding
+	// every phantom edge into the group's member edges.
+	for consumerKey, edges := range g.edges {
+		var newEdges []NodeKey
+		for i, edge := range edges {
+			if _, ok := phantoms[edge]; !ok {
+				if newEdges != nil {
+					newEdges = append(newEdges, edge)
+				}
+				continue
+			}
+			if newEdges == nil {
+				newEdges = make([]NodeKey, i, len(edges))
+				copy(newEdges, edges[:i])
+			}
+			newEdges = append(newEdges, groupMembers[groupIndex{Type: edge.Type, Group: edge.Group}]...)
+		}
+		if newEdges != nil {
+			g.edges[consumerKey] = newEdges
 		}
 	}
 
-	// Step 3: Rewire consumers and remove phantoms
-	for _, phantomKey := range phantomKeys {
-		idx := groupIndex{Type: phantomKey.Type, Group: phantomKey.Group}
-		members := groupMembers[idx]
-
-		// Replace phantom edge with actual member edges in all consumers
-		for consumerKey, edges := range g.edges {
-			newEdges := make([]NodeKey, 0, len(edges)+len(members))
-			modified := false
-			for _, edge := range edges {
-				if edge == phantomKey {
-					newEdges = append(newEdges, members...)
-					modified = true
-				} else {
-					newEdges = append(newEdges, edge)
-				}
-			}
-			if modified {
-				g.edges[consumerKey] = newEdges
-			}
-		}
-
-		// Remove the phantom node
+	// Step 4: Remove the phantom nodes
+	for phantomKey := range phantoms {
 		delete(g.nodes, phantomKey)
 		delete(g.edges, phantomKey)
 	}
 
 	// Mark caches as dirty since edges changed
-	if len(phantomKeys) > 0 {
-		g.sortedNodesDirty = true
-	}
+	g.sortedNodesDirty = true
+}
+
+func isPhantomGroupNode(key NodeKey, node *Node) bool {
+	return key.Group != "" && key.Key == nil && node.Provider == nil
 }
 
 // updateDegrees recalculates in/out degrees for all nodes

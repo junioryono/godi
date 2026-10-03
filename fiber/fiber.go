@@ -16,6 +16,7 @@ package fiber
 
 import (
 	"log/slog"
+	"sync"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/junioryono/godi/v5"
@@ -129,11 +130,22 @@ func ScopeMiddleware(provider godi.Provider, opts ...Option) fiber.Handler {
 			return cfg.ErrorHandler(c, err)
 		}
 
-		// Close via defer so the scope is released even when a handler panics.
-		defer func() {
+		closeScope := func() {
 			if closeErr := scope.Close(); closeErr != nil {
 				cfg.CloseErrorHandler(closeErr)
 			}
+		}
+
+		// Close via defer so the scope is released even when a handler panics.
+		// A streamed response body (c.SendStream) is written by fasthttp only
+		// after the handler chain returns, and it is typically a scoped
+		// resource, so then the scope is kept open until the response is done.
+		defer func() {
+			if c.Response().IsBodyStream() {
+				deferScopeClose(c, closeScope)
+				return
+			}
+			closeScope()
 		}()
 
 		// Attach the scope's context as the request's UserContext so it is
@@ -152,6 +164,28 @@ func ScopeMiddleware(provider godi.Provider, opts ...Option) fiber.Handler {
 		// Execute handler chain
 		return dispatchError(c, c.Next())
 	}
+}
+
+// scopeCloserKey is the request user-value key of a deferred scope close.
+type scopeCloserKey struct{}
+
+// scopeCloser closes a request scope when fasthttp releases the request.
+type scopeCloser struct {
+	once  sync.Once
+	close func()
+}
+
+func (s *scopeCloser) Close() error {
+	s.once.Do(s.close)
+	return nil
+}
+
+// deferScopeClose closes the scope once fasthttp has written the response.
+// fasthttp closes request user values that implement io.Closer when it
+// releases the request, after the response (including a body stream) has been
+// written or the connection failed.
+func deferScopeClose(c *fiber.Ctx, closeScope func()) {
+	c.Context().SetUserValue(scopeCloserKey{}, &scopeCloser{close: closeScope})
 }
 
 func dispatchError(c *fiber.Ctx, err error) error {

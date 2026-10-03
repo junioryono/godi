@@ -270,6 +270,23 @@ type GoodResult struct {
 }
 ```
 
+### Optional Outputs (nil fields)
+
+A field left nil is "not provided" by that construction. The constructor still
+runs only once, and the other fields are cached as usual:
+
+- Resolving the missing service fails with `godi.ErrServiceNotFound`, so an
+  `optional:"true"` dependency on it receives its zero value.
+- A nil group field is skipped: the group just has one fewer member.
+
+```go
+type Clients struct {
+    godi.Out
+    Primary *Client
+    Replica *Client `name:"replica"` // nil when no replica is configured
+}
+```
+
 ### Unexported Fields
 
 ```go

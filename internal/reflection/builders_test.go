@@ -169,6 +169,16 @@ func (r *TestResolver) GetGroup(t reflect.Type, group string) ([]any, error) {
 }
 
 // Test ConstructorInvoker
+// structError is an error implemented by a non-nilable struct type.
+type structError struct{}
+
+func (structError) Error() string { return "struct error" }
+
+// pointerError is an error implemented by a pointer type.
+type pointerError struct{}
+
+func (*pointerError) Error() string { return "pointer error" }
+
 func TestConstructorInvoker(t *testing.T) {
 	analyzer := reflection.New()
 	invoker := reflection.NewConstructorInvoker(analyzer)
@@ -280,6 +290,24 @@ func TestConstructorInvoker(t *testing.T) {
 				r.failError = errors.New("dependency not found")
 			},
 			wantErr: true,
+		},
+		{
+			// A struct error can never be nil: it is always a failure, and
+			// checking it must not panic in reflect.Value.IsNil.
+			name:          "constructor with struct error return",
+			constructor:   func() (*Database, structError) { return &Database{}, structError{} },
+			setupResolver: func(r *TestResolver) {},
+			wantErr:       true,
+		},
+		{
+			// Go semantics: a typed nil inside an error interface is non-nil.
+			name: "constructor with typed nil error",
+			constructor: func() (*Database, error) {
+				var err *pointerError
+				return &Database{}, err
+			},
+			setupResolver: func(r *TestResolver) {},
+			wantErr:       true,
 		},
 	}
 
