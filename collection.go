@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/junioryono/godi/v5/internal/graph"
 	"github.com/junioryono/godi/v5/internal/reflection"
@@ -410,10 +409,10 @@ func (sc *collection) doBuild(parent, ctx context.Context) (Provider, error) {
 
 // providerContext is the root scope's context. It is cancelled by
 // Provider.Close (or by the BuildWithContext parent). While Build runs it is
-// also cancelled by the build context and reports that context's deadline and
-// error, so eager constructors observe a build timeout; once Build succeeds it
-// is detached from the build context, so the timeout cannot cancel the
-// context that singletons keep.
+// also cancelled by the build context and reports that context's error, so
+// eager constructors observe a build timeout; once Build succeeds it is
+// detached from the build context, so the timeout cannot cancel the context
+// that singletons keep.
 type providerContext struct {
 	context.Context
 	cancel context.CancelFunc
@@ -443,14 +442,11 @@ func (c *providerContext) finishBuild() bool {
 	return true
 }
 
-func (c *providerContext) Deadline() (time.Time, bool) {
-	if c.building.Load() {
-		if deadline, ok := c.build.Deadline(); ok {
-			return deadline, true
-		}
-	}
-	return c.Context.Deadline()
-}
+// Deadline is deliberately inherited from the parent, not the build context:
+// context.Context requires successive Deadline calls to agree, so a build
+// deadline cannot be reported during Build and dropped afterwards. The
+// build deadline still reaches constructors as cancellation, and Err
+// reports DeadlineExceeded.
 
 func (c *providerContext) Err() error {
 	err := c.Context.Err()

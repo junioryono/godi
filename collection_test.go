@@ -1655,6 +1655,32 @@ func TestBuildContext(t *testing.T) {
 		assert.ErrorIs(t, holder.Ctx.Err(), context.Canceled, "provider shutdown cancels the context")
 	})
 
+	t.Run("singleton_context_deadline_is_stable", func(t *testing.T) {
+		t.Parallel()
+		type CtxHolder struct {
+			Ctx         context.Context
+			BuildTime   time.Time
+			BuildHasDdl bool
+		}
+		c := NewCollection()
+		c.AddSingleton(func(ctx context.Context) *CtxHolder {
+			deadline, ok := ctx.Deadline()
+			return &CtxHolder{Ctx: ctx, BuildTime: deadline, BuildHasDdl: ok}
+		})
+
+		p, err := c.BuildWithOptions(&ProviderOptions{BuildTimeout: time.Minute})
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+		holder, err := Resolve[*CtxHolder](p)
+		require.NoError(t, err)
+
+		// context.Context requires successive Deadline calls to agree; the
+		// build timeout must not appear during Build and vanish afterwards.
+		deadline, ok := holder.Ctx.Deadline()
+		assert.Equal(t, holder.BuildHasDdl, ok)
+		assert.Equal(t, holder.BuildTime, deadline)
+	})
+
 	t.Run("root_scope_context_cancelled_on_provider_close", func(t *testing.T) {
 		t.Parallel()
 		type CtxHolder struct{ Ctx context.Context }
