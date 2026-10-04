@@ -71,13 +71,16 @@ func (a *AuthService) ValidateWithUser(users *UserService, token string) bool {
 ### Missing Dependency
 
 ```
-Error: no registration found for type *DatabasePool required by *UserRepository
+Error: *UserRepository requires *DatabasePool (not registered)
 ```
 
 **What it means:** A constructor needs a type that wasn't registered.
 
-**When it surfaces:** at `Build()` for singletons (they are constructed
-eagerly), and at first resolution for scoped and transient services.
+**When it surfaces:** at `Build()`, for every lifetime. `Build` checks each
+constructor's dependencies and reports all missing ones together as
+`*godi.MissingDependencyError` values (`errors.Is(err, godi.ErrServiceNotFound)`
+matches). Optional (`optional:"true"`) and group dependencies are exempt: they
+may legitimately be absent or empty.
 
 **How to fix:**
 
@@ -168,10 +171,12 @@ These errors occur when resolving services.
 ### Service Not Found
 
 ```
-Error: no registration found for type *UnknownService
+Error: service not found: *UnknownService
 ```
 
 **What it means:** You're trying to resolve a type that wasn't registered.
+(A registered service whose constructor failed is reported as
+`failed to resolve *Service: ...` instead, with the constructor's error.)
 
 **How to fix:**
 
@@ -206,6 +211,26 @@ defer scope.Close()  // Close AFTER you're done
 service := godi.MustResolve[*UserService](scope)
 service.DoWork()
 ```
+
+### Circular Resolution at Runtime
+
+```
+Error: circular dependency detected: *Service -> *Service (cycle)
+```
+
+**What it means:** A constructor resolved itself, directly or through other
+constructors, via the `godi.Scope` or `godi.Provider` it was injected with.
+`Build` can't see these dynamic resolutions, so the cycle is reported when it
+happens (a `*godi.CircularDependencyError`) instead of deadlocking.
+
+The injected `Scope`/`Provider` attributes resolutions to the running
+constructor; it is a view of the same scope (same `ID()` and `Context()`), not
+the identical value. After the constructor returns, a stored copy resolves
+without restriction. Resolutions through `godi.FromContext` are not attributed
+to the constructor, so use the injected value inside constructors.
+
+**How to fix:** Break the cycle: take the dependency as a constructor
+parameter, or resolve lazily after construction.
 
 ### No Scope in Context
 

@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/gofiber/fiber/v2"
@@ -582,4 +583,69 @@ func TestScopeClosedWhenHandlerPanics(t *testing.T) {
 	assert.Contains(t, closeErr.Error(), "close failed")
 	assert.True(t, errorHandlerSawScope, "panic error handling must run while the scope is alive")
 	assert.True(t, disposable.closed, "scope must be closed even when the handler panics")
+}
+
+// streamResource is a scoped reader that cannot be read once closed.
+type streamResource struct {
+	remaining []byte
+	closed    atomic.Bool
+}
+
+func (r *streamResource) Read(p []byte) (int, error) {
+	if r.closed.Load() {
+		return 0, errors.New("read from closed stream")
+	}
+	if len(r.remaining) == 0 {
+		return 0, io.EOF
+	}
+	n := copy(p, r.remaining)
+	r.remaining = r.remaining[n:]
+	return n, nil
+}
+
+func (r *streamResource) Close() error {
+	r.closed.Store(true)
+	return nil
+}
+
+func TestScopeOutlivesStreamedResponse(t *testing.T) {
+	const payload = "streamed from a scoped resource"
+	var resource *streamResource
+
+	collection := godi.NewCollection()
+	collection.AddScoped(func() *streamResource {
+		resource = &streamResource{remaining: []byte(payload)}
+		return resource
+	})
+
+	provider, err := collection.Build()
+	assert.NoError(t, err)
+	defer provider.Close()
+
+	var closeErr error
+	app := fiber.New()
+	app.Use(ScopeMiddleware(provider, WithCloseErrorHandler(func(err error) { closeErr = err })))
+	app.Get("/stream", func(c *fiber.Ctx) error {
+		scope, scopeErr := godi.FromContext(c.UserContext())
+		assert.NoError(t, scopeErr)
+		stream, resolveErr := godi.Resolve[*streamResource](scope)
+		assert.NoError(t, resolveErr)
+		// Fiber writes the stream after the handler chain returns.
+		return c.SendStream(stream)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/stream", http.NoBody)
+	resp, err := app.Test(req)
+	if !assert.NoError(t, err, "the scope must stay open until the response is streamed") {
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Equal(t, payload, string(body), "the scope must stay open until the response is streamed")
+	assert.NoError(t, closeErr)
+	if assert.NotNil(t, resource) {
+		assert.True(t, resource.closed.Load(), "the scope must be closed once the response is written")
+	}
 }

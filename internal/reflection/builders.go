@@ -67,6 +67,31 @@ func (b *ParamObjectBuilder) BuildParamObject(
 		return reflect.Value{}, fmt.Errorf("paramType cannot be nil")
 	}
 
+	structType := paramType
+	if structType.Kind() == reflect.Pointer {
+		structType = structType.Elem()
+	}
+	if structType.Kind() != reflect.Struct {
+		return reflect.Value{}, fmt.Errorf("param type must be struct, got %v", structType.Kind())
+	}
+
+	// Analyze the struct's fields, then populate it from that analysis.
+	info := &ConstructorInfo{}
+	if err := b.analyzer.analyzeParamObject(info, paramType); err != nil {
+		return reflect.Value{}, err
+	}
+
+	return b.buildParamObject(paramType, info.Parameters, resolver)
+}
+
+// buildParamObject creates and populates an In struct from field metadata
+// already produced by Analyze. The hot resolution path uses it so struct
+// fields and tags are not re-walked and re-parsed on every construction.
+func (b *ParamObjectBuilder) buildParamObject(
+	paramType reflect.Type,
+	params []ParameterInfo,
+	resolver DependencyResolver,
+) (reflect.Value, error) {
 	// Get struct type (dereference if pointer)
 	structType := paramType
 	if structType.Kind() == reflect.Pointer {
@@ -82,42 +107,24 @@ func (b *ParamObjectBuilder) BuildParamObject(
 	structPtr := reflect.New(structType)
 	structValue := structPtr.Elem()
 
-	// Populate each field
-	for i := 0; i < structType.NumField(); i++ {
-		field := structType.Field(i)
+	// Populate each analyzed field (unexported, embedded In, and ignored
+	// fields were already excluded by analysis).
+	for i := range params {
+		param := &params[i]
 
-		// Skip unexported fields
-		if !field.IsExported() {
-			continue
-		}
-
-		// Skip embedded In field
-		if field.Anonymous && isInOutType(field.Type, inType) {
-			continue
-		}
-
-		// Parse tags
-		tagInfo := b.analyzer.parseFieldTags(field.Tag)
-
-		// Skip ignored fields
-		if tagInfo.Ignore {
-			continue
-		}
-
-		// Resolve dependency for this field
-		fieldValue, err := b.resolveFieldDependency(&field, tagInfo, resolver)
+		fieldValue, err := b.resolveFieldDependency(param, resolver)
 		if err != nil {
 			// Optional only forgives "not registered". A registered
 			// dependency whose construction failed must propagate the
 			// error instead of silently injecting a zero value.
-			if tagInfo.Optional && isServiceNotFound(err) {
+			if param.Optional && isServiceNotFound(err) {
 				continue
 			}
-			return reflect.Value{}, fmt.Errorf("failed to resolve field %s: %w", field.Name, err)
+			return reflect.Value{}, fmt.Errorf("failed to resolve field %s: %w", param.Name, err)
 		}
 
 		// Set the field value
-		fieldToSet := structValue.Field(i)
+		fieldToSet := structValue.Field(param.Index)
 		if fieldToSet.CanSet() && fieldValue.IsValid() {
 			fieldToSet.Set(fieldValue)
 		}
@@ -145,20 +152,19 @@ func isServiceNotFound(err error) bool {
 
 // resolveFieldDependency resolves a single field's dependency.
 func (b *ParamObjectBuilder) resolveFieldDependency(
-	field *reflect.StructField,
-	tagInfo TagInfo,
+	param *ParameterInfo,
 	resolver DependencyResolver,
 ) (reflect.Value, error) {
-	fieldType := field.Type
+	fieldType := param.Type
 
 	// Handle group dependencies (slices)
-	if tagInfo.Group != "" {
+	if param.Group != "" {
 		if fieldType.Kind() != reflect.Slice {
 			return reflect.Value{}, fmt.Errorf("group field must be slice, got %v", fieldType.Kind())
 		}
 
 		elemType := fieldType.Elem()
-		values, err := resolver.GetGroup(elemType, tagInfo.Group)
+		values, err := resolver.GetGroup(elemType, param.Group)
 		if err != nil {
 			return reflect.Value{}, err
 		}
@@ -173,8 +179,8 @@ func (b *ParamObjectBuilder) resolveFieldDependency(
 	}
 
 	// Handle keyed dependencies
-	if tagInfo.Name != "" {
-		value, err := resolver.GetKeyed(fieldType, tagInfo.Name)
+	if param.Key != nil {
+		value, err := resolver.GetKeyed(fieldType, param.Key)
 		if err != nil {
 			return reflect.Value{}, err
 		}
@@ -221,64 +227,109 @@ func (p *ResultObjectProcessor) ProcessResultObject(
 		return nil, fmt.Errorf("result must be struct, got %v", result.Kind())
 	}
 
-	registrations := make([]ServiceRegistration, 0)
+	info := &ConstructorInfo{}
+	if err := p.analyzer.analyzeResultObject(info, resultType); err != nil {
+		return nil, err
+	}
 
-	// Process each field
-	for i := 0; i < resultType.NumField(); i++ {
-		field := resultType.Field(i)
+	outputs, err := ResultObjectOutputs(result, info.Returns)
+	if err != nil {
+		return nil, err
+	}
 
-		// Skip unexported fields
-		if !field.IsExported() {
+	registrations := make([]ServiceRegistration, 0, len(outputs))
+	for i, output := range outputs {
+		if !output.Present {
 			continue
 		}
-
-		// Skip embedded Out field
-		if field.Anonymous && isInOutType(field.Type, outType) {
-			continue
-		}
-
-		// Parse tags
-		tagInfo := p.analyzer.parseFieldTags(field.Tag)
-
-		// Skip ignored fields
-		if tagInfo.Ignore {
-			continue
-		}
-
-		// Get field value
-		fieldValue := result.Field(i)
-		if !fieldValue.IsValid() {
-			continue
-		}
-
-		// Skip nil values for types that can be nil, unwrapping interfaces so
-		// a typed-nil pointer stored in an interface field is also treated as
-		// "not provided" rather than cached as a valid service.
-		nilCheck := fieldValue
-		for nilCheck.Kind() == reflect.Interface && !nilCheck.IsNil() {
-			nilCheck = nilCheck.Elem()
-		}
-		switch nilCheck.Kind() {
-		case reflect.Pointer, reflect.Interface, reflect.Slice, reflect.Map, reflect.Chan, reflect.Func:
-			if nilCheck.IsNil() {
-				continue
-			}
-		}
-
-		// Create service registration
-		reg := ServiceRegistration{
-			Type:  field.Type,
-			Value: fieldValue.Interface(),
-			Name:  field.Name,
-			Key:   tagInfo.Name,
-			Group: tagInfo.Group,
-			Index: i,
-		}
-
-		registrations = append(registrations, reg)
+		ret := info.Returns[i]
+		key, _ := ret.Key.(string)
+		registrations = append(registrations, ServiceRegistration{
+			Type:  ret.Type,
+			Value: output.Value,
+			Name:  ret.Name,
+			Key:   key,
+			Group: ret.Group,
+			Index: ret.Index,
+		})
 	}
 
 	return registrations, nil
+}
+
+// ResultOutput is one field of a constructed result object (Out struct).
+type ResultOutput struct {
+	// Index is the field index in the Out struct.
+	Index int
+	// Value is the field's value; nil when Present is false.
+	Value any
+	// Present is false when the field holds a nil value, which means the
+	// constructor did not provide that output.
+	Present bool
+}
+
+// ResultObjectOutputs extracts one output per entry of returns (the analyzed
+// Out-struct fields, as produced by Analyze) from a constructed result object.
+// The returned slice is parallel to returns. Using the analyzed metadata keeps
+// the hot resolution path from re-walking struct fields and re-parsing tags.
+func ResultObjectOutputs(result reflect.Value, returns []ReturnInfo) ([]ResultOutput, error) {
+	if result.Kind() == reflect.Pointer {
+		if result.IsNil() {
+			return nil, fmt.Errorf("result object is nil")
+		}
+		result = result.Elem()
+	}
+
+	if result.Kind() != reflect.Struct {
+		return nil, fmt.Errorf("result must be struct, got %v", result.Kind())
+	}
+
+	outputs := make([]ResultOutput, len(returns))
+	for i, ret := range returns {
+		fieldValue := result.Field(ret.Index)
+		outputs[i].Index = ret.Index
+		// Nil values are "not provided", unwrapping interfaces so a typed-nil
+		// pointer stored in an interface field is not cached as a service.
+		if IsNilValue(fieldValue) {
+			continue
+		}
+		outputs[i].Value = fieldValue.Interface()
+		outputs[i].Present = true
+	}
+
+	return outputs, nil
+}
+
+// IsNilValue reports whether v is invalid or a nil value, unwrapping non-nil
+// interfaces to their dynamic value. Values of kinds that cannot be nil
+// (structs, numbers, ...) are never nil.
+func IsNilValue(v reflect.Value) bool {
+	if !v.IsValid() {
+		return true
+	}
+	for v.Kind() == reflect.Interface {
+		if v.IsNil() {
+			return true
+		}
+		v = v.Elem()
+	}
+	return canBeNil(v.Kind()) && v.IsNil()
+}
+
+// canBeNil reports whether values of kind k can be nil, i.e. whether
+// reflect.Value.IsNil may be called on them.
+func canBeNil(k reflect.Kind) bool {
+	switch k {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice, reflect.UnsafePointer:
+		return true
+	default:
+		return false
+	}
+}
+
+// CanBeNil reports whether values of type t can be nil.
+func CanBeNil(t reflect.Type) bool {
+	return canBeNil(t.Kind())
 }
 
 // ServiceRegistration represents a service to be registered from an Out struct.
@@ -360,7 +411,10 @@ func (ci *ConstructorInvoker) Invoke(
 	// Check for error return
 	if info.HasErrorReturn && len(results) > 0 {
 		lastResult := results[len(results)-1]
-		if !lastResult.IsNil() {
+		// Value.IsNil panics on kinds that cannot be nil, such as a struct
+		// implementing error; such a value is always a non-nil error. A
+		// typed nil inside an error interface stays non-nil, as in Go.
+		if !canBeNil(lastResult.Kind()) || !lastResult.IsNil() {
 			if err, ok := lastResult.Interface().(error); ok {
 				return nil, fmt.Errorf("constructor error: %w", err)
 			}
@@ -396,7 +450,7 @@ func (ci *ConstructorInvoker) buildArguments(
 	if info.IsParamObject {
 		// Build the In struct
 		paramType := info.Type.In(0)
-		paramValue, err := ci.paramBuilder.BuildParamObject(paramType, resolver)
+		paramValue, err := ci.paramBuilder.buildParamObject(paramType, info.Parameters, resolver)
 		if err != nil {
 			return nil, err
 		}

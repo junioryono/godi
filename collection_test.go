@@ -252,7 +252,56 @@ func TestCollectionRegistrationErrors(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "only parameter")
 	})
+
+	t.Run("rejects_non_nilable_error_return", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddSingleton(func() (*TService, structError) { return NewTService(), structError{} })
+
+		// A struct error can never be nil, so the constructor would always
+		// fail; previously resolution panicked calling IsNil on it.
+		var err error
+		require.NotPanics(t, func() { _, err = c.Build() })
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "error return")
+	})
+
+	t.Run("rejects_multiple_error_returns", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddSingleton(func() (error, error) { return errors.New("init failed"), nil })
+
+		// Only the last error is inspected, so the first would be dropped
+		// and Build would succeed despite the failure.
+		err := c.Err()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "error return must be the last return value")
+	})
+
+	t.Run("rejects_in_field_with_name_and_group", func(t *testing.T) {
+		t.Parallel()
+		type Item struct{ ID int }
+		type Holder struct{ Items []*Item }
+		type Params struct {
+			In
+			Items []*Item `name:"x" group:"items"`
+		}
+		c := NewCollection()
+		c.AddScoped(func() *Item { return &Item{} }, Group("items"))
+		c.AddSingleton(func(p Params) *Holder { return &Holder{Items: p.Items} })
+
+		// Accepting both tags let a singleton receive scoped group members:
+		// lifetime validation keyed on the name while resolution used the group.
+		_, err := c.Build()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "both name and group")
+	})
 }
+
+// structError is an error implemented by a non-nilable struct type.
+type structError struct{}
+
+func (structError) Error() string { return "struct error" }
 
 func TestCollectionRemove(t *testing.T) {
 	t.Parallel()
@@ -302,6 +351,55 @@ func TestCollectionRemove(t *testing.T) {
 		assert.Equal(t, 0, calls, "removed singleton constructor must not run at build")
 		_, err = Resolve[*TService](p)
 		require.Error(t, err)
+	})
+
+	t.Run("removed_output_is_still_disposed", func(t *testing.T) {
+		t.Parallel()
+		type ResourceOut struct {
+			Out
+			Resource *TDisposable
+			Service  *TService
+		}
+		registrations := map[string]func(Collection, *atomic.Pointer[TDisposable]){
+			"multi_return": func(c Collection, produced *atomic.Pointer[TDisposable]) {
+				c.AddScoped(func() (*TDisposable, *TService) {
+					d := NewTDisposable()
+					produced.Store(d)
+					return d, NewTService()
+				})
+			},
+			"result_object": func(c Collection, produced *atomic.Pointer[TDisposable]) {
+				c.AddScoped(func() ResourceOut {
+					d := NewTDisposable()
+					produced.Store(d)
+					return ResourceOut{Resource: d, Service: NewTService()}
+				})
+			},
+		}
+		for name, register := range registrations {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				var produced atomic.Pointer[TDisposable]
+				c := NewCollection()
+				register(c, &produced)
+				c.Remove(PtrTypeOf[TDisposable]())
+
+				p, err := c.Build()
+				require.NoError(t, err)
+				t.Cleanup(func() { _ = p.Close() })
+
+				s, err := p.CreateScope(context.Background())
+				require.NoError(t, err)
+				_, err = Resolve[*TService](s)
+				require.NoError(t, err)
+				require.NoError(t, s.Close())
+
+				// The constructor still produces the removed output, so the
+				// scope that ran it owns its cleanup.
+				require.NotNil(t, produced.Load())
+				assert.True(t, produced.Load().IsClosed(), "removed output must still be closed")
+			})
+		}
 	})
 
 	t.Run("count_and_toslice_reflect_removal", func(t *testing.T) {
@@ -498,6 +596,70 @@ func TestCollectionBuild(t *testing.T) {
 		require.Error(t, err)
 		assert.ErrorIs(t, err, context.Canceled)
 	})
+
+	t.Run("detects_missing_dependencies_for_every_lifetime", func(t *testing.T) {
+		t.Parallel()
+		type Missing struct{}
+		type NeedsMissing struct{}
+		ctor := func(*Missing) *NeedsMissing { return &NeedsMissing{} }
+
+		for _, lifetime := range []Lifetime{Singleton, Scoped, Transient} {
+			t.Run(lifetime.String(), func(t *testing.T) {
+				t.Parallel()
+				c := NewCollection()
+				switch lifetime {
+				case Singleton:
+					c.AddSingleton(ctor)
+				case Scoped:
+					c.AddScoped(ctor)
+				case Transient:
+					c.AddTransient(ctor)
+				}
+
+				_, err := c.Build()
+				require.Error(t, err, "a missing dependency must fail Build, not the first resolution")
+				assert.ErrorIs(t, err, ErrServiceNotFound)
+				assert.Contains(t, err.Error(), "NeedsMissing requires *Missing")
+			})
+		}
+	})
+
+	t.Run("missing_optional_dependency_does_not_fail_build", func(t *testing.T) {
+		t.Parallel()
+		type Missing struct{}
+		type Params struct {
+			In
+			Missing *Missing `optional:"true"`
+		}
+		c := NewCollection()
+		c.AddScoped(func(p Params) *TService { return NewTService() })
+
+		p, err := c.Build()
+		require.NoError(t, err)
+		require.NoError(t, p.Close())
+	})
+
+	t.Run("constructor_may_inspect_collection", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddSingleton(func() *TService { return &TService{Value: c.Count()} })
+
+		done := make(chan error, 1)
+		go func() {
+			p, err := c.Build()
+			if err == nil {
+				err = p.Close()
+			}
+			done <- err
+		}()
+
+		select {
+		case err := <-done:
+			require.NoError(t, err)
+		case <-time.After(5 * time.Second):
+			t.Fatal("Build deadlocked: it held the collection lock while running constructors")
+		}
+	})
 }
 
 func TestCollectionParameterObjects(t *testing.T) {
@@ -561,6 +723,112 @@ func TestCollectionResultObjects(t *testing.T) {
 	logger, err := p.GetKeyed(reflect.TypeFor[*ResultLogger](), "audit")
 	require.NoError(t, err)
 	assert.Equal(t, "info", logger.(*ResultLogger).Level)
+}
+
+// A nil Out field means the constructor did not provide that output.
+func TestResultObjectAbsentOutputs(t *testing.T) {
+	t.Parallel()
+
+	type Present struct{ N int32 }
+	type Absent struct{}
+	type PartialOut struct {
+		Out
+		Present *Present
+		Absent  *Absent
+	}
+
+	t.Run("singleton_builds_and_runs_once", func(t *testing.T) {
+		t.Parallel()
+		var calls atomic.Int32
+		c := NewCollection()
+		c.AddSingleton(func() PartialOut {
+			calls.Add(1)
+			return PartialOut{Present: &Present{}}
+		})
+
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+
+		_, err = Resolve[*Present](p)
+		require.NoError(t, err)
+		_, err = Resolve[*Absent](p)
+		require.ErrorIs(t, err, ErrServiceNotFound)
+		assert.Equal(t, int32(1), calls.Load(), "constructor must run exactly once")
+	})
+
+	t.Run("scoped_keeps_sibling_identity", func(t *testing.T) {
+		t.Parallel()
+		var calls atomic.Int32
+		c := NewCollection()
+		c.AddScoped(func() PartialOut {
+			return PartialOut{Present: &Present{N: calls.Add(1)}}
+		})
+
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+		s, err := p.CreateScope(context.Background())
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = s.Close() })
+
+		first, err := Resolve[*Present](s)
+		require.NoError(t, err)
+		_, err = Resolve[*Absent](s)
+		require.ErrorIs(t, err, ErrServiceNotFound)
+		second, err := Resolve[*Present](s)
+		require.NoError(t, err)
+
+		// Resolving the absent output used to re-run the constructor and
+		// overwrite the cached sibling.
+		assert.Same(t, first, second, "a scoped instance must be unique within its scope")
+		assert.Equal(t, int32(1), calls.Load(), "constructor must run once per scope")
+	})
+
+	t.Run("optional_dependency_receives_nil", func(t *testing.T) {
+		t.Parallel()
+		type Params struct {
+			In
+			Absent *Absent `optional:"true"`
+		}
+		c := NewCollection()
+		c.AddSingleton(func() PartialOut { return PartialOut{Present: &Present{}} })
+		c.AddSingleton(func(p Params) *TService {
+			return &TService{ID: fmt.Sprint(p.Absent != nil)}
+		})
+
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+
+		svc, err := Resolve[*TService](p)
+		require.NoError(t, err)
+		assert.Equal(t, "false", svc.ID)
+	})
+
+	t.Run("group_skips_absent_members", func(t *testing.T) {
+		t.Parallel()
+		type Item struct{ ID int }
+		type GroupOut struct {
+			Out
+			First  *Item `group:"items"`
+			Second *Item `group:"items"`
+		}
+		c := NewCollection()
+		c.AddScoped(func() GroupOut { return GroupOut{First: &Item{ID: 1}} })
+
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+		s, err := p.CreateScope(context.Background())
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = s.Close() })
+
+		items, err := ResolveGroup[*Item](s, "items")
+		require.NoError(t, err)
+		require.Len(t, items, 1)
+		assert.Equal(t, 1, items[0].ID)
+	})
 }
 
 func TestSingletonConsumingGroupViaIn(t *testing.T) {
@@ -843,12 +1111,12 @@ func TestOptionalDependencyErrors(t *testing.T) {
 			return &TOptionalConsumer{Failing: p.Failing}
 		})
 
-		p, err := c.Build()
-		require.NoError(t, err)
-		t.Cleanup(func() { _ = p.Close() })
-
-		_, err = Resolve[*TOptionalConsumer](p)
+		// Build validates every registration's dependencies, so the
+		// unconstructible TFailing is reported before any resolution.
+		_, err := c.Build()
 		require.Error(t, err, "missing transitive dependency of an optional service must propagate")
+		assert.ErrorIs(t, err, ErrServiceNotFound)
+		assert.Contains(t, err.Error(), "*TFailing requires *TDisposable")
 	})
 
 	t.Run("failing_constructor_of_optional_dependency_propagates", func(t *testing.T) {
@@ -1366,6 +1634,68 @@ func TestBuildContext(t *testing.T) {
 		readers.Wait()
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = p.Close() })
+	})
+
+	t.Run("singleton_context_survives_build_timeout", func(t *testing.T) {
+		t.Parallel()
+		type CtxHolder struct{ Ctx context.Context }
+		c := NewCollection()
+		c.AddSingleton(func(ctx context.Context) *CtxHolder { return &CtxHolder{Ctx: ctx} })
+
+		p, err := c.BuildWithOptions(&ProviderOptions{BuildTimeout: time.Minute})
+		require.NoError(t, err)
+		holder, err := Resolve[*CtxHolder](p)
+		require.NoError(t, err)
+
+		// The timeout bounds Build only; it used to cancel the context every
+		// singleton captured as soon as Build returned.
+		require.NoError(t, holder.Ctx.Err(), "a successful Build must not cancel singleton contexts")
+
+		require.NoError(t, p.Close())
+		assert.ErrorIs(t, holder.Ctx.Err(), context.Canceled, "provider shutdown cancels the context")
+	})
+
+	t.Run("singleton_context_deadline_is_stable", func(t *testing.T) {
+		t.Parallel()
+		type CtxHolder struct {
+			Ctx         context.Context
+			BuildTime   time.Time
+			BuildHasDdl bool
+		}
+		c := NewCollection()
+		c.AddSingleton(func(ctx context.Context) *CtxHolder {
+			deadline, ok := ctx.Deadline()
+			return &CtxHolder{Ctx: ctx, BuildTime: deadline, BuildHasDdl: ok}
+		})
+
+		p, err := c.BuildWithOptions(&ProviderOptions{BuildTimeout: time.Minute})
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+		holder, err := Resolve[*CtxHolder](p)
+		require.NoError(t, err)
+
+		// context.Context requires successive Deadline calls to agree; the
+		// build timeout must not appear during Build and vanish afterwards.
+		deadline, ok := holder.Ctx.Deadline()
+		assert.Equal(t, holder.BuildHasDdl, ok)
+		assert.Equal(t, holder.BuildTime, deadline)
+	})
+
+	t.Run("root_scope_context_cancelled_on_provider_close", func(t *testing.T) {
+		t.Parallel()
+		type CtxHolder struct{ Ctx context.Context }
+		c := NewCollection()
+		c.AddScoped(func(ctx context.Context) *CtxHolder { return &CtxHolder{Ctx: ctx} })
+
+		p, err := c.Build()
+		require.NoError(t, err)
+		holder, err := Resolve[*CtxHolder](p)
+		require.NoError(t, err)
+		require.NoError(t, holder.Ctx.Err())
+
+		require.NoError(t, p.Close())
+		assert.ErrorIs(t, holder.Ctx.Err(), context.Canceled,
+			"services resolved from the root scope must observe provider shutdown")
 	})
 }
 

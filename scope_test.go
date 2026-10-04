@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -110,6 +112,63 @@ func TestScopeDisposal(t *testing.T) {
 		assert.False(t, d.IsClosed()) // Singleton outlives scope
 	})
 
+	t.Run("scope_does_not_dispose_borrowed_singleton", func(t *testing.T) {
+		t.Parallel()
+		for _, lifetime := range []Lifetime{Scoped, Transient} {
+			t.Run(lifetime.String(), func(t *testing.T) {
+				t.Parallel()
+				c := NewCollection()
+				c.AddSingleton(NewTDisposable)
+				// A shorter-lived service that hands out the singleton itself.
+				asCloser := func(d *TDisposable) io.Closer { return d }
+				if lifetime == Scoped {
+					c.AddScoped(asCloser)
+				} else {
+					c.AddTransient(asCloser)
+				}
+				p, err := c.Build()
+				require.NoError(t, err)
+				singleton, err := Resolve[*TDisposable](p)
+				require.NoError(t, err)
+
+				for range 2 {
+					scope, err := p.CreateScope(context.Background())
+					require.NoError(t, err)
+					_, err = Resolve[io.Closer](scope)
+					require.NoError(t, err)
+					require.NoError(t, scope.Close())
+					assert.False(t, singleton.IsClosed(), "a scope must not close a singleton it only borrowed")
+				}
+
+				require.NoError(t, p.Close(), "the provider closes its singleton exactly once")
+				assert.True(t, singleton.IsClosed())
+			})
+		}
+	})
+
+	t.Run("failed_multi_return_closes_produced_sibling", func(t *testing.T) {
+		t.Parallel()
+		var produced atomic.Pointer[TDisposable]
+		c := NewCollection()
+		c.AddScoped(func() (*TDisposable, *TService) {
+			d := NewTDisposable()
+			produced.Store(d)
+			return d, nil // nil service fails resolution
+		})
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+
+		scope, err := p.CreateScope(context.Background())
+		require.NoError(t, err)
+		_, err = Resolve[*TService](scope)
+		require.Error(t, err)
+		require.NoError(t, scope.Close())
+
+		require.NotNil(t, produced.Load())
+		assert.True(t, produced.Load().IsClosed(), "the successfully produced disposable must not leak")
+	})
+
 	t.Run("provider_disposes_singletons", func(t *testing.T) {
 		t.Parallel()
 		c := NewCollection()
@@ -149,6 +208,23 @@ func TestScopeContextCancellation(t *testing.T) {
 
 	_, err = scope.Get(PtrTypeOf[TService]())
 	assert.ErrorIs(t, err, ErrScopeDisposed)
+}
+
+func TestScopeContextWatchIsUnregistered(t *testing.T) {
+	t.Parallel()
+
+	p := BuildProvider(t)
+	parent, err := p.CreateScope(context.Background())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = parent.Close() })
+	child, err := parent.CreateScope(context.Background())
+	require.NoError(t, err)
+
+	// Close must be able to unregister the context watch; otherwise its own
+	// cancel() starts the AfterFunc goroutine on every explicit Close.
+	for name, s := range map[string]Scope{"top_level": parent, "child": child} {
+		assert.NotNil(t, s.(*scope).stopContextWatch.Load(), "%s scope must keep its context-watch stop func", name)
+	}
 }
 
 func TestNestedScopes(t *testing.T) {
@@ -274,7 +350,10 @@ func TestBuiltinServiceInjection(t *testing.T) {
 		defer scope.Close()
 
 		svc, _ := Resolve[*ScopeSvc](scope)
-		assert.Same(t, scope, svc.Scope)
+		// The injected Scope is a view of the resolving scope that attributes
+		// its resolutions to the construction (for cycle detection).
+		assert.Equal(t, scope.ID(), svc.Scope.ID())
+		assert.Equal(t, scope.Context(), svc.Scope.Context())
 	})
 
 	t.Run("injects_provider", func(t *testing.T) {
@@ -290,7 +369,192 @@ func TestBuiltinServiceInjection(t *testing.T) {
 		defer p.Close()
 
 		svc, _ := Resolve[*ProvSvc](p)
-		assert.Same(t, p, svc.Prov)
+		assert.Equal(t, p.ID(), svc.Prov.ID())
+	})
+}
+
+// Constructors that resolve through their injected Scope or Provider are
+// outside the static dependency graph, so Build cannot see a cycle there.
+func TestDynamicCircularResolution(t *testing.T) {
+	t.Parallel()
+
+	// resolveWithin fails the test instead of hanging when resolution
+	// deadlocks.
+	resolveWithin := func(t *testing.T, resolve func() error) error {
+		t.Helper()
+		done := make(chan error, 1)
+		go func() { done <- resolve() }()
+		select {
+		case err := <-done:
+			return err
+		case <-time.After(5 * time.Second):
+			t.Fatal("resolution deadlocked")
+			return nil
+		}
+	}
+
+	type SelfA struct{}
+	type SelfB struct{}
+
+	t.Run("scoped_self_resolution_through_scope", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddScoped(func(s Scope) (*SelfA, error) {
+			if _, err := Resolve[*SelfA](s); err != nil {
+				return nil, err
+			}
+			return &SelfA{}, nil
+		})
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+		scope, err := p.CreateScope(context.Background())
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = scope.Close() })
+
+		err = resolveWithin(t, func() error {
+			_, resolveErr := Resolve[*SelfA](scope)
+			return resolveErr
+		})
+		var cycleErr *CircularDependencyError
+		require.ErrorAs(t, err, &cycleErr)
+		assert.Contains(t, cycleErr.Error(), "SelfA")
+	})
+
+	t.Run("transient_self_resolution_through_scope", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddTransient(func(s Scope) (*SelfA, error) {
+			if _, err := Resolve[*SelfA](s); err != nil {
+				return nil, err
+			}
+			return &SelfA{}, nil
+		})
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+		scope, err := p.CreateScope(context.Background())
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = scope.Close() })
+
+		// Previously this recursed until the goroutine stack overflowed.
+		err = resolveWithin(t, func() error {
+			_, resolveErr := Resolve[*SelfA](scope)
+			return resolveErr
+		})
+		var cycleErr *CircularDependencyError
+		require.ErrorAs(t, err, &cycleErr)
+	})
+
+	t.Run("indirect_cycle_through_scope", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddScoped(func(s Scope) (*SelfA, error) {
+			_, err := Resolve[*SelfB](s)
+			return &SelfA{}, err
+		})
+		c.AddScoped(func(s Scope) (*SelfB, error) {
+			_, err := Resolve[*SelfA](s)
+			return &SelfB{}, err
+		})
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+		scope, err := p.CreateScope(context.Background())
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = scope.Close() })
+
+		err = resolveWithin(t, func() error {
+			_, resolveErr := Resolve[*SelfA](scope)
+			return resolveErr
+		})
+		var cycleErr *CircularDependencyError
+		require.ErrorAs(t, err, &cycleErr)
+		joined := strings.Join(cycleErr.Path, " -> ")
+		assert.Contains(t, joined, "SelfA")
+		assert.Contains(t, joined, "SelfB")
+	})
+
+	t.Run("self_resolution_through_provider", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddScoped(func(p Provider) (*SelfA, error) {
+			if _, err := Resolve[*SelfA](p); err != nil {
+				return nil, err
+			}
+			return &SelfA{}, nil
+		})
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+
+		err = resolveWithin(t, func() error {
+			_, resolveErr := Resolve[*SelfA](p)
+			return resolveErr
+		})
+		var cycleErr *CircularDependencyError
+		require.ErrorAs(t, err, &cycleErr)
+	})
+
+	t.Run("stored_scope_is_unrestricted_after_construction", func(t *testing.T) {
+		t.Parallel()
+		type Factory struct{ Scope Scope }
+		c := NewCollection()
+		c.AddTransient(func() *SelfA { return &SelfA{} })
+		c.AddScoped(func(s Scope) *Factory { return &Factory{Scope: s} })
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+		scope, err := p.CreateScope(context.Background())
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = scope.Close() })
+
+		factory, err := Resolve[*Factory](scope)
+		require.NoError(t, err)
+		// The construction is over: a stored Scope resolves freely,
+		// including the factory's own type.
+		_, err = Resolve[*SelfA](factory.Scope)
+		require.NoError(t, err)
+		again, err := Resolve[*Factory](factory.Scope)
+		require.NoError(t, err)
+		assert.Same(t, factory, again)
+	})
+
+	t.Run("concurrent_resolution_is_not_a_cycle", func(t *testing.T) {
+		t.Parallel()
+		started := make(chan struct{})
+		release := make(chan struct{})
+		c := NewCollection()
+		c.AddScoped(func(s Scope) *SelfA {
+			close(started)
+			<-release
+			return &SelfA{}
+		})
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+		scope, err := p.CreateScope(context.Background())
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = scope.Close() })
+
+		first := make(chan *SelfA, 1)
+		go func() {
+			a, _ := Resolve[*SelfA](scope)
+			first <- a
+		}()
+		<-started
+		second := make(chan *SelfA, 1)
+		go func() {
+			a, _ := Resolve[*SelfA](scope)
+			second <- a
+		}()
+		close(release)
+
+		// Another goroutine waiting on the in-flight construction is not
+		// re-entrance: it shares the single instance.
+		a1, a2 := <-first, <-second
+		require.NotNil(t, a1)
+		assert.Same(t, a1, a2)
 	})
 }
 

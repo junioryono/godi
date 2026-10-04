@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -26,11 +27,18 @@ type scope struct {
 	rootProvider *provider
 	parentScope  *scope
 	context      context.Context
-	// constructionContext atomically overrides context.Context resolution while
-	// Build invokes eager constructors. Constructors can receive Provider and
-	// resolve from other goroutines, so the override must be race-safe.
-	constructionContext atomic.Pointer[scopeConstructionContext]
-	cancel              context.CancelFunc
+	cancel       context.CancelFunc
+
+	// isRoot marks the provider's root scope. Its disposables live as long as
+	// the provider, so they are tracked in the provider's creation-ordered
+	// list alongside the singletons: a singleton and the root-scope
+	// instances it depends on are then disposed in reverse creation order.
+	isRoot bool
+
+	// stopContextWatch unregisters the context.AfterFunc that closes this
+	// scope when its context is cancelled, so an explicit Close does not
+	// spawn the callback's goroutine.
+	stopContextWatch atomic.Pointer[func() bool]
 
 	// Scoped instances (isolated per scope)
 	instances   map[instanceKey]any
@@ -68,9 +76,145 @@ type scopeFlight struct {
 	err      error
 }
 
-type scopeConstructionContext struct {
-	context context.Context
+// resolveFrame is one in-progress constructor invocation. It is the
+// DependencyResolver handed to the constructor invoker, so each dependency
+// resolved for a constructor knows which construction requested it. Frames
+// link to the requesting construction, forming the chain from the outermost
+// resolution to the current constructor.
+//
+// Frames are only allocated where the chain is consulted: in the root scope
+// (transient ownership, see trackTransient), and from any constructor that
+// receives the container itself (cycle detection, see checkCycle) down.
+type resolveFrame struct {
+	scope      *scope
+	parent     *resolveFrame
+	descriptor *descriptor
+
+	// active is true while the constructor runs. A Scope or Provider handed
+	// to the constructor outlives it; once the construction is over,
+	// resolutions through it are no longer part of the construction.
+	active atomic.Bool
 }
+
+func (f *resolveFrame) Get(serviceType reflect.Type) (any, error) {
+	return f.scope.get(f, serviceType)
+}
+
+func (f *resolveFrame) GetKeyed(serviceType reflect.Type, key any) (any, error) {
+	return f.scope.getKeyed(f, serviceType, key)
+}
+
+func (f *resolveFrame) GetGroup(serviceType reflect.Type, group string) ([]any, error) {
+	return f.scope.getGroup(f, serviceType, group)
+}
+
+// ifActive returns f while its constructor is running, else nil.
+func (f *resolveFrame) ifActive() *resolveFrame {
+	if f.active.Load() {
+		return f
+	}
+	return nil
+}
+
+// frameScope is the Scope injected into a constructor: the resolving scope,
+// with resolutions made through it attributed to the in-progress
+// construction. A constructor that (directly or indirectly) resolves itself
+// through it gets a CircularDependencyError instead of deadlocking (scoped)
+// or overflowing the stack (transient). After the constructor returns it
+// behaves exactly like the scope.
+type frameScope struct {
+	*scope
+	frame *resolveFrame
+}
+
+func (f *frameScope) Get(serviceType reflect.Type) (any, error) {
+	return f.get(f.frame.ifActive(), serviceType)
+}
+
+func (f *frameScope) GetKeyed(serviceType reflect.Type, key any) (any, error) {
+	return f.getKeyed(f.frame.ifActive(), serviceType, key)
+}
+
+func (f *frameScope) GetGroup(serviceType reflect.Type, group string) ([]any, error) {
+	return f.getGroup(f.frame.ifActive(), serviceType, group)
+}
+
+// frameProvider is the Provider injected into a constructor; see frameScope.
+type frameProvider struct {
+	*provider
+	frame *resolveFrame
+}
+
+func (f *frameProvider) Get(serviceType reflect.Type) (any, error) {
+	return f.get(f.frame.ifActive(), serviceType)
+}
+
+func (f *frameProvider) GetKeyed(serviceType reflect.Type, key any) (any, error) {
+	return f.getKeyed(f.frame.ifActive(), serviceType, key)
+}
+
+func (f *frameProvider) GetGroup(serviceType reflect.Type, group string) ([]any, error) {
+	return f.getGroup(f.frame.ifActive(), serviceType, group)
+}
+
+// hasCachedOwner reports whether a construction requested through parent is
+// owned by a cached (singleton or scoped) service of scope s: some frame in
+// the chain within s, possibly through other transients, is not transient.
+func hasCachedOwner(s *scope, parent *resolveFrame) bool {
+	for f := parent; f != nil && f.scope == s && f.active.Load(); f = f.parent {
+		if f.descriptor.Lifetime != Transient {
+			return true
+		}
+	}
+	return false
+}
+
+// checkCycle reports a CircularDependencyError if constructing d in scope s
+// on behalf of parent would re-enter a construction of d (or of a sibling
+// output of the same constructor) that is still in progress in s. Such
+// re-entrance happens only through an injected Scope or Provider: the static
+// dependency graph is checked for cycles at Build.
+func (s *scope) checkCycle(parent *resolveFrame, d *descriptor) error {
+	fkey := flightKey(d)
+	for f := parent; f != nil; f = f.parent {
+		if f.scope != s || !f.active.Load() || flightKey(f.descriptor) != fkey {
+			continue
+		}
+		// Path: from the re-entered construction to the current one.
+		var path []string
+		for g := parent; g != nil; g = g.parent {
+			path = append(path, describeService(g.descriptor))
+			if g == f {
+				break
+			}
+		}
+		slices.Reverse(path)
+		return &CircularDependencyError{
+			Node: describeService(d),
+			Path: path,
+		}
+	}
+	return nil
+}
+
+// describeService names a registration in cycle reports, in the same form as
+// the dependency graph's cycle errors.
+func describeService(d *descriptor) string {
+	name := d.Type.String()
+	if d.Key != nil {
+		name += fmt.Sprintf(":%v", d.Key)
+	}
+	if d.Group != "" {
+		name += fmt.Sprintf(" [%s]", d.Group)
+	}
+	return name
+}
+
+// absentOutput is cached in place of a result-object (godi.Out) field the
+// constructor left nil. Caching the absence keeps the constructor from being
+// re-run (and replacing its other, already cached outputs) on every attempt
+// to resolve the missing field.
+type absentOutput struct{}
 
 func newScope(rootProvider *provider, parent *scope, ctx context.Context, cancel context.CancelFunc) (*scope, error) {
 	s, err := newUninitializedScope(rootProvider, parent, ctx, cancel)
@@ -112,14 +256,14 @@ func newUninitializedScope(
 	scopeNum := rootProvider.scopeCounter.Add(1)
 
 	s := &scope{
-		id:            "s" + strconv.FormatUint(scopeNum, 36),
-		rootProvider:  rootProvider,
-		parentScope:   parent,
-		cancel:        cancel,
-		instances:     make(map[instanceKey]any, 8), // Pre-size for typical usage
-		disposableSet: make(map[disposableIdentity]struct{}, 4),
-		closeDone:     make(chan struct{}),
-		// disposables and children are lazily allocated on first use.
+		id:           "s" + strconv.FormatUint(scopeNum, 36),
+		rootProvider: rootProvider,
+		parentScope:  parent,
+		cancel:       cancel,
+		instances:    make(map[instanceKey]any, 8), // Pre-size for typical usage
+		closeDone:    make(chan struct{}),
+		// disposables, disposableSet and children are lazily allocated on
+		// first use.
 	}
 
 	ctx = context.WithValue(ctx, scopeContextKey{}, s)
@@ -130,7 +274,7 @@ func newUninitializedScope(
 
 func (s *scope) initializeScopedServices() error {
 	for _, descriptor := range s.rootProvider.voidReturnScopedDescriptors {
-		if _, err := s.createInstance(descriptor); err != nil {
+		if _, err := s.createInstance(nil, descriptor); err != nil {
 			return &ResolutionError{
 				ServiceType: descriptor.Type,
 				ServiceKey:  descriptor.Key,
@@ -161,6 +305,22 @@ func (s *scope) ID() string {
 
 // Get resolves a service in this scope
 func (s *scope) Get(serviceType reflect.Type) (any, error) {
+	return s.get(nil, serviceType)
+}
+
+// GetKeyed resolves a keyed service in this scope
+func (s *scope) GetKeyed(serviceType reflect.Type, serviceKey any) (any, error) {
+	return s.getKeyed(nil, serviceType, serviceKey)
+}
+
+// GetGroup resolves all services in a group
+func (s *scope) GetGroup(serviceType reflect.Type, group string) ([]any, error) {
+	return s.getGroup(nil, serviceType, group)
+}
+
+// get resolves a service on behalf of parent, the construction that requested
+// it (nil for a direct call).
+func (s *scope) get(parent *resolveFrame, serviceType reflect.Type) (any, error) {
 	if s.disposed.Load() != 0 {
 		return nil, ErrScopeDisposed
 	}
@@ -170,7 +330,7 @@ func (s *scope) Get(serviceType reflect.Type) (any, error) {
 	}
 
 	key := instanceKey{Type: serviceType}
-	instance, err := s.resolve(key, nil)
+	instance, err := s.resolve(parent, key, nil)
 	// If Close ran while resolve was in flight, surface that as
 	// ErrScopeDisposed instead of a stale "not found" / dangling instance.
 	if s.disposed.Load() != 0 {
@@ -179,8 +339,7 @@ func (s *scope) Get(serviceType reflect.Type) (any, error) {
 	return instance, err
 }
 
-// GetKeyed resolves a keyed service in this scope
-func (s *scope) GetKeyed(serviceType reflect.Type, serviceKey any) (any, error) {
+func (s *scope) getKeyed(parent *resolveFrame, serviceType reflect.Type, serviceKey any) (any, error) {
 	if s.disposed.Load() != 0 {
 		return nil, ErrScopeDisposed
 	}
@@ -204,15 +363,14 @@ func (s *scope) GetKeyed(serviceType reflect.Type, serviceKey any) (any, error) 
 	}
 
 	key := instanceKey{Type: serviceType, Key: serviceKey}
-	instance, err := s.resolve(key, nil)
+	instance, err := s.resolve(parent, key, nil)
 	if s.disposed.Load() != 0 {
 		return nil, ErrScopeDisposed
 	}
 	return instance, err
 }
 
-// GetGroup resolves all services in a group
-func (s *scope) GetGroup(serviceType reflect.Type, group string) ([]any, error) {
+func (s *scope) getGroup(parent *resolveFrame, serviceType reflect.Type, group string) ([]any, error) {
 	if s.disposed.Load() != 0 {
 		return nil, ErrScopeDisposed
 	}
@@ -237,8 +395,13 @@ func (s *scope) GetGroup(serviceType reflect.Type, group string) ([]any, error) 
 	instances := make([]any, 0, len(descriptors))
 	for _, descriptor := range descriptors {
 		key := instanceKey{Type: descriptor.Type, Key: descriptor.Key, Group: descriptor.Group}
-		instance, err := s.resolve(key, descriptor)
+		instance, err := s.resolve(parent, key, descriptor)
 		if err != nil {
+			// A result-object constructor that left this member's field
+			// nil did not provide it: the group simply has one fewer member.
+			if isOutputNotProvided(err) {
+				continue
+			}
 			// Normalize close-vs-resolve races to ErrScopeDisposed, the same
 			// way Get and GetKeyed do.
 			if s.disposed.Load() != 0 {
@@ -317,16 +480,21 @@ func (s *scope) CreateScope(ctx context.Context) (Scope, error) {
 	s.rootProvider.scopes[child] = struct{}{}
 	s.rootProvider.scopesMu.Unlock()
 
-	// Auto-close on context cancellation. AfterFunc avoids dedicating a
-	// goroutine per scope; Close is idempotent, so the callback firing
-	// after an explicit Close (which cancels ctx) is harmless.
-	context.AfterFunc(ctx, func() {
-		// Context cancellation cleanup errors are expected during shutdown
-		// and cannot be meaningfully handled, so we ignore them.
-		_ = child.Close()
-	})
+	child.closeOnContextDone(ctx)
 
 	return child, nil
+}
+
+// closeOnContextDone closes the scope when ctx is cancelled. AfterFunc avoids
+// dedicating a goroutine per scope; Close unregisters it, so an explicit
+// Close (which cancels ctx) does not start the callback's goroutine either.
+func (s *scope) closeOnContextDone(ctx context.Context) {
+	stop := context.AfterFunc(ctx, func() {
+		// Context cancellation cleanup errors are expected during shutdown
+		// and cannot be meaningfully handled, so we ignore them.
+		_ = s.Close()
+	})
+	s.stopContextWatch.Store(&stop)
 }
 
 // Close disposes the scope and all its resources
@@ -342,7 +510,11 @@ func (s *scope) Close() (result error) {
 
 	var errs []error
 
-	// Cancel context
+	// Unregister the context watch (a no-op if it already fired), then
+	// cancel the context.
+	if stop := s.stopContextWatch.Load(); stop != nil {
+		(*stop)()
+	}
 	if s.cancel != nil {
 		s.cancel()
 	}
@@ -363,9 +535,9 @@ func (s *scope) Close() (result error) {
 	}
 
 	// Dispose all disposable scoped instances in reverse order.
-	// disposableSet is deliberately retained: appendDisposable consults it
-	// after close so orphaned constructor results shared across sibling
-	// registrations are still closed exactly once.
+	// disposableSet is deliberately retained: track consults it after close
+	// so orphaned constructor results shared across sibling registrations
+	// are still closed exactly once.
 	s.disposablesMu.Lock()
 	disposables := s.disposables
 	s.disposables = nil
@@ -415,50 +587,124 @@ func (s *scope) getInstance(key instanceKey) (any, bool) {
 	return instance, ok
 }
 
-// setInstance caches an instance in this scope in a thread-safe manner.
-// It also tracks the instance if it implements the Disposable interface
-// for proper cleanup when the scope is closed.
-//
-// If the scope has been closed between when the caller decided to create
-// this instance and when setInstance runs, the instance is closed eagerly
-// (if Disposable) and not cached. This is the fix for the close-vs-resolve
-// race: previously a write to s.instances after Close set it to nil would
-// panic with "assignment to entry in nil map".
-func (s *scope) setInstance(descriptor *descriptor, key instanceKey, instance any) {
+// cachedInstance converts a cache hit into a resolution result, reporting a
+// cached absent result-object output as "not provided".
+func cachedInstance(key instanceKey, instance any) (any, error) {
+	if _, absent := instance.(absentOutput); absent {
+		return nil, &ResolutionError{
+			ServiceType: key.Type,
+			ServiceKey:  key.Key,
+			Cause:       errOutputNotProvided,
+		}
+	}
+	return instance, nil
+}
+
+// setInstance caches an instance produced for descriptor (for cacheable
+// lifetimes) and takes ownership of its disposal. parent is the construction
+// that requested the instance's constructor.
+func (s *scope) setInstance(parent *resolveFrame, descriptor *descriptor, key instanceKey, instance any) {
 	switch descriptor.Lifetime {
 	case Singleton:
-		s.rootProvider.setSingleton(key, instance)
+		s.rootProvider.setSingleton(instance, key)
 	case Scoped:
-		s.instancesMu.Lock()
-		if s.instances == nil {
-			s.instancesMu.Unlock()
-			// The scope was closed while the constructor was running.
-			// appendDisposable closes the orphan with identity dedup so a
-			// value shared across sibling registrations closes only once.
-			s.appendDisposable(instance)
-			return
-		}
-		s.instances[key] = instance
-		s.instancesMu.Unlock()
-		s.appendDisposable(instance)
+		s.publishScoped(instance, key)
 	case Transient:
-		s.appendDisposable(instance)
+		s.trackTransient(parent, instance)
 	}
 }
 
-// appendDisposable tracks a Disposable instance for cleanup at scope close.
-// If the scope is already closed, the instance is closed eagerly to avoid a
-// leak.
-func (s *scope) appendDisposable(instance any) {
-	d, ok := instance.(Disposable)
-	if !ok {
+// setAbsent records that the constructor did not provide descriptor's output
+// (a nil result-object field), so resolving it fails without re-running the
+// constructor.
+func (s *scope) setAbsent(descriptor *descriptor, key instanceKey) {
+	switch descriptor.Lifetime {
+	case Singleton:
+		s.rootProvider.cacheSingleton(key, absentOutput{})
+	case Scoped:
+		s.instancesMu.Lock()
+		if s.instances != nil {
+			s.instances[key] = absentOutput{}
+		}
+		s.instancesMu.Unlock()
+	}
+}
+
+// trackProduced takes ownership of a value a constructor produced that is not
+// cached under any registration (its registration was removed), so it is
+// still disposed with the construction's owner.
+func (s *scope) trackProduced(parent *resolveFrame, lifetime Lifetime, instance any) {
+	switch lifetime {
+	case Singleton:
+		s.rootProvider.trackDisposable(instance)
+	case Scoped:
+		closeOrphan(s.track(instance))
+	case Transient:
+		s.trackTransient(parent, instance)
+	}
+}
+
+// publishScoped caches a scoped instance under keys and takes ownership of
+// its disposal.
+//
+// Ownership is taken before the instance is published: a concurrent
+// resolution that finds it in the cache and builds a consumer on it must be
+// tracked after it, so that reverse-order disposal closes the consumer first.
+// If the scope has been closed while the constructor ran, the instance is
+// closed eagerly (if Disposable) and not cached.
+func (s *scope) publishScoped(instance any, keys ...instanceKey) {
+	s.instancesMu.Lock()
+	orphan := s.track(instance)
+	if orphan == nil && s.instances != nil {
+		for _, key := range keys {
+			s.instances[key] = instance
+		}
+	}
+	s.instancesMu.Unlock()
+	// Close outside the lock: Close may resolve from this scope.
+	closeOrphan(orphan)
+}
+
+// trackTransient takes ownership of a transient instance's disposal.
+//
+// Transients resolved directly from the root scope (Provider.Get and
+// friends) are owned by the caller: tracking them would retain every
+// resolution until provider shutdown. A root-scope transient is tracked only
+// when a cached service of the root scope depends on it (directly or through
+// other transients), since that owner lives until shutdown anyway.
+func (s *scope) trackTransient(parent *resolveFrame, instance any) {
+	if s.isRoot && !hasCachedOwner(s, parent) {
 		return
 	}
+	closeOrphan(s.track(instance))
+}
+
+// track takes ownership of instance's disposal if it is Disposable. It
+// returns the instance as an orphan, for the caller to close outside any
+// lock, if the owner was already closed. Instances already owned by this
+// scope, or by a longer-lived owner (a parent scope or the provider) that
+// merely lent them, are not tracked again.
+func (s *scope) track(instance any) (orphan Disposable) {
+	d, ok := instance.(Disposable)
+	if !ok {
+		return nil
+	}
+	if s.isRoot {
+		return s.rootProvider.track(d)
+	}
+
+	identity, identifiable := identifyDisposable(d)
+	// e.g. a scoped service that returns a singleton: the singleton is
+	// borrowed, and closing it with this scope would break the provider.
+	if identifiable && s.ownedByLongerLived(identity) {
+		return nil
+	}
+
 	s.disposablesMu.Lock()
-	if identity, identifiable := identifyDisposable(d); identifiable {
+	defer s.disposablesMu.Unlock()
+	if identifiable {
 		if _, exists := s.disposableSet[identity]; exists {
-			s.disposablesMu.Unlock()
-			return
+			return nil
 		}
 		if s.disposableSet == nil {
 			s.disposableSet = make(map[disposableIdentity]struct{}, 4)
@@ -466,12 +712,43 @@ func (s *scope) appendDisposable(instance any) {
 		s.disposableSet[identity] = struct{}{}
 	}
 	if s.disposed.Load() != 0 {
-		s.disposablesMu.Unlock()
-		closeOrphan(d)
-		return
+		return d
 	}
 	s.disposables = append(s.disposables, d)
+	return nil
+}
+
+// ownedByLongerLived reports whether a parent scope or the provider already
+// owns the disposal of the value with the given identity.
+func (s *scope) ownedByLongerLived(identity disposableIdentity) bool {
+	for ancestor := s.parentScope; ancestor != nil && !ancestor.isRoot; ancestor = ancestor.parentScope {
+		if ancestor.owns(identity) {
+			return true
+		}
+	}
+	return s.rootProvider.owns(identity)
+}
+
+// owns reports whether this scope owns the disposal of the value with the
+// given identity.
+func (s *scope) owns(identity disposableIdentity) bool {
+	s.disposablesMu.Lock()
+	_, ok := s.disposableSet[identity]
 	s.disposablesMu.Unlock()
+	return ok
+}
+
+// ownedByAnyone reports whether this scope or a longer-lived owner owns the
+// disposal of d.
+func (s *scope) ownedByAnyone(d Disposable) bool {
+	identity, identifiable := identifyDisposable(d)
+	if !identifiable {
+		return false
+	}
+	if s.isRoot {
+		return s.rootProvider.owns(identity)
+	}
+	return s.owns(identity) || s.ownedByLongerLived(identity)
 }
 
 // closeOrphan closes a Disposable produced for a scope that has already been
@@ -521,7 +798,13 @@ func flightKey(d *descriptor) any {
 // resolveScopedSingleFlight runs createInstance for a Scoped descriptor under
 // single-flight: concurrent resolutions of the same key (or of sister output
 // keys from the same multi-return ctor) share one constructor invocation.
-func (s *scope) resolveScopedSingleFlight(key instanceKey, descriptor *descriptor) (any, error) {
+func (s *scope) resolveScopedSingleFlight(parent *resolveFrame, key instanceKey, descriptor *descriptor) (any, error) {
+	// Waiting on a flight that this resolution's own construction chain is
+	// running would never finish.
+	if err := s.checkCycle(parent, descriptor); err != nil {
+		return nil, err
+	}
+
 	fkey := flightKey(descriptor)
 	newFlight := &scopeFlight{done: make(chan struct{})}
 	raw, loaded := s.inflight.LoadOrStore(fkey, newFlight)
@@ -531,7 +814,7 @@ func (s *scope) resolveScopedSingleFlight(key instanceKey, descriptor *descripto
 		<-flight.done
 		// Sister flights may have cached our key during their createInstance.
 		if instance, ok := s.getInstance(key); ok {
-			return instance, nil
+			return cachedInstance(key, instance)
 		}
 		if flight.err != nil {
 			return nil, flight.err
@@ -551,11 +834,11 @@ func (s *scope) resolveScopedSingleFlight(key instanceKey, descriptor *descripto
 	// Re-check the cache: another flight might have completed and been
 	// deleted between our initial getInstance miss and LoadOrStore.
 	if instance, ok := s.getInstance(key); ok {
-		flight.instance = instance
-		return instance, nil
+		flight.instance, flight.err = cachedInstance(key, instance)
+		return flight.instance, flight.err
 	}
 
-	flight.instance, flight.err = s.createInstance(descriptor)
+	flight.instance, flight.err = s.createInstance(parent, descriptor)
 	return flight.instance, flight.err
 }
 
@@ -565,22 +848,25 @@ var (
 	scopeType    = reflect.TypeFor[Scope]()
 )
 
-// resolve performs the actual service resolution using the appropriate lifetime strategy.
-// It handles singleton caching, scoped caching, and transient creation, while also
-// detecting circular dependencies during resolution.
-func (s *scope) resolve(key instanceKey, descriptor *descriptor) (any, error) {
+// resolve performs the actual service resolution using the appropriate lifetime
+// strategy: singleton and scoped caching, or transient creation. parent is the
+// construction that requested the service (nil for a direct call).
+func (s *scope) resolve(parent *resolveFrame, key instanceKey, descriptor *descriptor) (any, error) {
 	// Find descriptor if not provided
 	if descriptor == nil {
 		if key.Key == nil && key.Group == "" {
 			switch key.Type {
 			case contextType:
-				if override := s.constructionContext.Load(); override != nil {
-					return override.context, nil
-				}
 				return s.context, nil
 			case providerType:
+				if parent != nil {
+					return &frameProvider{provider: s.rootProvider, frame: parent}, nil
+				}
 				return s.rootProvider, nil
 			case scopeType:
+				if parent != nil {
+					return &frameScope{scope: s, frame: parent}, nil
+				}
 				return s, nil
 			}
 		}
@@ -600,7 +886,7 @@ func (s *scope) resolve(key instanceKey, descriptor *descriptor) (any, error) {
 	case Singleton:
 		// Singletons are created at build time, no circular check needed
 		if instance, ok := s.rootProvider.getSingleton(key); ok {
-			return instance, nil
+			return cachedInstance(key, instance)
 		}
 
 		// Singleton should have been created at build time
@@ -612,13 +898,16 @@ func (s *scope) resolve(key instanceKey, descriptor *descriptor) (any, error) {
 
 	case Scoped:
 		if instance, ok := s.getInstance(key); ok {
-			return instance, nil
+			return cachedInstance(key, instance)
 		}
-		return s.resolveScopedSingleFlight(key, descriptor)
+		return s.resolveScopedSingleFlight(parent, key, descriptor)
 
 	case Transient:
 		// Always create new instance
-		return s.createInstance(descriptor)
+		if err := s.checkCycle(parent, descriptor); err != nil {
+			return nil, err
+		}
+		return s.createInstance(parent, descriptor)
 
 	default:
 		return nil, &LifetimeError{
@@ -629,8 +918,9 @@ func (s *scope) resolve(key instanceKey, descriptor *descriptor) (any, error) {
 
 // createInstance creates a new instance of a service using its constructor.
 // It handles regular constructors, result objects (Out structs), multi-return
-// constructors, and instance descriptors.
-func (s *scope) createInstance(descriptor *descriptor) (any, error) {
+// constructors, and instance descriptors. parent is the construction that
+// requested this one (nil for a direct call).
+func (s *scope) createInstance(parent *resolveFrame, descriptor *descriptor) (any, error) {
 	if descriptor == nil {
 		return nil, &ValidationError{
 			ServiceType: nil,
@@ -647,13 +937,7 @@ func (s *scope) createInstance(descriptor *descriptor) (any, error) {
 			}
 		}
 
-		key := instanceKey{
-			Type:  descriptor.Type,
-			Key:   descriptor.Key,
-			Group: descriptor.Group,
-		}
-
-		s.setAliasedInstance(descriptor, key, instance)
+		s.setAliasedInstance(parent, descriptor, descriptor.instanceKey(), instance)
 		return instance, nil
 	}
 
@@ -677,8 +961,23 @@ func (s *scope) createInstance(descriptor *descriptor) (any, error) {
 	// Get cached invoker (reduces allocations)
 	invoker := s.rootProvider.analyzer.GetInvoker()
 
-	// Invoke constructor
-	results, err := invoker.Invoke(info, s)
+	// Invoke constructor. Its dependencies are resolved through a frame
+	// recording this construction as their requester where that chain is
+	// consulted: in the root scope it decides who owns the transients the
+	// constructor receives (see trackTransient), and from a constructor
+	// that receives the container itself it detects re-entrance (see
+	// checkCycle). Elsewhere the frame allocation is skipped.
+	var resolver reflection.DependencyResolver = s
+	var frame *resolveFrame
+	if len(info.Parameters) > 0 && (s.isRoot || parent != nil || descriptor.injectsContainer) {
+		frame = &resolveFrame{scope: s, parent: parent, descriptor: descriptor}
+		frame.active.Store(true)
+		resolver = frame
+	}
+	results, err := invoker.Invoke(info, resolver)
+	if frame != nil {
+		frame.active.Store(false)
+	}
 	if err != nil {
 		// Check if it's a panic error and wrap appropriately
 		if panicErr, ok := errors.AsType[*reflection.PanicError](err); ok {
@@ -698,12 +997,7 @@ func (s *scope) createInstance(descriptor *descriptor) (any, error) {
 
 	if descriptor.VoidReturn {
 		emptyStruct := struct{}{}
-		key := instanceKey{
-			Type:  descriptor.Type,
-			Key:   descriptor.Key,
-			Group: descriptor.Group,
-		}
-		s.setInstance(descriptor, key, emptyStruct)
+		s.setInstance(parent, descriptor, descriptor.instanceKey(), emptyStruct)
 		return emptyStruct, nil
 	}
 
@@ -720,126 +1014,18 @@ func (s *scope) createInstance(descriptor *descriptor) (any, error) {
 	// boxed value after Interface() would incorrectly report a successful
 	// resolution.
 	if err := validateServiceResults(info, results); err != nil {
+		// Nothing will own the outputs that were produced successfully;
+		// close them rather than leak them.
+		s.closeProducedOutputs(info, results)
 		return nil, err
 	}
 
-	// Handle result objects (Out structs)
 	if info.IsResultObject {
-		processor := reflection.NewResultObjectProcessor(s.rootProvider.analyzer)
-		registrations, err := processor.ProcessResultObject(results[0], info.Type.Out(0))
-		if err != nil {
-			return nil, &ReflectionAnalysisError{
-				Constructor: descriptor.Constructor.Interface(),
-				Operation:   "process result object",
-				Cause:       err,
-			}
-		}
-
-		// Find the primary service to return
-		var primaryService any
-		for _, reg := range registrations {
-			value := reg.Value
-
-			// Each field's registered descriptor is a sibling of the one
-			// being resolved, matched by field index. This works for keyed
-			// and grouped fields alike, whose registry keys differ from
-			// their struct tags.
-			// Convert empty string key to nil for consistent lookup
-			var regKey any
-			if reg.Key != "" {
-				regKey = reg.Key
-			}
-
-			regDescriptor := descriptor.siblingForField(reg.Index)
-			if regDescriptor == nil {
-				if len(descriptor.siblings) > 0 {
-					// Sibling-linked registration with no sibling for this
-					// field: the field's registration was removed from the
-					// collection. Skip it rather than falling back to the
-					// registry, which could find (and wrongly shadow) a
-					// replacement registration of the same type.
-					continue
-				}
-				// Fallback for descriptors constructed outside the normal
-				// Add* path (no sibling links): registry lookup by type/key.
-				regDescriptor = s.rootProvider.findDescriptor(reg.Type, regKey)
-			}
-			if regDescriptor == nil {
-				return nil, &ResolutionError{
-					ServiceType: reg.Type,
-					ServiceKey:  regKey,
-					Cause:       fmt.Errorf("no descriptor found for return type %v", reg.Type),
-				}
-			}
-
-			if regDescriptor == descriptor ||
-				(reg.Type == descriptor.Type && regDescriptor.Key == descriptor.Key && regDescriptor.Group == descriptor.Group) {
-				primaryService = value
-			}
-
-			key := instanceKey{
-				Type:  regDescriptor.Type,
-				Key:   regDescriptor.Key,
-				Group: regDescriptor.Group,
-			}
-
-			s.setInstance(regDescriptor, key, value)
-		}
-
-		if primaryService == nil {
-			return nil, &ValidationError{
-				ServiceType: descriptor.Type,
-				Cause:       fmt.Errorf("result object produced no services"),
-			}
-		}
-
-		return primaryService, nil
+		return s.publishResultObject(parent, descriptor, info, results[0])
 	}
 
-	// Handle multi-return constructors
 	if descriptor.MultiReturnIndex >= 0 {
-		if len(descriptor.siblings) > 0 {
-			// Cache every return value under its sibling's registration
-			// (which carries the actual key or group assigned at Add time).
-			for _, sibling := range descriptor.siblings {
-				value := results[sibling.MultiReturnIndex].Interface()
-				key := instanceKey{
-					Type:  sibling.Type,
-					Key:   sibling.Key,
-					Group: sibling.Group,
-				}
-				s.setInstance(sibling, key, value)
-			}
-		} else {
-			// Fallback for descriptors constructed outside the normal Add*
-			// path (no sibling links): registry lookup per return type.
-			for _, ret := range info.Returns {
-				if ret.IsError {
-					continue
-				}
-
-				value := results[ret.Index].Interface()
-
-				serviceDescriptor := s.rootProvider.findDescriptor(ret.Type, nil)
-				if serviceDescriptor == nil {
-					return nil, &ResolutionError{
-						ServiceType: ret.Type,
-						ServiceKey:  nil,
-						Cause:       fmt.Errorf("no descriptor found for return type %v", ret.Type),
-					}
-				}
-
-				key := instanceKey{
-					Type:  ret.Type,
-					Key:   serviceDescriptor.Key,
-					Group: serviceDescriptor.Group,
-				}
-
-				s.setInstance(serviceDescriptor, key, value)
-			}
-		}
-
-		return results[descriptor.MultiReturnIndex].Interface(), nil
+		return s.publishMultiReturn(parent, descriptor, info, results)
 	}
 
 	instance := results[0].Interface()
@@ -850,32 +1036,184 @@ func (s *scope) createInstance(descriptor *descriptor) (any, error) {
 		}
 	}
 
-	key := instanceKey{
-		Type:  descriptor.Type,
-		Key:   descriptor.Key,
-		Group: descriptor.Group,
-	}
-
-	s.setAliasedInstance(descriptor, key, instance)
+	s.setAliasedInstance(parent, descriptor, descriptor.instanceKey(), instance)
 	return instance, nil
 }
 
-func isNilServiceResult(value reflect.Value) bool {
-	if !value.IsValid() {
-		return true
-	}
-	for value.Kind() == reflect.Interface {
-		if value.IsNil() {
-			return true
+// publishResultObject caches every field of a constructed result object (Out
+// struct) under its registration and returns the field requested resolves to.
+func (s *scope) publishResultObject(
+	parent *resolveFrame,
+	requested *descriptor,
+	info *reflection.ConstructorInfo,
+	result reflect.Value,
+) (any, error) {
+	outputs, err := reflection.ResultObjectOutputs(result, info.Returns)
+	if err != nil {
+		return nil, &ReflectionAnalysisError{
+			Constructor: requested.Constructor.Interface(),
+			Operation:   "process result object",
+			Cause:       err,
 		}
-		value = value.Elem()
 	}
-	switch value.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Map, reflect.Pointer, reflect.Slice:
-		return value.IsNil()
-	default:
-		return false
+
+	var primaryService any
+	primaryAbsent := false
+	next := 0
+	for i, output := range outputs {
+		ret := info.Returns[i]
+
+		// Each field's registered descriptor is a sibling of the one being
+		// resolved, matched by field index. This works for keyed and grouped
+		// fields alike, whose registry keys differ from their struct tags.
+		var target *descriptor
+		if len(requested.siblings) > 0 {
+			target, next = requested.siblingForField(output.Index, next)
+			if target == nil {
+				// The field's registration was removed from the collection.
+				// Don't fall back to the registry, which could find (and
+				// wrongly shadow) a replacement registration of the same type;
+				// but the constructor still produced the value, so this
+				// construction must still dispose it.
+				if output.Present {
+					s.trackProduced(parent, requested.Lifetime, output.Value)
+				}
+				continue
+			}
+		} else {
+			// Fallback for descriptors constructed outside the normal Add*
+			// path (no sibling links): registry lookup by type/key.
+			target = s.rootProvider.findDescriptor(ret.Type, ret.Key)
+			if target == nil {
+				if !output.Present {
+					continue
+				}
+				return nil, &ResolutionError{
+					ServiceType: ret.Type,
+					ServiceKey:  ret.Key,
+					Cause:       fmt.Errorf("no descriptor found for return type %v", ret.Type),
+				}
+			}
+		}
+
+		isPrimary := target == requested ||
+			(ret.Type == requested.Type && target.Key == requested.Key && target.Group == requested.Group)
+
+		key := target.instanceKey()
+		if !output.Present {
+			s.setAbsent(target, key)
+			if isPrimary {
+				primaryAbsent = true
+			}
+			continue
+		}
+
+		s.setInstance(parent, target, key, output.Value)
+		if isPrimary {
+			primaryService = output.Value
+		}
 	}
+
+	if primaryService == nil {
+		if primaryAbsent {
+			return nil, &ResolutionError{
+				ServiceType: requested.Type,
+				ServiceKey:  requested.Key,
+				Cause:       errOutputNotProvided,
+			}
+		}
+		return nil, &ValidationError{
+			ServiceType: requested.Type,
+			Cause:       fmt.Errorf("result object produced no services"),
+		}
+	}
+
+	return primaryService, nil
+}
+
+// publishMultiReturn caches every return value of a multi-return constructor
+// under its registration and returns the value requested resolves to.
+func (s *scope) publishMultiReturn(
+	parent *resolveFrame,
+	requested *descriptor,
+	info *reflection.ConstructorInfo,
+	results []reflect.Value,
+) (any, error) {
+	if len(requested.siblings) > 0 {
+		// Cache every return value under its sibling's registration
+		// (which carries the actual key or group assigned at Add time).
+		for _, sibling := range requested.siblings {
+			value := results[sibling.MultiReturnIndex].Interface()
+			s.setInstance(parent, sibling, sibling.instanceKey(), value)
+		}
+
+		// Return values whose registration was removed are still produced
+		// by this call, so this construction must still dispose them.
+		for _, ret := range info.Returns {
+			if !ret.IsError && !requested.hasSiblingForReturn(ret.Index) {
+				s.trackProduced(parent, requested.Lifetime, results[ret.Index].Interface())
+			}
+		}
+	} else {
+		// Fallback for descriptors constructed outside the normal Add*
+		// path (no sibling links): registry lookup per return type.
+		for _, ret := range info.Returns {
+			if ret.IsError {
+				continue
+			}
+
+			value := results[ret.Index].Interface()
+
+			serviceDescriptor := s.rootProvider.findDescriptor(ret.Type, nil)
+			if serviceDescriptor == nil {
+				return nil, &ResolutionError{
+					ServiceType: ret.Type,
+					ServiceKey:  nil,
+					Cause:       fmt.Errorf("no descriptor found for return type %v", ret.Type),
+				}
+			}
+
+			key := instanceKey{
+				Type:  ret.Type,
+				Key:   serviceDescriptor.Key,
+				Group: serviceDescriptor.Group,
+			}
+
+			s.setInstance(parent, serviceDescriptor, key, value)
+		}
+	}
+
+	return results[requested.MultiReturnIndex].Interface(), nil
+}
+
+// closeProducedOutputs closes the disposable service values of a constructor
+// call whose results were rejected, unless a longer-lived owner already owns
+// them (e.g. a singleton the constructor merely returned).
+func (s *scope) closeProducedOutputs(info *reflection.ConstructorInfo, results []reflect.Value) {
+	var closed map[disposableIdentity]struct{}
+	for _, ret := range info.Returns {
+		if ret.IsError || reflection.IsNilValue(results[ret.Index]) {
+			continue
+		}
+		d, ok := results[ret.Index].Interface().(Disposable)
+		if !ok || s.ownedByAnyone(d) {
+			continue
+		}
+		if identity, identifiable := identifyDisposable(d); identifiable {
+			if _, done := closed[identity]; done {
+				continue
+			}
+			if closed == nil {
+				closed = make(map[disposableIdentity]struct{}, 2)
+			}
+			closed[identity] = struct{}{}
+		}
+		closeOrphan(d)
+	}
+}
+
+func isNilServiceResult(value reflect.Value) bool {
+	return reflection.IsNilValue(value)
 }
 
 func validateServiceResults(info *reflection.ConstructorInfo, results []reflect.Value) error {
@@ -899,32 +1237,22 @@ func validateServiceResults(info *reflection.ConstructorInfo, results []reflect.
 // setAliasedInstance stores one produced value under every interface alias for
 // cacheable lifetimes. Transients deliberately store only the requested alias:
 // each resolution is a distinct constructor invocation.
-func (s *scope) setAliasedInstance(descriptor *descriptor, key instanceKey, instance any) {
+func (s *scope) setAliasedInstance(parent *resolveFrame, descriptor *descriptor, key instanceKey, instance any) {
 	if !descriptor.isAlias || descriptor.Lifetime == Transient || len(descriptor.siblings) == 0 {
-		s.setInstance(descriptor, key, instance)
+		s.setInstance(parent, descriptor, key, instance)
 		return
+	}
+
+	keys := make([]instanceKey, len(descriptor.siblings))
+	for i, alias := range descriptor.siblings {
+		keys[i] = alias.instanceKey()
 	}
 
 	switch descriptor.Lifetime {
 	case Singleton:
-		for _, alias := range descriptor.siblings {
-			key := instanceKey{Type: alias.Type, Key: alias.Key, Group: alias.Group}
-			s.rootProvider.cacheSingleton(key, instance)
-		}
-		s.rootProvider.trackDisposable(instance)
+		s.rootProvider.setSingleton(instance, keys...)
 	case Scoped:
-		s.instancesMu.Lock()
-		if s.instances == nil {
-			s.instancesMu.Unlock()
-			closeOrphan(instance)
-			return
-		}
-		for _, alias := range descriptor.siblings {
-			key := instanceKey{Type: alias.Type, Key: alias.Key, Group: alias.Group}
-			s.instances[key] = instance
-		}
-		s.instancesMu.Unlock()
-		s.appendDisposable(instance)
+		s.publishScoped(instance, keys...)
 	}
 }
 

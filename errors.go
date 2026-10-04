@@ -62,6 +62,7 @@ var (
 	_ error = (*BuildError)(nil)
 	_ error = (*DisposalError)(nil)
 	_ error = (*CircularDependencyError)(nil)
+	_ error = (*MissingDependencyError)(nil)
 )
 
 // ========================================
@@ -139,14 +140,25 @@ type ResolutionError struct {
 func (e ResolutionError) Error() string {
 	var b strings.Builder
 
-	if e.ServiceKey != nil {
-		fmt.Fprintf(&b, "service not found: %s (key: %v)", formatType(e.ServiceType), e.ServiceKey)
+	// Only a missing registration is "not found"; a registered service whose
+	// construction failed is reported as a resolution failure.
+	notFound := e.Cause == nil || e.ServiceNotFound()
+	if notFound {
+		b.WriteString("service not found: ")
 	} else {
-		fmt.Fprintf(&b, "service not found: %s", formatType(e.ServiceType))
+		b.WriteString("failed to resolve ")
+	}
+	b.WriteString(formatType(e.ServiceType))
+	if e.ServiceKey != nil {
+		fmt.Fprintf(&b, " (key: %v)", e.ServiceKey)
 	}
 
 	if e.Cause != nil && e.Cause != ErrServiceNotFound {
 		fmt.Fprintf(&b, ": %v", e.Cause)
+	}
+
+	if !notFound {
+		return b.String()
 	}
 
 	// Suggest similar types if available
@@ -174,7 +186,49 @@ func (e ResolutionError) Unwrap() error {
 // failed). Used by the parameter builder to decide whether an optional
 // dependency may be skipped.
 func (e ResolutionError) ServiceNotFound() bool {
-	return e.Cause == ErrServiceNotFound
+	return e.Cause == ErrServiceNotFound || e.Cause == errOutputNotProvided
+}
+
+// errOutputNotProvided is the cause reported for a result-object (godi.Out)
+// field the constructor left nil: the service is registered, but this
+// construction did not provide it. It counts as "not found", so optional
+// dependencies receive their zero value and groups skip the member.
+var errOutputNotProvided error = outputNotProvidedError{}
+
+type outputNotProvidedError struct{}
+
+func (outputNotProvidedError) Error() string {
+	return "the constructor left this result object field nil"
+}
+
+func (outputNotProvidedError) Unwrap() error { return ErrServiceNotFound }
+
+// isOutputNotProvided reports whether err is a direct "result object field
+// was nil" resolution failure.
+func isOutputNotProvided(err error) bool {
+	resErr, ok := err.(*ResolutionError)
+	return ok && resErr.Cause == errOutputNotProvided
+}
+
+// MissingDependencyError reports, at Build time, a constructor parameter whose
+// type (and key) has no registration.
+type MissingDependencyError struct {
+	ServiceType    reflect.Type
+	DependencyType reflect.Type
+	DependencyKey  any // nil for non-keyed dependencies
+}
+
+func (e MissingDependencyError) Error() string {
+	if e.DependencyKey != nil {
+		return fmt.Sprintf("%s requires %s (key: %v) (not registered)",
+			formatType(e.ServiceType), formatType(e.DependencyType), e.DependencyKey)
+	}
+	return fmt.Sprintf("%s requires %s (not registered)", formatType(e.ServiceType), formatType(e.DependencyType))
+}
+
+// Unwrap lets errors.Is(err, ErrServiceNotFound) match.
+func (e MissingDependencyError) Unwrap() error {
+	return ErrServiceNotFound
 }
 
 // findSimilarTypes finds types with similar names using a simple substring/prefix match

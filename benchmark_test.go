@@ -302,6 +302,72 @@ func BenchmarkScopeWithResolution(b *testing.B) {
 	}
 }
 
+type benchParams struct {
+	In
+	Dep1 *BenchDep1
+	Dep2 *BenchDep2
+	Dep3 *BenchDep3
+	Opt  *BenchService `optional:"true" name:"missing"`
+}
+
+type benchResult struct {
+	Out
+	Dep1 *BenchDep1
+	Dep2 *BenchDep2
+	Dep3 *BenchDep3
+	Svc  *BenchService
+}
+
+// BenchmarkParamObjectResolution measures constructing a service whose
+// dependencies arrive in a godi.In parameter object.
+func BenchmarkParamObjectResolution(b *testing.B) {
+	c := NewCollection()
+	c.AddSingleton(NewBenchDep1)
+	c.AddSingleton(NewBenchDep2)
+	c.AddSingleton(NewBenchDep3)
+	c.AddTransient(func(p benchParams) *BenchServiceWith3Deps {
+		return &BenchServiceWith3Deps{Dep1: p.Dep1, Dep2: p.Dep2, Dep3: p.Dep3}
+	})
+	p, err := c.Build()
+	if err != nil {
+		b.Fatalf("failed to build provider: %v", err)
+	}
+	b.Cleanup(func() { _ = p.Close() })
+	scope, err := p.CreateScope(context.Background())
+	if err != nil {
+		b.Fatalf("failed to create scope: %v", err)
+	}
+	b.Cleanup(func() { _ = scope.Close() })
+	target := reflect.TypeFor[*BenchServiceWith3Deps]()
+
+	b.ReportAllocs()
+	for b.Loop() {
+		_, _ = scope.Get(target)
+	}
+}
+
+// BenchmarkResultObjectResolution measures constructing a scoped godi.Out
+// result object and publishing its fields.
+func BenchmarkResultObjectResolution(b *testing.B) {
+	c := NewCollection()
+	c.AddScoped(func() benchResult {
+		return benchResult{Dep1: &BenchDep1{}, Dep2: &BenchDep2{}, Dep3: &BenchDep3{}, Svc: &BenchService{}}
+	})
+	p, err := c.Build()
+	if err != nil {
+		b.Fatalf("failed to build provider: %v", err)
+	}
+	b.Cleanup(func() { _ = p.Close() })
+	target := reflect.TypeFor[*BenchService]()
+
+	b.ReportAllocs()
+	for b.Loop() {
+		scope, _ := p.CreateScope(context.Background())
+		_, _ = scope.Get(target)
+		_ = scope.Close()
+	}
+}
+
 // BenchmarkGenericResolve tests the generic Resolve function
 func BenchmarkGenericResolve(b *testing.B) {
 	c := NewCollection()

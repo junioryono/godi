@@ -71,6 +71,9 @@ type ProviderOptions struct {
 	// Constructors that accept context.Context can stop promptly when it is
 	// cancelled. Other constructors cannot be preempted, but an expired deadline
 	// is checked after they return and can never produce a successful provider.
+	// The deadline bounds Build only: once Build succeeds, the context given
+	// to singletons is no longer subject to it and is cancelled when the
+	// provider closes.
 	BuildTimeout time.Duration
 }
 
@@ -136,6 +139,22 @@ func (p *provider) ID() string {
 
 // Get resolves a service from the root scope
 func (p *provider) Get(serviceType reflect.Type) (any, error) {
+	return p.get(nil, serviceType)
+}
+
+// GetKeyed resolves a keyed service from the root scope
+func (p *provider) GetKeyed(serviceType reflect.Type, key any) (any, error) {
+	return p.getKeyed(nil, serviceType, key)
+}
+
+// GetGroup resolves all services in a group from the root scope
+func (p *provider) GetGroup(serviceType reflect.Type, group string) ([]any, error) {
+	return p.getGroup(nil, serviceType, group)
+}
+
+// get resolves a service from the root scope on behalf of parent, the
+// construction that requested it (nil for a direct call).
+func (p *provider) get(parent *resolveFrame, serviceType reflect.Type) (any, error) {
 	if p.disposed.Load() != 0 {
 		return nil, ErrProviderDisposed
 	}
@@ -144,11 +163,10 @@ func (p *provider) Get(serviceType reflect.Type) (any, error) {
 		return nil, ErrServiceTypeNil
 	}
 
-	return p.rootScope.Get(serviceType)
+	return p.rootScope.get(parent, serviceType)
 }
 
-// GetKeyed resolves a keyed service from the root scope
-func (p *provider) GetKeyed(serviceType reflect.Type, key any) (any, error) {
+func (p *provider) getKeyed(parent *resolveFrame, serviceType reflect.Type, key any) (any, error) {
 	if p.disposed.Load() != 0 {
 		return nil, ErrProviderDisposed
 	}
@@ -161,11 +179,10 @@ func (p *provider) GetKeyed(serviceType reflect.Type, key any) (any, error) {
 		return nil, ErrServiceKeyNil
 	}
 
-	return p.rootScope.GetKeyed(serviceType, key)
+	return p.rootScope.getKeyed(parent, serviceType, key)
 }
 
-// GetGroup resolves all services in a group from the root scope
-func (p *provider) GetGroup(serviceType reflect.Type, group string) ([]any, error) {
+func (p *provider) getGroup(parent *resolveFrame, serviceType reflect.Type, group string) ([]any, error) {
 	if p.disposed.Load() != 0 {
 		return nil, ErrProviderDisposed
 	}
@@ -181,7 +198,7 @@ func (p *provider) GetGroup(serviceType reflect.Type, group string) ([]any, erro
 		}
 	}
 
-	return p.rootScope.GetGroup(serviceType, group)
+	return p.rootScope.getGroup(parent, serviceType, group)
 }
 
 // CreateScope creates a new service scope
@@ -221,14 +238,7 @@ func (p *provider) CreateScope(ctx context.Context) (Scope, error) {
 	p.scopes[s] = struct{}{}
 	p.scopesMu.Unlock()
 
-	// Auto-close on context cancellation. AfterFunc avoids dedicating a
-	// goroutine per scope; Close is idempotent, so the callback firing
-	// after an explicit Close (which cancels ctx) is harmless.
-	context.AfterFunc(ctx, func() {
-		// Context cancellation cleanup errors are expected during shutdown
-		// and cannot be meaningfully handled, so we ignore them.
-		_ = s.Close()
-	})
+	s.closeOnContextDone(ctx)
 
 	return s, nil
 }
@@ -265,7 +275,9 @@ func (p *provider) Close() (result error) {
 		}
 	}
 
-	// Close root scope. The field is deliberately not nil-ed: concurrent
+	// Close root scope: this cancels the root context and closes scopes
+	// created from it. Its disposables are tracked in the provider's list
+	// below. The field is deliberately not nil-ed: concurrent
 	// Get/GetKeyed/GetGroup calls read it without synchronization, and a
 	// closed root scope already rejects resolution with ErrScopeDisposed.
 	if p.rootScope != nil {
@@ -319,16 +331,26 @@ func (p *provider) getSingleton(key instanceKey) (any, bool) {
 	return p.singletons.Load(key)
 }
 
-// setSingleton stores a singleton instance using lock-free sync.Map.
-// It also tracks the instance if it implements the Disposable interface
-// for proper cleanup during provider disposal.
-func (p *provider) setSingleton(key instanceKey, instance any) {
+// setSingleton stores a singleton instance under keys (one per interface
+// alias) using lock-free sync.Map. It also tracks the instance if it
+// implements the Disposable interface for proper cleanup during provider
+// disposal. Ownership is taken before the instance is published, so anything
+// built on the published instance is disposed before it.
+func (p *provider) setSingleton(instance any, keys ...instanceKey) {
 	if instance == nil {
 		return
 	}
 
-	p.cacheSingleton(key, instance)
-	p.trackDisposable(instance)
+	if d, ok := instance.(Disposable); ok {
+		if orphan := p.track(d); orphan != nil {
+			// The provider was closed while the constructor was running.
+			closeOrphan(orphan)
+			return
+		}
+	}
+	for _, key := range keys {
+		p.cacheSingleton(key, instance)
+	}
 }
 
 func (p *provider) cacheSingleton(key instanceKey, instance any) {
@@ -338,32 +360,47 @@ func (p *provider) cacheSingleton(key instanceKey, instance any) {
 	p.singletonKeysMu.Lock()
 	p.singletonKeys = append(p.singletonKeys, key)
 	p.singletonKeysMu.Unlock()
-
 }
 
+// trackDisposable takes ownership of instance's disposal if it is Disposable,
+// closing it eagerly if the provider has already been closed.
 func (p *provider) trackDisposable(instance any) {
 	if d, ok := instance.(Disposable); ok {
-		p.disposablesMu.Lock()
-		if identity, identifiable := identifyDisposable(d); identifiable {
-			if _, exists := p.disposableSet[identity]; exists {
-				p.disposablesMu.Unlock()
-				return
-			}
-			if p.disposableSet == nil {
-				p.disposableSet = make(map[disposableIdentity]struct{}, 4)
-			}
-			p.disposableSet[identity] = struct{}{}
-		}
-		if p.disposed.Load() != 0 {
-			// The provider was closed while the constructor was running;
-			// close the orphan eagerly instead of leaking it.
-			p.disposablesMu.Unlock()
-			closeOrphan(d)
-			return
-		}
-		p.disposables = append(p.disposables, d)
-		p.disposablesMu.Unlock()
+		closeOrphan(p.track(d))
 	}
+}
+
+// track takes ownership of d's disposal. The provider's list holds the
+// singletons and the root scope's disposables in creation order, so
+// reverse-order disposal closes every consumer before its dependencies. It
+// returns d as an orphan, for the caller to close outside any lock, if the
+// provider was already closed (the constructor outlived Close).
+func (p *provider) track(d Disposable) (orphan Disposable) {
+	p.disposablesMu.Lock()
+	defer p.disposablesMu.Unlock()
+	if identity, identifiable := identifyDisposable(d); identifiable {
+		if _, exists := p.disposableSet[identity]; exists {
+			return nil
+		}
+		if p.disposableSet == nil {
+			p.disposableSet = make(map[disposableIdentity]struct{}, 4)
+		}
+		p.disposableSet[identity] = struct{}{}
+	}
+	if p.disposed.Load() != 0 {
+		return d
+	}
+	p.disposables = append(p.disposables, d)
+	return nil
+}
+
+// owns reports whether the provider owns the disposal of the value with the
+// given identity.
+func (p *provider) owns(identity disposableIdentity) bool {
+	p.disposablesMu.Lock()
+	_, ok := p.disposableSet[identity]
+	p.disposablesMu.Unlock()
+	return ok
 }
 
 // findDescriptor finds a descriptor for the given service type and optional key.
@@ -444,8 +481,8 @@ func (p *provider) createAllSingletonsWithContext(ctx context.Context) error {
 			continue
 		}
 
-		_, err := p.rootScope.createInstance(descriptor)
-		if err != nil {
+		_, err := p.rootScope.createInstance(nil, descriptor)
+		if err != nil && !isOutputNotProvided(err) {
 			return &ResolutionError{
 				ServiceType: descriptor.Type,
 				ServiceKey:  descriptor.Key,

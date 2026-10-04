@@ -134,7 +134,7 @@ users := godi.MustResolve[*UserService](provider)
 If you request a type that wasn't registered, you get an error:
 
 ```go
-// Error: no registration found for type *NotRegistered
+// Error: service not found: *NotRegistered
 thing := godi.MustResolve[*NotRegistered](provider)
 ```
 
@@ -178,7 +178,8 @@ services.AddSingleton(func(missing *NotRegistered) *MyService {
 })
 
 provider, err := services.Build()
-// Error: no registration found for type *NotRegistered required by *MyService
+// Error: *MyService requires *NotRegistered (not registered)
+// Checked at Build for singleton, scoped, and transient services alike.
 ```
 
 **Lifetime Conflicts**
