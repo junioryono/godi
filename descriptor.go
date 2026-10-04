@@ -96,6 +96,11 @@ type descriptor struct {
 	// at Build.
 	lazy bool
 
+	// source names the constructor and its location for diagnostics
+	// ("users.NewService (service.go:42)"), or the value's type for an
+	// instance registration.
+	source string
+
 	// decorators wrap this descriptor's output, in application order.
 	// Attached to the provider's snapshot at Build; never set on a
 	// collection's own descriptors.
@@ -187,7 +192,9 @@ func newDescriptorWithAnalyzer(service any, lifetime Lifetime, analyzer *reflect
 	if isInstance {
 		descriptor.Instance = service
 		descriptor.Type = constructorType
+		descriptor.source = formatType(constructorType) + " value"
 	} else {
+		descriptor.source = funcLocation(constructorValue)
 		numReturns := constructorType.NumOut()
 
 		descriptor.VoidReturn = numReturns == 0

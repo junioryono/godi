@@ -372,8 +372,9 @@ func TestCircularDependencyError(t *testing.T) {
 		Path: []string{"A", "B", "C"},
 	}
 
-	errStr2 := err2.Error()
-	assert.Contains(t, errStr2, "↓", "Error with path should contain down arrow notation")
+	assert.Equal(t, "circular dependency detected: A -> B -> C -> A", err2.Error())
+	assert.Contains(t, err2.Detail(), "↓", "the detail draws the cycle")
+	assert.Contains(t, fmt.Sprintf("%+v", err2), "A (cycle)", "%+v includes the detail")
 }
 
 // Test edge cases for GetDependencies and GetDependents

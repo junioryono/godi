@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"time"
 )
 
 // ContextCloser is implemented by resources whose cleanup honors a context:
@@ -134,13 +135,31 @@ func safeDispose(ctx context.Context, v any) (err error) {
 }
 
 // closeOrphan disposes a resource produced for an owner that has already been
-// torn down. Errors and panics are discarded: there is no caller to report
-// them to, and the goroutine that produced the orphan must not crash.
-func closeOrphan(v any) {
+// torn down. There is no caller to report errors to, and the goroutine that
+// produced the orphan must not crash, so errors and panics go only to the
+// observer.
+func (p *provider) closeOrphan(v any, scopeID string) {
 	if v == nil {
 		return
 	}
-	_ = safeDispose(context.Background(), v)
+	_ = p.disposeObserved(context.Background(), v, scopeID)
+}
+
+// disposeObserved disposes v (see safeDispose) and reports it to the
+// provider's observer.
+func (p *provider) disposeObserved(ctx context.Context, v any, scopeID string) error {
+	if p == nil || p.observer == nil {
+		return safeDispose(ctx, v)
+	}
+	start := time.Now()
+	err := safeDispose(ctx, v)
+	p.observer.Disposed(&DisposedEvent{
+		Type:     reflect.TypeOf(v),
+		ScopeID:  scopeID,
+		Duration: time.Since(start),
+		Err:      err,
+	})
+	return err
 }
 
 // shutdownIncomplete reports a shutdown that stopped waiting because ctx was

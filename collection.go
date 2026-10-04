@@ -153,6 +153,13 @@ type ServiceInfo struct {
 	Group string
 	// Lifetime is the service's lifetime (Singleton, Scoped, or Transient).
 	Lifetime Lifetime
+	// Constructor names the constructor function and its source location
+	// ("pkg.NewService (file.go:12)"), or the value's type for an instance
+	// registration.
+	Constructor string
+	// Dependencies are the services the constructor (and any decorators)
+	// receive, in parameter order.
+	Dependencies []DependencyInfo
 }
 
 // NewCollection creates a new empty Collection instance.
@@ -187,9 +194,14 @@ func (sc *collection) BuildWithContext(ctx context.Context) (Provider, error) {
 	return sc.doBuild(ctx, ctx, nil)
 }
 
-// BuildWithOptions creates a Provider with custom options for validation and behavior configuration.
+// BuildWithOptions creates a Provider configured by options (which may be
+// nil): a parent context, a build timeout, scope validation, and an observer.
 func (sc *collection) BuildWithOptions(options *ProviderOptions) (Provider, error) {
-	ctx := context.Background()
+	parent := context.Background()
+	if options != nil && options.Context != nil {
+		parent = options.Context
+	}
+	ctx := parent
 
 	// Handle build timeout if specified. The timeout bounds Build only: the
 	// provider's root context is detached from it once Build succeeds.
@@ -199,7 +211,15 @@ func (sc *collection) BuildWithOptions(options *ProviderOptions) (Provider, erro
 		defer cancel()
 	}
 
-	return sc.doBuild(context.Background(), ctx, options)
+	return sc.doBuild(parent, ctx, options)
+}
+
+// observerOf returns the observer configured in options, or nil.
+func observerOf(options *ProviderOptions) Observer {
+	if options == nil {
+		return nil
+	}
+	return options.Observer
 }
 
 // doBuild builds a provider. parent becomes the parent of the provider's root
@@ -210,7 +230,7 @@ func (sc *collection) doBuild(parent, ctx context.Context, options *ProviderOpti
 	select {
 	case <-ctx.Done():
 		return nil, &BuildError{
-			Phase:   "initialization",
+			Phase:   PhaseInitialization,
 			Details: "build cancelled before starting",
 			Cause:   ctx.Err(),
 		}
@@ -239,6 +259,8 @@ func (sc *collection) doBuild(parent, ctx context.Context, options *ProviderOpti
 		groups:                      groups,
 		singletonOrder:              singletonsInCreationOrder(allDescriptors, services, groups),
 		validateScopes:              options != nil && options.ValidateScopes,
+		descriptors:                 allDescriptors,
+		observer:                    observerOf(options),
 		analyzer:                    sc.analyzer, // Share analyzer from collection
 		singletonKeys:               make([]instanceKey, 0, len(allDescriptors)),
 		voidReturnScopedDescriptors: make([]*descriptor, 0, voidCount),
@@ -258,7 +280,7 @@ func (sc *collection) doBuild(parent, ctx context.Context, options *ProviderOpti
 	select {
 	case <-ctx.Done():
 		return nil, &BuildError{
-			Phase:   "scope-creation",
+			Phase:   PhaseScopeCreation,
 			Details: "build cancelled during root scope creation",
 			Cause:   ctx.Err(),
 		}
@@ -270,7 +292,7 @@ func (sc *collection) doBuild(parent, ctx context.Context, options *ProviderOpti
 	p.rootScope, err = newUninitializedScope(p, nil, rootCtx, rootCtx.cancel)
 	if err != nil {
 		return nil, &BuildError{
-			Phase:   "scope-creation",
+			Phase:   PhaseScopeCreation,
 			Details: "failed to create root scope",
 			Cause:   err,
 		}
@@ -282,7 +304,7 @@ func (sc *collection) doBuild(parent, ctx context.Context, options *ProviderOpti
 	// until Build succeeds.
 	if err := p.createAllSingletonsWithContext(ctx); err != nil {
 		buildErr := &BuildError{
-			Phase:   "singleton-creation",
+			Phase:   PhaseSingletonCreation,
 			Details: "failed to initialize singletons",
 			Cause:   err,
 		}
@@ -296,7 +318,7 @@ func (sc *collection) doBuild(parent, ctx context.Context, options *ProviderOpti
 	if !p.validateScopes {
 		if err := p.rootScope.initializeScopedServices(); err != nil {
 			buildErr := &BuildError{
-				Phase:   "scope-initialization",
+				Phase:   PhaseScopeInitialization,
 				Details: "failed to initialize root scoped services",
 				Cause:   err,
 			}
@@ -305,7 +327,7 @@ func (sc *collection) doBuild(parent, ctx context.Context, options *ProviderOpti
 	}
 	if err := ctx.Err(); err != nil {
 		buildErr := &BuildError{
-			Phase:   "scope-initialization",
+			Phase:   PhaseScopeInitialization,
 			Details: "build deadline expired after root scope initialization",
 			Cause:   err,
 		}
@@ -317,7 +339,7 @@ func (sc *collection) doBuild(parent, ctx context.Context, options *ProviderOpti
 	// provider must not be returned.
 	if !rootCtx.finishBuild() {
 		buildErr := &BuildError{
-			Phase:   "scope-initialization",
+			Phase:   PhaseScopeInitialization,
 			Details: "build cancelled while finishing",
 			Cause:   ctx.Err(),
 		}
@@ -350,7 +372,7 @@ func (sc *collection) plan(ctx context.Context) (*buildPlan, error) {
 		err := errors.Join(sc.errs...)
 		sc.mu.Unlock()
 		return nil, &BuildError{
-			Phase:   "registration",
+			Phase:   PhaseRegistration,
 			Details: "one or more service registrations failed",
 			Cause:   err,
 		}
@@ -371,7 +393,7 @@ func (sc *collection) plan(ctx context.Context) (*buildPlan, error) {
 	// them before the graph and validation see those dependencies.
 	if err := attachDecorators(decorators, services, groups); err != nil {
 		return nil, &BuildError{
-			Phase:   "registration",
+			Phase:   PhaseRegistration,
 			Details: "decorators match no registration",
 			Cause:   err,
 		}
@@ -381,7 +403,7 @@ func (sc *collection) plan(ctx context.Context) (*buildPlan, error) {
 	select {
 	case <-ctx.Done():
 		return nil, &BuildError{
-			Phase:   "graph",
+			Phase:   PhaseGraph,
 			Details: "build cancelled during graph construction",
 			Cause:   ctx.Err(),
 		}
@@ -397,7 +419,7 @@ func (sc *collection) plan(ctx context.Context) (*buildPlan, error) {
 
 		if err := g.AddProviderDeferred(descriptor); err != nil {
 			return nil, &BuildError{
-				Phase:   "graph",
+				Phase:   PhaseGraph,
 				Details: fmt.Sprintf("failed to add provider %v", formatType(descriptor.Type)),
 				Cause:   err,
 			}
@@ -414,7 +436,7 @@ func (sc *collection) plan(ctx context.Context) (*buildPlan, error) {
 	// Phase 2: Validate graph (cycles detected here, not per-add)
 	if err := g.DetectCycles(); err != nil {
 		return nil, &BuildError{
-			Phase:   "validation",
+			Phase:   PhaseValidation,
 			Details: "dependency graph validation failed",
 			Cause:   err,
 		}
@@ -424,7 +446,7 @@ func (sc *collection) plan(ctx context.Context) (*buildPlan, error) {
 	select {
 	case <-ctx.Done():
 		return nil, &BuildError{
-			Phase:   "validation",
+			Phase:   PhaseValidation,
 			Details: "build cancelled during lifetime validation",
 			Cause:   ctx.Err(),
 		}
@@ -433,7 +455,7 @@ func (sc *collection) plan(ctx context.Context) (*buildPlan, error) {
 
 	if err := validateLifetimes(allDescriptors, services, groups); err != nil {
 		return nil, &BuildError{
-			Phase:   "validation",
+			Phase:   PhaseValidation,
 			Details: "lifetime validation failed",
 			Cause:   err,
 		}
@@ -441,7 +463,7 @@ func (sc *collection) plan(ctx context.Context) (*buildPlan, error) {
 
 	if err := validateDependencies(allDescriptors, services); err != nil {
 		return nil, &BuildError{
-			Phase:   "validation",
+			Phase:   PhaseValidation,
 			Details: "missing dependencies",
 			Cause:   err,
 		}
@@ -509,7 +531,7 @@ func joinBuildCleanupError(buildErr, closeErr error) error {
 	return errors.Join(
 		buildErr,
 		&BuildError{
-			Phase:   "cleanup",
+			Phase:   PhaseCleanup,
 			Details: "failed to clean up partially created provider",
 			Cause:   closeErr,
 		},
@@ -777,12 +799,7 @@ func (r *collection) ToSlice() []ServiceInfo {
 		if d == nil {
 			continue
 		}
-		result = append(result, ServiceInfo{
-			ServiceType: d.Type,
-			Key:         serviceInfoKey(d),
-			Group:       d.Group,
-			Lifetime:    d.Lifetime,
-		})
+		result = append(result, describeDescriptor(d))
 	}
 	return result
 }
@@ -1385,6 +1402,7 @@ func validateDependencies(all []*descriptor, services map[TypeKey]*descriptor) e
 				ServiceType:    serviceType,
 				DependencyType: dep.Type,
 				DependencyKey:  dep.Key,
+				Constructor:    d.source,
 			})
 		}
 	}

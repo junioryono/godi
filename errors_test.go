@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestErrors(t *testing.T) {
@@ -38,7 +40,7 @@ func TestErrors(t *testing.T) {
 		assert.Contains(t, errStr, "Singleton")
 		assert.Contains(t, errStr, "Scoped")
 		assert.Contains(t, errStr, "cannot depend on")
-		assert.Contains(t, errStr, "To resolve this")
+		assert.Contains(t, Explain(err), "To resolve this")
 	})
 
 	t.Run("AlreadyRegisteredError", func(t *testing.T) {
@@ -108,7 +110,7 @@ func TestErrors(t *testing.T) {
 				ServiceType: svcType,
 				Cause:       ErrServiceNotFound,
 			}
-			assert.Contains(t, err.Error(), "Make sure the service is registered")
+			assert.Contains(t, Explain(err), "Make sure the service is registered")
 		})
 	})
 
@@ -285,9 +287,93 @@ func TestErrors(t *testing.T) {
 		errMsg := err.Error()
 		assert.Contains(t, errMsg, "panicked")
 		assert.Contains(t, errMsg, "nil pointer")
-		assert.Contains(t, errMsg, "Constructors should be pure dependency wiring")
-		assert.Contains(t, errMsg, "To resolve this")
-		assert.Contains(t, errMsg, "Stack trace")
+		// The stack and guidance are detail, not message: Error() strings
+		// end up in logs and (through framework error handlers) responses.
+		assert.NotContains(t, errMsg, "goroutine 1")
+		assert.NotContains(t, errMsg, "\n")
+
+		detail := Explain(err)
+		assert.Contains(t, detail, "To resolve this")
+		assert.Contains(t, detail, "Stack trace")
+		assert.Contains(t, detail, "goroutine 1")
+		assert.Equal(t, detail, fmt.Sprintf("%+v", err))
+	})
+
+	t.Run("messages_are_one_line_with_detail_on_request", func(t *testing.T) {
+		t.Parallel()
+		conflict := &LifetimeConflictError{
+			ServiceType: svcType, ServiceLifetime: Singleton,
+			DependencyType: depType, DependencyLifetime: Scoped,
+		}
+		notFound := &ResolutionError{ServiceType: svcType, Cause: ErrServiceNotFound}
+		for _, err := range []error{conflict, notFound} {
+			assert.NotContains(t, err.Error(), "\n", "%T", err)
+		}
+		assert.Contains(t, Explain(conflict), "To resolve this")
+		assert.Contains(t, Explain(notFound), "Make sure the service is registered")
+
+		// Detail survives wrapping, including errors.Join.
+		wrapped := &BuildError{Phase: PhaseValidation, Cause: errors.Join(conflict, notFound)}
+		detail := Explain(wrapped)
+		assert.Contains(t, detail, "To resolve this")
+		assert.Contains(t, detail, "Make sure the service is registered")
+	})
+
+	t.Run("constructor_failures_name_the_function_and_location", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddSingleton(NewTServiceError)
+		_, err := c.Build()
+		require.Error(t, err)
+		// Two constructors with the same signature used to be
+		// indistinguishable: only func() (*TService, error) was printed.
+		assert.Contains(t, err.Error(), "NewTServiceError")
+		assert.Contains(t, err.Error(), "testutil_test.go:")
+	})
+
+	t.Run("missing_dependency_names_the_constructor", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddScoped(NewTServiceWithDeps)
+		_, err := c.Build()
+		var missing *MissingDependencyError
+		require.ErrorAs(t, err, &missing)
+		assert.Contains(t, missing.Constructor, "NewTServiceWithDeps")
+	})
+
+	t.Run("not_found_suggests_similar_registrations", func(t *testing.T) {
+		t.Parallel()
+		p := BuildProvider(t, AddSingleton(NewTService))
+		// A common slip: resolving the value type of a pointer registration.
+		_, err := Resolve[TService](p)
+		require.ErrorIs(t, err, ErrServiceNotFound)
+		detail := Explain(err)
+		assert.Contains(t, detail, "Did you mean")
+		assert.Contains(t, detail, "*godi.TService")
+	})
+
+	t.Run("cycles_list_each_service_once", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddSingleton(NewTCircularA)
+		c.AddSingleton(NewTCircularB)
+		_, err := c.Build()
+		var cycle *CircularDependencyError
+		require.ErrorAs(t, err, &cycle)
+		// The start node used to be reported twice before "(cycle)".
+		assert.Equal(t, 1, strings.Count(strings.Join(cycle.Path, " "), "TCircularA"), cycle.Path)
+		assert.NotContains(t, cycle.Error(), "\n")
+	})
+
+	t.Run("build_phases_are_constants", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddSingleton(NewTCircularA)
+		c.AddSingleton(NewTCircularB)
+		_, err := c.Build()
+		var buildErr *BuildError
+		require.ErrorAs(t, err, &buildErr)
+		assert.Equal(t, PhaseValidation, buildErr.Phase)
 	})
 
 	t.Run("ErrorWrapping", func(t *testing.T) {
@@ -315,19 +401,21 @@ func TestFormatType(t *testing.T) {
 		typ      reflect.Type
 		contains string
 	}{
+		// Types are package-qualified: a bare *Config is ambiguous across
+		// packages.
 		{"nil", nil, "<nil>"},
-		{"pointer", reflect.TypeFor[*TService](), "*TService"},
-		{"slice", reflect.TypeFor[[]TService](), "[]TService"},
+		{"pointer", reflect.TypeFor[*TService](), "*godi.TService"},
+		{"slice", reflect.TypeFor[[]TService](), "[]godi.TService"},
 		{"map", reflect.TypeFor[map[string]int](), "map[string]int"},
-		{"interface", reflect.TypeFor[fmt.Stringer](), "Stringer"},
-		{"struct", reflect.TypeFor[TService](), "TService"},
+		{"interface", reflect.TypeFor[fmt.Stringer](), "fmt.Stringer"},
+		{"struct", reflect.TypeFor[TService](), "godi.TService"},
 		{"func", reflect.TypeFor[func()](), "func()"},
 		{"basic", reflect.TypeFor[int](), "int"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Contains(t, formatType(tc.typ), tc.contains)
+			assert.Equal(t, tc.contains, formatType(tc.typ))
 		})
 	}
 }
