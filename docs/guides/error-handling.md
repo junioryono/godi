@@ -4,7 +4,11 @@ When something goes wrong, godi provides detailed error messages to help you fix
 
 ## Build-Time Errors
 
-These errors occur when calling `services.Build()`.
+These errors occur when calling `services.Build()`. `Build` wraps each one in a
+`build failed during <phase> phase: ...` prefix; the samples below show the full
+message for a program whose types live in package `main`. Each message is one
+line; `godi.Explain(err)` adds the detail shown under some samples (see
+[Get the Full Explanation](#get-the-full-explanation)).
 
 ### Registration Errors
 
@@ -13,7 +17,7 @@ constructors, duplicates, bad tags, ...) are recorded and reported all at
 once when you call `Build()`:
 
 ```
-Error: build failed during registration phase: one or more service registrations failed: ...
+build failed during registration phase: one or more service registrations failed: constructor cannot be nil
 ```
 
 Register everything first, then handle the single error from `Build()`. Use
@@ -22,8 +26,27 @@ Register everything first, then handle the single error from `Build()`. Use
 ### Circular Dependency Detected
 
 ```
-Error: circular dependency detected: *UserService -> *AuthService -> *UserService
+build failed during validation phase: dependency graph validation failed: circular dependency detected: *main.UserService -> *main.AuthService -> *main.UserService
 ```
+
+`godi.Explain(err)` draws the cycle and suggests fixes:
+
+```
+    *main.UserService
+      ↓
+    *main.AuthService
+      ↓
+    *main.UserService (cycle)
+
+To resolve this:
+  • Use an interface to break the dependency
+  • Use a factory function for lazy initialization
+  • Restructure to remove the circular relationship
+```
+
+The cycle can be reported starting from any service in it. Match it with
+`errors.As(err, &cycleErr)` for a `*godi.CircularDependencyError`; its `Path`
+field holds the chain of services.
 
 **What it means:** Service A needs B, but B needs A (directly or indirectly).
 
@@ -71,7 +94,7 @@ func (a *AuthService) ValidateWithUser(users *UserService, token string) bool {
 ### Missing Dependency
 
 ```
-Error: *UserRepository requires *DatabasePool (not registered)
+build failed during validation phase: missing dependencies: *main.UserRepository requires *main.DatabasePool (not registered) [constructor main.NewUserRepository (repository.go:12)]
 ```
 
 **What it means:** A constructor needs a type that wasn't registered.
@@ -96,8 +119,24 @@ services.AddScoped(NewUserRepository)
 ### Lifetime Conflict
 
 ```
-Error: singleton *Cache cannot depend on scoped *RequestContext
+build failed during validation phase: lifetime validation failed: lifetime conflict: *main.Cache (Singleton) cannot depend on *main.RequestContext (Scoped)
 ```
+
+`godi.Explain(err)` adds:
+
+```
+Singleton services are created once and live for the application lifetime.
+Scoped services are created per-scope and may have different values in different scopes.
+A singleton depending on a scoped service would capture a single scope's value,
+which is almost certainly not what you want.
+
+To resolve this:
+  • Change *main.Cache to Scoped lifetime
+  • Change *main.RequestContext to Singleton lifetime
+  • Pass *main.RequestContext to *main.Cache's methods per call instead of holding it
+```
+
+The typed error is `*godi.LifetimeConflictError`.
 
 **What it means:** A longer-lived service depends on a shorter-lived one.
 
@@ -134,8 +173,18 @@ func (c *Cache) DoSomething(ctx context.Context) {
 
 ### Constructor Error
 
+For a singleton, the constructor runs during `Build`:
+
 ```
-Error: failed to create *Database: connection refused
+build failed during singleton-creation phase: failed to initialize singletons: failed to resolve *main.Database: constructor main.NewDatabase (database.go:20) failed: connection refused
+```
+
+For a scoped or transient service, it runs at resolution, and the error is
+returned by `Resolve` (a `*godi.ConstructorInvocationError`; it does not match
+`godi.ErrServiceNotFound`):
+
+```
+constructor main.NewDatabase (database.go:20) failed: connection refused
 ```
 
 **What it means:** A constructor returned an error.
@@ -171,12 +220,12 @@ These errors occur when resolving services.
 ### Service Not Found
 
 ```
-Error: service not found: *UnknownService
+service not found: *main.UnknownService
 ```
 
 **What it means:** You're trying to resolve a type that wasn't registered.
-(A registered service whose constructor failed is reported as
-`failed to resolve *Service: ...` instead, with the constructor's error.)
+(A registered service whose constructor failed reports the constructor's
+error instead, as shown under Constructor Error above.)
 
 **How to fix:**
 
@@ -192,7 +241,7 @@ user := godi.MustResolve[UserService](provider)   // Wrong! (no pointer)
 ### Scope Disposed
 
 ```
-Error: scope has been disposed
+scope has been disposed
 ```
 
 **What it means:** You're trying to use a scope after calling `Close()`.
@@ -215,7 +264,7 @@ service.DoWork()
 ### Circular Resolution at Runtime
 
 ```
-Error: circular dependency detected: *Service -> *Service (cycle)
+constructor main.NewService (service.go:15) failed: circular dependency detected: *main.Service -> *main.Service
 ```
 
 **What it means:** A constructor resolved itself, directly or through other
@@ -235,7 +284,7 @@ parameter, or resolve lazily after construction.
 ### No Scope in Context
 
 ```
-Error: no scope found in context
+failed to resolve godi.Scope: no scope found in context
 ```
 
 **What it means:** You're calling `godi.FromContext` but no scope was attached.
@@ -324,6 +373,8 @@ func main() {
     runServer(provider)
 }
 ```
+
+(get-the-full-explanation)=
 
 ### 4. Get the Full Explanation
 

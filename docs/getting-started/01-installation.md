@@ -20,7 +20,7 @@ import (
 
 func main() {
     services := godi.NewCollection()
-    fmt.Println("godi is ready!")
+    fmt.Println("godi is ready!", services.Count())
 }
 ```
 
@@ -33,7 +33,7 @@ go run main.go
 You should see:
 
 ```
-godi is ready!
+godi is ready! 0
 ```
 
 ## Requirements

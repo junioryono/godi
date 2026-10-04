@@ -166,24 +166,36 @@ When a scope closes, all scoped and transient services created within it are dis
 
 ```go
 type Transaction struct {
-    db *sql.DB
     tx *sql.Tx
 }
 
-func (t *Transaction) Close() error {
-    // Commit or rollback
+// Commit is called explicitly once the request's work has succeeded.
+func (t *Transaction) Commit() error {
     return t.tx.Commit()
+}
+
+// Close rolls back unless Commit already ran (Rollback then returns
+// sql.ErrTxDone, which is not an error here).
+func (t *Transaction) Close() error {
+    if err := t.tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+        return err
+    }
+    return nil
 }
 
 services.AddScoped(NewTransaction)
 
 scope, _ := provider.CreateScope(ctx)
+defer scope.Close() // Transaction.Close() called automatically
+
 tx := godi.MustResolve[*Transaction](scope)
-
-// ... do work ...
-
-scope.Close() // Transaction.Close() called automatically
+if err := doWork(tx); err != nil {
+    return err // Close rolls back
+}
+return tx.Commit()
 ```
+
+Scopes also close after handler errors, panics and client disconnects, so committing in `Close()` would persist failed or partial work; commit explicitly on success and let `Close()` roll back.
 
 Disposal order is reverse creation order:
 
@@ -279,8 +291,18 @@ func NewTransaction(pool *DatabasePool) (*Transaction, error) {
     return &Transaction{db: pool.DB(), tx: tx}, nil
 }
 
-func (t *Transaction) Close() error {
+// Commit is called explicitly once the request's work has succeeded.
+func (t *Transaction) Commit() error {
     return t.tx.Commit()
+}
+
+// Close rolls back unless Commit already ran (Rollback then returns
+// sql.ErrTxDone, which is not an error here).
+func (t *Transaction) Close() error {
+    if err := t.tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+        return err
+    }
+    return nil
 }
 
 services.AddSingleton(NewDatabasePool)  // Shared pool
@@ -288,6 +310,10 @@ services.AddScoped(NewTransaction)       // Per-request transaction
 services.AddScoped(NewUserRepository)    // Uses transaction
 services.AddScoped(NewOrderRepository)   // Uses same transaction
 ```
+
+The handler calls `Commit()` after its work succeeds; if it returns an error,
+panics or the client disconnects, the scope's `Close()` rolls the transaction
+back instead of committing partial work.
 
 ---
 

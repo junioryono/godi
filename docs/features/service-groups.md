@@ -71,13 +71,20 @@ services.AddSingleton(NewEmailFormatValidator, godi.Group("validators"))
 services.AddSingleton(NewPhoneFormatValidator, godi.Group("validators"))
 services.AddSingleton(NewAddressValidator, godi.Group("validators"))
 
-// Use in service
+// Use in service: a group is injected through a `group` tag on a
+// godi.In field (a plain []Validator parameter is not a group)
 type UserService struct {
     validators []Validator
 }
 
-func NewUserService(validators []Validator) *UserService {
-    return &UserService{validators: validators}
+type UserServiceParams struct {
+    godi.In
+
+    Validators []Validator `group:"validators"`
+}
+
+func NewUserService(params UserServiceParams) *UserService {
+    return &UserService{validators: params.Validators}
 }
 
 func (s *UserService) Create(user *User) error {
@@ -220,19 +227,30 @@ func NewService(params ServiceParams) *Service {
 
 ## Combining Keys and Groups
 
-A service can have both a key and belong to groups:
+A single registration cannot use both `godi.Name` and `godi.Group` (`Build`
+reports a registration error). To make one instance available by key and as a
+group member, return it from a [result object](result-objects.md) with two
+fields, one tagged `name` and one tagged `group`:
 
 ```go
-// Service with name AND in group
-services.AddSingleton(NewEmailValidator,
-    godi.Name("email"),
-    godi.Group("validators"),
-)
+type EmailValidatorResult struct {
+    godi.Out
+
+    Named   Validator `name:"email"`
+    InGroup Validator `group:"validators"`
+}
+
+func NewEmailValidator() EmailValidatorResult {
+    v := &EmailValidator{}
+    return EmailValidatorResult{Named: v, InGroup: v} // same instance
+}
+
+services.AddSingleton(NewEmailValidator)
 
 // Resolve by name
 emailValidator := godi.MustResolveKeyed[Validator](provider, "email")
 
-// Or get all validators
+// Or get all validators (includes the same EmailValidator instance)
 allValidators := godi.MustResolveGroup[Validator](provider, "validators")
 ```
 

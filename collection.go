@@ -22,8 +22,11 @@ var providerIDCounter atomic.Uint64
 // Collection follows a builder pattern where services are registered
 // with their lifetimes and dependencies, then built into a Provider.
 //
-// Collection is NOT thread-safe. It should be configured in a single
-// goroutine before building the Provider.
+// The registration methods are safe for concurrent use, but registration
+// should be complete before Build: Build works from a snapshot of the
+// collection, so later registrations do not affect providers already built.
+// A Collection can be built more than once, and each Build produces an
+// independent Provider.
 //
 // Example:
 //

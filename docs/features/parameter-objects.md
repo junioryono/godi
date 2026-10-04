@@ -220,9 +220,20 @@ func TestServiceIntegration(t *testing.T) {
     services.AddSingleton(NewTestLogger)
     services.AddScoped(NewService)
 
-    provider, _ := services.Build()
+    provider, err := services.Build()
+    if err != nil {
+        t.Fatal(err)
+    }
+    defer provider.Close()
 
-    service := godi.MustResolve[*Service](provider)
+    // Service is scoped, so resolve it from a scope
+    scope, err := provider.CreateScope(t.Context())
+    if err != nil {
+        t.Fatal(err)
+    }
+    defer scope.Close()
+
+    service := godi.MustResolve[*Service](scope)
     // Test...
 }
 ```

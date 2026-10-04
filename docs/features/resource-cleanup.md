@@ -247,14 +247,25 @@ func NewTransaction(db *Database) (*Transaction, error) {
     return &Transaction{tx: tx}, nil
 }
 
-func (t *Transaction) Close() error {
-    // Commit on successful close, or rollback
+// Commit is called explicitly once the request's work has succeeded.
+func (t *Transaction) Commit() error {
     return t.tx.Commit()
+}
+
+// Close rolls back unless Commit already ran (Rollback then returns
+// sql.ErrTxDone, which is not an error here).
+func (t *Transaction) Close() error {
+    if err := t.tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+        return err
+    }
+    return nil
 }
 
 // Register as scoped - one per request
 services.AddScoped(NewTransaction)
 ```
+
+Scopes also close after handler errors, panics and client disconnects, so committing in `Close()` would persist failed or partial work; commit explicitly on success and let `Close()` roll back.
 
 ### File Handler
 
@@ -358,15 +369,15 @@ if closer, ok := service.(godi.Disposable); ok {
 
 ## Common Resources to Dispose
 
-| Resource        | Lifetime  | Close Action           |
-| --------------- | --------- | ---------------------- |
-| Database pool   | Singleton | Close connections      |
-| Redis client    | Singleton | Close connections      |
-| HTTP client     | Singleton | Close idle connections |
-| File handle     | Transient | Close and delete       |
-| DB transaction  | Scoped    | Commit/rollback        |
-| gRPC connection | Singleton | Close connection       |
-| WebSocket       | Scoped    | Close connection       |
+| Resource        | Lifetime  | Close Action               |
+| --------------- | --------- | -------------------------- |
+| Database pool   | Singleton | Close connections          |
+| Redis client    | Singleton | Close connections          |
+| HTTP client     | Singleton | Close idle connections     |
+| File handle     | Transient | Close and delete           |
+| DB transaction  | Scoped    | Roll back if not committed |
+| gRPC connection | Singleton | Close connection           |
+| WebSocket       | Scoped    | Close connection           |
 
 ---
 

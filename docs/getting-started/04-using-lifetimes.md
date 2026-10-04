@@ -208,7 +208,11 @@ Why? A singleton lives forever, but scoped services are destroyed when the scope
 | --------- | ---------- | ------------ | ---------------- | ----------------------------- |
 | Singleton | Once       | App-wide     | Provider.Close() | DB pools, config              |
 | Scoped    | Per scope  | Within scope | Scope.Close()    | Request context, transactions |
-| Transient | Every time | Never        | Scope.Close()    | Builders, temp objects        |
+| Transient | Every time | Never        | Scope.Close() ¹  | Builders, temp objects        |
+
+¹ When resolved from a scope. A transient resolved directly from the provider
+is owned by the caller, who must close it (see
+[Resource Cleanup](../features/resource-cleanup.md)).
 
 ---
 

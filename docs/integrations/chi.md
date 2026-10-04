@@ -66,7 +66,7 @@ r.Use(godichi.ScopeMiddleware(provider))
 
 ```go
 r.Use(godichi.ScopeMiddleware(provider,
-    // Custom error handler for scope creation failures
+    // Custom error handler for scope creation and WithMiddleware failures
     godichi.WithErrorHandler(func(w http.ResponseWriter, r *http.Request, err error) {
         http.Error(w, "Service unavailable", http.StatusServiceUnavailable)
     }),

@@ -45,11 +45,12 @@ godi is a dependency injection container that automatically resolves and creates
 │  "Ask me for anything"                                          │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
-│   godi.MustResolve[*UserService](provider)                      │
+│   scope, _ := provider.CreateScope(ctx)                         │
+│   godi.MustResolve[*UserService](scope)                         │
 │                                                                 │
 │   1. Logger and Database already exist (singletons are          │
 │      created eagerly during Build, in dependency order)         │
-│   2. Create UserService(Database, Logger)                       │
+│   2. Create UserService(Database, Logger), cached in the scope  │
 │   3. Return UserService                                         │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
@@ -110,15 +111,27 @@ if err != nil {
 
 ### 4. You Request Services
 
-When you resolve a service, godi walks the dependency graph:
+When you resolve a service, godi walks the dependency graph. `UserService` is
+scoped, so resolve it from a scope (in a web app, one scope per request):
 
 ```go
-userService := godi.MustResolve[*UserService](provider)
+scope, err := provider.CreateScope(ctx)
+if err != nil {
+    log.Fatal(err)
+}
+defer scope.Close()
+
+userService := godi.MustResolve[*UserService](scope)
 ```
 
 The singletons (Logger, Database) were already created during `Build()` in
 dependency order — Logger first (no dependencies), then Database (needs
-Logger). Resolving UserService creates it from those cached instances.
+Logger). Resolving UserService creates it from those cached instances and
+caches it in the scope until the scope is closed.
+
+Resolving a scoped service directly from the provider uses the provider's
+root scope, so the instance lives until the provider is closed; resolve
+scoped services from a scope you create.
 
 ## Type Resolution
 
@@ -128,13 +141,14 @@ godi uses Go generics for type-safe resolution:
 // The type in brackets must match what you registered
 logger := godi.MustResolve[*Logger](provider)
 db := godi.MustResolve[*Database](provider)
-users := godi.MustResolve[*UserService](provider)
+users := godi.MustResolve[*UserService](scope)
 ```
 
-If you request a type that wasn't registered, you get an error:
+If you request a type that wasn't registered, you get an error
+(`MustResolve` panics with it; `Resolve` returns it):
 
 ```go
-// Error: service not found: *NotRegistered
+// service not found: *main.NotRegistered
 thing := godi.MustResolve[*NotRegistered](provider)
 ```
 
@@ -167,7 +181,8 @@ services.AddSingleton(func(b *B) *A { return &A{} })
 services.AddSingleton(func(a *A) *B { return &B{} })
 
 provider, err := services.Build()
-// Error: circular dependency detected: *A -> *B -> *A
+// build failed during validation phase: dependency graph validation failed: circular dependency detected: *main.A -> *main.B -> *main.A
+// godi.Explain(err) draws the cycle and suggests fixes.
 ```
 
 **Missing Dependencies**
@@ -178,7 +193,7 @@ services.AddSingleton(func(missing *NotRegistered) *MyService {
 })
 
 provider, err := services.Build()
-// Error: *MyService requires *NotRegistered (not registered)
+// build failed during validation phase: missing dependencies: *main.MyService requires *main.NotRegistered (not registered) [constructor main.main.func1 (main.go:9)]
 // Checked at Build for singleton, scoped, and transient services alike.
 ```
 
@@ -191,7 +206,8 @@ services.AddSingleton(func(ctx *RequestContext) *Cache {
 })
 
 provider, err := services.Build()
-// Error: singleton *Cache cannot depend on scoped *RequestContext
+// build failed during validation phase: lifetime validation failed: lifetime conflict: *main.Cache (Singleton) cannot depend on *main.RequestContext (Scoped)
+// godi.Explain(err) explains the conflict and suggests fixes.
 ```
 
 ## Cleanup

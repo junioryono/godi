@@ -100,9 +100,11 @@ func (o *addOptions) Validate() error {
 	return nil
 }
 
-// Name is an AddOption that specifies that all values produced by a
-// constructor should have the given name. See also the package documentation
-// about Named Values.
+// Name is an AddOption that registers the value produced by a constructor as
+// a keyed service under the given name. Resolve it with ResolveKeyed or an In
+// field tagged `name:"..."`. For a constructor with several non-error
+// returns, the name applies to the first non-error return only; the other
+// returns are registered without a name.
 //
 // Given,
 //
@@ -148,12 +150,13 @@ func (o addKeyOption) applyAddOption(opt *addOptions) {
 	opt.Key = o.key
 }
 
-// Group is an AddOption that specifies that all values produced by a
-// constructor should be added to the specified group. See also the package
-// documentation about Value Groups.
+// Group is an AddOption that adds the values produced by a constructor to the
+// specified group. For a constructor with several non-error returns, every
+// return is added to the group of its own type. Consume a group with
+// ResolveGroup or an In field of slice type tagged `group:"..."`.
 //
-// This option cannot be provided for constructors which produce result
-// objects.
+// This option cannot be combined with Name or Key, and cannot be provided for
+// constructors which produce result objects.
 func Group(group string) AddOption {
 	return addGroupOption(group)
 }

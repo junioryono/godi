@@ -290,7 +290,11 @@ services.AddTransient(NewExpensiveService) // 5 seconds
 | --------- | ---------- | ------------ | ---------------- | ----------------------------- |
 | Singleton | Once       | App-wide     | provider.Close() | DB pools, config, loggers     |
 | Scoped    | Per scope  | Within scope | scope.Close()    | Request context, transactions |
-| Transient | Every time | Never        | scope.Close()    | Builders, temp objects        |
+| Transient | Every time | Never        | scope.Close() ¹  | Builders, temp objects        |
+
+¹ When resolved from a scope. A transient resolved directly from the provider
+is owned by the caller, who must close it (see
+[Resource Cleanup](../features/resource-cleanup.md)).
 
 ## Common Patterns
 

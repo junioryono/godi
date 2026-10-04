@@ -64,7 +64,7 @@ func NewModule(name string, builders ...ModuleOption) ModuleOption {
 	}
 }
 
-// AddSingleton creates a ModuleBuilder for adding a singleton service.
+// AddSingleton returns a ModuleOption that registers a singleton service.
 // Registration errors are recorded on the collection and reported by Build.
 func AddSingleton(service any, opts ...AddOption) ModuleOption {
 	return func(s Collection) error {
@@ -73,7 +73,7 @@ func AddSingleton(service any, opts ...AddOption) ModuleOption {
 	}
 }
 
-// AddScoped creates a ModuleBuilder for adding a scoped service.
+// AddScoped returns a ModuleOption that registers a scoped service.
 // Registration errors are recorded on the collection and reported by Build.
 func AddScoped(service any, opts ...AddOption) ModuleOption {
 	return func(s Collection) error {
@@ -82,7 +82,7 @@ func AddScoped(service any, opts ...AddOption) ModuleOption {
 	}
 }
 
-// AddTransient creates a ModuleBuilder for adding a transient service.
+// AddTransient returns a ModuleOption that registers a transient service.
 // Registration errors are recorded on the collection and reported by Build.
 func AddTransient(service any, opts ...AddOption) ModuleOption {
 	return func(s Collection) error {

@@ -63,7 +63,7 @@ http.ListenAndServe(":8080", handler)
 
 ```go
 handler := godihttp.ScopeMiddleware(provider,
-    // Custom error handler for scope creation failures
+    // Custom error handler for scope creation and WithMiddleware failures
     godihttp.WithErrorHandler(func(w http.ResponseWriter, r *http.Request, err error) {
         http.Error(w, "Service unavailable", http.StatusServiceUnavailable)
     }),

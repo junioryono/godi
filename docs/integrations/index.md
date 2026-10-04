@@ -1,6 +1,9 @@
 # Integrations
 
-Each integration creates and closes request scopes around its framework's handler lifecycle.
+Each router integration (net/http, Chi, Echo, Fiber, Gin) creates and closes
+request scopes around its framework's handler lifecycle. The Huma integration
+resolves controllers from the scope that the underlying router's scope
+middleware creates.
 
 - [net/http](net-http.md)
 - [Chi](chi.md)
