@@ -57,10 +57,8 @@ You now understand the fundamentals of godi. Here's where to go next based on wh
 | --------- | --------------------------------------------------- |
 | Gin       | [Gin Integration](../integrations/gin.md)           |
 | Chi       | [Chi Integration](../integrations/chi.md)           |
-| Echo v4   | [Echo Integration](../integrations/echo.md)         |
-| Echo v5   | [Echo v5 Integration](../integrations/echo-v5.md)   |
-| Fiber v2  | [Fiber Integration](../integrations/fiber.md)       |
-| Fiber v3  | [Fiber v3 Integration](../integrations/fiber-v3.md) |
+| Echo v5   | [Echo Integration](../integrations/echo.md)   |
+| Fiber v3  | [Fiber Integration](../integrations/fiber.md) |
 | net/http  | [net/http Integration](../integrations/net-http.md) |
 
 ## Get Help

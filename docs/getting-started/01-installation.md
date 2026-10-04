@@ -53,13 +53,11 @@ go get github.com/junioryono/godi/gin/v6
 # For Chi
 go get github.com/junioryono/godi/chi/v6
 
-# For Echo v4 / Echo v5
+# For Echo v5
 go get github.com/junioryono/godi/echo/v6
-go get github.com/junioryono/godi/echov5/v6
 
-# For Fiber v2 / Fiber v3
+# For Fiber v3
 go get github.com/junioryono/godi/fiber/v6
-go get github.com/junioryono/godi/fiberv3/v6
 
 # For net/http
 go get github.com/junioryono/godi/http/v6

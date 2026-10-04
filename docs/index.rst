@@ -56,9 +56,7 @@
    integrations/gin
    integrations/chi
    integrations/echo
-   integrations/echo-v5
    integrations/fiber
-   integrations/fiber-v3
    integrations/net-http
    integrations/huma
 
@@ -166,10 +164,8 @@ Quick Links
 
 - :doc:`integrations/gin` - Gin web framework
 - :doc:`integrations/chi` - Chi router
-- :doc:`integrations/echo` - Echo v4 framework
-- :doc:`integrations/echo-v5` - Echo v5 framework
-- :doc:`integrations/fiber` - Fiber v2 framework
-- :doc:`integrations/fiber-v3` - Fiber v3 framework
+- :doc:`integrations/echo` - Echo v5 framework
+- :doc:`integrations/fiber` - Fiber v3 framework
 - :doc:`integrations/net-http` - Standard library
 - :doc:`integrations/huma` - Huma REST API framework
 

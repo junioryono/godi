@@ -13,18 +13,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-chi/chi/v5"
-	fiber2 "github.com/gofiber/fiber/v2"
-	fiber3 "github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3"
 	godichi "github.com/junioryono/godi/chi/v6"
 	godiecho "github.com/junioryono/godi/echo/v6"
-	godiechov5 "github.com/junioryono/godi/echov5/v6"
 	godifiber "github.com/junioryono/godi/fiber/v6"
-	godifiberv3 "github.com/junioryono/godi/fiberv3/v6"
 	godigin "github.com/junioryono/godi/gin/v6"
 	godihttp "github.com/junioryono/godi/http/v6"
 	"github.com/junioryono/godi/v6"
-	echo4 "github.com/labstack/echo/v4"
-	echo5 "github.com/labstack/echo/v5"
+	"github.com/labstack/echo/v5"
 )
 
 // The conformance suite runs the same behavioral contract against every
@@ -201,43 +197,21 @@ func buildEcho(_ *testing.T, provider godi.Provider, opts conformanceOptions) co
 	options := []godiecho.Option{godiecho.WithLogger(quietLogger)}
 	if opts.failingMiddleware {
 		options = append(options,
-			godiecho.WithMiddleware(func(scope godi.Scope, _ echo4.Context) error { return failingMiddleware(scope) }),
-			godiecho.WithMiddlewareErrorHandler(func(echo4.Context, error) error { return echo4.ErrUnauthorized }),
+			godiecho.WithMiddleware(func(scope godi.Scope, _ *echo.Context) error { return failingMiddleware(scope) }),
+			godiecho.WithMiddlewareErrorHandler(func(*echo.Context, error) error { return echo.ErrUnauthorized }),
 		)
 	}
-	engine := echo4.New()
+	engine := echo.New()
 	engine.Use(godiecho.ScopeMiddleware(provider, options...))
-	engine.GET("/probe", godiecho.Handle(func(p *conformanceProbe, c echo4.Context) error {
+	engine.GET("/probe", godiecho.Handle(func(p *conformanceProbe, c *echo.Context) error {
 		return c.String(http.StatusOK, p.serve(c.Request().Context()))
 	}, godiecho.WithHandlerLogger(quietLogger)))
-	engine.GET("/panic", godiecho.Handle(func(p *conformanceProbe, c echo4.Context) error {
+	engine.GET("/panic", godiecho.Handle(func(p *conformanceProbe, c *echo.Context) error {
 		p.serve(c.Request().Context())
 		panic(panicDetail)
 	}, godiecho.WithPanicRecovery(true), godiecho.WithHandlerLogger(quietLogger)))
-	engine.GET("/missing", godiecho.Handle(func(*unregisteredController, echo4.Context) error { return nil },
+	engine.GET("/missing", godiecho.Handle(func(*unregisteredController, *echo.Context) error { return nil },
 		godiecho.WithHandlerLogger(quietLogger)))
-	return recorderRunner(engine)
-}
-
-func buildEchoV5(_ *testing.T, provider godi.Provider, opts conformanceOptions) conformanceRunner {
-	options := []godiechov5.Option{godiechov5.WithLogger(quietLogger)}
-	if opts.failingMiddleware {
-		options = append(options,
-			godiechov5.WithMiddleware(func(scope godi.Scope, _ *echo5.Context) error { return failingMiddleware(scope) }),
-			godiechov5.WithMiddlewareErrorHandler(func(*echo5.Context, error) error { return echo5.ErrUnauthorized }),
-		)
-	}
-	engine := echo5.New()
-	engine.Use(godiechov5.ScopeMiddleware(provider, options...))
-	engine.GET("/probe", godiechov5.Handle(func(p *conformanceProbe, c *echo5.Context) error {
-		return c.String(http.StatusOK, p.serve(c.Request().Context()))
-	}, godiechov5.WithHandlerLogger(quietLogger)))
-	engine.GET("/panic", godiechov5.Handle(func(p *conformanceProbe, c *echo5.Context) error {
-		p.serve(c.Request().Context())
-		panic(panicDetail)
-	}, godiechov5.WithPanicRecovery(true), godiechov5.WithHandlerLogger(quietLogger)))
-	engine.GET("/missing", godiechov5.Handle(func(*unregisteredController, *echo5.Context) error { return nil },
-		godiechov5.WithHandlerLogger(quietLogger)))
 	return recorderRunner(engine)
 }
 
@@ -245,43 +219,21 @@ func buildFiber(t *testing.T, provider godi.Provider, opts conformanceOptions) c
 	options := []godifiber.Option{godifiber.WithLogger(quietLogger)}
 	if opts.failingMiddleware {
 		options = append(options,
-			godifiber.WithMiddleware(func(scope godi.Scope, _ *fiber2.Ctx) error { return failingMiddleware(scope) }),
-			godifiber.WithMiddlewareErrorHandler(func(*fiber2.Ctx, error) error { return fiber2.ErrUnauthorized }),
+			godifiber.WithMiddleware(func(scope godi.Scope, _ fiber.Ctx) error { return failingMiddleware(scope) }),
+			godifiber.WithMiddlewareErrorHandler(func(fiber.Ctx, error) error { return fiber.ErrUnauthorized }),
 		)
 	}
-	app := fiber2.New()
+	app := fiber.New()
 	app.Use(godifiber.ScopeMiddleware(provider, options...))
-	app.Get("/probe", godifiber.Handle(func(p *conformanceProbe, c *fiber2.Ctx) error {
-		return c.SendString(p.serve(c.UserContext()))
-	}, godifiber.WithHandlerLogger(quietLogger)))
-	app.Get("/panic", godifiber.Handle(func(p *conformanceProbe, c *fiber2.Ctx) error {
-		p.serve(c.UserContext())
-		panic(panicDetail)
-	}, godifiber.WithPanicRecovery(true), godifiber.WithHandlerLogger(quietLogger)))
-	app.Get("/missing", godifiber.Handle(func(*unregisteredController, *fiber2.Ctx) error { return nil },
-		godifiber.WithHandlerLogger(quietLogger)))
-	return testRunner(t, func(req *http.Request) (*http.Response, error) { return app.Test(req) })
-}
-
-func buildFiberV3(t *testing.T, provider godi.Provider, opts conformanceOptions) conformanceRunner {
-	options := []godifiberv3.Option{godifiberv3.WithLogger(quietLogger)}
-	if opts.failingMiddleware {
-		options = append(options,
-			godifiberv3.WithMiddleware(func(scope godi.Scope, _ fiber3.Ctx) error { return failingMiddleware(scope) }),
-			godifiberv3.WithMiddlewareErrorHandler(func(fiber3.Ctx, error) error { return fiber3.ErrUnauthorized }),
-		)
-	}
-	app := fiber3.New()
-	app.Use(godifiberv3.ScopeMiddleware(provider, options...))
-	app.Get("/probe", godifiberv3.Handle(func(p *conformanceProbe, c fiber3.Ctx) error {
+	app.Get("/probe", godifiber.Handle(func(p *conformanceProbe, c fiber.Ctx) error {
 		return c.SendString(p.serve(c.Context()))
-	}, godifiberv3.WithHandlerLogger(quietLogger)))
-	app.Get("/panic", godifiberv3.Handle(func(p *conformanceProbe, c fiber3.Ctx) error {
+	}, godifiber.WithHandlerLogger(quietLogger)))
+	app.Get("/panic", godifiber.Handle(func(p *conformanceProbe, c fiber.Ctx) error {
 		p.serve(c.Context())
 		panic(panicDetail)
-	}, godifiberv3.WithPanicRecovery(true), godifiberv3.WithHandlerLogger(quietLogger)))
-	app.Get("/missing", godifiberv3.Handle(func(*unregisteredController, fiber3.Ctx) error { return nil },
-		godifiberv3.WithHandlerLogger(quietLogger)))
+	}, godifiber.WithPanicRecovery(true), godifiber.WithHandlerLogger(quietLogger)))
+	app.Get("/missing", godifiber.Handle(func(*unregisteredController, fiber.Ctx) error { return nil },
+		godifiber.WithHandlerLogger(quietLogger)))
 	return testRunner(t, func(req *http.Request) (*http.Response, error) { return app.Test(req) })
 }
 
@@ -291,9 +243,7 @@ func conformanceTargets() []conformanceTarget {
 		{name: "chi", build: buildChi},
 		{name: "gin", build: buildGin},
 		{name: "echo", build: buildEcho},
-		{name: "echov5", build: buildEchoV5},
 		{name: "fiber", build: buildFiber},
-		{name: "fiberv3", build: buildFiberV3},
 	}
 }
 

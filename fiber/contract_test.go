@@ -10,7 +10,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/junioryono/godi/v6"
 	"github.com/stretchr/testify/assert"
 )
@@ -85,7 +85,7 @@ func appWith(middleware, handler fiber.Handler) *fiber.App {
 	return app
 }
 
-func ok(c *fiber.Ctx) error { return c.SendStatus(http.StatusOK) }
+func ok(c fiber.Ctx) error { return c.SendStatus(http.StatusOK) }
 
 func TestContractDefaultScopeErrorIsLoggedAndGeneric(t *testing.T) {
 	logger, logs := newCapturingLogger()
@@ -102,7 +102,7 @@ func TestContractDefaultMiddlewareErrorIsLoggedAndGeneric(t *testing.T) {
 
 	resp := serve(t, appWith(ScopeMiddleware(openProvider(t),
 		WithLogger(logger),
-		WithMiddleware(func(godi.Scope, *fiber.Ctx) error { return errors.New(internalDetail) }),
+		WithMiddleware(func(godi.Scope, fiber.Ctx) error { return errors.New(internalDetail) }),
 	), ok))
 
 	assert.Equal(t, http.StatusInternalServerError, resp.status)
@@ -111,8 +111,8 @@ func TestContractDefaultMiddlewareErrorIsLoggedAndGeneric(t *testing.T) {
 }
 
 func TestContractMiddlewareErrorHandler(t *testing.T) {
-	unauthorized := func(c *fiber.Ctx, _ error) error { return c.SendStatus(http.StatusUnauthorized) }
-	failingAuth := WithMiddleware(func(godi.Scope, *fiber.Ctx) error { return errors.New("bad token") })
+	unauthorized := func(c fiber.Ctx, _ error) error { return c.SendStatus(http.StatusUnauthorized) }
+	failingAuth := WithMiddleware(func(godi.Scope, fiber.Ctx) error { return errors.New("bad token") })
 
 	t.Run("handles middleware errors", func(t *testing.T) {
 		resp := serve(t, appWith(ScopeMiddleware(openProvider(t), failingAuth, WithMiddlewareErrorHandler(unauthorized)), ok))
@@ -127,7 +127,7 @@ func TestContractMiddlewareErrorHandler(t *testing.T) {
 
 	t.Run("defaults to the configured error handler", func(t *testing.T) {
 		resp := serve(t, appWith(ScopeMiddleware(openProvider(t), failingAuth,
-			WithErrorHandler(func(c *fiber.Ctx, _ error) error { return c.SendStatus(http.StatusTeapot) }),
+			WithErrorHandler(func(c fiber.Ctx, _ error) error { return c.SendStatus(http.StatusTeapot) }),
 		), ok))
 		assert.Equal(t, http.StatusTeapot, resp.status)
 	})
@@ -198,7 +198,7 @@ func TestContractDefaultResolutionErrorIsLoggedAndGeneric(t *testing.T) {
 
 // recordingMiddleware records the error the rest of the chain returns to it.
 func recordingMiddleware(seen *[]error) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		err := c.Next()
 		*seen = append(*seen, err)
 		return err
@@ -211,12 +211,13 @@ func TestContractErrorPassthrough(t *testing.T) {
 	t.Run("consumes downstream errors by default", func(t *testing.T) {
 		var seen []error
 		errorHandlerCalls := 0
-		app := fiber.New(fiber.Config{ErrorHandler: func(c *fiber.Ctx, err error) error {
+		app := fiber.New(fiber.Config{ErrorHandler: func(c fiber.Ctx, err error) error {
 			errorHandlerCalls++
 			return fiber.DefaultErrorHandler(c, err)
 		}})
-		app.Use(recordingMiddleware(&seen), ScopeMiddleware(openProvider(t)))
-		app.Get("/test", func(*fiber.Ctx) error { return handlerErr })
+		app.Use(recordingMiddleware(&seen))
+		app.Use(ScopeMiddleware(openProvider(t)))
+		app.Get("/test", func(fiber.Ctx) error { return handlerErr })
 
 		resp := serve(t, app)
 
@@ -229,17 +230,18 @@ func TestContractErrorPassthrough(t *testing.T) {
 		var seen []error
 		errorHandlerCalls := 0
 		var scopeAliveDuringRender bool
-		app := fiber.New(fiber.Config{ErrorHandler: func(c *fiber.Ctx, err error) error {
+		app := fiber.New(fiber.Config{ErrorHandler: func(c fiber.Ctx, err error) error {
 			errorHandlerCalls++
-			scope, scopeErr := godi.FromContext(c.UserContext())
+			scope, scopeErr := godi.FromContext(c.Context())
 			if scopeErr == nil {
 				_, resolveErr := godi.Resolve[*testService](scope)
 				scopeAliveDuringRender = resolveErr == nil
 			}
 			return fiber.DefaultErrorHandler(c, err)
 		}})
-		app.Use(recordingMiddleware(&seen), ScopeMiddleware(openProvider(t), WithErrorPassthrough(true)))
-		app.Get("/test", func(*fiber.Ctx) error { return handlerErr })
+		app.Use(recordingMiddleware(&seen))
+		app.Use(ScopeMiddleware(openProvider(t), WithErrorPassthrough(true)))
+		app.Get("/test", func(fiber.Ctx) error { return handlerErr })
 
 		resp := serve(t, app)
 
@@ -252,10 +254,11 @@ func TestContractErrorPassthrough(t *testing.T) {
 	t.Run("returns middleware errors to outer middleware when enabled", func(t *testing.T) {
 		var seen []error
 		app := fiber.New()
-		app.Use(recordingMiddleware(&seen), ScopeMiddleware(openProvider(t),
+		app.Use(recordingMiddleware(&seen))
+		app.Use(ScopeMiddleware(openProvider(t),
 			WithErrorPassthrough(true),
-			WithMiddleware(func(godi.Scope, *fiber.Ctx) error { return errors.New("bad token") }),
-			WithMiddlewareErrorHandler(func(*fiber.Ctx, error) error { return fiber.ErrUnauthorized }),
+			WithMiddleware(func(godi.Scope, fiber.Ctx) error { return errors.New("bad token") }),
+			WithMiddlewareErrorHandler(func(fiber.Ctx, error) error { return fiber.ErrUnauthorized }),
 		))
 		app.Get("/test", ok)
 

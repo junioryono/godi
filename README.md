@@ -221,16 +221,13 @@ func main() {
 | net/http  | `github.com/junioryono/godi/http/v6`    | `go get github.com/junioryono/godi/http/v6`    |
 | Gin       | `github.com/junioryono/godi/gin/v6`     | `go get github.com/junioryono/godi/gin/v6`     |
 | Chi       | `github.com/junioryono/godi/chi/v6`     | `go get github.com/junioryono/godi/chi/v6`     |
-| Echo v4   | `github.com/junioryono/godi/echo/v6`    | `go get github.com/junioryono/godi/echo/v6`    |
-| Echo v5   | `github.com/junioryono/godi/echov5/v6`  | `go get github.com/junioryono/godi/echov5/v6`  |
-| Fiber v2  | `github.com/junioryono/godi/fiber/v6`   | `go get github.com/junioryono/godi/fiber/v6`   |
-| Fiber v3  | `github.com/junioryono/godi/fiberv3/v6` | `go get github.com/junioryono/godi/fiberv3/v6` |
+| Echo v5   | `github.com/junioryono/godi/echo/v6`    | `go get github.com/junioryono/godi/echo/v6`    |
+| Fiber v3  | `github.com/junioryono/godi/fiber/v6`   | `go get github.com/junioryono/godi/fiber/v6`   |
 | Huma      | `github.com/junioryono/godi/huma/v6`    | `go get github.com/junioryono/godi/huma/v6`    |
 
-The trailing `/v5` is godi's major version, not the framework's: `echov5/v5`
-is godi v5's integration for Echo v5.
+The trailing `/v6` is godi's major version, not the framework's.
 
-Huma runs on top of a router, so pair `godi/huma/v5` with the matching router
+Huma runs on top of a router, so pair `godi/huma/v6` with the matching router
 integration above — the router middleware owns the request scope, and Huma
 propagates it to your typed operation handlers.
 

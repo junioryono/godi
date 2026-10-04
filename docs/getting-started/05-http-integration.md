@@ -274,10 +274,8 @@ godi has dedicated integrations for popular frameworks:
 | --------- | --------------------------------------- | --------------------------------------------------- |
 | Gin       | `github.com/junioryono/godi/gin/v6`     | [Gin Integration](../integrations/gin.md)           |
 | Chi       | `github.com/junioryono/godi/chi/v6`     | [Chi Integration](../integrations/chi.md)           |
-| Echo v4   | `github.com/junioryono/godi/echo/v6`    | [Echo Integration](../integrations/echo.md)         |
-| Echo v5   | `github.com/junioryono/godi/echov5/v6`  | [Echo v5 Integration](../integrations/echo-v5.md)   |
-| Fiber v2  | `github.com/junioryono/godi/fiber/v6`   | [Fiber Integration](../integrations/fiber.md)       |
-| Fiber v3  | `github.com/junioryono/godi/fiberv3/v6` | [Fiber v3 Integration](../integrations/fiber-v3.md) |
+| Echo v5   | `github.com/junioryono/godi/echo/v6`  | [Echo Integration](../integrations/echo.md)   |
+| Fiber v3  | `github.com/junioryono/godi/fiber/v6` | [Fiber Integration](../integrations/fiber.md) |
 | net/http  | `github.com/junioryono/godi/http/v6`    | [net/http Integration](../integrations/net-http.md) |
 
 Each integration provides:
