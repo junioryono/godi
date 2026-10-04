@@ -106,9 +106,10 @@ type descriptor struct {
 	// collection's own descriptors.
 	decorators []*decoration
 
-	// injectsContainer reports whether the constructor receives the
-	// container itself (godi.Scope or godi.Provider) and so can resolve
-	// services outside the static dependency graph.
+	// injectsContainer reports whether the constructor receives a view of
+	// the container (godi.Resolver, godi.ScopeFactory, or a context.Context
+	// carrying the scope) and so can resolve services outside the static
+	// dependency graph.
 	injectsContainer bool
 }
 
@@ -208,7 +209,7 @@ func newDescriptorWithAnalyzer(service any, lifetime Lifetime, analyzer *reflect
 	descriptor.isParamObject = info.IsParamObject
 	descriptor.info = info
 	for _, param := range info.Parameters {
-		if param.Key == nil && (param.Type == scopeType || param.Type == providerType || param.Type == contextType) {
+		if param.Key == nil && injectsContainer(param.Type) {
 			descriptor.injectsContainer = true
 			break
 		}
@@ -594,6 +595,9 @@ func (d *descriptor) validateParameterTypes() error {
 		if dep == nil {
 			continue
 		}
+		if err := containerParameterError(dep.Type, dep.Key, dep.Group); err != nil {
+			return &ValidationError{ServiceType: d.Type, Cause: err}
+		}
 
 		depType := dep.Type
 		if depType == nil {
@@ -627,4 +631,21 @@ func (d *descriptor) validateParameterTypes() error {
 	}
 
 	return nil
+}
+
+// injectsContainer reports whether a parameter of type t receives a view of
+// the container.
+func injectsContainer(t reflect.Type) bool {
+	return t == resolverType || t == scopeFactoryType || t == contextType
+}
+
+// containerParameterError rejects a dependency on the whole container: an
+// injected Provider or Scope could close it, create scopes outside its
+// lifetime, and resolve anything, so constructors receive the narrower
+// Resolver and ScopeFactory instead.
+func containerParameterError(t reflect.Type, key any, group string) error {
+	if key != nil || group != "" || (t != providerType && t != scopeType) {
+		return nil
+	}
+	return fmt.Errorf("cannot depend on %s: depend on godi.Resolver to resolve services, or godi.ScopeFactory to create scopes", formatType(t))
 }

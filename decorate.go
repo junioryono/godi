@@ -26,8 +26,8 @@ type decoration struct {
 	// source names the decorator function and its location.
 	source string
 
-	// injectsContainer reports whether the decorator receives godi.Scope or
-	// godi.Provider.
+	// injectsContainer reports whether the decorator receives a view of the
+	// container (see descriptor.injectsContainer).
 	injectsContainer bool
 }
 
@@ -130,7 +130,10 @@ func newDecoration(analyzer *reflection.Analyzer, fn any, opts []AddOption) (*de
 		dependencies: info.Dependencies()[1:],
 	}
 	for _, param := range info.Parameters[1:] {
-		if param.Key == nil && (param.Type == scopeType || param.Type == providerType || param.Type == contextType) {
+		if err := containerParameterError(param.Type, param.Key, param.Group); err != nil {
+			return nil, invalid("decorator %s %v", fnType, err)
+		}
+		if param.Key == nil && injectsContainer(param.Type) {
 			dec.injectsContainer = true
 		}
 	}

@@ -445,46 +445,106 @@ func TestBuiltinServiceInjection(t *testing.T) {
 		assert.Equal(t, "value", svc.Ctx.Value(testContextKey("key")))
 	})
 
-	t.Run("injects_scope", func(t *testing.T) {
+	t.Run("injects_resolver", func(t *testing.T) {
 		t.Parallel()
-		type ScopeSvc struct{ Scope Scope }
+		type Holder struct{ Resolver Resolver }
 
 		c := NewCollection()
-		c.AddScoped(func(s Scope) *ScopeSvc {
-			return &ScopeSvc{Scope: s}
-		})
+		c.AddScoped(func() *TScoped { return &TScoped{} })
+		c.AddScoped(func(r Resolver) *Holder { return &Holder{Resolver: r} })
 
-		p, _ := c.Build()
-		defer p.Close()
+		built, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = built.Close() })
+		scope := NewTestScope(t, built)
 
-		scope, _ := p.CreateScope(context.Background())
-		defer scope.Close()
-
-		svc, _ := Resolve[*ScopeSvc](scope)
-		// The injected Scope is a view of the resolving scope that attributes
-		// its resolutions to the construction (for cycle detection).
-		assert.Equal(t, scope.ID(), svc.Scope.ID())
-		assert.Equal(t, scope.Context(), svc.Scope.Context())
+		holder, err := Resolve[*Holder](scope)
+		require.NoError(t, err)
+		// It resolves from the scope running the constructor...
+		fromHolder, err := Resolve[*TScoped](holder.Resolver)
+		require.NoError(t, err)
+		fromScope, err := Resolve[*TScoped](scope)
+		require.NoError(t, err)
+		assert.Same(t, fromScope, fromHolder)
+		// ...but is not the scope: it cannot be closed or create scopes.
+		_, isScope := holder.Resolver.(Scope)
+		assert.False(t, isScope)
+		_, isFactory := holder.Resolver.(ScopeFactory)
+		assert.False(t, isFactory)
 	})
 
-	t.Run("injects_provider", func(t *testing.T) {
+	t.Run("a_singletons_resolver_cannot_reach_scoped_services", func(t *testing.T) {
 		t.Parallel()
-		type ProvSvc struct{ Prov Provider }
-
+		type Holder struct{ Resolver Resolver }
 		c := NewCollection()
-		c.AddSingleton(func(p Provider) *ProvSvc {
-			return &ProvSvc{Prov: p}
-		})
+		c.AddScoped(func() *TScoped { return &TScoped{} })
+		c.AddSingleton(func(r Resolver) *Holder { return &Holder{Resolver: r} })
+		built, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = built.Close() })
 
-		p, _ := c.Build()
-		defer p.Close()
+		holder, err := Resolve[*Holder](built)
+		require.NoError(t, err)
+		_, err = Resolve[*TScoped](holder.Resolver)
+		assert.ErrorIs(t, err, ErrScopeRequired)
+	})
 
-		svc, _ := Resolve[*ProvSvc](p)
-		assert.Equal(t, p.ID(), svc.Prov.ID())
+	t.Run("injects_scope_factory", func(t *testing.T) {
+		t.Parallel()
+		type Worker struct{ Scopes ScopeFactory }
+		c := NewCollection()
+		c.AddScoped(NewTDisposable)
+		c.AddSingleton(func(f ScopeFactory) *Worker { return &Worker{Scopes: f} })
+		built, err := c.Build()
+		require.NoError(t, err)
+
+		worker, err := Resolve[*Worker](built)
+		require.NoError(t, err)
+		child, err := worker.Scopes.CreateScope(context.Background())
+		require.NoError(t, err)
+		d, err := Resolve[*TDisposable](child)
+		require.NoError(t, err)
+
+		// Scopes it creates are children of the constructor's scope (the
+		// root, for a singleton), closed with it.
+		require.NoError(t, built.Close())
+		assert.True(t, d.IsClosed())
+	})
+
+	t.Run("rejects_provider_and_scope_parameters", func(t *testing.T) {
+		t.Parallel()
+		type Holder struct{}
+		type In1 struct {
+			In
+			S Scope
+		}
+		for name, register := range map[string]func(Collection){
+			"provider":     func(c Collection) { c.AddSingleton(func(Provider) *Holder { return &Holder{} }) },
+			"scope":        func(c Collection) { c.AddScoped(func(Scope) *Holder { return &Holder{} }) },
+			"in_field":     func(c Collection) { c.AddScoped(func(In1) *Holder { return &Holder{} }) },
+			"decorator":    func(c Collection) { c.AddModules(Decorate(func(h *TService, _ Scope) *TService { return h })) },
+			"invoke_param": nil,
+		} {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				if register == nil {
+					err := Invoke(BuildProvider(t), func(Provider) {})
+					require.Error(t, err)
+					assert.Contains(t, err.Error(), "godi.Resolver")
+					return
+				}
+				c := NewCollection()
+				c.AddSingleton(NewTService)
+				register(c)
+				err := Validate(c)
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "godi.Resolver")
+			})
+		}
 	})
 }
 
-// Constructors that resolve through their injected Scope or Provider are
+// Constructors that resolve through their injected Resolver are
 // outside the static dependency graph, so Build cannot see a cycle there.
 func TestDynamicCircularResolution(t *testing.T) {
 	t.Parallel()
@@ -507,10 +567,10 @@ func TestDynamicCircularResolution(t *testing.T) {
 	type SelfA struct{}
 	type SelfB struct{}
 
-	t.Run("scoped_self_resolution_through_scope", func(t *testing.T) {
+	t.Run("scoped_self_resolution_through_resolver", func(t *testing.T) {
 		t.Parallel()
 		c := NewCollection()
-		c.AddScoped(func(s Scope) (*SelfA, error) {
+		c.AddScoped(func(s Resolver) (*SelfA, error) {
 			if _, err := Resolve[*SelfA](s); err != nil {
 				return nil, err
 			}
@@ -532,10 +592,10 @@ func TestDynamicCircularResolution(t *testing.T) {
 		assert.Contains(t, cycleErr.Error(), "SelfA")
 	})
 
-	t.Run("transient_self_resolution_through_scope", func(t *testing.T) {
+	t.Run("transient_self_resolution_through_resolver", func(t *testing.T) {
 		t.Parallel()
 		c := NewCollection()
-		c.AddTransient(func(s Scope) (*SelfA, error) {
+		c.AddTransient(func(s Resolver) (*SelfA, error) {
 			if _, err := Resolve[*SelfA](s); err != nil {
 				return nil, err
 			}
@@ -557,14 +617,14 @@ func TestDynamicCircularResolution(t *testing.T) {
 		require.ErrorAs(t, err, &cycleErr)
 	})
 
-	t.Run("indirect_cycle_through_scope", func(t *testing.T) {
+	t.Run("indirect_cycle_through_resolver", func(t *testing.T) {
 		t.Parallel()
 		c := NewCollection()
-		c.AddScoped(func(s Scope) (*SelfA, error) {
+		c.AddScoped(func(s Resolver) (*SelfA, error) {
 			_, err := Resolve[*SelfB](s)
 			return &SelfA{}, err
 		})
-		c.AddScoped(func(s Scope) (*SelfB, error) {
+		c.AddScoped(func(s Resolver) (*SelfB, error) {
 			_, err := Resolve[*SelfA](s)
 			return &SelfB{}, err
 		})
@@ -586,23 +646,19 @@ func TestDynamicCircularResolution(t *testing.T) {
 		assert.Contains(t, joined, "SelfB")
 	})
 
-	t.Run("self_resolution_through_provider", func(t *testing.T) {
+	t.Run("singleton_self_resolution_through_resolver", func(t *testing.T) {
 		t.Parallel()
 		c := NewCollection()
-		c.AddScoped(func(p Provider) (*SelfA, error) {
-			if _, err := Resolve[*SelfA](p); err != nil {
+		c.AddSingleton(func(r Resolver) (*SelfA, error) {
+			if _, err := Resolve[*SelfA](r); err != nil {
 				return nil, err
 			}
 			return &SelfA{}, nil
 		})
-		// The injected Provider resolves from the root scope.
-		p, err := c.Build(WithScopeValidation(false))
-		require.NoError(t, err)
-		t.Cleanup(func() { _ = p.Close() })
 
-		err = resolveWithin(t, func() error {
-			_, resolveErr := Resolve[*SelfA](p)
-			return resolveErr
+		err := resolveWithin(t, func() error {
+			_, buildErr := c.Build()
+			return buildErr
 		})
 		var cycleErr *CircularDependencyError
 		require.ErrorAs(t, err, &cycleErr)
@@ -616,13 +672,13 @@ func TestDynamicCircularResolution(t *testing.T) {
 		// in-flight construction.
 		startedA, startedB := make(chan struct{}), make(chan struct{})
 		c := NewCollection()
-		c.AddScoped(func(s Scope) (*SelfA, error) {
+		c.AddScoped(func(s Resolver) (*SelfA, error) {
 			close(startedA)
 			<-startedB
 			_, err := Resolve[*SelfB](s)
 			return &SelfA{}, err
 		})
-		c.AddScoped(func(s Scope) (*SelfB, error) {
+		c.AddScoped(func(s Resolver) (*SelfB, error) {
 			close(startedB)
 			<-startedA
 			_, err := Resolve[*SelfA](s)
@@ -673,12 +729,12 @@ func TestDynamicCircularResolution(t *testing.T) {
 		require.ErrorAs(t, err, &cycle)
 	})
 
-	t.Run("stored_scope_is_unrestricted_after_construction", func(t *testing.T) {
+	t.Run("stored_resolver_is_unrestricted_after_construction", func(t *testing.T) {
 		t.Parallel()
-		type Factory struct{ Scope Scope }
+		type Factory struct{ Resolver Resolver }
 		c := NewCollection()
 		c.AddTransient(func() *SelfA { return &SelfA{} })
-		c.AddScoped(func(s Scope) *Factory { return &Factory{Scope: s} })
+		c.AddScoped(func(s Resolver) *Factory { return &Factory{Resolver: s} })
 		p, err := c.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = p.Close() })
@@ -688,11 +744,11 @@ func TestDynamicCircularResolution(t *testing.T) {
 
 		factory, err := Resolve[*Factory](scope)
 		require.NoError(t, err)
-		// The construction is over: a stored Scope resolves freely,
+		// The construction is over: a stored Resolver resolves freely,
 		// including the factory's own type.
-		_, err = Resolve[*SelfA](factory.Scope)
+		_, err = Resolve[*SelfA](factory.Resolver)
 		require.NoError(t, err)
-		again, err := Resolve[*Factory](factory.Scope)
+		again, err := Resolve[*Factory](factory.Resolver)
 		require.NoError(t, err)
 		assert.Same(t, factory, again)
 	})
@@ -702,7 +758,7 @@ func TestDynamicCircularResolution(t *testing.T) {
 		started := make(chan struct{})
 		release := make(chan struct{})
 		c := NewCollection()
-		c.AddScoped(func(s Scope) *SelfA {
+		c.AddScoped(func(s Resolver) *SelfA {
 			close(started)
 			<-release
 			return &SelfA{}
@@ -1456,9 +1512,6 @@ func TestScopeAccessors(t *testing.T) {
 	s, err := p.CreateScope(context.Background())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = s.Close() })
-
-	// Provider() returns the owning provider.
-	assert.Same(t, p, s.Provider())
 
 	// ID() is non-empty and unique per scope.
 	assert.NotEmpty(t, s.ID())

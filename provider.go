@@ -47,8 +47,8 @@ type provider struct {
 	singletonOrder []*descriptor
 
 	// building is true while Build creates singletons: a singleton resolved
-	// before its turn (at runtime, through an injected Provider or Scope)
-	// is then created on demand.
+	// before its turn (at runtime, through an injected Resolver) is then
+	// created on demand.
 	building atomic.Bool
 
 	// validateScopes is set by WithScopeValidation. Immutable after build.

@@ -251,6 +251,38 @@ defer scope2.Close()
 // scope2 has its own scoped service instances
 ```
 
+## Creating Scopes from Services
+
+A service that creates scopes of its own, such as a background worker that
+runs each job in a fresh scope, depends on `godi.ScopeFactory`. Constructors
+cannot depend on the whole `godi.Provider` or `godi.Scope`, which could close
+the container.
+
+```go
+type Worker struct {
+    scopes godi.ScopeFactory
+}
+
+func NewWorker(scopes godi.ScopeFactory) *Worker {
+    return &Worker{scopes: scopes}
+}
+
+func (w *Worker) Run(ctx context.Context, job Job) error {
+    scope, err := w.scopes.CreateScope(ctx)
+    if err != nil {
+        return err
+    }
+    defer scope.Close()
+    handler := godi.MustResolve[*JobHandler](scope)
+    return handler.Handle(ctx, job)
+}
+```
+
+The injected factory creates children of the scope that resolved the
+constructor (the root scope for a singleton), and they are closed with it.
+A constructor that only needs to resolve services takes a `godi.Resolver`
+instead.
+
 ## Common Patterns
 
 ### Request-Per-Scope

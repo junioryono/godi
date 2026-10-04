@@ -206,8 +206,8 @@ var invokeAnalyzer = reflection.New(reflection.WithNotFound(isNotFound))
 //	err := godi.Invoke(scope, func(db *sql.DB, log *slog.Logger) error {
 //	    return migrate(db, log)
 //	})
-func Invoke(p Provider, fn any) error {
-	if p == nil {
+func Invoke(r Resolver, fn any) error {
+	if r == nil {
 		return ErrProviderNil
 	}
 	if fn == nil {
@@ -231,7 +231,12 @@ func Invoke(p Provider, fn any) error {
 	if err != nil {
 		return &reflectionAnalysisError{Constructor: fn, Operation: "analyze", Cause: err}
 	}
-	if _, err := invokeAnalyzer.GetInvoker().Invoke(info, p); err != nil {
+	for _, param := range info.Parameters {
+		if err := containerParameterError(param.Type, param.Key, param.Group); err != nil {
+			return &ValidationError{Cause: fmt.Errorf("godi.Invoke: %w", err)}
+		}
+	}
+	if _, err := invokeAnalyzer.GetInvoker().Invoke(info, r); err != nil {
 		if panicErr, ok := errors.AsType[*reflection.PanicError](err); ok {
 			return &ConstructorPanicError{Constructor: fnType, Panic: panicErr.Panic, Stack: panicErr.Stack}
 		}
@@ -248,30 +253,30 @@ func Invoke(p Provider, fn any) error {
 // p, a Provider or Scope: it is registered, or it is one of the container's
 // own types (context.Context, godi.Provider, godi.Scope). It constructs
 // nothing.
-func IsService(p Provider, serviceType reflect.Type) bool {
+func IsService(r Resolver, serviceType reflect.Type) bool {
 	if serviceType == nil {
 		return false
 	}
 	if _, reserved := reservedTypes[serviceType]; reserved {
 		return true
 	}
-	return resolvableFrom(p, serviceType, nil)
+	return resolvableFrom(r, serviceType, nil)
 }
 
 // IsKeyedService reports whether serviceType is registered under key in p,
 // a Provider or Scope. It constructs nothing.
-func IsKeyedService(p Provider, serviceType reflect.Type, key any) bool {
+func IsKeyedService(r Resolver, serviceType reflect.Type, key any) bool {
 	if serviceType == nil || key == nil || !reflect.ValueOf(key).Comparable() {
 		return false
 	}
-	return resolvableFrom(p, serviceType, key)
+	return resolvableFrom(r, serviceType, key)
 }
 
 // resolvableFrom reports whether a registration of serviceType and key exists
 // and can be resolved from p: with ValidateScopes, scoped services cannot be
 // resolved from the root provider.
-func resolvableFrom(p Provider, serviceType reflect.Type, key any) bool {
-	root := rootProviderOf(p)
+func resolvableFrom(r Resolver, serviceType reflect.Type, key any) bool {
+	root := rootProviderOf(r)
 	if root == nil {
 		return false
 	}
@@ -279,29 +284,32 @@ func resolvableFrom(p Provider, serviceType reflect.Type, key any) bool {
 	if d == nil {
 		return false
 	}
-	return d.Lifetime != Scoped || !root.validateScopes || !resolvesFromRoot(p)
+	return d.Lifetime != Scoped || !root.validateScopes || !resolvesFromRoot(r)
 }
 
 // resolvesFromRoot reports whether p resolves from the provider's root scope.
-func resolvesFromRoot(p Provider) bool {
-	switch v := p.(type) {
-	case *provider, *frameProvider:
+func resolvesFromRoot(r Resolver) bool {
+	switch v := r.(type) {
+	case *provider:
 		return true
 	case *scope:
 		return v.isRoot
 	case *frameScope:
 		return v.isRoot
+	case *frameResolver:
+		return v.scope.isRoot
 	default:
 		return false
 	}
 }
 
-// rootProviderOf returns the godi provider behind p, or nil for a nil p.
-func rootProviderOf(p Provider) *provider {
-	if p == nil {
-		return nil
+// rootProviderOf returns the godi provider behind r, or nil if r is nil or
+// not implemented by godi (a test double).
+func rootProviderOf(r Resolver) *provider {
+	if impl, ok := r.(interface{ root() *provider }); ok {
+		return impl.root()
 	}
-	return p.root()
+	return nil
 }
 
 func (p *provider) root() *provider { return p }

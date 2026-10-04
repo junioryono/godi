@@ -47,6 +47,8 @@ var (
 		reflect.TypeFor[context.Context](),
 		reflect.TypeFor[Provider](),
 		reflect.TypeFor[Scope](),
+		reflect.TypeFor[Resolver](),
+		reflect.TypeFor[ScopeFactory](),
 		reflect.TypeFor[func() int](),
 		reflect.TypeFor[fuzzRegError](),
 		reflect.TypeFor[*fuzzRegError](),
@@ -270,7 +272,18 @@ func fuzzStructFields(t, marker reflect.Type) []reflect.StructField {
 }
 
 func fuzzReserved(t reflect.Type) bool {
-	return t == reflect.TypeFor[context.Context]() || t == reflect.TypeFor[Provider]() || t == reflect.TypeFor[Scope]()
+	switch t {
+	case reflect.TypeFor[context.Context](), reflect.TypeFor[Provider](), reflect.TypeFor[Scope](),
+		reflect.TypeFor[Resolver](), reflect.TypeFor[ScopeFactory]():
+		return true
+	}
+	return false
+}
+
+// fuzzContainer reports whether t is the whole container, which constructors
+// may not depend on (they get Resolver and ScopeFactory instead).
+func fuzzContainer(t reflect.Type) bool {
+	return t == reflect.TypeFor[Provider]() || t == reflect.TypeFor[Scope]()
 }
 
 func fuzzCanBeNil(t reflect.Type) bool {
@@ -350,6 +363,9 @@ func expectAccepted(reg *fuzzRegistration, occupied map[registryKey]bool) (ok bo
 			if tag.group == "" && fuzzUnsupportedService(f.Type) {
 				return false, "chan or unsafe.Pointer dependency"
 			}
+			if tag.name == "" && tag.group == "" && fuzzContainer(f.Type) {
+				return false, "Provider or Scope dependency"
+			}
 		}
 	} else {
 		for in := range fn.Ins() {
@@ -358,6 +374,9 @@ func expectAccepted(reg *fuzzRegistration, occupied map[registryKey]bool) (ok bo
 			}
 			if fuzzUnsupportedService(in) {
 				return false, "chan or unsafe.Pointer dependency"
+			}
+			if fuzzContainer(in) {
+				return false, "Provider or Scope dependency"
 			}
 		}
 	}

@@ -800,6 +800,8 @@ var (
 		reflect.TypeFor[context.Context](): {},
 		reflect.TypeFor[Provider]():        {},
 		reflect.TypeFor[Scope]():           {},
+		reflect.TypeFor[Resolver]():        {},
+		reflect.TypeFor[ScopeFactory]():    {},
 	}
 )
 

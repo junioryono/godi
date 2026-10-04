@@ -268,15 +268,14 @@ constructor main.NewService (service.go:15) failed: circular dependency detected
 ```
 
 **What it means:** A constructor resolved itself, directly or through other
-constructors, via the `godi.Scope` or `godi.Provider` it was injected with.
-`Build` can't see these dynamic resolutions, so the cycle is reported when it
-happens (a `*godi.CircularDependencyError`) instead of deadlocking.
+constructors, via the `godi.Resolver` it was injected with. `Build` can't see
+these dynamic resolutions, so the cycle is reported when it happens (a
+`*godi.CircularDependencyError`) instead of deadlocking.
 
-The injected `Scope`/`Provider` attributes resolutions to the running
-constructor; it is a view of the same scope (same `ID()` and `Context()`), not
-the identical value. After the constructor returns, a stored copy resolves
-without restriction. Resolutions through `godi.FromContext` are not attributed
-to the constructor, so use the injected value inside constructors.
+The injected `Resolver` resolves from the scope running the constructor and
+attributes its resolutions to that constructor. So does the scope found (with
+`godi.FromContext`) in an injected `context.Context`. After the constructor
+returns, a stored `Resolver` resolves without restriction.
 
 **How to fix:** Break the cycle: take the dependency as a constructor
 parameter, or resolve lazily after construction.

@@ -14,11 +14,19 @@ import (
 	"github.com/junioryono/godi/v6/internal/reflection"
 )
 
+// ScopeFactory creates scopes. Provider and Scope implement it. A
+// constructor that creates scopes of its own (a background worker, say)
+// depends on ScopeFactory rather than on the Provider or Scope: injected, it
+// creates child scopes of the scope resolving the constructor (the root
+// scope for singletons), which are closed with it.
+type ScopeFactory interface {
+	CreateScope(ctx context.Context) (Scope, error)
+}
+
 // Scope provides an isolated resolution context
 type Scope interface {
 	Provider
 
-	Provider() Provider
 	Context() context.Context
 }
 
@@ -162,10 +170,47 @@ func (f *resolveFrame) GetGroup(serviceType reflect.Type, group string) ([]any, 
 
 // ifActive returns f while its constructor is running, else nil.
 func (f *resolveFrame) ifActive() *resolveFrame {
-	if f.active.Load() {
+	if f != nil && f.active.Load() {
 		return f
 	}
 	return nil
+}
+
+// frameResolver is the Resolver injected into a constructor or decorator: it
+// resolves from the scope running the constructor, attributing resolutions to
+// the in-progress construction, so a constructor that (directly or
+// indirectly) resolves itself gets a CircularDependencyError instead of
+// deadlocking (scoped) or overflowing the stack (transient). After the
+// constructor returns it resolves without that attribution. It does not embed
+// the scope, so it cannot be closed or turned back into a Scope.
+type frameResolver struct {
+	scope *scope
+	frame *resolveFrame
+}
+
+func (f *frameResolver) Get(serviceType reflect.Type) (any, error) {
+	return f.scope.get(f.frame.ifActive(), serviceType)
+}
+
+func (f *frameResolver) GetKeyed(serviceType reflect.Type, key any) (any, error) {
+	return f.scope.getKeyed(f.frame.ifActive(), serviceType, key)
+}
+
+func (f *frameResolver) GetGroup(serviceType reflect.Type, group string) ([]any, error) {
+	return f.scope.getGroup(f.frame.ifActive(), serviceType, group)
+}
+
+func (f *frameResolver) root() *provider { return f.scope.rootProvider }
+
+// scopeFactory is the ScopeFactory injected into a constructor: it creates
+// child scopes of the scope resolving the constructor (the root scope for
+// singletons), which are closed with it.
+type scopeFactory struct {
+	scope *scope
+}
+
+func (f scopeFactory) CreateScope(ctx context.Context) (Scope, error) {
+	return f.scope.CreateScope(ctx)
 }
 
 // frameScope is the Scope injected into a constructor: the resolving scope,
@@ -191,24 +236,6 @@ func (f *frameScope) GetGroup(serviceType reflect.Type, group string) ([]any, er
 	return f.getGroup(f.frame.ifActive(), serviceType, group)
 }
 
-// frameProvider is the Provider injected into a constructor; see frameScope.
-type frameProvider struct {
-	*provider
-	frame *resolveFrame
-}
-
-func (f *frameProvider) Get(serviceType reflect.Type) (any, error) {
-	return f.get(f.frame.ifActive(), serviceType)
-}
-
-func (f *frameProvider) GetKeyed(serviceType reflect.Type, key any) (any, error) {
-	return f.getKeyed(f.frame.ifActive(), serviceType, key)
-}
-
-func (f *frameProvider) GetGroup(serviceType reflect.Type, group string) ([]any, error) {
-	return f.getGroup(f.frame.ifActive(), serviceType, group)
-}
-
 // hasCachedOwner reports whether a construction requested through parent is
 // owned by a cached (singleton or scoped) service of scope s: some frame in
 // the chain within s, possibly through other transients, is not transient.
@@ -224,8 +251,9 @@ func hasCachedOwner(s *scope, parent *resolveFrame) bool {
 // checkCycle reports a CircularDependencyError if constructing d in scope s
 // on behalf of parent would re-enter a construction of d (or of a sibling
 // output of the same constructor) that is still in progress in s. Such
-// re-entrance happens only through an injected Scope or Provider: the static
-// dependency graph is checked for cycles at Build.
+// re-entrance happens only through an injected Resolver (or the scope of an
+// injected context): the static dependency graph is checked for cycles at
+// Build.
 func (s *scope) checkCycle(parent *resolveFrame, d *descriptor) error {
 	fkey := flightKey(d)
 	for f := parent; f != nil; f = f.parent {
@@ -335,12 +363,6 @@ func (s *scope) initializeScopedServices() error {
 		}
 	}
 	return nil
-}
-
-// Provider returns the parent provider that created this scope.
-// The provider contains the service registry and dependency graph.
-func (s *scope) Provider() Provider {
-	return s.rootProvider
 }
 
 // Context returns the context associated with this scope.
@@ -906,9 +928,11 @@ func (s *scope) resolveSingletonDuringBuild(parent *resolveFrame, key instanceKe
 }
 
 var (
-	contextType  = reflect.TypeFor[context.Context]()
-	providerType = reflect.TypeFor[Provider]()
-	scopeType    = reflect.TypeFor[Scope]()
+	contextType      = reflect.TypeFor[context.Context]()
+	providerType     = reflect.TypeFor[Provider]()
+	scopeType        = reflect.TypeFor[Scope]()
+	resolverType     = reflect.TypeFor[Resolver]()
+	scopeFactoryType = reflect.TypeFor[ScopeFactory]()
 )
 
 // resolve performs the actual service resolution using the appropriate lifetime
@@ -923,19 +947,19 @@ func (s *scope) resolve(parent *resolveFrame, key instanceKey, descriptor *descr
 				if parent != nil {
 					// The scope found in the context (FromContext,
 					// ResolveFromContext) is attributed to the construction,
-					// like an injected Scope.
+					// like an injected Resolver.
 					return context.WithValue(s.context, scopeContextKey{}, &frameScope{scope: s, frame: parent}), nil
 				}
 				return s.context, nil
+			case resolverType:
+				return &frameResolver{scope: s, frame: parent}, nil
+			case scopeFactoryType:
+				return scopeFactory{scope: s}, nil
 			case providerType:
-				if parent != nil {
-					return &frameProvider{provider: s.rootProvider, frame: parent}, nil
-				}
+				// Only direct resolutions get here: constructors cannot
+				// depend on Provider or Scope.
 				return s.rootProvider, nil
 			case scopeType:
-				if parent != nil {
-					return &frameScope{scope: s, frame: parent}, nil
-				}
 				return s, nil
 			}
 		}
@@ -960,7 +984,7 @@ func (s *scope) resolve(parent *resolveFrame, key instanceKey, descriptor *descr
 		}
 
 		// A singleton resolved before its turn during Build (at runtime,
-		// through an injected Provider or Scope) is created on demand.
+		// through an injected Resolver) is created on demand.
 		// A Lazy singleton is created on its first resolution.
 		if s.rootProvider.building.Load() || descriptor.lazy {
 			return s.rootProvider.rootScope.resolveSingletonDuringBuild(parent, key, descriptor)

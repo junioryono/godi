@@ -1844,7 +1844,7 @@ func TestBuildOrder(t *testing.T) {
 			c := NewCollection()
 			// Early resolves Late at runtime, so the static graph cannot
 			// order them; Late is registered (and so ordered) after Early.
-			c.AddSingleton(func(p Provider) (*Early, error) {
+			c.AddSingleton(func(p Resolver) (*Early, error) {
 				late, err := Resolve[*TService](p)
 				return &Early{Late: late}, err
 			})
@@ -2046,7 +2046,7 @@ func TestBuildContext(t *testing.T) {
 		var readers sync.WaitGroup
 
 		c := NewCollection()
-		c.AddSingleton(func(p Provider) *TService {
+		c.AddSingleton(func(p Resolver) *TService {
 			readers.Go(func() {
 				close(started)
 				for {

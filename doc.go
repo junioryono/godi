@@ -56,8 +56,10 @@
 //
 // [Resolve], [ResolveKeyed], and [ResolveGroup] (and their Must variants)
 // resolve typed services from any [Resolver] — a Provider, a Scope, or a
-// test double. Constructors and [Invoke] receive context.Context, the
-// current [Scope], or the [Provider] when they ask for them.
+// test double. Constructors, decorators and [Invoke] functions receive a
+// context.Context, a [Resolver] that resolves from the scope running them,
+// or a [ScopeFactory] when they ask for one; they cannot depend on the
+// whole [Provider] or [Scope].
 // [IsService] and [IsKeyedService] check resolvability without constructing.
 //
 // # Disposal

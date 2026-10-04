@@ -186,7 +186,7 @@ func TestDecorate(t *testing.T) {
 		t.Parallel()
 		c := NewCollection()
 		c.AddScoped(func() greeter { return &baseGreeter{} })
-		c.AddModules(Decorate(func(g greeter, s Scope) (greeter, error) {
+		c.AddModules(Decorate(func(g greeter, s Resolver) (greeter, error) {
 			_, err := Resolve[greeter](s)
 			return g, err
 		}))

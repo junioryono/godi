@@ -93,11 +93,11 @@ type DatabaseManager struct {
     analytics Database
 }
 
-func NewDatabaseManager(provider godi.Provider) *DatabaseManager {
+func NewDatabaseManager(r godi.Resolver) *DatabaseManager {
     return &DatabaseManager{
-        primary:   godi.MustResolveKeyed[Database](provider, "primary"),
-        replica:   godi.MustResolveKeyed[Database](provider, "replica"),
-        analytics: godi.MustResolveKeyed[Database](provider, "analytics"),
+        primary:   godi.MustResolveKeyed[Database](r, "primary"),
+        replica:   godi.MustResolveKeyed[Database](r, "replica"),
+        analytics: godi.MustResolveKeyed[Database](r, "analytics"),
     }
 }
 
