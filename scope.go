@@ -419,62 +419,13 @@ func (s *scope) getGroup(parent *resolveFrame, serviceType reflect.Type, group s
 	return instances, nil
 }
 
-// CreateScope creates a child scope
+// CreateScope creates a child scope, closed with this scope. A nil ctx
+// defaults to this scope's context.
 func (s *scope) CreateScope(ctx context.Context) (Scope, error) {
-	if s.disposed.Load() != 0 {
-		return nil, ErrScopeDisposed
-	}
-
-	if ctx == nil {
-		ctx = s.context
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-
-	ctx, cancel := context.WithCancel(ctx)
-	child, err := newScope(s.rootProvider, s, ctx, cancel)
+	child, err := s.rootProvider.createScope(s, ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create child scope: %w", err)
-	}
-	if err := ctx.Err(); err != nil {
-		_ = child.Close()
 		return nil, err
 	}
-
-	// Track child. Re-check disposal under the lock: Close may have run
-	// (and enumerated children) between the check at the top of this method
-	// and here, in which case the child must be torn down by us.
-	s.childrenMu.Lock()
-	if s.disposed.Load() != 0 {
-		s.childrenMu.Unlock()
-		_ = child.Close()
-		return nil, ErrScopeDisposed
-	}
-	if s.children == nil {
-		s.children = make(map[*scope]struct{}, 2)
-	}
-	s.children[child] = struct{}{}
-	s.childrenMu.Unlock()
-
-	// Track in provider, re-checking both the provider's and this scope's
-	// disposal. The parent may have closed (and closed the child via the
-	// children map) between the tracking step above and here; inserting the
-	// already-closed child into provider.scopes would leak the entry forever
-	// and hand the caller a disposed scope with a nil error.
-	s.rootProvider.scopesMu.Lock()
-	if s.rootProvider.disposed.Load() != 0 {
-		s.rootProvider.scopesMu.Unlock()
-		_ = child.Close()
-		return nil, ErrProviderDisposed
-	}
-	if s.disposed.Load() != 0 {
-		s.rootProvider.scopesMu.Unlock()
-		_ = child.Close()
-		return nil, ErrScopeDisposed
-	}
-	s.rootProvider.scopesMu.Unlock()
-
 	return child, nil
 }
 
@@ -1389,10 +1340,6 @@ func (s *scope) closeProducedOutputs(requested *descriptor, info *reflection.Con
 	}
 }
 
-func isNilServiceResult(value reflect.Value) bool {
-	return reflection.IsNilValue(value)
-}
-
 func validateServiceResults(info *reflection.ConstructorInfo, results []reflect.Value) error {
 	if info.IsResultObject {
 		return nil
@@ -1401,7 +1348,7 @@ func validateServiceResults(info *reflection.ConstructorInfo, results []reflect.
 		if ret.IsError {
 			continue
 		}
-		if isNilServiceResult(results[ret.Index]) {
+		if reflection.IsNilValue(results[ret.Index]) {
 			return &ValidationError{
 				ServiceType: ret.Type,
 				Cause:       fmt.Errorf("constructor returned nil service value at index %d", ret.Index),

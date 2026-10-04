@@ -129,13 +129,19 @@ type collection struct {
 	decorators []*decoration
 }
 
-// TypeKey uniquely identifies a keyed service
+// TypeKey uniquely identifies a keyed service.
+//
+// Deprecated: TypeKey is an internal registry key that appears in no godi API;
+// it will be unexported in the next major version.
 type TypeKey struct {
 	Type reflect.Type
 	Key  any
 }
 
-// GroupKey uniquely identifies a group of services
+// GroupKey uniquely identifies a group of services.
+//
+// Deprecated: GroupKey is an internal registry key that appears in no godi
+// API; it will be unexported in the next major version.
 type GroupKey struct {
 	Type  reflect.Type
 	Group string
@@ -901,7 +907,7 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 
 	// Handle result objects (Out structs)
 	if info.IsResultObject {
-		if options.Name != "" || options.Group != "" {
+		if options.key() != nil || options.Group != "" {
 			return &RegistrationError{
 				ServiceType: descriptor.Type,
 				Operation:   "register result object",
@@ -1174,8 +1180,8 @@ func (r *collection) registerMultiReturn(d *descriptor, info *reflection.Constru
 
 		// Apply name/key only to the first return if specified
 		typeDescriptor.Key = nil
-		if options.Name != "" && i == 0 {
-			typeDescriptor.Key = options.Name
+		if options.key() != nil && i == 0 {
+			typeDescriptor.Key = options.key()
 		}
 
 		typeDescriptors = append(typeDescriptors, typeDescriptor)

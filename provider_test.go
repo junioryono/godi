@@ -985,6 +985,105 @@ func TestObserver(t *testing.T) {
 	})
 }
 
+func TestResolutionHelpers(t *testing.T) {
+	t.Parallel()
+
+	t.Run("must_resolve_panics_with_the_error", func(t *testing.T) {
+		t.Parallel()
+		p := BuildProvider(t)
+		defer func() {
+			// The panic value used to be a formatted string, losing the
+			// error for errors.Is/As in recover handlers.
+			r := recover()
+			err, ok := r.(error)
+			require.True(t, ok, "panic value is %T", r)
+			assert.ErrorIs(t, err, ErrServiceNotFound)
+		}()
+		MustResolve[*TService](p)
+	})
+
+	t.Run("resolve_from_context", func(t *testing.T) {
+		t.Parallel()
+		p := BuildProvider(t, AddScoped(NewTService))
+		scope, err := p.CreateScope(context.Background())
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = scope.Close() })
+
+		svc, err := ResolveFromContext[*TService](scope.Context())
+		require.NoError(t, err)
+		again, err := Resolve[*TService](scope)
+		require.NoError(t, err)
+		assert.Same(t, again, svc)
+
+		_, err = ResolveFromContext[*TService](context.Background())
+		require.Error(t, err, "no scope in the context")
+	})
+
+	t.Run("helpers_accept_any_resolver", func(t *testing.T) {
+		t.Parallel()
+		p := BuildProvider(t, AddSingleton(NewTService))
+		// A narrow Resolver (e.g. a test double) is enough; the generic
+		// helpers no longer require a full Provider.
+		var r Resolver = resolverOnly{p}
+		svc, err := Resolve[*TService](r)
+		require.NoError(t, err)
+		assert.NotNil(t, svc)
+	})
+}
+
+// resolverOnly exposes only the Resolver methods of a Provider.
+type resolverOnly struct{ p Provider }
+
+func (r resolverOnly) Get(t reflect.Type) (any, error)                  { return r.p.Get(t) }
+func (r resolverOnly) GetKeyed(t reflect.Type, k any) (any, error)      { return r.p.GetKeyed(t, k) }
+func (r resolverOnly) GetGroup(t reflect.Type, g string) ([]any, error) { return r.p.GetGroup(t, g) }
+
+func TestRegistrationValuesAndKeys(t *testing.T) {
+	t.Parallel()
+
+	t.Run("instance_of_a_function_type", func(t *testing.T) {
+		t.Parallel()
+		type Clock func() time.Time
+		fixed := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		clock := Clock(func() time.Time { return fixed })
+
+		// A function value was always taken for a constructor.
+		c := NewCollection()
+		c.AddSingleton(Instance(clock))
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+
+		got, err := Resolve[Clock](p)
+		require.NoError(t, err)
+		assert.Equal(t, fixed, got())
+	})
+
+	t.Run("non_string_keys", func(t *testing.T) {
+		t.Parallel()
+		type Region int
+		const eu, us Region = 1, 2
+		c := NewCollection()
+		c.AddSingleton(NewTServiceWithID("eu"), Key(eu))
+		c.AddSingleton(NewTServiceWithID("us"), Key(us))
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+
+		svc, err := ResolveKeyed[*TService](p, us)
+		require.NoError(t, err)
+		assert.Equal(t, "us", svc.ID)
+		assert.True(t, c.ContainsKeyed(PtrTypeOf[TService](), eu))
+	})
+
+	t.Run("key_must_be_comparable", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddSingleton(NewTService, Key([]int{1}))
+		require.Error(t, c.Err())
+	})
+}
+
 // funcCloser adapts a function to Disposable.
 type funcCloser struct{ close func() error }
 

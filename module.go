@@ -99,13 +99,35 @@ type AddOption interface {
 
 type addOptions struct {
 	Name      string
+	Key       any
 	Group     string
 	As        []any
 	NoDispose bool
 	Lazy      bool
 }
 
+// key returns the registration key from godi.Key or godi.Name, or nil.
+func (o *addOptions) key() any {
+	if o.Key != nil {
+		return o.Key
+	}
+	if o.Name != "" {
+		return o.Name
+	}
+	return nil
+}
+
 func (o *addOptions) Validate() error {
+	if o.Key != nil {
+		switch {
+		case o.Name != "":
+			return &ValidationError{Cause: fmt.Errorf("cannot use both godi.Key and godi.Name")}
+		case o.Group != "":
+			return &ValidationError{Cause: fmt.Errorf("cannot use both godi.Key and godi.Group")}
+		case !reflect.ValueOf(o.Key).Comparable():
+			return &ValidationError{Cause: fmt.Errorf("invalid godi.Key(%v): key of type %T is not comparable", o.Key, o.Key)}
+		}
+	}
 	if o.Group != "" {
 		if o.Name != "" {
 			return &ValidationError{
