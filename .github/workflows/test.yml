@@ -245,33 +245,6 @@ jobs:
       - name: Test the candidate release set without local replacements
         run: make published-check
 
-  benchmark:
-    name: Benchmarks
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-
-      - name: Setup Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
-        with:
-          go-version-file: .go-version
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            benchmarks/go.sum
-
-      - name: Run package and comparison benchmarks
-        env:
-          BENCH_COUNT: "3"
-        run: scripts/run-benchmarks.sh | tee benchmark-results.txt
-
-      - name: Upload benchmark results
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: benchmark-results
-          path: benchmark-results.txt
-
   security:
     name: Security
     runs-on: ubuntu-latest
@@ -304,7 +277,6 @@ jobs:
       - docs
       - coverage
       - published-compatibility
-      - benchmark
       - security
     steps:
       - name: Verify all required jobs passed

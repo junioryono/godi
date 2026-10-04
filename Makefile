@@ -17,8 +17,7 @@ ACTIONLINT_BIN := $(TOOLS_BIN)/actionlint-$(ACTIONLINT_VERSION)
 
 verify: module-check floor-check dependency-check workflow-check format-check tidy-check build vet test lint
 
-verify-ci: BENCH_COUNT = 3
-verify-ci: verify test-cover docs published-check security benchmark
+verify-ci: verify test-cover docs published-check security
 
 module-check:
 	@scripts/check-modules.sh

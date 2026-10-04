@@ -1,0 +1,98 @@
+name: Benchmarks
+
+# Benchmarks are informational and do not gate pull requests: shared runners
+# are too noisy for a pass/fail threshold. Each nightly run on main publishes
+# its raw results as an artifact and compares them with the previous
+# successful run using benchstat. Dispatch the workflow manually to measure a
+# branch; it is compared with that branch's previous run, if any.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmarks-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # golang.org/x/perf publishes no tagged releases; pin a known commit.
+  BENCHSTAT_VERSION: v0.0.0-20260929162123-406019bb8b68
+  BENCH_COUNT: "6"
+
+jobs:
+  benchmark:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: .go-version
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            benchmarks/go.sum
+
+      - name: Run package and comparison benchmarks
+        run: scripts/run-benchmarks.sh | tee benchmark-results.txt
+
+      - name: Download the previous run's results
+        id: previous
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_FILE: benchmark.yml
+        run: |
+          run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "$WORKFLOW_FILE" \
+            --branch "$GITHUB_REF_NAME" --status success --limit 1 \
+            --json databaseId --jq '.[0].databaseId // empty')
+          if [[ -z "$run_id" ]]; then
+            echo "No previous successful run on $GITHUB_REF_NAME; nothing to compare."
+            exit 0
+          fi
+          if gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name benchmark-results --dir previous; then
+            echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Could not download benchmark results from run $run_id (expired?)."
+          fi
+
+      - name: Compare with benchstat
+        env:
+          PREVIOUS_RUN: ${{ steps.previous.outputs.run_id }}
+        run: |
+          {
+            echo "## Benchmarks"
+            echo
+            if [[ -f previous/benchmark-results.txt ]]; then
+              echo "Compared with [run $PREVIOUS_RUN]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$PREVIOUS_RUN)."
+              echo "Runner hardware varies between runs; treat small deltas as noise."
+              echo
+              echo '```'
+              go run "golang.org/x/perf/cmd/benchstat@$BENCHSTAT_VERSION" \
+                previous=previous/benchmark-results.txt current=benchmark-results.txt
+              echo '```'
+            else
+              echo "No previous results to compare with."
+              echo
+              echo '```'
+              go run "golang.org/x/perf/cmd/benchstat@$BENCHSTAT_VERSION" benchmark-results.txt
+              echo '```'
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: benchmark-results
+          path: benchmark-results.txt
+          retention-days: 90
