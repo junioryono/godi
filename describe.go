@@ -102,7 +102,9 @@ func funcLocation(fn reflect.Value) string {
 		return ""
 	}
 	f := runtime.FuncForPC(fn.Pointer())
-	if f == nil {
+	// Functions made with reflect.MakeFunc all run one runtime stub, whose
+	// name and location say nothing about the constructor.
+	if f == nil || strings.HasPrefix(f.Name(), "reflect.") {
 		return fn.Type().String()
 	}
 	name := f.Name()

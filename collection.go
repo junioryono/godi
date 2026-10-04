@@ -1310,7 +1310,8 @@ func validateLifetimes(all []*descriptor, services map[TypeKey]*descriptor, grou
 				return r
 			}
 			memo[d] = &reach{} // the graph is acyclic; this only guards re-entry
-			for _, dep := range d.Dependencies {
+			// Constructing d also runs the decorators of its other outputs.
+			for _, dep := range constructionDependencies(d) {
 				for _, depDescriptor := range dependencyDescriptors(dep, services, groups) {
 					if r := reachScoped(depDescriptor); r.scoped != nil {
 						found := &reach{scoped: r.scoped, via: append([]*descriptor{d}, r.via...)}

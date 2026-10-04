@@ -35,13 +35,20 @@ store := godi.MustResolve[Store](provider) // *loggingStore wrapping *PostgresSt
   or `Shutdown`) owns the value it wraps: godi closes only the outermost
   disposable layer, and that layer should close what it wraps. A wrapper that
   is not disposable leaves the wrapped value to godi. Either way each value is
-  closed exactly once.
+  closed exactly once. This holds across interface aliases (`godi.As`) too: a
+  disposable wrapper from one alias's decorator owns the shared value, even
+  where another alias publishes it undecorated. Avoid disposable decorators on
+  two aliases of one value; each would close it.
 - **Lifecycle hooks.** `godi.Start` and `godi.HealthCheck` act on the
   constructed service, not on decorators' results.
 - **Restrictions.** It is a `Build` (and `Validate`) error if a decorator
   matches no registration, or if it depends — directly or through other
-  services — on another output of the decorated service's own constructor,
-  which is still being produced when the decorator runs.
+  services and their decorators — on another output of the decorated
+  service's own constructor, which is still being produced when the decorator
+  runs. Lifetime validation follows decorators the same way: constructing a
+  multi-output service runs the decorators of all its outputs, so a singleton
+  depending on one output must not reach a scoped service through another
+  output's decorator.
 - **Root-resolved transients.** A decorated transient resolved directly from
   the provider is owned by the caller, like any such transient: close the
   value you receive, so make wrappers of disposable transients disposable.

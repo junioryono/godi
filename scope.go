@@ -1212,7 +1212,7 @@ func (s *scope) publishOutputs(
 		}
 	}
 	for i := range outputs {
-		s.commitOutput(parent, &outputs[i])
+		s.commitOutput(parent, &outputs[i], wrappedElsewhere(outputs, i))
 		if outputs[i].isPrimary {
 			primary = outputs[i].value()
 		}
@@ -1220,10 +1220,32 @@ func (s *scope) publishOutputs(
 	return primary, nil
 }
 
+// wrappedElsewhere reports whether the value outputs[i] was constructed with
+// is owned by a disposable decorator result of another output: interface
+// aliases share one constructed value, and when one alias's decorator wraps
+// it, that wrapper owns it even where the value is also published bare.
+func wrappedElsewhere(outputs []stagedOutput, i int) bool {
+	base, ok := identifyDisposable(outputs[i].layers[0])
+	if !ok {
+		return false
+	}
+	for j := range outputs {
+		if j == i || ownerLayer(outputs[j].layers) <= 0 {
+			continue
+		}
+		if other, ok := identifyDisposable(outputs[j].layers[0]); ok && other == base {
+			return true
+		}
+	}
+	return false
+}
+
 // commitOutput takes ownership of a staged output and caches it. Of its
 // layers, godi disposes only the outermost disposable one (see ownerLayer);
-// the others are recorded as owned so no scope adopts them.
-func (s *scope) commitOutput(parent *resolveFrame, out *stagedOutput) {
+// the others are recorded as owned so no scope adopts them. With
+// baseWrapped, a disposable decorator result of another output owns the
+// constructed value, which is then disposed only through that wrapper.
+func (s *scope) commitOutput(parent *resolveFrame, out *stagedOutput, baseWrapped bool) {
 	t := out.target
 	if t.Lifetime == Singleton && !t.isAlias {
 		// Start and HealthCheck act on the constructed service, not on
@@ -1234,6 +1256,14 @@ func (s *scope) commitOutput(parent *resolveFrame, out *stagedOutput) {
 
 	final := len(out.layers) - 1
 	owner := ownerLayer(out.layers)
+	if baseWrapped && owner == 0 {
+		owner = -1
+		if t.Lifetime != Transient {
+			// Recorded before setInstance, which would otherwise take
+			// ownership of a bare constructed value.
+			s.markOwned(t, out.layers[0])
+		}
+	}
 	if owner >= 0 && owner != final {
 		s.trackProduced(parent, t, out.layers[owner])
 	}
@@ -1251,9 +1281,9 @@ func (s *scope) commitOutput(parent *resolveFrame, out *stagedOutput) {
 // the owning layer of each, unless something else owns it.
 func (s *scope) discardOutputs(requested *descriptor, outputs []stagedOutput) {
 	seen := make(map[disposableIdentity]struct{})
-	for _, out := range outputs {
+	for i, out := range outputs {
 		owner := ownerLayer(out.layers)
-		if owner < 0 {
+		if owner < 0 || owner == 0 && wrappedElsewhere(outputs, i) {
 			continue
 		}
 		v := out.layers[owner]

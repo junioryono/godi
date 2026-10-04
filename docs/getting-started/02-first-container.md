@@ -80,6 +80,8 @@ func main() {
 }
 ```
 
+A runnable program following these steps is the [`ExampleNewCollection`](https://pkg.go.dev/github.com/junioryono/godi/v5#example-NewCollection) example in the package documentation (`example_test.go`), verified by `go test`.
+
 ## What Just Happened?
 
 ```
