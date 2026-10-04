@@ -93,6 +93,17 @@ updates:
       include: scope
 
   - package-ecosystem: gomod
+    directory: /fiberv3
+    schedule:
+      interval: weekly
+    groups:
+      go-dependencies:
+        patterns: ["*"]
+    commit-message:
+      prefix: chore
+      include: scope
+
+  - package-ecosystem: gomod
     directory: /gin
     schedule:
       interval: weekly

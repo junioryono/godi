@@ -5,6 +5,7 @@ chi integration
 echo integration
 echov5 integration
 fiber integration
+fiberv3 integration
 gin integration
 huma integration
 integrationtests test
