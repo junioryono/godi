@@ -68,6 +68,17 @@ updates:
       include: scope
 
   - package-ecosystem: gomod
+    directory: /echov5
+    schedule:
+      interval: weekly
+    groups:
+      go-dependencies:
+        patterns: ["*"]
+    commit-message:
+      prefix: chore
+      include: scope
+
+  - package-ecosystem: gomod
     directory: /fiber
     schedule:
       interval: weekly

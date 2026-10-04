@@ -3,6 +3,7 @@
 http integration
 chi integration
 echo integration
+echov5 integration
 fiber integration
 gin integration
 huma integration
