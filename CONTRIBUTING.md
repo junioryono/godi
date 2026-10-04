@@ -29,6 +29,36 @@ read that file rather than maintaining separate module lists. Adding a module is
 a one-line change there plus its Dependabot entry (`make dependency-check`
 enforces the match).
 
+## Repository Layout
+
+The root package `godi` has one file per concept:
+
+| File | Contents |
+| --- | --- |
+| `collection.go` | `Collection`, `Build`, `Validate`, build-time validation |
+| `module.go` | `ModuleOption`, `NewModule`, `Add*`, `Remove*`, `Replace*`, `TryAdd*` |
+| `options.go` | registration options: `Name`, `Key`, `Group`, `As`, `Lazy`, `NoDispose`, `Instance` |
+| `decorate.go` | `Decorate` |
+| `provider.go`, `scope.go` | the built container: `Provider`, `ProviderOptions`, `Scope`, `FromContext` |
+| `resolve.go` | `Resolver`, `Resolve*`, `MustResolve*`, `ResolveFromContext`, `Invoke`, `IsService` |
+| `lifecycle.go` | disposal (`Disposable`, `ContextCloser`, `Shutdowner`, `Shutdown`), `Start`, `HealthCheck` |
+| `errors.go` | error types and `Explain` |
+| `observer.go` | `Observer` and its events |
+| `describe.go` | `Describe`, `WriteDOT` |
+| `descriptor.go`, `lifetime.go`, `inout.go` | registration descriptors, `Lifetime`, `In`/`Out` |
+
+`internal/reflection` analyzes constructors and `internal/graph` holds the
+dependency graph. Each integration (`http`, `chi`, `echo`, `fiber`, `gin`,
+`huma`) is its own module.
+
+Two modules are never released:
+
+- `integrationtests` holds tests that need several integrations at once. It
+  is a separate module so that no integration's `go.mod` depends on the
+  others' routers.
+- `benchmarks` compares godi with other DI libraries, keeping their
+  dependencies out of the root module.
+
 ## Verification Commands
 
 ```bash
@@ -49,7 +79,7 @@ Run `make verify` during development. Before opening or updating a pull request,
 
 - Use `gofmt` and standard Go conventions.
 - Add focused tests for new behavior, failure paths, and concurrency where relevant.
-- Keep test files paired with the source file they cover: tests for `scope.go` belong in `scope_test.go`. Place a test next to the file that implements the behavior rather than creating a new test file named after a theme. Shared helpers and fixtures live in `testutil_test.go`.
+- Keep test files paired with the source file they cover: tests for `scope.go` belong in `scope_test.go`. Place a test next to the file that implements the behavior rather than creating a new test file named after a theme. Fixtures live with the area they model: the service fixtures (`TService`, …) in `collection_test.go`, `TDisposable` in `lifecycle_test.go`, `BuildProvider` in `provider_test.go`. The exceptions are cross-cutting suites: `model_test.go` (model-based invariants), `fuzz_registration_test.go`, `example_test.go`, `benchmark_test.go`, and `main_test.go` (goroutine-leak checks).
 - Update Go documentation and user guides when behavior or public APIs change.
 - Keep unrelated refactors out of feature and bug-fix pull requests.
 - Do not edit generated benchmark results into the README. CI publishes raw results for comparison with `benchstat`.

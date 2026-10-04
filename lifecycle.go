@@ -5,8 +5,19 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sync"
 	"time"
 )
+
+// Disposable is implemented by resources that need cleanup. godi also disposes
+// services implementing ContextCloser or Shutdowner; see Shutdown.
+//
+// Close must not recursively call Close on the Provider or Scope that owns the
+// resource. Shutdown is serialized so concurrent callers receive the same
+// final result, which makes recursive owner shutdown deadlock by definition.
+type Disposable interface {
+	Close() error
+}
 
 // ContextCloser is implemented by resources whose cleanup honors a context:
 // Close(ctx) receives the context passed to Shutdown (or
@@ -78,24 +89,6 @@ func contextFailure(ctx context.Context) error {
 		return err
 	}
 	return fmt.Errorf("%w: %w", err, cause)
-}
-
-// NoDispose is an AddOption declaring that the registered service's lifetime
-// is managed outside the container: godi never disposes it. Use it for
-// resources the application shares or closes itself, such as a pre-built
-// *sql.DB or os.Stdout passed to AddSingleton.
-//
-// A NoDispose value is also never adopted by a scope that merely returns it.
-func NoDispose() AddOption {
-	return addNoDisposeOption{}
-}
-
-type addNoDisposeOption struct{}
-
-func (addNoDisposeOption) String() string { return "NoDispose()" }
-
-func (addNoDisposeOption) applyAddOption(opt *addOptions) {
-	opt.NoDispose = true
 }
 
 // isDisposable reports whether v has a cleanup method godi calls.
@@ -205,4 +198,121 @@ func identifyDisposable(v any) (disposableIdentity, bool) {
 		return disposableIdentity{}, false
 	}
 	return disposableIdentity{typ: value.Type(), value: v}, true
+}
+
+// ---------------------------------------------------------------------------
+// Start and HealthCheck
+// ---------------------------------------------------------------------------
+
+// Starter is implemented by singletons that have startup work to run after
+// the whole graph is built, such as starting a server or a consumer loop.
+type Starter interface {
+	Start(ctx context.Context) error
+}
+
+// Start calls Start(ctx) on every created singleton that implements Starter,
+// in creation order (dependencies first), stopping at the first error. Lazy
+// singletons that have not been resolved yet are not created. Start runs at
+// most once per provider. Stop started services by closing the provider
+// (godi.Shutdown with a deadline): disposal runs in reverse creation order.
+func Start(ctx context.Context, p Provider) error {
+	root := rootProviderOf(p)
+	if root == nil {
+		return errors.New("godi.Start requires a Provider built by godi")
+	}
+	if root.disposed.Load() != 0 {
+		return ErrProviderDisposed
+	}
+	if !root.started.CompareAndSwap(false, true) {
+		return errors.New("godi.Start: the provider has already been started")
+	}
+	for _, s := range root.createdSingletons() {
+		starter, ok := s.instance.(Starter)
+		if !ok {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := starter.Start(ctx); err != nil {
+			return fmt.Errorf("start %s: %w", formatType(s.serviceType), err)
+		}
+	}
+	return nil
+}
+
+// HealthChecker is implemented by singletons that can report their health,
+// such as a database pool pinging its server.
+type HealthChecker interface {
+	HealthCheck(ctx context.Context) error
+}
+
+// HealthCheck runs HealthCheck(ctx) concurrently on every created singleton
+// that implements HealthChecker and returns their failures joined, each
+// prefixed with its service type, or nil when all are healthy. It creates
+// no services.
+func HealthCheck(ctx context.Context, p Provider) error {
+	root := rootProviderOf(p)
+	if root == nil {
+		return errors.New("godi.HealthCheck requires a Provider built by godi")
+	}
+	if root.disposed.Load() != 0 {
+		return ErrProviderDisposed
+	}
+
+	var (
+		wg   sync.WaitGroup
+		mu   sync.Mutex
+		errs []error
+	)
+	for _, s := range root.createdSingletons() {
+		checker, ok := s.instance.(HealthChecker)
+		if !ok {
+			continue
+		}
+		wg.Go(func() {
+			if err := checker.HealthCheck(ctx); err != nil {
+				mu.Lock()
+				errs = append(errs, fmt.Errorf("%s: %w", formatType(s.serviceType), err))
+				mu.Unlock()
+			}
+		})
+	}
+	wg.Wait()
+	return errors.Join(errs...)
+}
+
+type createdSingleton struct {
+	serviceType reflect.Type
+	instance    any
+}
+
+// recordConstructed adds a constructed singleton (before decoration) to the
+// inventory that Start and HealthCheck act on.
+func (p *provider) recordConstructed(serviceType reflect.Type, instance any) {
+	p.constructedMu.Lock()
+	p.constructed = append(p.constructed, createdSingleton{serviceType: serviceType, instance: instance})
+	p.constructedMu.Unlock()
+}
+
+// createdSingletons returns the singletons constructed so far, before
+// decoration, in creation order, each once (interface aliases and sibling
+// outputs share an instance).
+func (p *provider) createdSingletons() []createdSingleton {
+	p.constructedMu.Lock()
+	constructed := append([]createdSingleton(nil), p.constructed...)
+	p.constructedMu.Unlock()
+
+	seen := make(map[disposableIdentity]struct{}, len(constructed))
+	created := constructed[:0]
+	for _, c := range constructed {
+		if identity, identifiable := identifyDisposable(c.instance); identifiable {
+			if _, dup := seen[identity]; dup {
+				continue
+			}
+			seen[identity] = struct{}{}
+		}
+		created = append(created, c)
+	}
+	return created
 }
