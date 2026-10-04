@@ -1,7 +1,6 @@
 package godi
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -10,7 +9,6 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
-	"time"
 
 	"github.com/junioryono/godi/v6/internal/graph"
 	"github.com/junioryono/godi/v6/internal/reflection"
@@ -42,10 +40,14 @@ var (
 	ErrScopeRequired = errors.New("scoped service resolved from the root provider; resolve it from a scope created with CreateScope")
 
 	// Validation errors.
-	ErrConstructorNil          = errors.New("constructor cannot be nil")
-	ErrGroupNameEmpty          = errors.New("group name cannot be empty")
-	ErrSingletonNotInitialized = errors.New("singleton not initialized at build time")
-	ErrDescriptorNil           = errors.New("descriptor cannot be nil")
+	ErrConstructorNil = errors.New("constructor cannot be nil")
+	ErrGroupNameEmpty = errors.New("group name cannot be empty")
+)
+
+// Internal invariants: these indicate a bug in godi, not in the caller.
+var (
+	errSingletonNotInitialized = errors.New("singleton not initialized at build time")
+	errDescriptorNil           = errors.New("descriptor cannot be nil")
 )
 
 // All typed errors are returned as pointers. Match them with
@@ -59,13 +61,11 @@ var (
 	_ error = (*LifetimeConflictError)(nil)
 	_ error = (*AlreadyRegisteredError)(nil)
 	_ error = (*ResolutionError)(nil)
-	_ error = (*TimeoutError)(nil)
 	_ error = (*RegistrationError)(nil)
 	_ error = (*ValidationError)(nil)
 	_ error = (*ModuleError)(nil)
 	_ error = (*TypeMismatchError)(nil)
-	_ error = (*ReflectionAnalysisError)(nil)
-	_ error = (*GraphOperationError)(nil)
+	_ error = (*reflectionAnalysisError)(nil)
 	_ error = (*ConstructorInvocationError)(nil)
 	_ error = (*ConstructorPanicError)(nil)
 	_ error = (*BuildError)(nil)
@@ -302,24 +302,6 @@ func findSimilarTypes(target reflect.Type, available []reflect.Type) []reflect.T
 	return similar
 }
 
-// TimeoutError indicates a service resolution timed out.
-//
-// Deprecated: godi never returns TimeoutError; build timeouts are reported as
-// a BuildError matching context.DeadlineExceeded. It will be removed in the
-// next major version.
-type TimeoutError struct {
-	ServiceType reflect.Type
-	Timeout     time.Duration
-}
-
-func (e *TimeoutError) Error() string {
-	return fmt.Sprintf("resolution of %s timed out after %v", formatType(e.ServiceType), e.Timeout)
-}
-
-func (e *TimeoutError) Is(target error) bool {
-	return errors.Is(target, context.DeadlineExceeded)
-}
-
 // RegistrationError wraps errors during service registration.
 type RegistrationError struct {
 	ServiceType reflect.Type
@@ -377,37 +359,18 @@ func (e *TypeMismatchError) Error() string {
 	return fmt.Sprintf("%s: expected %s, got %s", e.Context, formatType(e.Expected), formatType(e.Actual))
 }
 
-// ReflectionAnalysisError for reflection/analysis failures
-type ReflectionAnalysisError struct {
+// reflectionAnalysisError for reflection/analysis failures
+type reflectionAnalysisError struct {
 	Constructor any
 	Operation   string // "analyze", "process result object"
 	Cause       error
 }
 
-func (e *ReflectionAnalysisError) Error() string {
+func (e *reflectionAnalysisError) Error() string {
 	return fmt.Sprintf("reflection %s failed for constructor %T: %v", e.Operation, e.Constructor, e.Cause)
 }
 
-func (e *ReflectionAnalysisError) Unwrap() error {
-	return e.Cause
-}
-
-// GraphOperationError for dependency graph operations
-type GraphOperationError struct {
-	Operation string // "add", "topological sort"
-	NodeType  reflect.Type
-	NodeKey   any
-	Cause     error
-}
-
-func (e *GraphOperationError) Error() string {
-	if e.NodeKey != nil {
-		return fmt.Sprintf("graph %s failed for %s[%v]: %v", e.Operation, formatType(e.NodeType), e.NodeKey, e.Cause)
-	}
-	return fmt.Sprintf("graph %s failed for %s: %v", e.Operation, formatType(e.NodeType), e.Cause)
-}
-
-func (e *GraphOperationError) Unwrap() error {
+func (e *reflectionAnalysisError) Unwrap() error {
 	return e.Cause
 }
 
@@ -485,7 +448,7 @@ func (e *ConstructorPanicError) Format(s fmt.State, verb rune) { formatError(s, 
 
 // BuildError wraps errors that occur during provider building
 type BuildError struct {
-	Phase   string // "validation", "graph", "singleton-creation", etc.
+	Phase   BuildPhase
 	Details string
 	Cause   error
 }
@@ -500,9 +463,18 @@ func (e *BuildError) Unwrap() error {
 
 // DisposalError aggregates disposal errors
 type DisposalError struct {
-	Context string // "provider", "scope"
+	Context DisposalContext
 	Errors  []error
 }
+
+// DisposalContext names what was being disposed when a DisposalError
+// occurred.
+type DisposalContext string
+
+const (
+	DisposalProvider DisposalContext = "provider"
+	DisposalScope    DisposalContext = "scope"
+)
 
 func (e *DisposalError) Error() string {
 	if len(e.Errors) == 1 {
@@ -531,8 +503,7 @@ func (e *RegistrationError) Format(s fmt.State, verb rune)       { formatError(s
 func (e *ValidationError) Format(s fmt.State, verb rune)         { formatError(s, verb, e) }
 func (e *ModuleError) Format(s fmt.State, verb rune)             { formatError(s, verb, e) }
 func (e *MissingDependencyError) Format(s fmt.State, verb rune)  { formatError(s, verb, e) }
-func (e *GraphOperationError) Format(s fmt.State, verb rune)     { formatError(s, verb, e) }
-func (e *ReflectionAnalysisError) Format(s fmt.State, verb rune) { formatError(s, verb, e) }
+func (e *reflectionAnalysisError) Format(s fmt.State, verb rune) { formatError(s, verb, e) }
 
 // ---------------------------------------------------------------------------
 // Error detail and formatting
@@ -592,16 +563,19 @@ func formatError(s fmt.State, verb rune, err error) {
 	}
 }
 
+// BuildPhase names the build phase a BuildError comes from.
+type BuildPhase string
+
 // Build phases reported in BuildError.Phase.
 const (
-	PhaseInitialization      = "initialization"
-	PhaseRegistration        = "registration"
-	PhaseGraph               = "graph"
-	PhaseValidation          = "validation"
-	PhaseScopeCreation       = "scope-creation"
-	PhaseSingletonCreation   = "singleton-creation"
-	PhaseScopeInitialization = "scope-initialization"
-	PhaseCleanup             = "cleanup"
+	PhaseInitialization      BuildPhase = "initialization"
+	PhaseRegistration        BuildPhase = "registration"
+	PhaseGraph               BuildPhase = "graph"
+	PhaseValidation          BuildPhase = "validation"
+	PhaseScopeCreation       BuildPhase = "scope-creation"
+	PhaseSingletonCreation   BuildPhase = "singleton-creation"
+	PhaseScopeInitialization BuildPhase = "scope-initialization"
+	PhaseCleanup             BuildPhase = "cleanup"
 )
 
 // formatType formats a reflect.Type for messages, package-qualified

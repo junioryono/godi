@@ -1,13 +1,11 @@
 package godi
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -114,18 +112,6 @@ func TestErrors(t *testing.T) {
 		})
 	})
 
-	t.Run("TimeoutError", func(t *testing.T) {
-		t.Parallel()
-		err := &TimeoutError{
-			ServiceType: svcType,
-			Timeout:     5 * time.Second,
-		}
-		errStr := err.Error()
-		assert.Contains(t, errStr, "timed out")
-		assert.Contains(t, errStr, "5s")
-		assert.ErrorIs(t, err, context.DeadlineExceeded)
-	})
-
 	t.Run("RegistrationError", func(t *testing.T) {
 		t.Parallel()
 		err := &RegistrationError{
@@ -178,9 +164,9 @@ func TestErrors(t *testing.T) {
 		assert.Contains(t, errStr, "string")
 	})
 
-	t.Run("ReflectionAnalysisError", func(t *testing.T) {
+	t.Run("reflectionAnalysisError", func(t *testing.T) {
 		t.Parallel()
-		err := &ReflectionAnalysisError{
+		err := &reflectionAnalysisError{
 			Constructor: func() *TService { return nil },
 			Operation:   "analyze",
 			Cause:       baseCause,
@@ -189,36 +175,6 @@ func TestErrors(t *testing.T) {
 		assert.Contains(t, errStr, "reflection analyze failed")
 		assert.Contains(t, errStr, "constructor")
 		assert.ErrorIs(t, err, baseCause)
-	})
-
-	t.Run("GraphOperationError", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("without_key", func(t *testing.T) {
-			t.Parallel()
-			err := &GraphOperationError{
-				Operation: "add",
-				NodeType:  svcType,
-				NodeKey:   nil,
-				Cause:     baseCause,
-			}
-			errStr := err.Error()
-			assert.Contains(t, errStr, "graph add failed")
-			assert.NotContains(t, errStr, "[")
-			assert.ErrorIs(t, err, baseCause)
-		})
-
-		t.Run("with_key", func(t *testing.T) {
-			t.Parallel()
-			err := &GraphOperationError{
-				Operation: "add",
-				NodeType:  svcType,
-				NodeKey:   "primary",
-				Cause:     baseCause,
-			}
-			assert.Contains(t, err.Error(), "[primary]")
-			assert.ErrorIs(t, err, baseCause)
-		})
 	})
 
 	t.Run("ConstructorInvocationError", func(t *testing.T) {
@@ -410,8 +366,7 @@ func TestErrors(t *testing.T) {
 			&RegistrationError{Cause: baseCause},
 			&ValidationError{Cause: baseCause},
 			&ModuleError{Cause: baseCause},
-			&ReflectionAnalysisError{Cause: baseCause},
-			&GraphOperationError{Cause: baseCause},
+			&reflectionAnalysisError{Cause: baseCause},
 			&ConstructorInvocationError{Cause: baseCause},
 			&BuildError{Cause: baseCause},
 		}

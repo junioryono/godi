@@ -324,7 +324,7 @@ func (p *provider) shutdown(ctx context.Context) error {
 			return p.closeErr
 		default:
 		}
-		return shutdownIncomplete("provider", ctx)
+		return shutdownIncomplete(DisposalProvider, ctx)
 	}
 }
 
@@ -412,7 +412,7 @@ func (p *provider) teardown(ctx context.Context) error {
 
 	if len(errors) > 0 {
 		return &DisposalError{
-			Context: "provider",
+			Context: DisposalProvider,
 			Errors:  errors,
 		}
 	}

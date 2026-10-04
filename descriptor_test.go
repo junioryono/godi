@@ -258,7 +258,7 @@ func TestDescriptor(t *testing.T) {
 			require.Error(t, err)
 			var valErr *ValidationError
 			assert.ErrorAs(t, err, &valErr)
-			assert.ErrorIs(t, valErr.Cause, ErrDescriptorNil)
+			assert.ErrorIs(t, valErr.Cause, errDescriptorNil)
 		})
 
 		t.Run("invalid_constructor", func(t *testing.T) {

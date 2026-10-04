@@ -515,7 +515,7 @@ func (s *scope) shutdown(ctx context.Context) error {
 			return s.closeErr
 		default:
 		}
-		return shutdownIncomplete("scope", ctx)
+		return shutdownIncomplete(DisposalScope, ctx)
 	}
 }
 
@@ -599,7 +599,7 @@ func (s *scope) teardown(ctx context.Context) error {
 
 	if len(errs) > 0 {
 		return &DisposalError{
-			Context: "scope",
+			Context: DisposalScope,
 			Errors:  errs,
 		}
 	}
@@ -887,7 +887,7 @@ func (s *scope) resolveSingletonDuringBuild(parent *resolveFrame, key instanceKe
 		return nil, &ResolutionError{
 			ServiceType: key.Type,
 			ServiceKey:  key.Key,
-			Cause:       ErrSingletonNotInitialized,
+			Cause:       errSingletonNotInitialized,
 		}
 	}
 
@@ -970,7 +970,7 @@ func (s *scope) resolve(parent *resolveFrame, key instanceKey, descriptor *descr
 		return nil, &ResolutionError{
 			ServiceType: key.Type,
 			ServiceKey:  key.Key,
-			Cause:       ErrSingletonNotInitialized,
+			Cause:       errSingletonNotInitialized,
 		}
 
 	case Scoped:
@@ -1008,7 +1008,7 @@ func (s *scope) createInstance(parent *resolveFrame, descriptor *descriptor, fli
 	if descriptor == nil {
 		return nil, &ValidationError{
 			ServiceType: nil,
-			Cause:       ErrDescriptorNil,
+			Cause:       errDescriptorNil,
 		}
 	}
 
@@ -1067,7 +1067,7 @@ func (s *scope) createInstance(parent *resolveFrame, descriptor *descriptor, fli
 	if info == nil {
 		info, err = s.rootProvider.analyzer.Analyze(descriptor.Constructor.Interface())
 		if err != nil {
-			return nil, &ReflectionAnalysisError{
+			return nil, &reflectionAnalysisError{
 				Constructor: descriptor.Constructor.Interface(),
 				Operation:   "analyze",
 				Cause:       err,
@@ -1327,7 +1327,7 @@ func (s *scope) publishResultObject(
 ) (any, error) {
 	fields, err := reflection.ResultObjectOutputs(result, info.Returns)
 	if err != nil {
-		return nil, &ReflectionAnalysisError{
+		return nil, &reflectionAnalysisError{
 			Constructor: requested.Constructor.Interface(),
 			Operation:   "process result object",
 			Cause:       err,

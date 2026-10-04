@@ -282,7 +282,7 @@ func analyzeService(service any, analyzer *reflection.Analyzer) (unwrapped any, 
 	}
 	info, err = analyzer.Analyze(service)
 	if err != nil {
-		return nil, false, nil, &ReflectionAnalysisError{
+		return nil, false, nil, &reflectionAnalysisError{
 			Constructor: service,
 			Operation:   "analyze",
 			Cause:       err,
@@ -377,7 +377,7 @@ func (d *descriptor) Validate() error {
 	if d.Type == nil {
 		return &ValidationError{
 			ServiceType: nil,
-			Cause:       ErrDescriptorNil,
+			Cause:       errDescriptorNil,
 		}
 	}
 

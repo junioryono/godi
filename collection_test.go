@@ -1491,7 +1491,7 @@ func TestDeferredRegistrationErrors(t *testing.T) {
 
 		var buildErr *BuildError
 		require.ErrorAs(t, err, &buildErr)
-		assert.Equal(t, "registration", buildErr.Phase)
+		assert.Equal(t, PhaseRegistration, buildErr.Phase)
 
 		msg := err.Error()
 		assert.Contains(t, msg, "constructor cannot be nil")

@@ -171,7 +171,7 @@ func (p *provider) disposeObserved(ctx context.Context, v any, scopeID string) e
 
 // shutdownIncomplete reports a shutdown that stopped waiting because ctx was
 // done before cleanup finished.
-func shutdownIncomplete(owner string, ctx context.Context) error {
+func shutdownIncomplete(owner DisposalContext, ctx context.Context) error {
 	return &DisposalError{
 		Context: owner,
 		Errors:  []error{fmt.Errorf("shutdown incomplete, cleanup continues in the background: %w", contextFailure(ctx))},

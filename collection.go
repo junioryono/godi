@@ -426,7 +426,7 @@ func (sc *collection) plan(ctx context.Context) (*buildPlan, error) {
 	// Connect group consumers to actual group member nodes in the graph.
 	// Without this, group consumers depend on phantom nodes (Key=nil) that
 	// don't match the real group members (Key=1,2,...), causing incorrect
-	// topological ordering and ErrSingletonNotInitialized during build.
+	// topological ordering and errSingletonNotInitialized during build.
 	g.ResolveGroupDependencies()
 
 	// Phase 2: Validate graph (cycles detected here, not per-add)
@@ -887,7 +887,7 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 		var err error
 		info, err = r.analyzer.Analyze(service)
 		if err != nil {
-			return &ReflectionAnalysisError{
+			return &reflectionAnalysisError{
 				Constructor: service,
 				Operation:   "analyze",
 				Cause:       err,

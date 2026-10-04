@@ -229,7 +229,7 @@ func Invoke(p Provider, fn any) error {
 
 	info, err := invokeAnalyzer.AnalyzeUncached(fn)
 	if err != nil {
-		return &ReflectionAnalysisError{Constructor: fn, Operation: "analyze", Cause: err}
+		return &reflectionAnalysisError{Constructor: fn, Operation: "analyze", Cause: err}
 	}
 	if _, err := invokeAnalyzer.GetInvoker().Invoke(info, p); err != nil {
 		if panicErr, ok := errors.AsType[*reflection.PanicError](err); ok {
