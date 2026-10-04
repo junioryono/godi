@@ -18,8 +18,16 @@ provider, err := services.Build()
 if err != nil {
     log.Fatal(err)
 }
+defer provider.Close()
 
-user := godi.MustResolve[*UserService](provider)
+// Scoped services are resolved from a scope (typically one per request)
+scope, err := provider.CreateScope(context.Background())
+if err != nil {
+    log.Fatal(err)
+}
+defer scope.Close()
+
+users := godi.MustResolve[*UserService](scope)
 ```
 
 ## Contents
@@ -170,8 +178,16 @@ import (
     godihttp "github.com/junioryono/godi/http/v5"
 )
 
+type Logger struct{}
+
+func NewLogger() *Logger { return &Logger{} }
+
 type UserController struct {
-    // Dependencies injected automatically
+    logger *Logger // Injected automatically
+}
+
+func NewUserController(logger *Logger) *UserController {
+    return &UserController{logger: logger}
 }
 
 func (c *UserController) List(w http.ResponseWriter, r *http.Request) {
@@ -344,11 +360,31 @@ if err != nil {
 }
 ```
 
-Common errors caught at build time:
+Common errors caught at build time (each is wrapped in a `build failed during ... phase:` prefix):
 
-- **Circular dependencies** - `*A -> *B -> *A`
-- **Missing dependencies** - `*UserService requires *Database (not registered)`
-- **Lifetime conflicts** - `singleton *Cache cannot depend on scoped *RequestContext`
+- **Circular dependencies** - a multi-line message that draws the cycle:
+
+  ```text
+  circular dependency detected:
+
+      *main.A
+        ↓
+      *main.B
+        ↓
+      *main.A
+        ↓
+      *main.A (cycle)
+
+  To resolve this:
+    • Use an interface to break the dependency
+    • ...
+  ```
+
+- **Missing dependencies** - `missing dependencies: *UserService requires *Database (not registered)`
+- **Lifetime conflicts** - `lifetime conflict: *Cache (Singleton) cannot depend on *RequestContext (Scoped)`, followed by an explanation and suggested fixes
+- **Singleton constructor failures** - singletons are created during `Build`, so their errors surface here too: `build failed during singleton-creation phase: failed to initialize singletons: failed to resolve *Database: failed to invoke func() (*main.Database, error) with parameters []: constructor error: connection refused`
+
+Use `errors.As` with `*godi.CircularDependencyError`, `*godi.MissingDependencyError` or `*godi.LifetimeConflictError` to handle a specific case.
 
 ## Testing
 
@@ -373,15 +409,31 @@ func TestUserService(t *testing.T) {
 
 ## Comparison
 
-| Feature                    | godi | Wire | Fx  | do  |
-| -------------------------- | ---- | ---- | --- | --- |
-| No code generation         | Yes  | No   | Yes | Yes |
-| Service lifetimes          | Yes  | No   | No  | No  |
-| Scoped services            | Yes  | No   | No  | No  |
-| Build-time validation      | Yes  | Yes  | No  | No  |
-| HTTP framework integration | Yes  | No   | No  | No  |
-| Parameter objects          | Yes  | No   | Yes | No  |
-| Automatic cleanup          | Yes  | No   | Yes | Yes |
+How godi differs from other Go DI libraries, as of 2026-10 (google/wire v0.7.0,
+uber-go/fx v1.24.0 on dig v1.19.0, samber/do v2.1.0):
+
+|                    | godi                                                                                                 | google/wire                                                                              | uber-go/fx                                                                                           | samber/do v2                                                                                         |
+| ------------------ | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Approach           | Runtime container (reflection, generic resolve helpers)                                              | Compile-time code generation; no runtime container                                       | Runtime container (reflection, built on dig)                                                         | Runtime container (generics)                                                                         |
+| Lifetimes          | Singleton, scoped, transient                                                                         | None; the generated injector calls each provider once per injector call                  | One instance per container; no transient                                                             | Lazy or eager singletons, transient                                                                  |
+| Scopes             | Scoped services get one instance per scope (e.g. per request), closed with the scope                 | None                                                                                     | `fx.Module`/`fx.Private` and dig scopes control visibility; no per-scope instances or scope disposal | Nested scopes (`injector.Scope`) control visibility; services registered in a child scope live in it |
+| Graph validation   | At `Build`: cycles, missing dependencies, lifetime conflicts; singletons are constructed             | At code generation                                                                       | `fx.New` runs invokes; `fx.ValidateApp` checks for missing dependencies without running constructors | None up front; missing services and cycles are reported on invoke                                    |
+| Startup / shutdown | Singletons are created at `Build`; `Close() error` methods run on `scope.Close()`/`provider.Close()` | Providers can return a cleanup `func()`; the injector returns a combined cleanup         | `fx.Lifecycle` `OnStart`/`OnStop` hooks                                                              | `Shutdown`/`ShutdownWithContext` call `Shutdowner` implementations (not for transients)              |
+| Health checks      | No                                                                                                   | No                                                                                       | No                                                                                                   | Yes (`HealthCheck`, `Healthchecker`)                                                                 |
+| Names and groups   | `godi.Name`, `godi.Group`, `godi.In`/`godi.Out` tags                                                 | No; use distinct types                                                                   | Yes (`name`/`group` tags, `fx.ResultTags`)                                                           | Named services; no groups                                                                            |
+| HTTP integration   | Scope middleware for net/http, Chi, Echo, Fiber, Gin; Huma handlers                                  | No                                                                                       | No                                                                                                   | No                                                                                                   |
+| Status             | Active                                                                                               | Archived 2025-08-25 ([goforj/wire](https://github.com/goforj/wire) is a maintained fork) | Maintained                                                                                           | Maintained                                                                                           |
+
+Sources: [wire README](https://github.com/google/wire) and
+[guide](https://github.com/google/wire/blob/main/docs/guide.md);
+[fx package docs](https://pkg.go.dev/go.uber.org/fx) and
+[lifecycle](https://uber-go.github.io/fx/lifecycle.html);
+[dig package docs](https://pkg.go.dev/go.uber.org/dig);
+[do docs](https://do.samber.dev/docs/container/scope) on
+[transients](https://do.samber.dev/docs/service-registration/transient-loading),
+[health checks](https://do.samber.dev/docs/service-lifecycle/healthchecker) and
+[shutdown](https://do.samber.dev/docs/service-lifecycle/shutdowner).
+Corrections are welcome.
 
 ## Performance
 

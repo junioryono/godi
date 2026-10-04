@@ -13,9 +13,12 @@ func NewDatabaseConnection(config *Config) (*Database, *HealthChecker) {
     health := &HealthChecker{db: db}
     return db, health
 }
-
-// How to register both?
 ```
+
+godi registers each non-error return of a multi-return constructor as its own
+service, but every return shares the registration's options: `godi.Name` keys
+only the first return, and `godi.Group` adds every return to the group. To
+give each output its own name or group, use a result object.
 
 ## The Solution: Result Objects
 
@@ -124,12 +127,36 @@ validators := godi.MustResolveGroup[Validator](provider, "validators")
 
 ### Interface Binding
 
+There is no `as` tag, and `godi.As` cannot be combined with a result object.
+A field is registered under its declared type, so declare the field with the
+interface type to provide an interface:
+
 ```go
 type RepositoryResult struct {
     godi.Out
 
-    UserRepo  UserRepository  `as:"UserRepository"`
-    OrderRepo OrderRepository `as:"OrderRepository"`
+    UserRepo  UserRepository  // registered as UserRepository
+    OrderRepo OrderRepository // registered as OrderRepository
+}
+
+func NewRepositories(db *Database) RepositoryResult {
+    return RepositoryResult{
+        UserRepo:  &postgresUserRepository{db: db},
+        OrderRepo: &postgresOrderRepository{db: db},
+    }
+}
+```
+
+### Skipping a Field
+
+A field tagged `inject:"-"` is not registered:
+
+```go
+type Result struct {
+    godi.Out
+
+    Service *Service
+    Debug   *DebugInfo `inject:"-"` // not registered
 }
 ```
 
@@ -239,15 +266,15 @@ func NewServices(params ServiceParams) ServiceResult {
 Result objects work with error returns:
 
 ```go
-func NewServices(config *Config) (ServiceResult, error) {
+func NewDatabaseConnection(config *Config) (DatabaseResult, error) {
     db, err := connectDB(config)
     if err != nil {
-        return ServiceResult{}, err
+        return DatabaseResult{}, err
     }
 
-    return ServiceResult{
-        Database: db,
-        Health:   &HealthChecker{db},
+    return DatabaseResult{
+        Database:      db,
+        HealthChecker: &HealthChecker{db: db},
     }, nil
 }
 ```

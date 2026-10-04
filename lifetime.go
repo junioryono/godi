@@ -11,7 +11,9 @@ type Lifetime int
 
 const (
 	// Singleton specifies that a single instance of the service will be created.
-	// The instance is created on first request and cached for the lifetime of the root provider.
+	// The instance is created eagerly when the Collection is built (Build fails if
+	// its constructor fails), or on first use if registered with Lazy, and cached
+	// for the lifetime of the root provider.
 	// Singleton services must not depend on Scoped services.
 	Singleton Lifetime = iota
 

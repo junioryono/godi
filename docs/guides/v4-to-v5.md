@@ -54,7 +54,7 @@ go mod tidy
 
 ## 2. Go 1.26 minimum
 
-v5 uses `errors.AsType`, `context.AfterFunc`, and other Go 1.26 features. Bump
+v5 uses `errors.AsType` and other Go 1.26 features. Bump
 your `go.mod`:
 
 ```
@@ -180,7 +180,7 @@ The rendered error message (`err.Error()`) is unchanged.
 
 ## 7. Behavioral changes
 
-These compile without changes but behave differently. All three align the code
+These compile without changes but behave differently. They align the code
 with what the v4 docs already promised.
 
 - **`Remove[T]()` / `Collection.Remove`** now removes *all* registrations of a

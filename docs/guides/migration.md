@@ -68,14 +68,15 @@ func main() {
 
 ### Fx Concepts → godi Concepts
 
-| Uber Fx        | godi                                           |
-| -------------- | ---------------------------------------------- |
-| `fx.Provide`   | `services.AddSingleton/AddScoped/AddTransient` |
-| `fx.Invoke`    | Resolve after Build                            |
-| `fx.Module`    | `godi.NewModule`                                |
-| `fx.In`        | `godi.In`                                      |
-| `fx.Out`       | `godi.Out`                                     |
-| `fx.Lifecycle` | `Close()` method                               |
+| Uber Fx          | godi                                                  |
+| ---------------- | ----------------------------------------------------- |
+| `fx.Provide`     | `services.AddSingleton/AddScoped/AddTransient`        |
+| `fx.Invoke`      | Resolve after Build                                   |
+| `fx.Module`      | `godi.NewModule`                                      |
+| `fx.In`          | `godi.In`                                             |
+| `fx.Out`         | `godi.Out`                                            |
+| `fx.Lifecycle`   | `Close()` method (stop only; see below)               |
+| `fx.ValidateApp` | `services.Build()` (also runs singleton constructors) |
 
 ### Before (Fx)
 
@@ -101,10 +102,20 @@ func main() {
     services.AddSingleton(NewDatabase)
     services.AddScoped(NewUserService)
 
-    provider, _ := services.Build()
+    provider, err := services.Build()
+    if err != nil {
+        log.Fatal(err)
+    }
     defer provider.Close()
 
-    userService := godi.MustResolve[*UserService](provider)
+    // Scoped services are resolved from a scope
+    scope, err := provider.CreateScope(context.Background())
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer scope.Close()
+
+    userService := godi.MustResolve[*UserService](scope)
     // Use service
 }
 ```
@@ -130,16 +141,23 @@ func (d *Database) Close() error {
 // Called automatically when provider.Close() is called
 ```
 
+godi has no `OnStart` hooks today. Startup work happens in constructors:
+singletons are created eagerly during `Build()` (a constructor that returns
+an error makes `Build` fail). Work that must run after the whole graph is
+built, such as starting an HTTP server, belongs in your own code after `Build()`
+returns.
+
 ## From samber/do
 
 ### do Concepts → godi Concepts
 
-| samber/do             | godi                    |
-| --------------------- | ----------------------- |
-| `do.Provide`          | `services.AddSingleton` |
-| `do.ProvideTransient` | `services.AddTransient` |
-| `do.Invoke`           | `godi.MustResolve`      |
-| `do.Injector`         | `godi.Provider`         |
+| samber/do             | godi                                                                     |
+| --------------------- | ------------------------------------------------------------------------ |
+| `do.Provide`          | `services.AddSingleton` (eager: created at `Build`, not on first invoke) |
+| `do.ProvideTransient` | `services.AddTransient`                                                  |
+| `do.Invoke`           | `godi.Resolve`                                                           |
+| `do.MustInvoke`       | `godi.MustResolve`                                                       |
+| `do.Injector`         | `godi.Provider`                                                          |
 
 ### Before (do)
 
@@ -171,7 +189,10 @@ func main() {
 
 ### Adding Scopes
 
-godi adds scoped lifetime that do doesn't have:
+do's scopes (`injector.Scope(name)`) are nested containers that control
+which services are visible where. godi's scoped lifetime is different: every
+scope (typically one per request) gets its own instance of each scoped service,
+disposed when the scope is closed:
 
 ```go
 // godi: per-request services
@@ -191,12 +212,13 @@ Wire uses code generation; godi is runtime-based.
 
 ### Wire Concepts → godi Concepts
 
-| Wire               | godi                           |
-| ------------------ | ------------------------------ |
-| Provider functions | Constructor functions          |
-| `wire.NewSet`      | `godi.NewModule` or registrations |
-| `wire.Build`       | `services.Build()`             |
-| `wire.Bind`        | `godi.As[Interface]()`         |
+| Wire                    | godi                                  |
+| ----------------------- | ------------------------------------- |
+| Provider functions      | Constructor functions                 |
+| `wire.NewSet`           | `godi.NewModule` or registrations     |
+| `wire.Build`            | `services.Build()`                    |
+| `wire.Bind`             | `godi.As[Interface]()`                |
+| Cleanup `func()` return | `Close() error` method on the service |
 
 ### Before (Wire)
 
@@ -222,15 +244,22 @@ func main() {
     services := godi.NewCollection()
     services.AddSingleton(NewLogger)
     services.AddSingleton(NewDatabase)
-    services.AddScoped(NewUserService)
-    services.AddScoped(NewApp)
+    services.AddSingleton(NewUserService)
+    services.AddSingleton(NewApp)
 
-    provider, _ := services.Build()
+    provider, err := services.Build()
+    if err != nil {
+        log.Fatal(err)
+    }
     defer provider.Close()
 
     app := godi.MustResolve[*App](provider)
 }
 ```
+
+Wire builds the graph once per injector call, so the closest mapping is
+singletons. Use `AddScoped` for services that should be created per request,
+and resolve those from a scope (`provider.CreateScope`).
 
 ### Interface Binding
 

@@ -112,9 +112,9 @@ func TestUserHandler_List(t *testing.T) {
     services := godi.NewCollection()
 
     // Mock repository with test data
-    services.AddScoped(func() *UserRepository {
+    services.AddScoped(func() UserRepository {
         return &mockUserRepository{
-            users: []User{{ID: 1, Name: "Alice"}},
+            users: map[int]*User{1: {ID: 1, Name: "Alice"}},
         }
     })
     services.AddScoped(NewRequestContext)

@@ -84,7 +84,7 @@ scoped resource.
 
 ```go
 app.Use(godifiber.ScopeMiddleware(provider,
-    // Custom error handler for scope creation failures
+    // Custom error handler for scope creation and WithMiddleware failures
     godifiber.WithErrorHandler(func(c *fiber.Ctx, err error) error {
         return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
             "error": "Service unavailable",

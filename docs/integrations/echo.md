@@ -1,7 +1,6 @@
 # Echo Integration
 
-Complete guide for using godi with the [Echo](https://github.com/labstack/echo) web framework, version 4 (`github.com/labstack/echo/v4`).
-For Echo v5, see the [Echo v5 integration](echo-v5.md).
+Complete guide for using godi with the [Echo](https://github.com/labstack/echo) web framework.
 
 ## Installation
 
@@ -57,16 +56,11 @@ e := echo.New()
 e.Use(godiecho.ScopeMiddleware(provider))
 ```
 
-```{important}
-The scope middleware **consumes errors**. It dispatches downstream errors
-(and `WithMiddleware` errors) through Echo's configured `HTTPErrorHandler`
-before closing the request scope, then returns `nil` to avoid a second
-dispatch. Middleware registered *before* `ScopeMiddleware` never sees the
-error.
-```
-
-Register middleware that needs the returned error, including panic recovery,
-*after* the scope middleware so it runs inside the scope:
+The scope middleware dispatches downstream errors through Echo's configured
+`HTTPErrorHandler` before closing the request scope, then consumes the error to
+avoid a second dispatch. Middleware that needs the returned error must be
+registered after the scope middleware so it runs inside the scope. The same
+ordering applies to panic recovery:
 
 ```go
 e.Use(godiecho.ScopeMiddleware(provider))
@@ -74,32 +68,14 @@ e.Use(middleware.Logger())
 e.Use(middleware.Recover())
 ```
 
-To return errors to outer middleware instead, use
-`godiecho.WithErrorPassthrough(true)`. Echo then renders the error after the
-scope has closed, so the error handler cannot use request-scoped services.
-See the [integration contract](#echo-and-fiber-errors-are-consumed-inside-the-scope).
-
 ### Configuration Options
 
 ```go
 e.Use(godiecho.ScopeMiddleware(provider,
-    // Custom error handler for scope creation failures
+    // Custom error handler for scope creation and WithMiddleware failures
     godiecho.WithErrorHandler(func(c echo.Context, err error) error {
         return echo.NewHTTPError(http.StatusServiceUnavailable, "Service unavailable")
     }),
-
-    // Custom error handler for WithMiddleware failures
-    // (defaults to the error handler above)
-    godiecho.WithMiddlewareErrorHandler(func(c echo.Context, err error) error {
-        return echo.ErrUnauthorized
-    }),
-
-    // Logger for the default handlers (defaults to slog.Default())
-    godiecho.WithLogger(logger),
-
-    // Return errors to outer middleware instead of consuming them;
-    // Echo then renders them after the scope closes (default false)
-    godiecho.WithErrorPassthrough(false),
 
     // Custom handler for scope close errors
     godiecho.WithCloseErrorHandler(func(err error) {
@@ -153,14 +129,8 @@ e.GET("/users", godiecho.Handle(UserController.List,
     godiecho.WithResolutionErrorHandler(func(c echo.Context, err error) error {
         return echo.NewHTTPError(http.StatusServiceUnavailable, "Service unavailable")
     }),
-
-    // Logger for the default handlers (defaults to slog.Default())
-    godiecho.WithHandlerLogger(logger),
 ))
 ```
-
-The default panic handler logs the panic value and stack trace, then returns
-a generic 500. A panic with `http.ErrAbortHandler` is re-panicked.
 
 ## Complete Example
 
@@ -359,32 +329,17 @@ func (c *UserController) Create(ctx echo.Context) error {
 
 ## Error Handling
 
-Default handlers log the cause with `log/slog` and return a generic 500
-`echo.HTTPError`; they never send internal error text to the client. Custom
-handlers return `echo.HTTPError` values, which Echo renders. Log the cause
-rather than putting it in the response:
+Echo uses `echo.HTTPError` for error responses. Resolution errors can contain constructor internals (types, parameters and the wrapped constructor error), so log them server-side and never send them to clients.
 
 ```go
 godiecho.WithResolutionErrorHandler(func(c echo.Context, err error) error {
-    logger.Error("controller unavailable", "error", err)
-    return echo.NewHTTPError(http.StatusServiceUnavailable, "Service temporarily unavailable")
+    slog.ErrorContext(c.Request().Context(), "resolve controller",
+        "path", c.Path(), "error", err)
+    return echo.NewHTTPError(http.StatusServiceUnavailable,
+        "Service temporarily unavailable")
 })
-```
-
-Authentication in a `WithMiddleware` function can respond 401 without
-changing how scope-creation failures are rendered:
-
-```go
-e.Use(godiecho.ScopeMiddleware(provider,
-    godiecho.WithMiddleware(func(scope godi.Scope, c echo.Context) error {
-        return godi.MustResolve[*Session](scope).Authenticate(c.Request())
-    }),
-    godiecho.WithMiddlewareErrorHandler(func(c echo.Context, err error) error {
-        return echo.ErrUnauthorized
-    }),
-))
 ```
 
 ---
 
-**See also:** [Integration contract](#integration-contract) | [Echo v5 Integration](echo-v5.md) | [Gin Integration](gin.md) | [Chi Integration](chi.md) | [Fiber Integration](fiber.md) | [net/http Integration](net-http.md)
+**See also:** [Gin Integration](gin.md) | [Chi Integration](chi.md) | [Fiber Integration](fiber.md) | [net/http Integration](net-http.md)

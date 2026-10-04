@@ -242,7 +242,8 @@ Replace modules for testing:
 ```go
 // users/module_test.go
 var TestModule = godi.NewModule("users-test",
-    godi.AddScoped(NewMockUserRepository), // Use mock repository
+    godi.AddSingleton(infrastructure.NewLogger), // UserService needs a Logger
+    godi.AddScoped(NewMockUserRepository),       // Use mock repository
     godi.AddScoped(NewUserService),
 )
 
@@ -250,7 +251,11 @@ func TestUserService(t *testing.T) {
     services := godi.NewCollection()
     services.AddModules(TestModule)
 
-    provider, _ := services.Build()
+    // Build reports missing dependencies, so check its error
+    provider, err := services.Build()
+    if err != nil {
+        t.Fatal(err)
+    }
     defer provider.Close()
 
     // Test with mock

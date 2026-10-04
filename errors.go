@@ -19,8 +19,8 @@ import (
 // ========================================
 // Core Error Values (Sentinel Errors)
 // ========================================
-// These are base errors that should be wrapped in typed errors when returned.
-// Never return these directly to users - always wrap them with context.
+// Some are returned wrapped in typed errors, others (such as ErrScopeDisposed
+// and ErrProviderDisposed) directly. Match them with errors.Is.
 
 var (
 	// Service resolution errors.
@@ -323,7 +323,7 @@ func (e TimeoutError) Is(target error) bool {
 // RegistrationError wraps errors during service registration.
 type RegistrationError struct {
 	ServiceType reflect.Type
-	Operation   string // "register", "create-descriptor", "validate-descriptor", etc.
+	Operation   string // "register", "create descriptor", "validate descriptor", "register result object", etc.
 	Cause       error
 }
 
@@ -380,7 +380,7 @@ func (e TypeMismatchError) Error() string {
 // ReflectionAnalysisError for reflection/analysis failures
 type ReflectionAnalysisError struct {
 	Constructor any
-	Operation   string // "analyze", "validate", "invoke"
+	Operation   string // "analyze", "process result object"
 	Cause       error
 }
 
@@ -394,7 +394,7 @@ func (e ReflectionAnalysisError) Unwrap() error {
 
 // GraphOperationError for dependency graph operations
 type GraphOperationError struct {
-	Operation string // "add", "remove", "sort"
+	Operation string // "add", "topological sort"
 	NodeType  reflect.Type
 	NodeKey   any
 	Cause     error
@@ -494,7 +494,7 @@ func (e BuildError) Unwrap() error {
 
 // DisposalError aggregates disposal errors
 type DisposalError struct {
-	Context string // "provider", "scope", "singleton"
+	Context string // "provider", "scope"
 	Errors  []error
 }
 

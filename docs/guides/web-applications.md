@@ -411,8 +411,18 @@ func NewTransaction(db *Database) (*Transaction, error) {
     return &Transaction{tx: tx}, nil
 }
 
-func (t *Transaction) Close() error {
+// Commit is called explicitly once the request's work has succeeded.
+func (t *Transaction) Commit() error {
     return t.tx.Commit()
+}
+
+// Close rolls back unless Commit already ran (Rollback then returns
+// sql.ErrTxDone, which is not an error here).
+func (t *Transaction) Close() error {
+    if err := t.tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+        return err
+    }
+    return nil
 }
 
 // All repositories use the same transaction
@@ -423,7 +433,32 @@ type UserRepository struct {
 type OrderRepository struct {
     tx *Transaction  // Same transaction!
 }
+
+// The handler commits only when the work succeeded
+type OrderController struct {
+    orders *OrderRepository
+    tx     *Transaction
+}
+
+func (c *OrderController) Create(w http.ResponseWriter, r *http.Request) {
+    var order Order
+    if err := json.NewDecoder(r.Body).Decode(&order); err != nil {
+        http.Error(w, "invalid request body", http.StatusBadRequest)
+        return // the scope's Close() rolls back
+    }
+    if err := c.orders.Insert(r.Context(), order); err != nil {
+        http.Error(w, "could not create order", http.StatusInternalServerError)
+        return // the scope's Close() rolls back
+    }
+    if err := c.tx.Commit(); err != nil {
+        http.Error(w, "could not create order", http.StatusInternalServerError)
+        return
+    }
+    w.WriteHeader(http.StatusCreated)
+}
 ```
+
+Scopes also close after handler errors, panics and client disconnects, so committing in `Close()` would persist failed or partial work; commit explicitly on success and let `Close()` roll back.
 
 ## Graceful Shutdown
 
