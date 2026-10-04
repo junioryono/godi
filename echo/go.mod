@@ -6,6 +6,7 @@ require (
 	github.com/junioryono/godi/v5 v5.1.0
 	github.com/labstack/echo/v4 v4.16.0
 	github.com/stretchr/testify v1.12.1
+	go.uber.org/goleak v1.3.0
 )
 
 require (
