@@ -367,7 +367,7 @@ type PanicError struct {
 	Stack       []byte
 }
 
-func (e PanicError) Error() string {
+func (e *PanicError) Error() string {
 	return fmt.Sprintf("constructor %v panicked: %v", e.Constructor, e.Panic)
 }
 

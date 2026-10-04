@@ -357,7 +357,7 @@ func TestCircularDependencyError(t *testing.T) {
 	testType := reflect.TypeFor[ErrorTest]()
 
 	// Test with empty path
-	err1 := graph.CircularDependencyError{
+	err1 := &graph.CircularDependencyError{
 		Node: testType.String(),
 		Path: []string{},
 	}
@@ -367,7 +367,7 @@ func TestCircularDependencyError(t *testing.T) {
 	assert.Contains(t, errStr1, "ErrorTest", "Error should contain node type")
 
 	// Test with path
-	err2 := graph.CircularDependencyError{
+	err2 := &graph.CircularDependencyError{
 		Node: testType.String(),
 		Path: []string{"A", "B", "C"},
 	}

@@ -85,7 +85,7 @@ type LifetimeError struct {
 	Value any
 }
 
-func (e LifetimeError) Error() string {
+func (e *LifetimeError) Error() string {
 	return fmt.Sprintf("invalid service lifetime: %v", e.Value)
 }
 
@@ -101,7 +101,7 @@ type LifetimeConflictError struct {
 	Via []reflect.Type
 }
 
-func (e LifetimeConflictError) Error() string {
+func (e *LifetimeConflictError) Error() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "lifetime conflict: %s (%s) cannot depend on %s (%s)",
 		formatType(e.ServiceType), e.ServiceLifetime,
@@ -117,7 +117,7 @@ func (e LifetimeConflictError) Error() string {
 }
 
 // Detail explains the conflict and how to resolve it; see Explain.
-func (e LifetimeConflictError) Detail() string {
+func (e *LifetimeConflictError) Detail() string {
 	var b strings.Builder
 	if e.ServiceLifetime == Singleton {
 		b.WriteString("Singleton services are created once and live for the application lifetime.\n")
@@ -133,14 +133,14 @@ func (e LifetimeConflictError) Detail() string {
 	return b.String()
 }
 
-func (e LifetimeConflictError) Format(s fmt.State, verb rune) { formatError(s, verb, e) }
+func (e *LifetimeConflictError) Format(s fmt.State, verb rune) { formatError(s, verb, e) }
 
 // AlreadyRegisteredError indicates a service type is already registered.
 type AlreadyRegisteredError struct {
 	ServiceType reflect.Type
 }
 
-func (e AlreadyRegisteredError) Error() string {
+func (e *AlreadyRegisteredError) Error() string {
 	return fmt.Sprintf("service %s already registered (use keyed services or groups)", formatType(e.ServiceType))
 }
 
@@ -155,7 +155,7 @@ type ResolutionError struct {
 	Available   []reflect.Type // Types that ARE registered (optional, for suggestions)
 }
 
-func (e ResolutionError) Error() string {
+func (e *ResolutionError) Error() string {
 	var b strings.Builder
 
 	// Only a missing registration is "not found"; a registered service whose
@@ -180,7 +180,7 @@ func (e ResolutionError) Error() string {
 
 // Detail suggests similar registered types for a missing service; see
 // Explain.
-func (e ResolutionError) Detail() string {
+func (e *ResolutionError) Detail() string {
 	if e.Cause != nil && !e.ServiceNotFound() {
 		return ""
 	}
@@ -196,9 +196,9 @@ func (e ResolutionError) Detail() string {
 	return b.String()
 }
 
-func (e ResolutionError) Format(s fmt.State, verb rune) { formatError(s, verb, e) }
+func (e *ResolutionError) Format(s fmt.State, verb rune) { formatError(s, verb, e) }
 
-func (e ResolutionError) Unwrap() error {
+func (e *ResolutionError) Unwrap() error {
 	return e.Cause
 }
 
@@ -206,7 +206,7 @@ func (e ResolutionError) Unwrap() error {
 // registered" failure (as opposed to a registered provider whose construction
 // failed). Used by the parameter builder to decide whether an optional
 // dependency may be skipped.
-func (e ResolutionError) ServiceNotFound() bool {
+func (e *ResolutionError) ServiceNotFound() bool {
 	return e.Cause == ErrServiceNotFound || e.Cause == errOutputNotProvided
 }
 
@@ -241,7 +241,7 @@ type MissingDependencyError struct {
 	Constructor string
 }
 
-func (e MissingDependencyError) Error() string {
+func (e *MissingDependencyError) Error() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s requires %s", formatType(e.ServiceType), formatType(e.DependencyType))
 	if e.DependencyKey != nil {
@@ -255,7 +255,7 @@ func (e MissingDependencyError) Error() string {
 }
 
 // Unwrap lets errors.Is(err, ErrServiceNotFound) match.
-func (e MissingDependencyError) Unwrap() error {
+func (e *MissingDependencyError) Unwrap() error {
 	return ErrServiceNotFound
 }
 
@@ -312,11 +312,11 @@ type TimeoutError struct {
 	Timeout     time.Duration
 }
 
-func (e TimeoutError) Error() string {
+func (e *TimeoutError) Error() string {
 	return fmt.Sprintf("resolution of %s timed out after %v", formatType(e.ServiceType), e.Timeout)
 }
 
-func (e TimeoutError) Is(target error) bool {
+func (e *TimeoutError) Is(target error) bool {
 	return errors.Is(target, context.DeadlineExceeded)
 }
 
@@ -327,11 +327,11 @@ type RegistrationError struct {
 	Cause       error
 }
 
-func (e RegistrationError) Error() string {
+func (e *RegistrationError) Error() string {
 	return fmt.Sprintf("failed to %s %s: %v", e.Operation, formatType(e.ServiceType), e.Cause)
 }
 
-func (e RegistrationError) Unwrap() error {
+func (e *RegistrationError) Unwrap() error {
 	return e.Cause
 }
 
@@ -341,14 +341,14 @@ type ValidationError struct {
 	Cause       error
 }
 
-func (e ValidationError) Error() string {
+func (e *ValidationError) Error() string {
 	if e.ServiceType != nil {
 		return fmt.Sprintf("%s: %v", formatType(e.ServiceType), e.Cause)
 	}
 	return e.Cause.Error()
 }
 
-func (e ValidationError) Unwrap() error {
+func (e *ValidationError) Unwrap() error {
 	return e.Cause
 }
 
@@ -358,11 +358,11 @@ type ModuleError struct {
 	Cause  error
 }
 
-func (e ModuleError) Error() string {
+func (e *ModuleError) Error() string {
 	return fmt.Sprintf("module %q: %v", e.Module, e.Cause)
 }
 
-func (e ModuleError) Unwrap() error {
+func (e *ModuleError) Unwrap() error {
 	return e.Cause
 }
 
@@ -373,7 +373,7 @@ type TypeMismatchError struct {
 	Context  string // "interface implementation", "type assertion", etc.
 }
 
-func (e TypeMismatchError) Error() string {
+func (e *TypeMismatchError) Error() string {
 	return fmt.Sprintf("%s: expected %s, got %s", e.Context, formatType(e.Expected), formatType(e.Actual))
 }
 
@@ -384,11 +384,11 @@ type ReflectionAnalysisError struct {
 	Cause       error
 }
 
-func (e ReflectionAnalysisError) Error() string {
+func (e *ReflectionAnalysisError) Error() string {
 	return fmt.Sprintf("reflection %s failed for constructor %T: %v", e.Operation, e.Constructor, e.Cause)
 }
 
-func (e ReflectionAnalysisError) Unwrap() error {
+func (e *ReflectionAnalysisError) Unwrap() error {
 	return e.Cause
 }
 
@@ -400,14 +400,14 @@ type GraphOperationError struct {
 	Cause     error
 }
 
-func (e GraphOperationError) Error() string {
+func (e *GraphOperationError) Error() string {
 	if e.NodeKey != nil {
 		return fmt.Sprintf("graph %s failed for %s[%v]: %v", e.Operation, formatType(e.NodeType), e.NodeKey, e.Cause)
 	}
 	return fmt.Sprintf("graph %s failed for %s: %v", e.Operation, formatType(e.NodeType), e.Cause)
 }
 
-func (e GraphOperationError) Unwrap() error {
+func (e *GraphOperationError) Unwrap() error {
 	return e.Cause
 }
 
@@ -421,7 +421,7 @@ type ConstructorInvocationError struct {
 	Location string
 }
 
-func (e ConstructorInvocationError) Error() string {
+func (e *ConstructorInvocationError) Error() string {
 	if e.Location != "" {
 		cause := e.Cause
 		// The message already says the constructor failed; print the
@@ -439,9 +439,9 @@ func (e ConstructorInvocationError) Error() string {
 		formatType(e.Constructor), strings.Join(paramStrs, ", "), e.Cause)
 }
 
-func (e ConstructorInvocationError) Format(s fmt.State, verb rune) { formatError(s, verb, e) }
+func (e *ConstructorInvocationError) Format(s fmt.State, verb rune) { formatError(s, verb, e) }
 
-func (e ConstructorInvocationError) Unwrap() error {
+func (e *ConstructorInvocationError) Unwrap() error {
 	return e.Cause
 }
 
@@ -457,7 +457,7 @@ type ConstructorPanicError struct {
 	Location string
 }
 
-func (e ConstructorPanicError) Error() string {
+func (e *ConstructorPanicError) Error() string {
 	name := e.Location
 	if name == "" {
 		name = formatType(e.Constructor)
@@ -466,7 +466,7 @@ func (e ConstructorPanicError) Error() string {
 }
 
 // Detail gives guidance and the panic's stack trace; see Explain.
-func (e ConstructorPanicError) Detail() string {
+func (e *ConstructorPanicError) Detail() string {
 	var b strings.Builder
 	b.WriteString("Constructors should be pure dependency wiring - avoid operations that can panic.\n")
 	b.WriteString("Critical operations that can fail belong in application initialization, not constructors.\n\n")
@@ -481,7 +481,7 @@ func (e ConstructorPanicError) Detail() string {
 	return b.String()
 }
 
-func (e ConstructorPanicError) Format(s fmt.State, verb rune) { formatError(s, verb, e) }
+func (e *ConstructorPanicError) Format(s fmt.State, verb rune) { formatError(s, verb, e) }
 
 // BuildError wraps errors that occur during provider building
 type BuildError struct {
@@ -490,11 +490,11 @@ type BuildError struct {
 	Cause   error
 }
 
-func (e BuildError) Error() string {
+func (e *BuildError) Error() string {
 	return fmt.Sprintf("build failed during %s phase: %s: %v", e.Phase, e.Details, e.Cause)
 }
 
-func (e BuildError) Unwrap() error {
+func (e *BuildError) Unwrap() error {
 	return e.Cause
 }
 
@@ -504,7 +504,7 @@ type DisposalError struct {
 	Errors  []error
 }
 
-func (e DisposalError) Error() string {
+func (e *DisposalError) Error() string {
 	if len(e.Errors) == 1 {
 		return fmt.Sprintf("%s disposal failed: %v", e.Context, e.Errors[0])
 	}
@@ -518,21 +518,21 @@ func (e DisposalError) Error() string {
 }
 
 // Unwrap exposes every cleanup failure to errors.Is and errors.As.
-func (e DisposalError) Unwrap() []error {
+func (e *DisposalError) Unwrap() []error {
 	return e.Errors
 }
 
 // fmt.Formatter: %+v prints Explain (message plus detail), other verbs the
 // one-line message.
 
-func (e BuildError) Format(s fmt.State, verb rune)              { formatError(s, verb, e) }
-func (e DisposalError) Format(s fmt.State, verb rune)           { formatError(s, verb, e) }
-func (e RegistrationError) Format(s fmt.State, verb rune)       { formatError(s, verb, e) }
-func (e ValidationError) Format(s fmt.State, verb rune)         { formatError(s, verb, e) }
-func (e ModuleError) Format(s fmt.State, verb rune)             { formatError(s, verb, e) }
-func (e MissingDependencyError) Format(s fmt.State, verb rune)  { formatError(s, verb, e) }
-func (e GraphOperationError) Format(s fmt.State, verb rune)     { formatError(s, verb, e) }
-func (e ReflectionAnalysisError) Format(s fmt.State, verb rune) { formatError(s, verb, e) }
+func (e *BuildError) Format(s fmt.State, verb rune)              { formatError(s, verb, e) }
+func (e *DisposalError) Format(s fmt.State, verb rune)           { formatError(s, verb, e) }
+func (e *RegistrationError) Format(s fmt.State, verb rune)       { formatError(s, verb, e) }
+func (e *ValidationError) Format(s fmt.State, verb rune)         { formatError(s, verb, e) }
+func (e *ModuleError) Format(s fmt.State, verb rune)             { formatError(s, verb, e) }
+func (e *MissingDependencyError) Format(s fmt.State, verb rune)  { formatError(s, verb, e) }
+func (e *GraphOperationError) Format(s fmt.State, verb rune)     { formatError(s, verb, e) }
+func (e *ReflectionAnalysisError) Format(s fmt.State, verb rune) { formatError(s, verb, e) }
 
 // ---------------------------------------------------------------------------
 // Error detail and formatting
