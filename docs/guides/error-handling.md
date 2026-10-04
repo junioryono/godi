@@ -8,7 +8,7 @@ These errors occur when calling `services.Build()`. `Build` wraps each one in a
 `build failed during <phase> phase: ...` prefix; the samples below show the full
 message for a program whose types live in package `main`. Each message is one
 line; `godi.Explain(err)` adds the detail shown under some samples (see
-[Get the Full Explanation](#4-get-the-full-explanation)).
+[Get the Full Explanation](#get-the-full-explanation)).
 
 ### Registration Errors
 
@@ -373,6 +373,8 @@ func main() {
     runServer(provider)
 }
 ```
+
+(get-the-full-explanation)=
 
 ### 4. Get the Full Explanation
 
