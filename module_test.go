@@ -56,9 +56,9 @@ func TestModule(t *testing.T) {
 			c := NewCollection()
 			require.NoError(t, module(c))
 			assert.Equal(t, 3, c.Count())
-			assert.True(t, c.Contains(PtrTypeOf[TService]()))
-			assert.True(t, c.ContainsKeyed(PtrTypeOf[TService](), "scoped"))
-			assert.True(t, c.ContainsKeyed(PtrTypeOf[TService](), "transient"))
+			assert.True(t, c.Contains(reflect.TypeFor[*TService]()))
+			assert.True(t, c.ContainsKeyed(reflect.TypeFor[*TService](), "scoped"))
+			assert.True(t, c.ContainsKeyed(reflect.TypeFor[*TService](), "transient"))
 		})
 
 		t.Run("grouped_services", func(t *testing.T) {
@@ -71,7 +71,7 @@ func TestModule(t *testing.T) {
 			cl := NewCollection()
 			require.NoError(t, module(cl))
 			assert.Equal(t, 3, cl.Count())
-			assert.True(t, cl.(*collection).HasGroup(PtrTypeOf[TService](), "handlers"))
+			assert.True(t, cl.(*collection).HasGroup(reflect.TypeFor[*TService](), "handlers"))
 		})
 
 		t.Run("nested", func(t *testing.T) {
@@ -131,7 +131,7 @@ func TestModule(t *testing.T) {
 				c := NewCollection()
 				require.NoError(t, tc.add(c))
 				assert.Equal(t, 1, c.Count())
-				assert.True(t, c.Contains(PtrTypeOf[TService]()))
+				assert.True(t, c.Contains(reflect.TypeFor[*TService]()))
 			})
 		}
 
@@ -139,21 +139,21 @@ func TestModule(t *testing.T) {
 			t.Parallel()
 			c := NewCollection()
 			require.NoError(t, AddSingleton(NewTService, Name("primary"))(c))
-			assert.True(t, c.ContainsKeyed(PtrTypeOf[TService](), "primary"))
+			assert.True(t, c.ContainsKeyed(reflect.TypeFor[*TService](), "primary"))
 		})
 
 		t.Run("with_group", func(t *testing.T) {
 			t.Parallel()
 			c := NewCollection()
 			require.NoError(t, AddSingleton(NewTService, Group("services"))(c))
-			assert.True(t, c.(*collection).HasGroup(PtrTypeOf[TService](), "services"))
+			assert.True(t, c.(*collection).HasGroup(reflect.TypeFor[*TService](), "services"))
 		})
 
 		t.Run("with_As", func(t *testing.T) {
 			t.Parallel()
 			c := NewCollection()
 			require.NoError(t, AddSingleton(NewTService, As[TInterface]())(c))
-			assert.True(t, c.Contains(TypeOf[TInterface]()))
+			assert.True(t, c.Contains(reflect.TypeFor[TInterface]()))
 		})
 	})
 
@@ -164,20 +164,20 @@ func TestModule(t *testing.T) {
 			t.Parallel()
 			c := NewCollection()
 			c.AddSingleton(NewTService)
-			assert.True(t, c.Contains(PtrTypeOf[TService]()))
+			assert.True(t, c.Contains(reflect.TypeFor[*TService]()))
 
 			c.AddModules(Remove[*TService]())
-			assert.False(t, c.Contains(PtrTypeOf[TService]()))
+			assert.False(t, c.Contains(reflect.TypeFor[*TService]()))
 		})
 
 		t.Run("removes_interface", func(t *testing.T) {
 			t.Parallel()
 			c := NewCollection()
 			c.AddSingleton(NewTService, As[TInterface]())
-			assert.True(t, c.Contains(TypeOf[TInterface]()))
+			assert.True(t, c.Contains(reflect.TypeFor[TInterface]()))
 
 			c.AddModules(Remove[TInterface]())
-			assert.False(t, c.Contains(TypeOf[TInterface]()))
+			assert.False(t, c.Contains(reflect.TypeFor[TInterface]()))
 		})
 
 		t.Run("remove_and_replace", func(t *testing.T) {
@@ -189,7 +189,7 @@ func TestModule(t *testing.T) {
 				Remove[*TService](),
 				AddSingleton(NewTServiceWithID("replacement")),
 			)
-			assert.True(t, c.Contains(PtrTypeOf[TService]()))
+			assert.True(t, c.Contains(reflect.TypeFor[*TService]()))
 		})
 
 		t.Run("non_existent_is_noop", func(t *testing.T) {
@@ -210,18 +210,18 @@ func TestModule(t *testing.T) {
 			c.AddSingleton(NewTService, Name("secondary"))
 
 			c.AddModules(RemoveKeyed[*TService]("primary"))
-			assert.False(t, c.ContainsKeyed(PtrTypeOf[TService](), "primary"))
-			assert.True(t, c.ContainsKeyed(PtrTypeOf[TService](), "secondary"))
+			assert.False(t, c.ContainsKeyed(reflect.TypeFor[*TService](), "primary"))
+			assert.True(t, c.ContainsKeyed(reflect.TypeFor[*TService](), "secondary"))
 		})
 
 		t.Run("nil_key_removes_default", func(t *testing.T) {
 			t.Parallel()
 			c := NewCollection()
 			c.AddSingleton(NewTService)
-			assert.True(t, c.Contains(PtrTypeOf[TService]()))
+			assert.True(t, c.Contains(reflect.TypeFor[*TService]()))
 
 			c.AddModules(RemoveKeyed[*TService](nil))
-			assert.False(t, c.Contains(PtrTypeOf[TService]()))
+			assert.False(t, c.Contains(reflect.TypeFor[*TService]()))
 		})
 
 		t.Run("non_existent_is_noop", func(t *testing.T) {
@@ -230,7 +230,7 @@ func TestModule(t *testing.T) {
 			c.AddSingleton(NewTService, Name("existing"))
 
 			c.AddModules(RemoveKeyed[*TService]("nonexistent"))
-			assert.True(t, c.ContainsKeyed(PtrTypeOf[TService](), "existing"))
+			assert.True(t, c.ContainsKeyed(reflect.TypeFor[*TService](), "existing"))
 			assert.Equal(t, 1, c.Count())
 		})
 	})
@@ -451,7 +451,7 @@ func TestTryAdd(t *testing.T) {
 		t.Parallel()
 		c := NewCollection()
 		c.AddModules(TryAddSingleton(NewTService))
-		assert.True(t, c.Contains(PtrTypeOf[TService]()))
+		assert.True(t, c.Contains(reflect.TypeFor[*TService]()))
 	})
 
 	t.Run("keeps_the_existing_registration", func(t *testing.T) {
@@ -480,7 +480,7 @@ func TestTryAdd(t *testing.T) {
 			TryAddSingleton(NewTServiceWithID("b"), Name("b")),
 		)
 		require.NoError(t, c.Err())
-		assert.True(t, c.ContainsKeyed(PtrTypeOf[TService](), "b"))
+		assert.True(t, c.ContainsKeyed(reflect.TypeFor[*TService](), "b"))
 		assert.Equal(t, 2, c.Count())
 	})
 }

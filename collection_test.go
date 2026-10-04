@@ -17,6 +17,104 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Service fixtures shared by the package's tests.
+
+// TService is a basic service.
+type TService struct {
+	ID    string
+	Value int
+}
+
+func (s *TService) GetID() string { return s.ID }
+
+// TDependency is a basic dependency.
+type TDependency struct {
+	Name string
+}
+
+// TServiceWithDeps depends on TService and TDependency.
+type TServiceWithDeps struct {
+	Svc *TService
+	Dep *TDependency
+}
+
+// TInterface is implemented by *TService.
+type TInterface interface {
+	GetID() string
+}
+
+// TMultiA and TMultiB are produced together by multi-return constructors.
+type TMultiA struct{ N int }
+type TMultiB struct{ N int }
+
+// TCircularA and TCircularB depend on each other.
+type TCircularA struct{ B *TCircularB }
+type TCircularB struct{ A *TCircularA }
+
+func NewTCircularA(b *TCircularB) *TCircularA { return &TCircularA{B: b} }
+func NewTCircularB(a *TCircularA) *TCircularB { return &TCircularB{A: a} }
+
+// TResult is a result object.
+type TResult struct {
+	Out
+	Primary   *TService
+	Secondary *TService `name:"secondary"`
+	Grouped   *TService `group:"services"`
+}
+
+func NewTService() *TService {
+	return &TService{ID: "test", Value: 42}
+}
+
+func NewTServiceWithID(id string) func() *TService {
+	return func() *TService {
+		return &TService{ID: id, Value: 42}
+	}
+}
+
+func NewTDependency() *TDependency {
+	return &TDependency{Name: "dep"}
+}
+
+func NewTServiceWithDeps(svc *TService, dep *TDependency) *TServiceWithDeps {
+	return &TServiceWithDeps{Svc: svc, Dep: dep}
+}
+
+func NewTServiceError() (*TService, error) {
+	return nil, errors.New("constructor error")
+}
+
+func NewTMultiReturnWithError() (*TService, *TDependency, error) {
+	return &TService{ID: "multi-err", Value: 2}, &TDependency{Name: "multi-err-dep"}, nil
+}
+
+func NewTResult() TResult {
+	return TResult{
+		Primary:   &TService{ID: "primary", Value: 1},
+		Secondary: &TService{ID: "secondary", Value: 2},
+		Grouped:   &TService{ID: "grouped", Value: 3},
+	}
+}
+
+// NewTVoid returns no service.
+func NewTVoid() {}
+
+// RequireResolve resolves a service or fails the test.
+func RequireResolve[T any](t *testing.T, p Provider) T {
+	t.Helper()
+	v, err := Resolve[T](p)
+	require.NoError(t, err)
+	return v
+}
+
+// RequireResolveFrom resolves from a scope or fails the test.
+func RequireResolveFrom[T any](t *testing.T, s Scope) T {
+	t.Helper()
+	v, err := Resolve[T](s)
+	require.NoError(t, err)
+	return v
+}
+
 func TestCollectionRegistration(t *testing.T) {
 	t.Parallel()
 
@@ -29,9 +127,9 @@ func TestCollectionRegistration(t *testing.T) {
 		c.AddTransient(NewTDisposable)
 
 		assert.Equal(t, 3, c.Count())
-		assert.True(t, c.Contains(PtrTypeOf[TService]()))
-		assert.True(t, c.Contains(PtrTypeOf[TDependency]()))
-		assert.True(t, c.Contains(PtrTypeOf[TDisposable]()))
+		assert.True(t, c.Contains(reflect.TypeFor[*TService]()))
+		assert.True(t, c.Contains(reflect.TypeFor[*TDependency]()))
+		assert.True(t, c.Contains(reflect.TypeFor[*TDisposable]()))
 	})
 
 	t.Run("registers_keyed_services", func(t *testing.T) {
@@ -41,9 +139,9 @@ func TestCollectionRegistration(t *testing.T) {
 		c.AddSingleton(NewTServiceWithID("primary"), Name("primary"))
 		c.AddSingleton(NewTServiceWithID("secondary"), Name("secondary"))
 
-		assert.True(t, c.ContainsKeyed(PtrTypeOf[TService](), "primary"))
-		assert.True(t, c.ContainsKeyed(PtrTypeOf[TService](), "secondary"))
-		assert.False(t, c.Contains(PtrTypeOf[TService]())) // No default registration
+		assert.True(t, c.ContainsKeyed(reflect.TypeFor[*TService](), "primary"))
+		assert.True(t, c.ContainsKeyed(reflect.TypeFor[*TService](), "secondary"))
+		assert.False(t, c.Contains(reflect.TypeFor[*TService]())) // No default registration
 	})
 
 	t.Run("registers_grouped_services", func(t *testing.T) {
@@ -57,7 +155,7 @@ func TestCollectionRegistration(t *testing.T) {
 		require.NoError(t, err)
 		defer p.Close()
 
-		services, err := p.GetGroup(PtrTypeOf[TService](), "handlers")
+		services, err := p.GetGroup(reflect.TypeFor[*TService](), "handlers")
 		require.NoError(t, err)
 		assert.Len(t, services, 2)
 	})
@@ -67,13 +165,13 @@ func TestCollectionRegistration(t *testing.T) {
 		c := NewCollection()
 
 		c.AddSingleton(NewTService, As[TInterface]())
-		assert.True(t, c.Contains(TypeOf[TInterface]()))
+		assert.True(t, c.Contains(reflect.TypeFor[TInterface]()))
 
 		p, err := c.Build()
 		require.NoError(t, err)
 		defer p.Close()
 
-		svc, err := p.Get(TypeOf[TInterface]())
+		svc, err := p.Get(reflect.TypeFor[TInterface]())
 		require.NoError(t, err)
 		assert.NotNil(t, svc)
 	})
@@ -368,11 +466,11 @@ func TestCollectionRemove(t *testing.T) {
 		c.AddSingleton(NewTService, Name("keyed"))
 		c.AddSingleton(NewTDependency)
 
-		c.Remove(PtrTypeOf[TService]())
+		c.Remove(reflect.TypeFor[*TService]())
 
-		assert.False(t, c.Contains(PtrTypeOf[TService]()))
-		assert.False(t, c.ContainsKeyed(PtrTypeOf[TService](), "keyed")) // Keyed removed too
-		assert.True(t, c.Contains(PtrTypeOf[TDependency]()))             // Other types untouched
+		assert.False(t, c.Contains(reflect.TypeFor[*TService]()))
+		assert.False(t, c.ContainsKeyed(reflect.TypeFor[*TService](), "keyed")) // Keyed removed too
+		assert.True(t, c.Contains(reflect.TypeFor[*TDependency]()))             // Other types untouched
 	})
 
 	t.Run("removes_keyed_registration", func(t *testing.T) {
@@ -381,10 +479,10 @@ func TestCollectionRemove(t *testing.T) {
 		c.AddSingleton(NewTService, Name("k1"))
 		c.AddSingleton(NewTService, Name("k2"))
 
-		c.RemoveKeyed(PtrTypeOf[TService](), "k1")
+		c.RemoveKeyed(reflect.TypeFor[*TService](), "k1")
 
-		assert.False(t, c.ContainsKeyed(PtrTypeOf[TService](), "k1"))
-		assert.True(t, c.ContainsKeyed(PtrTypeOf[TService](), "k2"))
+		assert.False(t, c.ContainsKeyed(reflect.TypeFor[*TService](), "k1"))
+		assert.True(t, c.ContainsKeyed(reflect.TypeFor[*TService](), "k2"))
 	})
 
 	t.Run("build_does_not_construct_removed_singleton", func(t *testing.T) {
@@ -397,7 +495,7 @@ func TestCollectionRemove(t *testing.T) {
 
 		c := NewCollection()
 		c.AddSingleton(ctor)
-		c.Remove(PtrTypeOf[TService]())
+		c.Remove(reflect.TypeFor[*TService]())
 
 		p, err := c.Build()
 		require.NoError(t, err)
@@ -437,7 +535,7 @@ func TestCollectionRemove(t *testing.T) {
 				var produced atomic.Pointer[TDisposable]
 				c := NewCollection()
 				register(c, &produced)
-				c.Remove(PtrTypeOf[TDisposable]())
+				c.Remove(reflect.TypeFor[*TDisposable]())
 
 				p, err := c.Build()
 				require.NoError(t, err)
@@ -463,12 +561,12 @@ func TestCollectionRemove(t *testing.T) {
 		c.AddSingleton(NewTService)
 		c.AddSingleton(NewTDependency)
 
-		c.Remove(PtrTypeOf[TService]())
+		c.Remove(reflect.TypeFor[*TService]())
 
 		assert.Equal(t, 1, c.Count())
 		descriptors := c.ToSlice()
 		require.Len(t, descriptors, 1)
-		assert.Equal(t, PtrTypeOf[TDependency](), descriptors[0].ServiceType)
+		assert.Equal(t, reflect.TypeFor[*TDependency](), descriptors[0].ServiceType)
 	})
 
 	t.Run("remove_drops_keyed_and_grouped_registrations_of_type", func(t *testing.T) {
@@ -478,17 +576,17 @@ func TestCollectionRemove(t *testing.T) {
 		c.AddSingleton(NewTService, Name("keyed"))
 		c.AddSingleton(NewTService, Group("grouped"))
 
-		c.Remove(PtrTypeOf[TService]())
+		c.Remove(reflect.TypeFor[*TService]())
 
 		assert.Equal(t, 0, c.Count())
-		assert.False(t, c.Contains(PtrTypeOf[TService]()))
-		assert.False(t, c.ContainsKeyed(PtrTypeOf[TService](), "keyed"))
+		assert.False(t, c.Contains(reflect.TypeFor[*TService]()))
+		assert.False(t, c.ContainsKeyed(reflect.TypeFor[*TService](), "keyed"))
 
 		p, err := c.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = p.Close() })
 
-		group, err := p.GetGroup(PtrTypeOf[TService](), "grouped")
+		group, err := p.GetGroup(reflect.TypeFor[*TService](), "grouped")
 		require.NoError(t, err)
 		assert.Empty(t, group)
 	})
@@ -504,7 +602,7 @@ func TestCollectionRemove(t *testing.T) {
 		c := NewCollection()
 		c.AddSingleton(ctor, Name("a"))
 		c.AddSingleton(NewTService)
-		c.RemoveKeyed(PtrTypeOf[TService](), "a")
+		c.RemoveKeyed(reflect.TypeFor[*TService](), "a")
 
 		assert.Equal(t, 1, c.Count())
 
@@ -1241,7 +1339,7 @@ func TestRemoveUnlinksSiblings(t *testing.T) {
 	c.AddSingleton(func() (*TMultiA, *TMultiB) {
 		return &TMultiA{N: 1}, &TMultiB{N: 2}
 	})
-	c.Remove(PtrTypeOf[TMultiA]())
+	c.Remove(reflect.TypeFor[*TMultiA]())
 	c.AddSingleton(func() *TMultiA { return &TMultiA{N: 99} })
 
 	p, err := c.Build()
@@ -1467,8 +1565,8 @@ func TestFailedRegistrationRollsBackGroupMember(t *testing.T) {
 	// Everything from the failed registration must be gone: no leftover
 	// group member, no leftover keyed service, nothing in allDescriptors.
 	assert.Equal(t, 0, c.Count(), "failed registration must leave no descriptors")
-	assert.False(t, c.ContainsKeyed(PtrTypeOf[TDependency](), "dup"))
-	assert.False(t, c.(*collection).HasGroup(PtrTypeOf[TService](), "g"))
+	assert.False(t, c.ContainsKeyed(reflect.TypeFor[*TDependency](), "dup"))
+	assert.False(t, c.(*collection).HasGroup(reflect.TypeFor[*TService](), "g"))
 }
 
 func TestBuildWithOptions(t *testing.T) {
@@ -1745,7 +1843,7 @@ func TestToSliceServiceInfo(t *testing.T) {
 
 	byLifetime := map[Lifetime]ServiceInfo{}
 	for _, info := range infos {
-		assert.Equal(t, PtrTypeOf[TService](), info.ServiceType)
+		assert.Equal(t, reflect.TypeFor[*TService](), info.ServiceType)
 		byLifetime[info.Lifetime] = info
 	}
 
@@ -1769,7 +1867,7 @@ func TestToSliceServiceInfo(t *testing.T) {
 	fresh := c.ToSlice()
 	require.Len(t, fresh, 3)
 	for _, info := range fresh {
-		assert.Equal(t, PtrTypeOf[TService](), info.ServiceType, "mutation leaked into the collection")
+		assert.Equal(t, reflect.TypeFor[*TService](), info.ServiceType, "mutation leaked into the collection")
 		assert.NotEqual(t, "tampered", info.Key)
 		assert.NotEqual(t, "tampered", info.Group)
 	}
@@ -2019,8 +2117,8 @@ func TestCollectionSnapshotIsolation(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = first.Close() })
 
-		c.Remove(PtrTypeOf[TService]())
-		c.Remove(PtrTypeOf[TDependency]())
+		c.Remove(reflect.TypeFor[*TService]())
+		c.Remove(reflect.TypeFor[*TDependency]())
 		c.AddSingleton(NewTServiceWithID("two"))
 
 		second, err := c.Build()
@@ -2055,7 +2153,7 @@ func TestCollectionSnapshotIsolation(t *testing.T) {
 
 		wg.Go(func() {
 			for range iterations {
-				c.Remove(PtrTypeOf[TService]())
+				c.Remove(reflect.TypeFor[*TService]())
 				c.AddSingleton(NewTServiceWithID("one"))
 			}
 		})
@@ -2184,8 +2282,8 @@ func TestMultipleAsRegistration(t *testing.T) {
 		c.AddSingleton(newAliasService, As[aliasReader](), As[aliasWriter]())
 		require.Error(t, c.Err())
 
-		assert.False(t, c.Contains(TypeOf[aliasReader]()))
-		assert.True(t, c.Contains(TypeOf[aliasWriter]()))
+		assert.False(t, c.Contains(reflect.TypeFor[aliasReader]()))
+		assert.True(t, c.Contains(reflect.TypeFor[aliasWriter]()))
 		assert.Equal(t, 1, c.Count())
 	})
 }
@@ -2273,10 +2371,10 @@ func TestCollectionKeyedNonComparableKey(t *testing.T) {
 	}
 	for _, key := range keys {
 		require.NotPanics(t, func() {
-			assert.False(t, c.ContainsKeyed(PtrTypeOf[TService](), key))
+			assert.False(t, c.ContainsKeyed(reflect.TypeFor[*TService](), key))
 		})
 		require.NotPanics(t, func() {
-			c.RemoveKeyed(PtrTypeOf[TService](), key)
+			c.RemoveKeyed(reflect.TypeFor[*TService](), key)
 		})
 	}
 	assert.Equal(t, 1, c.Count())

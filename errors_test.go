@@ -328,7 +328,7 @@ func TestErrors(t *testing.T) {
 		// Two constructors with the same signature used to be
 		// indistinguishable: only func() (*TService, error) was printed.
 		assert.Contains(t, err.Error(), "NewTServiceError")
-		assert.Contains(t, err.Error(), "testutil_test.go:")
+		assert.Contains(t, err.Error(), "collection_test.go:")
 	})
 
 	t.Run("a_reflect_made_constructor_is_named_by_its_type", func(t *testing.T) {

@@ -8,6 +8,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func NewTServiceWithError() (*TService, error) {
+	return &TService{ID: "with-error", Value: 1}, nil
+}
+
+func NewTMultiReturn() (*TService, *TDependency) {
+	return &TService{ID: "multi", Value: 1}, &TDependency{Name: "multi-dep"}
+}
+
+func NewTTripleReturn() (*TService, *TDependency, *TDisposable) {
+	return &TService{ID: "triple"}, &TDependency{Name: "triple"}, &TDisposable{Name: "triple"}
+}
+
 // Local types needed for descriptor-specific tests
 type descriptorParamObj struct {
 	In
@@ -42,7 +54,7 @@ func TestDescriptor(t *testing.T) {
 			d, err := newDescriptor(NewTService, Singleton)
 			require.NoError(t, err)
 			assert.NotNil(t, d)
-			assert.Equal(t, PtrTypeOf[TService](), d.Type)
+			assert.Equal(t, reflect.TypeFor[*TService](), d.Type)
 			assert.Equal(t, Singleton, d.Lifetime)
 			assert.NotNil(t, d.Constructor)
 			assert.NotNil(t, d.ConstructorType)
@@ -101,7 +113,7 @@ func TestDescriptor(t *testing.T) {
 				t.Run(tc.name, func(t *testing.T) {
 					d, err := newDescriptor(tc.ctor, Singleton)
 					require.NoError(t, err)
-					assert.Equal(t, PtrTypeOf[TService](), d.Type)
+					assert.Equal(t, reflect.TypeFor[*TService](), d.Type)
 				})
 			}
 		})
@@ -192,7 +204,7 @@ func TestDescriptor(t *testing.T) {
 		t.Run("GetType", func(t *testing.T) {
 			t.Parallel()
 			d, _ := newDescriptor(NewTService, Singleton)
-			assert.Equal(t, PtrTypeOf[TService](), d.GetType())
+			assert.Equal(t, reflect.TypeFor[*TService](), d.GetType())
 		})
 
 		t.Run("GetKey", func(t *testing.T) {
@@ -222,7 +234,7 @@ func TestDescriptor(t *testing.T) {
 			d2, _ := newDescriptor(withDep, Singleton)
 			deps := d2.GetDependencies()
 			assert.Len(t, deps, 1)
-			assert.Equal(t, PtrTypeOf[TService](), deps[0].Type)
+			assert.Equal(t, reflect.TypeFor[*TService](), deps[0].Type)
 		})
 	})
 
@@ -252,7 +264,7 @@ func TestDescriptor(t *testing.T) {
 		t.Run("invalid_constructor", func(t *testing.T) {
 			t.Parallel()
 			d := &descriptor{
-				Type:            PtrTypeOf[TService](),
+				Type:            reflect.TypeFor[*TService](),
 				Constructor:     reflect.Value{},
 				ConstructorType: reflect.TypeFor[func() *TService](),
 				Lifetime:        Singleton,
@@ -265,7 +277,7 @@ func TestDescriptor(t *testing.T) {
 		t.Run("nil_constructor_type", func(t *testing.T) {
 			t.Parallel()
 			d := &descriptor{
-				Type:        PtrTypeOf[TService](),
+				Type:        reflect.TypeFor[*TService](),
 				Constructor: reflect.ValueOf(NewTService),
 				Lifetime:    Singleton,
 			}

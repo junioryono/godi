@@ -1,10 +1,9 @@
 package godi
 
 import (
-	"bytes"
+	"errors"
 	"fmt"
 	"reflect"
-	"strings"
 )
 
 // ModuleOption represents a registration action within a module.
@@ -92,215 +91,6 @@ func AddTransient(service any, opts ...AddOption) ModuleOption {
 	}
 }
 
-// An AddOption modifies the default behavior of AddSingleton, AddScoped, and AddTransient.
-type AddOption interface {
-	applyAddOption(*addOptions)
-}
-
-type addOptions struct {
-	Name      string
-	Key       any
-	Group     string
-	As        []any
-	NoDispose bool
-	Lazy      bool
-}
-
-// key returns the registration key from godi.Key or godi.Name, or nil.
-func (o *addOptions) key() any {
-	if o.Key != nil {
-		return o.Key
-	}
-	if o.Name != "" {
-		return o.Name
-	}
-	return nil
-}
-
-func (o *addOptions) Validate() error {
-	if o.Key != nil {
-		switch {
-		case o.Name != "":
-			return &ValidationError{Cause: fmt.Errorf("cannot use both godi.Key and godi.Name")}
-		case o.Group != "":
-			return &ValidationError{Cause: fmt.Errorf("cannot use both godi.Key and godi.Group")}
-		case !reflect.ValueOf(o.Key).Comparable():
-			return &ValidationError{Cause: fmt.Errorf("invalid godi.Key(%v): key of type %T is not comparable", o.Key, o.Key)}
-		case !reflect.ValueOf(o.Key).Equal(reflect.ValueOf(o.Key)):
-			// e.g. NaN: comparable, but a lookup could never match it.
-			return &ValidationError{Cause: fmt.Errorf("invalid godi.Key(%v): the key is not equal to itself", o.Key)}
-		}
-	}
-	if o.Group != "" {
-		if o.Name != "" {
-			return &ValidationError{
-				ServiceType: nil,
-				Cause:       fmt.Errorf("cannot use both godi.Name and godi.Group: name:%q provided with group:%q", o.Name, o.Group),
-			}
-		}
-	}
-
-	// Names must be representable inside a backquoted string. The only
-	// limitation for raw string literals as per
-	// https://golang.org/ref/spec#raw_string_lit is that they cannot contain
-	// backquotes.
-	if strings.ContainsRune(o.Name, '`') {
-		return &ValidationError{
-			ServiceType: nil,
-			Cause:       fmt.Errorf("invalid godi.Name(%q): names cannot contain backquotes", o.Name),
-		}
-	}
-	if strings.ContainsRune(o.Group, '`') {
-		return &ValidationError{
-			ServiceType: nil,
-			Cause:       fmt.Errorf("invalid godi.Group(%q): group names cannot contain backquotes", o.Group),
-		}
-	}
-
-	for _, i := range o.As {
-		t := reflect.TypeOf(i)
-
-		if t == nil {
-			return &ValidationError{
-				ServiceType: nil,
-				Cause:       fmt.Errorf("invalid godi.As(nil): argument must be a pointer to an interface"),
-			}
-		}
-
-		if t.Kind() != reflect.Pointer {
-			return &ValidationError{
-				ServiceType: nil,
-				Cause:       fmt.Errorf("invalid godi.As(%v): argument must be a pointer to an interface", t),
-			}
-		}
-
-		pointingTo := t.Elem()
-		if pointingTo.Kind() != reflect.Interface {
-			return &ValidationError{
-				ServiceType: nil,
-				Cause:       fmt.Errorf("invalid godi.As(*%v): argument must be a pointer to an interface", pointingTo),
-			}
-		}
-	}
-	return nil
-}
-
-// Name is an AddOption that specifies that all values produced by a
-// constructor should have the given name. See also the package documentation
-// about Named Values.
-//
-// Given,
-//
-//	func NewReadOnlyConnection(...) (*Connection, error)
-//	func NewReadWriteConnection(...) (*Connection, error)
-//
-// The following will provide two connections to the container: one under the
-// name "ro" and the other under the name "rw".
-//
-//	c.AddSingleton(NewReadOnlyConnection, godi.Name("ro"))
-//	c.AddSingleton(NewReadWriteConnection, godi.Name("rw"))
-//
-// This option cannot be provided for constructors which produce result
-// objects.
-func Name(name string) AddOption {
-	return addNameOption(name)
-}
-
-type addNameOption string
-
-func (o addNameOption) String() string {
-	return fmt.Sprintf("Name(%q)", string(o))
-}
-
-func (o addNameOption) applyAddOption(opt *addOptions) {
-	opt.Name = string(o)
-}
-
-// Group is an AddOption that specifies that all values produced by a
-// constructor should be added to the specified group. See also the package
-// documentation about Value Groups.
-//
-// This option cannot be provided for constructors which produce result
-// objects.
-func Group(group string) AddOption {
-	return addGroupOption(group)
-}
-
-type addGroupOption string
-
-func (o addGroupOption) String() string {
-	return fmt.Sprintf("Group(%q)", string(o))
-}
-
-func (o addGroupOption) applyAddOption(opt *addOptions) {
-	opt.Group = string(o)
-}
-
-// As is an AddOption that specifies that the value produced by the
-// constructor implements the interface T and is provided to the container
-// as that interface.
-//
-// The value will then be available in the container as an implementation of
-// T, but not as its concrete type. Pass As multiple times to register the
-// value under several interfaces.
-//
-// For example, the following will make io.Reader and io.Writer available
-// in the container, but not the concrete buffer type.
-//
-//	c.AddSingleton(newBuffer, godi.As[io.Reader](), godi.As[io.Writer]())
-//
-// That is, the above is equivalent to the following.
-//
-//	c.AddSingleton(func(...) (io.Reader, io.Writer) {
-//	  b := newBuffer(...)
-//	  return b, b
-//	})
-//
-// If used with godi.Name, the types specified with godi.As will all use the
-// same name. For example,
-//
-//	c.AddSingleton(newFile, godi.As[io.Reader](), godi.Name("temp"))
-//
-// The above is equivalent to the following.
-//
-//	type Result struct {
-//	  godi.Out
-//
-//	  Reader io.Reader `name:"temp"`
-//	}
-//
-//	c.AddSingleton(func(...) Result {
-//	  f := newFile(...)
-//	  return Result{
-//	    Reader: f,
-//	  }
-//	})
-//
-// This option cannot be provided for constructors which produce result
-// objects or have multiple non-error return values, and reserved types
-// (context.Context, godi.Provider, godi.Scope) cannot be registered this way.
-func As[T any]() AddOption {
-	return addAsOption{new(T)}
-}
-
-type addAsOption []any
-
-func (o addAsOption) String() string {
-	buf := bytes.NewBufferString("As(")
-	for i, iface := range o {
-		if i > 0 {
-			buf.WriteString(", ")
-		}
-		buf.WriteString(reflect.TypeOf(iface).Elem().String())
-	}
-	buf.WriteString(")")
-	return buf.String()
-}
-
-func (o addAsOption) applyAddOption(opts *addOptions) {
-	opts.As = append(opts.As, o...)
-}
-
 // Remove creates a ModuleOption for removing all services of type T.
 // This is useful for testing scenarios where you need to replace a service
 // with a mock implementation.
@@ -336,4 +126,188 @@ func RemoveKeyed[T any](key any) ModuleOption {
 		c.RemoveKeyed(reflect.TypeFor[T](), key)
 		return nil
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Replace and TryAdd
+// ---------------------------------------------------------------------------
+
+// ReplaceSingleton is a ModuleOption that replaces the existing registrations
+// of the service's type (and name, with godi.Name; or interfaces, with
+// godi.As) with a singleton registration of service. It is an error if
+// nothing is registered to replace, so a replacement ordered before the
+// original registration is reported instead of silently doing nothing.
+//
+// Only the matching outputs are replaced: if the original registration was a
+// multi-return or godi.Out constructor that also provides other services,
+// that constructor still runs for them.
+func ReplaceSingleton(service any, opts ...AddOption) ModuleOption {
+	return replaceService(service, Singleton, opts)
+}
+
+// ReplaceScoped is like ReplaceSingleton for a scoped registration.
+func ReplaceScoped(service any, opts ...AddOption) ModuleOption {
+	return replaceService(service, Scoped, opts)
+}
+
+// ReplaceTransient is like ReplaceSingleton for a transient registration.
+func ReplaceTransient(service any, opts ...AddOption) ModuleOption {
+	return replaceService(service, Transient, opts)
+}
+
+// TryAddSingleton is a ModuleOption that registers service as a singleton
+// only if nothing is registered yet for its type (and name, with godi.Name;
+// or interfaces, with godi.As). Libraries use it to provide defaults that an
+// application may already have registered.
+func TryAddSingleton(service any, opts ...AddOption) ModuleOption {
+	return tryAddService(service, Singleton, opts)
+}
+
+// TryAddScoped is like TryAddSingleton for a scoped registration.
+func TryAddScoped(service any, opts ...AddOption) ModuleOption {
+	return tryAddService(service, Scoped, opts)
+}
+
+// TryAddTransient is like TryAddSingleton for a transient registration.
+func TryAddTransient(service any, opts ...AddOption) ModuleOption {
+	return tryAddService(service, Transient, opts)
+}
+
+func replaceService(service any, lifetime Lifetime, opts []AddOption) ModuleOption {
+	return func(c Collection) error {
+		sc, ok := c.(*collection)
+		if !ok {
+			return errUnsupportedCollection("Replace")
+		}
+		targets, err := sc.registrationTargets(service, lifetime, opts)
+		if err != nil {
+			return err
+		}
+
+		sc.mu.Lock()
+		removed := make(map[*descriptor]struct{}, len(targets))
+		for _, target := range targets {
+			if d, exists := sc.services[target]; exists {
+				delete(sc.services, target)
+				removed[d] = struct{}{}
+			}
+		}
+		if len(removed) == 0 {
+			sc.mu.Unlock()
+			return &RegistrationError{
+				ServiceType: targets[0].Type,
+				Operation:   "replace",
+				Cause:       fmt.Errorf("nothing to replace: no registration for %s", describeTargets(targets)),
+			}
+		}
+		sc.pruneDescriptors(removed)
+		sc.mu.Unlock()
+
+		return sc.addService(service, lifetime, opts...)
+	}
+}
+
+func tryAddService(service any, lifetime Lifetime, opts []AddOption) ModuleOption {
+	return func(c Collection) error {
+		sc, ok := c.(*collection)
+		if !ok {
+			return errUnsupportedCollection("TryAdd")
+		}
+		targets, err := sc.registrationTargets(service, lifetime, opts)
+		if err != nil {
+			return err
+		}
+
+		sc.mu.RLock()
+		for _, target := range targets {
+			if _, exists := sc.services[target]; exists {
+				sc.mu.RUnlock()
+				return nil
+			}
+		}
+		sc.mu.RUnlock()
+
+		return sc.addService(service, lifetime, opts...)
+	}
+}
+
+// registrationTargets returns the registry keys a registration of service
+// with opts would occupy. Group registrations and result objects are not
+// supported by Replace and TryAdd.
+func (sc *collection) registrationTargets(service any, lifetime Lifetime, opts []AddOption) ([]TypeKey, error) {
+	d, err := newDescriptorWithAnalyzer(service, lifetime, sc.analyzer, opts...)
+	if err != nil {
+		return nil, err
+	}
+	if err := d.Validate(); err != nil {
+		return nil, err
+	}
+	options := &addOptions{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt.applyAddOption(options)
+		}
+	}
+	if options.Group != "" {
+		return nil, &ValidationError{
+			ServiceType: d.Type,
+			Cause:       errors.New("godi.Replace and godi.TryAdd do not support godi.Group; use Remove and Add for group members"),
+		}
+	}
+	if d.VoidReturn {
+		return nil, &ValidationError{
+			ServiceType: d.Type,
+			Cause:       errors.New("godi.Replace and godi.TryAdd need a constructor that returns a service; this one returns no service"),
+		}
+	}
+	if d.info.IsResultObject {
+		return nil, &ValidationError{
+			ServiceType: d.Type,
+			Cause:       errors.New("godi.Replace and godi.TryAdd do not support result objects (godi.Out); register its fields individually"),
+		}
+	}
+
+	if len(options.As) > 0 {
+		targets := make([]TypeKey, 0, len(options.As))
+		for _, iface := range options.As {
+			targets = append(targets, TypeKey{Type: reflect.TypeOf(iface).Elem(), Key: d.Key})
+		}
+		return targets, nil
+	}
+
+	var targets []TypeKey
+	first := true
+	for _, ret := range d.info.Returns {
+		if ret.IsError {
+			continue
+		}
+		var key any
+		if first {
+			key = d.Key
+		}
+		first = false
+		targets = append(targets, TypeKey{Type: ret.Type, Key: key})
+	}
+	if len(targets) == 0 {
+		targets = append(targets, TypeKey{Type: d.Type, Key: d.Key})
+	}
+	return targets, nil
+}
+
+func describeTargets(targets []TypeKey) string {
+	s := ""
+	for i, t := range targets {
+		if i > 0 {
+			s += ", "
+		}
+		s += formatType(t.Type)
+		if t.Key != nil {
+			s += fmt.Sprintf(" (key: %v)", t.Key)
+		}
+	}
+	return s
+}
+
+func errUnsupportedCollection(operation string) error {
+	return fmt.Errorf("godi.%s requires a Collection created by godi.NewCollection", operation)
 }

@@ -213,14 +213,6 @@ func (sc *collection) BuildWithOptions(options *ProviderOptions) (Provider, erro
 	return sc.doBuild(parent, ctx, options)
 }
 
-// observerOf returns the observer configured in options, or nil.
-func observerOf(options *ProviderOptions) Observer {
-	if options == nil {
-		return Observer{}
-	}
-	return options.Observer
-}
-
 // doBuild builds a provider. parent becomes the parent of the provider's root
 // context; ctx bounds the build itself and is visible (deadline and
 // cancellation) to constructors that run during Build. options may be nil.
@@ -1418,4 +1410,18 @@ func validateDependencies(all []*descriptor, services map[TypeKey]*descriptor, d
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// Validate checks a collection's wiring without constructing anything:
+// registration errors, missing dependencies, dependency cycles, lifetime
+// conflicts, and decorators that match no registration — everything Build
+// checks before it creates singletons. Use it in tests so they don't need
+// the infrastructure (databases, servers) that singleton constructors open.
+func Validate(c Collection) error {
+	sc, ok := c.(*collection)
+	if !ok {
+		return errUnsupportedCollection("Validate")
+	}
+	_, err := sc.plan(context.Background())
+	return err
 }

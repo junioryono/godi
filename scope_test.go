@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,6 +16,27 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TScoped is a scoped service.
+type TScoped struct {
+	Created time.Time
+	ScopeID string
+}
+
+func NewTScoped() *TScoped {
+	return &TScoped{Created: time.Now(), ScopeID: "default"}
+}
+
+// TTransient is a transient service; each instance is numbered.
+type TTransient struct {
+	Instance int
+}
+
+var transientCounter atomic.Int64
+
+func NewTTransient() *TTransient {
+	return &TTransient{Instance: int(transientCounter.Add(1))}
+}
 
 type testContextKey string
 
@@ -30,9 +52,9 @@ func TestScopeLifetimeSemantics(t *testing.T) {
 		s2, _ := p.CreateScope(context.Background())
 		defer s2.Close()
 
-		svc1, _ := s1.Get(PtrTypeOf[TService]())
-		svc2, _ := s2.Get(PtrTypeOf[TService]())
-		provSvc, _ := p.Get(PtrTypeOf[TService]())
+		svc1, _ := s1.Get(reflect.TypeFor[*TService]())
+		svc2, _ := s2.Get(reflect.TypeFor[*TService]())
+		provSvc, _ := p.Get(reflect.TypeFor[*TService]())
 
 		assert.Same(t, svc1, svc2)
 		assert.Same(t, svc1, provSvc)
@@ -48,12 +70,12 @@ func TestScopeLifetimeSemantics(t *testing.T) {
 		defer s2.Close()
 
 		// Same instance within scope
-		svc1a, _ := s1.Get(PtrTypeOf[TScoped]())
-		svc1b, _ := s1.Get(PtrTypeOf[TScoped]())
+		svc1a, _ := s1.Get(reflect.TypeFor[*TScoped]())
+		svc1b, _ := s1.Get(reflect.TypeFor[*TScoped]())
 		assert.Same(t, svc1a, svc1b)
 
 		// Different instance across scopes
-		svc2, _ := s2.Get(PtrTypeOf[TScoped]())
+		svc2, _ := s2.Get(reflect.TypeFor[*TScoped]())
 		assert.NotSame(t, svc1a, svc2)
 	})
 
@@ -64,8 +86,8 @@ func TestScopeLifetimeSemantics(t *testing.T) {
 		scope, _ := p.CreateScope(context.Background())
 		defer scope.Close()
 
-		svc1, _ := scope.Get(PtrTypeOf[TTransient]())
-		svc2, _ := scope.Get(PtrTypeOf[TTransient]())
+		svc1, _ := scope.Get(reflect.TypeFor[*TTransient]())
+		svc2, _ := scope.Get(reflect.TypeFor[*TTransient]())
 
 		assert.NotSame(t, svc1, svc2)
 	})
@@ -79,7 +101,7 @@ func TestScopeDisposal(t *testing.T) {
 		p := BuildProvider(t, AddScoped(NewTDisposable))
 
 		scope, _ := p.CreateScope(context.Background())
-		svc, _ := scope.Get(PtrTypeOf[TDisposable]())
+		svc, _ := scope.Get(reflect.TypeFor[*TDisposable]())
 		d := svc.(*TDisposable)
 
 		assert.False(t, d.IsClosed())
@@ -92,8 +114,8 @@ func TestScopeDisposal(t *testing.T) {
 		p := BuildProvider(t, AddTransient(NewTDisposable))
 
 		scope, _ := p.CreateScope(context.Background())
-		svc1, _ := scope.Get(PtrTypeOf[TDisposable]())
-		svc2, _ := scope.Get(PtrTypeOf[TDisposable]())
+		svc1, _ := scope.Get(reflect.TypeFor[*TDisposable]())
+		svc2, _ := scope.Get(reflect.TypeFor[*TDisposable]())
 		d1, d2 := svc1.(*TDisposable), svc2.(*TDisposable)
 
 		scope.Close()
@@ -106,7 +128,7 @@ func TestScopeDisposal(t *testing.T) {
 		p := BuildProvider(t, AddSingleton(NewTDisposable))
 
 		scope, _ := p.CreateScope(context.Background())
-		svc, _ := scope.Get(PtrTypeOf[TDisposable]())
+		svc, _ := scope.Get(reflect.TypeFor[*TDisposable]())
 		d := svc.(*TDisposable)
 
 		scope.Close()
@@ -176,7 +198,7 @@ func TestScopeDisposal(t *testing.T) {
 		c.AddSingleton(NewTDisposable)
 		p, _ := c.Build()
 
-		svc, _ := p.Get(PtrTypeOf[TDisposable]())
+		svc, _ := p.Get(reflect.TypeFor[*TDisposable]())
 		d := svc.(*TDisposable)
 
 		p.Close()
@@ -191,7 +213,7 @@ func TestScopeDisposal(t *testing.T) {
 		scope, _ := p.CreateScope(context.Background())
 		p.Close()
 
-		_, err := scope.Get(PtrTypeOf[TService]())
+		_, err := scope.Get(reflect.TypeFor[*TService]())
 		assert.ErrorIs(t, err, ErrScopeDisposed)
 	})
 }
@@ -310,8 +332,8 @@ func TestNestedScopes(t *testing.T) {
 		child, _ := parent.CreateScope(context.Background())
 		defer child.Close()
 
-		parentSvc, _ := parent.Get(PtrTypeOf[TScoped]())
-		childSvc, _ := child.Get(PtrTypeOf[TScoped]())
+		parentSvc, _ := parent.Get(reflect.TypeFor[*TScoped]())
+		childSvc, _ := child.Get(reflect.TypeFor[*TScoped]())
 
 		assert.NotSame(t, parentSvc, childSvc)
 	})
@@ -326,9 +348,9 @@ func TestNestedScopes(t *testing.T) {
 
 		parent.Close()
 
-		_, err := child.Get(PtrTypeOf[TService]())
+		_, err := child.Get(reflect.TypeFor[*TService]())
 		assert.Error(t, err)
-		_, err = grandchild.Get(PtrTypeOf[TService]())
+		_, err = grandchild.Get(reflect.TypeFor[*TService]())
 		assert.Error(t, err)
 	})
 }
@@ -346,8 +368,8 @@ func TestKeyedAndGroupedResolution(t *testing.T) {
 		scope, _ := p.CreateScope(context.Background())
 		defer scope.Close()
 
-		primary, _ := scope.GetKeyed(PtrTypeOf[TService](), "primary")
-		backup, _ := scope.GetKeyed(PtrTypeOf[TService](), "backup")
+		primary, _ := scope.GetKeyed(reflect.TypeFor[*TService](), "primary")
+		backup, _ := scope.GetKeyed(reflect.TypeFor[*TService](), "backup")
 
 		assert.Equal(t, "primary", primary.(*TService).ID)
 		assert.Equal(t, "backup", backup.(*TService).ID)
@@ -364,7 +386,7 @@ func TestKeyedAndGroupedResolution(t *testing.T) {
 		scope, _ := p.CreateScope(context.Background())
 		defer scope.Close()
 
-		handlers, err := scope.GetGroup(PtrTypeOf[TService](), "handlers")
+		handlers, err := scope.GetGroup(reflect.TypeFor[*TService](), "handlers")
 		require.NoError(t, err)
 		assert.Len(t, handlers, 3)
 	})
@@ -376,7 +398,7 @@ func TestKeyedAndGroupedResolution(t *testing.T) {
 		scope, _ := p.CreateScope(context.Background())
 		defer scope.Close()
 
-		handlers, err := scope.GetGroup(PtrTypeOf[TService](), "nonexistent")
+		handlers, err := scope.GetGroup(reflect.TypeFor[*TService](), "nonexistent")
 		require.NoError(t, err)
 		assert.Empty(t, handlers)
 	})
@@ -736,7 +758,7 @@ func TestConstructorErrors(t *testing.T) {
 		scope, _ := p.CreateScope(context.Background())
 		defer scope.Close()
 
-		_, err := scope.Get(PtrTypeOf[TService]())
+		_, err := scope.Get(reflect.TypeFor[*TService]())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "panicked")
 	})
@@ -762,7 +784,7 @@ func TestDisposedStateErrors(t *testing.T) {
 		scope, _ := p.CreateScope(context.Background())
 		scope.Close()
 
-		_, err := scope.Get(PtrTypeOf[TScoped]())
+		_, err := scope.Get(reflect.TypeFor[*TScoped]())
 		assert.ErrorIs(t, err, ErrScopeDisposed)
 	})
 
@@ -904,7 +926,7 @@ func TestScopeCloseRaceWithResolve(t *testing.T) {
 				}
 				resolverDone <- struct{}{}
 			}()
-			_, err := scope.Get(PtrTypeOf[slowScoped]())
+			_, err := scope.Get(reflect.TypeFor[*slowScoped]())
 			if err != nil && !errors.Is(err, ErrScopeDisposed) {
 				resolveErrs <- err
 			}
@@ -969,7 +991,7 @@ func TestScopedSingleFlight(t *testing.T) {
 		go func(idx int) {
 			defer wg.Done()
 			<-start
-			v, err := scope.Get(PtrTypeOf[sfSvc]())
+			v, err := scope.Get(reflect.TypeFor[*sfSvc]())
 			require.NoError(t, err)
 			results[idx] = v.(*sfSvc)
 		}(i)
@@ -1020,10 +1042,10 @@ func TestScopedMultiReturnSingleFlight(t *testing.T) {
 			defer wg.Done()
 			<-start
 			if idx%2 == 0 {
-				_, err := scope.Get(PtrTypeOf[sfLeft]())
+				_, err := scope.Get(reflect.TypeFor[*sfLeft]())
 				require.NoError(t, err)
 			} else {
-				_, err := scope.Get(PtrTypeOf[sfRight]())
+				_, err := scope.Get(reflect.TypeFor[*sfRight]())
 				require.NoError(t, err)
 			}
 		}(i)
@@ -1073,10 +1095,10 @@ func TestScopedOutStructSingleFlight(t *testing.T) {
 			defer wg.Done()
 			<-start
 			if idx%2 == 0 {
-				_, err := scope.Get(PtrTypeOf[sfOutA]())
+				_, err := scope.Get(reflect.TypeFor[*sfOutA]())
 				require.NoError(t, err)
 			} else {
-				_, err := scope.Get(PtrTypeOf[sfOutB]())
+				_, err := scope.Get(reflect.TypeFor[*sfOutB]())
 				require.NoError(t, err)
 			}
 		}(i)
@@ -1127,9 +1149,9 @@ func TestScopeCloseSurvivesDisposablePanic(t *testing.T) {
 	// Resolve recording first (index 0 in disposables), then panicky (index
 	// 1). scope.Close iterates in reverse: panicky fires first; the fix must
 	// recover and still Close() the recording disposable.
-	rec, err := scope.Get(PtrTypeOf[recordingDisposable]())
+	rec, err := scope.Get(reflect.TypeFor[*recordingDisposable]())
 	require.NoError(t, err)
-	_, err = scope.Get(PtrTypeOf[panickyDisposable]())
+	_, err = scope.Get(reflect.TypeFor[*panickyDisposable]())
 	require.NoError(t, err)
 
 	var closeErr error
@@ -1184,7 +1206,7 @@ func TestTransientResolveArgsAreScratchPooled(t *testing.T) {
 	require.NoError(t, err)
 	defer scope.Close()
 
-	tgt := PtrTypeOf[composite]()
+	tgt := reflect.TypeFor[*composite]()
 	_, err = scope.Get(tgt) // warmup
 	require.NoError(t, err)
 
@@ -1221,13 +1243,13 @@ func TestResolveDoesNotReanalyzeConstructor(t *testing.T) {
 	defer scope.Close()
 
 	// Warm up the resolver path.
-	_, err = scope.Get(PtrTypeOf[svc]())
+	_, err = scope.Get(reflect.TypeFor[*svc]())
 	require.NoError(t, err)
 
 	before := col.analyzer.AnalyzeCalls()
 	const iterations = 50
 	for range iterations {
-		_, err := scope.Get(PtrTypeOf[svc]())
+		_, err := scope.Get(reflect.TypeFor[*svc]())
 		require.NoError(t, err)
 	}
 	delta := col.analyzer.AnalyzeCalls() - before
@@ -1300,7 +1322,7 @@ func TestCreateChildScopeRacingParentClose(t *testing.T) {
 		if createErr == nil {
 			require.NotNil(t, child)
 			_ = child.Close()
-			_, err := child.Get(PtrTypeOf[TService]())
+			_, err := child.Get(reflect.TypeFor[*TService]())
 			require.ErrorIs(t, err, ErrScopeDisposed, "child must be disposed after parent close")
 		}
 
@@ -1335,7 +1357,7 @@ func TestGetKeyedNonComparableKey(t *testing.T) {
 	}
 	for _, key := range keys {
 		require.NotPanics(t, func() {
-			_, err := p.GetKeyed(PtrTypeOf[TService](), key)
+			_, err := p.GetKeyed(reflect.TypeFor[*TService](), key)
 			require.Error(t, err)
 		})
 	}

@@ -4,7 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"path/filepath"
 	"reflect"
+	"regexp"
+	"runtime"
 	"strings"
 	"time"
 
@@ -523,3 +527,118 @@ func (e ModuleError) Format(s fmt.State, verb rune)             { formatError(s,
 func (e MissingDependencyError) Format(s fmt.State, verb rune)  { formatError(s, verb, e) }
 func (e GraphOperationError) Format(s fmt.State, verb rune)     { formatError(s, verb, e) }
 func (e ReflectionAnalysisError) Format(s fmt.State, verb rune) { formatError(s, verb, e) }
+
+// ---------------------------------------------------------------------------
+// Error detail and formatting
+// ---------------------------------------------------------------------------
+
+// Explain returns err's message followed by the detail godi attaches to its
+// errors: remediation hints, "did you mean" suggestions, dependency cycles
+// drawn out, and constructor panic stack traces. It walks wrapped and joined
+// errors. Error() strings stay one line so they are safe for logs and
+// responses; use Explain (or the %+v verb) when diagnosing.
+func Explain(err error) string {
+	if err == nil {
+		return ""
+	}
+	var details []string
+	seen := make(map[string]struct{})
+	var walk func(error)
+	walk = func(e error) {
+		if e == nil {
+			return
+		}
+		if d, ok := e.(interface{ Detail() string }); ok {
+			if detail := d.Detail(); detail != "" {
+				if _, dup := seen[detail]; !dup {
+					seen[detail] = struct{}{}
+					details = append(details, detail)
+				}
+			}
+		}
+		switch u := e.(type) {
+		case interface{ Unwrap() []error }:
+			for _, inner := range u.Unwrap() {
+				walk(inner)
+			}
+		case interface{ Unwrap() error }:
+			walk(u.Unwrap())
+		}
+	}
+	walk(err)
+
+	if len(details) == 0 {
+		return err.Error()
+	}
+	return err.Error() + "\n\n" + strings.Join(details, "\n\n")
+}
+
+// formatError implements fmt.Formatter for godi errors: %+v prints Explain,
+// every other verb the one-line message.
+func formatError(s fmt.State, verb rune, err error) {
+	switch {
+	case verb == 'v' && s.Flag('+'):
+		_, _ = io.WriteString(s, Explain(err))
+	case verb == 'q':
+		_, _ = fmt.Fprintf(s, "%q", err.Error())
+	default:
+		_, _ = io.WriteString(s, err.Error())
+	}
+}
+
+// Build phases reported in BuildError.Phase.
+const (
+	PhaseInitialization      = "initialization"
+	PhaseRegistration        = "registration"
+	PhaseGraph               = "graph"
+	PhaseValidation          = "validation"
+	PhaseScopeCreation       = "scope-creation"
+	PhaseSingletonCreation   = "singleton-creation"
+	PhaseScopeInitialization = "scope-initialization"
+	PhaseCleanup             = "cleanup"
+)
+
+// formatType formats a reflect.Type for messages, package-qualified
+// ("*db.Config"): a bare type name is ambiguous across packages.
+func formatType(t reflect.Type) string {
+	if t == nil {
+		return "<nil>"
+	}
+	return t.String()
+}
+
+// majorVersionSuffix matches a module major-version path element ("v5").
+var majorVersionSuffix = regexp.MustCompile(`^v\d+\.`)
+
+// funcLocation names a function value and its source location, e.g.
+// "users.NewService (service.go:42)".
+func funcLocation(fn reflect.Value) string {
+	if !fn.IsValid() || fn.Kind() != reflect.Func || fn.IsNil() {
+		return ""
+	}
+	f := runtime.FuncForPC(fn.Pointer())
+	// Functions made with reflect.MakeFunc all run one runtime stub, whose
+	// name and location say nothing about the constructor.
+	if f == nil || strings.HasPrefix(f.Name(), "reflect.") {
+		return fn.Type().String()
+	}
+	name := f.Name()
+	// Trim the import path: "github.com/acme/users.NewService" ->
+	// "users.NewService"; a module major version names the package by the
+	// element before it: "github.com/acme/godi/v5.New" -> "godi.New".
+	if slash := strings.LastIndex(name, "/"); slash >= 0 {
+		prefix, rest := name[:slash], name[slash+1:]
+		if majorVersionSuffix.MatchString(rest) {
+			pkg := prefix[strings.LastIndex(prefix, "/")+1:]
+			if dot := strings.IndexByte(rest, '.'); dot >= 0 {
+				rest = pkg + rest[dot:]
+			}
+		}
+		name = rest
+	}
+	file, line := f.FileLine(fn.Pointer())
+	if file == "" {
+		return name
+	}
+	return fmt.Sprintf("%s (%s:%d)", name, filepath.Base(file), line)
+}
