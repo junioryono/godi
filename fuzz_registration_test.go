@@ -23,13 +23,13 @@ type (
 	fuzzRegB       struct{ ID int }
 	fuzzRegLogger  interface{ Log(string) }
 	fuzzRegConsole struct{}
-	fuzzRegErr     struct{ Msg string } // an error that can never be nil
+	fuzzRegError   struct{ Msg string } // an error that can never be nil
 )
 
-func (fuzzRegConsole) Log(string)  {}
-func (e fuzzRegErr) Error() string { return e.Msg }
-func (fuzzRegB) String() string    { return "b" }
-func (*fuzzRegA) Close() error     { return nil }
+func (fuzzRegConsole) Log(string)    {}
+func (e fuzzRegError) Error() string { return e.Msg }
+func (fuzzRegB) String() string      { return "b" }
+func (*fuzzRegA) Close() error       { return nil }
 
 var (
 	fuzzInType  = reflect.TypeFor[In]()
@@ -48,8 +48,8 @@ var (
 		reflect.TypeFor[Provider](),
 		reflect.TypeFor[Scope](),
 		reflect.TypeFor[func() int](),
-		reflect.TypeFor[fuzzRegErr](),
-		reflect.TypeFor[*fuzzRegErr](),
+		reflect.TypeFor[fuzzRegError](),
+		reflect.TypeFor[*fuzzRegError](),
 		reflect.TypeFor[int](),
 		reflect.TypeFor[map[string]int](),
 	}
@@ -456,9 +456,9 @@ var registrationSeeds = [][]byte{
 	{0, 0, 0, 0, 2, 0, 7},                 // (*A, context.Context)
 	{0, 0, 0, 0, 1, 7},                    // func() context.Context
 	{0, 0, 0, 0, 1, 4},                    // func() chan int
-	{0, 0, 0, 0, 2, 11, 6},                // (fuzzRegErr, error)
-	{0, 0, 0, 0, 1, 11},                   // func() fuzzRegErr
-	{0, 0, 0, 0, 2, 0, 12},                // (*A, *fuzzRegErr)
+	{0, 0, 0, 0, 2, 11, 6},                // (fuzzRegError, error)
+	{0, 0, 0, 0, 1, 11},                   // func() fuzzRegError
+	{0, 0, 0, 0, 2, 0, 12},                // (*A, *fuzzRegError)
 	{0, 0, 1, 1, 15, 2, 0, 1, 1, 7, 1, 0}, // void func(In{*B optional, error optional})
 	{0, 0, 1, 1, 15, 1, 0, 3, 4, 1, 1},    // In with group slice
 	{0, 0, 0, 1, 15, 1, 0, 0, 4, 1, 1},    // In with group on a non-slice

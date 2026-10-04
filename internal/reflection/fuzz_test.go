@@ -109,13 +109,13 @@ type (
 	fuzzA      struct{ ID int }
 	fuzzB      struct{ Name string }
 	fuzzLogger interface{ Log(string) }
-	// fuzzStructErr is an error whose values can never be nil.
-	fuzzStructErr struct{ msg string }
+	// fuzzStructError is an error whose values can never be nil.
+	fuzzStructError struct{ msg string }
 )
 
-func (e fuzzStructErr) Error() string { return e.msg }
-func (*fuzzA) Close() error           { return nil }
-func (e *fuzzB) String() string       { return e.Name }
+func (e fuzzStructError) Error() string { return e.msg }
+func (*fuzzA) Close() error             { return nil }
+func (e *fuzzB) String() string         { return e.Name }
 
 // typeChoice is one entry of a pool of types a generated signature draws from.
 // Struct entries are built from further fuzz bytes.
@@ -153,8 +153,8 @@ var simpleTypes = map[typeChoice]reflect.Type{
 	choiceError:        reflect.TypeFor[error](),
 	choiceContext:      reflect.TypeFor[context.Context](),
 	choiceFunc:         reflect.TypeFor[func() int](),
-	choiceStructErr:    reflect.TypeFor[fuzzStructErr](),
-	choicePtrStructErr: reflect.TypeFor[*fuzzStructErr](),
+	choiceStructErr:    reflect.TypeFor[fuzzStructError](),
+	choicePtrStructErr: reflect.TypeFor[*fuzzStructError](),
 	choiceInt:          reflect.TypeFor[int](),
 	choiceString:       reflect.TypeFor[string](),
 	choiceMap:          reflect.TypeFor[map[string]int](),
@@ -278,8 +278,8 @@ var constructorSeeds = [][]byte{
 	{0, 2, 16, 2, 0, 0, 2, 1, 4, 6},    // func() (Out{...}, error)
 	{0, 3, 17, 1, 0, 0, 0, 0, 0},       // func() (*Out, *A, *A): too many
 	{0, 2, 16, 0, 0, 0},                // func() (Out, *A): non-error second
-	{0, 1, 9},                          // func() fuzzStructErr
-	{0, 2, 0, 9},                       // func() (*A, fuzzStructErr)
+	{0, 1, 9},                          // func() fuzzStructError
+	{0, 2, 0, 9},                       // func() (*A, fuzzStructError)
 	{0, 2, 6, 6},                       // func() (error, error)
 	{0, 2, 6, 0},                       // func() (error, *A)
 	{0, 1, 4},                          // func() chan int
@@ -288,7 +288,7 @@ var constructorSeeds = [][]byte{
 	{1, 5, 1, 0},                       // func(unsafe.Pointer) *A
 	{1, 3, 1, 0, 1},                    // func(...*A) *A
 	{1, 7, 1, 7},                       // func(context.Context) context.Context
-	{0, 2, 0, 10},                      // func() (*A, *fuzzStructErr)
+	{0, 2, 0, 10},                      // func() (*A, *fuzzStructError)
 	{1, 16, 1, 0, 0, 0, 1, 0},          // Out struct used as a parameter
 	{0, 1, 14, 1, 0, 0, 0},             // In struct used as a result
 	{0, 1, 16, 3, 3, 0, 0, 1, 0, 2, 3}, // Out with group slice + keyed fields
