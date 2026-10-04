@@ -103,6 +103,33 @@ func TestStart(t *testing.T) {
 	})
 }
 
+// valueStarter is a non-pointer Starter: its copies cannot be deduplicated
+// by identity.
+type valueStarter struct{ rec *startRecorder }
+
+func (s valueStarter) Start(context.Context) error {
+	s.rec.record("value")
+	return nil
+}
+
+type startIface1 interface{ Start(context.Context) error }
+type startIface2 interface{ Start(context.Context) error }
+
+func TestStartOncePerService(t *testing.T) {
+	t.Parallel()
+	rec := &startRecorder{}
+	c := NewCollection()
+	c.AddSingleton(func() valueStarter { return valueStarter{rec: rec} },
+		As[startIface1](), As[startIface2]())
+	c.AddModules(Decorate(func(s startIface2) startIface2 { return s }))
+	p, err := c.Build()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = p.Close() })
+
+	require.NoError(t, Start(context.Background(), p))
+	assert.Equal(t, []string{"value"}, rec.order, "one construction is started once, whatever its aliases")
+}
+
 type healthyService struct{}
 
 func (healthyService) HealthCheck(context.Context) error { return nil }

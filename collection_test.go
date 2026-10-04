@@ -278,6 +278,15 @@ func TestCollectionRegistrationErrors(t *testing.T) {
 		assert.Contains(t, err.Error(), "error return must be the last return value")
 	})
 
+	t.Run("rejects_lazy_without_a_service", func(t *testing.T) {
+		t.Parallel()
+		// A void constructor has no resolvable output, so a lazy one would
+		// silently never run.
+		c := NewCollection()
+		c.AddSingleton(func(*TService) {}, Lazy())
+		require.Error(t, c.Err())
+	})
+
 	t.Run("rejects_in_field_with_name_and_group", func(t *testing.T) {
 		t.Parallel()
 		type Item struct{ ID int }

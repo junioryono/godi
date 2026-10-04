@@ -131,16 +131,18 @@ func funcLocation(fn reflect.Value) string {
 // ---------------------------------------------------------------------------
 
 // Observer receives construction and disposal events from a provider and its
-// scopes (ProviderOptions.Observer). Methods are called synchronously on the
-// goroutine doing the work, so they must be safe for concurrent use and
-// should return quickly.
-type Observer interface {
-	// Constructed reports a constructor call: its service, scope, duration
-	// and error (nil on success).
-	Constructed(*ConstructedEvent)
-	// Disposed reports a resource's cleanup, including cleanup of values
-	// produced after their owner closed, which has no caller to report to.
-	Disposed(*DisposedEvent)
+// scopes (ProviderOptions.Observer). Set the callbacks you need; nil ones are
+// skipped, and new events may be added as fields. Callbacks are called
+// synchronously on the goroutine doing the work, so they must be safe for
+// concurrent use and should return quickly.
+type Observer struct {
+	// Constructed, if set, reports a constructor call: its service, scope,
+	// duration and error (nil on success).
+	Constructed func(*ConstructedEvent)
+	// Disposed, if set, reports a resource's cleanup, including cleanup of
+	// values produced after their owner closed, which has no caller to
+	// report to.
+	Disposed func(*DisposedEvent)
 }
 
 // ConstructedEvent describes one constructor call.
@@ -179,56 +181,70 @@ type DependencyInfo struct {
 	Optional bool
 }
 
+// ServiceDescription describes a registration in a built provider: its
+// identity (ServiceInfo), constructor, and dependencies.
+type ServiceDescription struct {
+	ServiceInfo
+	// Constructor names the constructor function and its source location
+	// ("users.NewService (service.go:42)"), or the value's type for an
+	// instance registration.
+	Constructor string
+	// Dependencies are the services the constructor and its decorators
+	// receive, in parameter order.
+	Dependencies []DependencyInfo
+}
+
 // Describe returns the registrations of the provider behind p (a Provider or
 // Scope), in registration order, with their constructors and dependencies
 // (including decorators'). It constructs nothing. Render it with WriteDOT.
-func Describe(p Provider) []ServiceInfo {
+func Describe(p Provider) []ServiceDescription {
 	root := rootProviderOf(p)
 	if root == nil {
 		return nil
 	}
-	infos := make([]ServiceInfo, 0, len(root.descriptors))
+	descriptions := make([]ServiceDescription, 0, len(root.descriptors))
 	for _, d := range root.descriptors {
-		infos = append(infos, describeDescriptor(d))
+		descriptions = append(descriptions, describeDescriptor(d))
 	}
-	return infos
+	return descriptions
 }
 
-func describeDescriptor(d *descriptor) ServiceInfo {
-	info := ServiceInfo{
-		ServiceType: d.Type,
-		Key:         serviceInfoKey(d),
-		Group:       d.Group,
-		Lifetime:    d.Lifetime,
+func describeDescriptor(d *descriptor) ServiceDescription {
+	description := ServiceDescription{
+		ServiceInfo: ServiceInfo{
+			ServiceType: d.Type,
+			Key:         serviceInfoKey(d),
+			Group:       d.Group,
+			Lifetime:    d.Lifetime,
+		},
 		Constructor: d.source,
 	}
-	if len(d.Dependencies) > 0 {
-		info.Dependencies = make([]DependencyInfo, 0, len(d.Dependencies))
-		for _, dep := range d.Dependencies {
-			if dep == nil {
-				continue
-			}
-			info.Dependencies = append(info.Dependencies, DependencyInfo{
-				Type:     dep.Type,
-				Key:      dep.Key,
-				Group:    dep.Group,
-				Optional: dep.Optional,
-			})
+	for _, dep := range d.Dependencies {
+		if dep == nil {
+			continue
 		}
+		description.Dependencies = append(description.Dependencies, DependencyInfo{
+			Type:     dep.Type,
+			Key:      dep.Key,
+			Group:    dep.Group,
+			Optional: dep.Optional,
+		})
 	}
-	return info
+	return description
 }
 
-// WriteDOT writes services (from Describe or Collection.ToSlice) as a
-// Graphviz digraph with an edge from each service to each dependency:
+// WriteDOT writes services (from Describe) as a Graphviz digraph with an edge
+// from each service to each dependency:
 //
 //	godi.WriteDOT(os.Stdout, godi.Describe(provider)) // | dot -Tsvg
-func WriteDOT(w io.Writer, services []ServiceInfo) error {
+func WriteDOT(w io.Writer, services []ServiceDescription) error {
 	bw := bufio.NewWriter(w)
 	_, _ = bw.WriteString("digraph godi {\n\trankdir=LR;\n")
-	for _, s := range services {
-		node := strconv.Quote(dotNodeName(s.ServiceType, s.Key, s.Group))
-		fmt.Fprintf(bw, "\t%s [label=%s];\n", node, strconv.Quote(dotLabel(&s)))
+	for i := range services {
+		s := &services[i]
+		name := dotNodeName(s.ServiceType, s.Key, s.Group)
+		node := strconv.Quote(name)
+		fmt.Fprintf(bw, "\t%s [label=%s];\n", node, strconv.Quote(name+"\n"+s.Lifetime.String()))
 		for _, dep := range s.Dependencies {
 			target := strconv.Quote(dotNodeName(dep.Type, dep.Key, dep.Group))
 			if dep.Optional {
@@ -251,8 +267,4 @@ func dotNodeName(t reflect.Type, key any, group string) string {
 		name += fmt.Sprintf(" [group: %s]", group)
 	}
 	return name
-}
-
-func dotLabel(s *ServiceInfo) string {
-	return dotNodeName(s.ServiceType, s.Key, s.Group) + "\n" + s.Lifetime.String()
 }

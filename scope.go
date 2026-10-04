@@ -70,6 +70,10 @@ type scopeFlight struct {
 	done     chan struct{}
 	instance any
 	err      error
+
+	// waitingFor is the flight that this flight's construction is waiting
+	// on, if any (guarded by provider.waitMu); see awaitFlight.
+	waitingFor *scopeFlight
 }
 
 // resolveFrame is one in-progress constructor invocation. It is the
@@ -90,6 +94,58 @@ type resolveFrame struct {
 	// to the constructor outlives it; once the construction is over,
 	// resolutions through it are no longer part of the construction.
 	active atomic.Bool
+
+	// flight is the single-flight this construction leads, or nil
+	// (transients).
+	flight *scopeFlight
+}
+
+// awaitFlight waits for another construction's flight to finish, on behalf
+// of the construction chain ending at parent. Before waiting it checks the
+// wait-for graph: if target's construction is (transitively) waiting on a
+// flight this chain leads, waiting would deadlock — typically two services
+// resolving each other at runtime, first requested from different
+// goroutines — and a CircularDependencyError is returned instead.
+func (p *provider) awaitFlight(parent *resolveFrame, d *descriptor, target *scopeFlight) error {
+	var held []*scopeFlight
+	var path []string
+	for f := parent; f != nil; f = f.parent {
+		if f.active.Load() {
+			path = append(path, describeService(f.descriptor))
+			if f.flight != nil {
+				held = append(held, f.flight)
+			}
+		}
+	}
+	if len(held) == 0 {
+		<-target.done
+		return nil
+	}
+
+	p.waitMu.Lock()
+	for f := target; f != nil; f = f.waitingFor {
+		if slices.Contains(held, f) {
+			p.waitMu.Unlock()
+			slices.Reverse(path)
+			return &CircularDependencyError{
+				Node: describeService(d),
+				Path: append(path, describeService(d)),
+			}
+		}
+	}
+	for _, h := range held {
+		h.waitingFor = target
+	}
+	p.waitMu.Unlock()
+
+	<-target.done
+
+	p.waitMu.Lock()
+	for _, h := range held {
+		h.waitingFor = nil
+	}
+	p.waitMu.Unlock()
+	return nil
 }
 
 func (f *resolveFrame) Get(serviceType reflect.Type) (any, error) {
@@ -270,7 +326,7 @@ func newUninitializedScope(
 
 func (s *scope) initializeScopedServices() error {
 	for _, descriptor := range s.rootProvider.voidReturnScopedDescriptors {
-		if _, err := s.createInstance(nil, descriptor); err != nil {
+		if _, err := s.createInstance(nil, descriptor, nil); err != nil {
 			return &ResolutionError{
 				ServiceType: descriptor.Type,
 				ServiceKey:  descriptor.Key,
@@ -445,7 +501,11 @@ func (s *scope) shutdown(ctx context.Context) error {
 	if ctx.Done() == nil {
 		return s.closeAndWait(ctx)
 	}
-	go func() { _ = s.closeAndWait(ctx) }()
+	// Claim the teardown here so that only the first caller starts a worker;
+	// later callers just wait on its completion or their own context.
+	if s.disposed.CompareAndSwap(0, 1) {
+		go s.finishTeardown(ctx)
+	}
 	select {
 	case <-s.closeDone:
 		return s.closeErr
@@ -466,9 +526,15 @@ func (s *scope) closeAndWait(ctx context.Context) error {
 		<-s.closeDone
 		return s.closeErr
 	}
+	s.finishTeardown(ctx)
+	return s.closeErr
+}
+
+// finishTeardown runs the teardown claimed by the caller and publishes its
+// result.
+func (s *scope) finishTeardown(ctx context.Context) {
 	s.closeErr = s.teardown(ctx)
 	close(s.closeDone)
-	return s.closeErr
 }
 
 // teardown cancels the scope's context, closes its child scopes (waiting for
@@ -574,8 +640,13 @@ func (s *scope) setInstance(parent *resolveFrame, descriptor *descriptor, key in
 	case Scoped:
 		s.publishScoped(instance, dispose, key)
 	case Transient:
-		if dispose {
+		switch {
+		case dispose:
 			s.trackTransient(parent, instance)
+		case !s.isRoot || hasCachedOwner(s, parent):
+			// NoDispose: record the value as owned elsewhere so a consumer
+			// in this scope that hands it out does not adopt (and close) it.
+			s.track(instance, false)
 		}
 	}
 }
@@ -756,7 +827,9 @@ func (s *scope) resolveScopedSingleFlight(parent *resolveFrame, key instanceKey,
 	flight := raw.(*scopeFlight)
 
 	if loaded {
-		<-flight.done
+		if err := s.rootProvider.awaitFlight(parent, descriptor, flight); err != nil {
+			return nil, err
+		}
 		// Sister flights may have cached our key during their createInstance.
 		if instance, ok := s.getInstance(key); ok {
 			return cachedInstance(key, instance)
@@ -783,7 +856,7 @@ func (s *scope) resolveScopedSingleFlight(parent *resolveFrame, key instanceKey,
 		return flight.instance, flight.err
 	}
 
-	flight.instance, flight.err = s.createInstance(parent, descriptor)
+	flight.instance, flight.err = s.createInstance(parent, descriptor, flight)
 	return flight.instance, flight.err
 }
 
@@ -802,7 +875,9 @@ func (s *scope) resolveSingletonDuringBuild(parent *resolveFrame, key instanceKe
 	flight := raw.(*scopeFlight)
 
 	if loaded {
-		<-flight.done
+		if err := s.rootProvider.awaitFlight(parent, descriptor, flight); err != nil {
+			return nil, err
+		}
 		if instance, ok := s.rootProvider.getSingleton(key); ok {
 			return cachedInstance(key, instance)
 		}
@@ -826,7 +901,7 @@ func (s *scope) resolveSingletonDuringBuild(parent *resolveFrame, key instanceKe
 		return flight.instance, flight.err
 	}
 
-	flight.instance, flight.err = s.createInstance(parent, descriptor)
+	flight.instance, flight.err = s.createInstance(parent, descriptor, flight)
 	return flight.instance, flight.err
 }
 
@@ -845,6 +920,12 @@ func (s *scope) resolve(parent *resolveFrame, key instanceKey, descriptor *descr
 		if key.Key == nil && key.Group == "" {
 			switch key.Type {
 			case contextType:
+				if parent != nil {
+					// The scope found in the context (FromContext,
+					// ResolveFromContext) is attributed to the construction,
+					// like an injected Scope.
+					return context.WithValue(s.context, scopeContextKey{}, &frameScope{scope: s, frame: parent}), nil
+				}
 				return s.context, nil
 			case providerType:
 				if parent != nil {
@@ -910,7 +991,7 @@ func (s *scope) resolve(parent *resolveFrame, key instanceKey, descriptor *descr
 		if err := s.checkCycle(parent, descriptor); err != nil {
 			return nil, err
 		}
-		return s.createInstance(parent, descriptor)
+		return s.createInstance(parent, descriptor, nil)
 
 	default:
 		return nil, &LifetimeError{
@@ -923,7 +1004,7 @@ func (s *scope) resolve(parent *resolveFrame, key instanceKey, descriptor *descr
 // It handles regular constructors, result objects (Out structs), multi-return
 // constructors, and instance descriptors. parent is the construction that
 // requested this one (nil for a direct call).
-func (s *scope) createInstance(parent *resolveFrame, descriptor *descriptor) (instance any, err error) {
+func (s *scope) createInstance(parent *resolveFrame, descriptor *descriptor, flight *scopeFlight) (instance any, err error) {
 	if descriptor == nil {
 		return nil, &ValidationError{
 			ServiceType: nil,
@@ -931,10 +1012,10 @@ func (s *scope) createInstance(parent *resolveFrame, descriptor *descriptor) (in
 		}
 	}
 
-	if observer := s.rootProvider.observer; observer != nil && !descriptor.IsInstance {
+	if constructed := s.rootProvider.observer.Constructed; constructed != nil && !descriptor.IsInstance {
 		start := time.Now()
 		defer func() {
-			observer.Constructed(&ConstructedEvent{
+			constructed(&ConstructedEvent{
 				ServiceType: descriptor.Type,
 				Key:         serviceInfoKey(descriptor),
 				Lifetime:    descriptor.Lifetime,
@@ -946,6 +1027,27 @@ func (s *scope) createInstance(parent *resolveFrame, descriptor *descriptor) (in
 		}()
 	}
 
+	// The constructor's (and decorators') dependencies are resolved through
+	// a frame recording this construction as their requester where that
+	// chain is consulted: in the root scope it decides who owns the
+	// transients the construction receives (see trackTransient), and when
+	// the container itself is injected it detects re-entrance (see
+	// checkCycle). Elsewhere the frame allocation is skipped.
+	var resolver reflection.DependencyResolver = s
+	paramCount := 0
+	if descriptor.info != nil {
+		paramCount = len(descriptor.info.Parameters)
+	}
+	if (paramCount > 0 || len(descriptor.decorators) > 0) &&
+		(s.isRoot || parent != nil || descriptor.injectsContainer) {
+		frame := &resolveFrame{scope: s, parent: parent, descriptor: descriptor, flight: flight}
+		frame.active.Store(true)
+		// The construction lasts until its outputs are decorated and
+		// published.
+		defer frame.active.Store(false)
+		resolver = frame
+	}
+
 	if descriptor.IsInstance {
 		if descriptor.Instance == nil {
 			return nil, &ValidationError{
@@ -954,7 +1056,7 @@ func (s *scope) createInstance(parent *resolveFrame, descriptor *descriptor) (in
 			}
 		}
 
-		return s.publishValue(parent, descriptor, descriptor.Instance, s)
+		return s.publishValue(parent, descriptor, descriptor.Instance, resolver)
 	}
 
 	// Read the pre-analyzed constructor info stashed on the descriptor at
@@ -976,22 +1078,6 @@ func (s *scope) createInstance(parent *resolveFrame, descriptor *descriptor) (in
 	// Get cached invoker (reduces allocations)
 	invoker := s.rootProvider.analyzer.GetInvoker()
 
-	// Invoke constructor. Its dependencies are resolved through a frame
-	// recording this construction as their requester where that chain is
-	// consulted: in the root scope it decides who owns the transients the
-	// constructor receives (see trackTransient), and from a constructor
-	// that receives the container itself it detects re-entrance (see
-	// checkCycle). Elsewhere the frame allocation is skipped.
-	var resolver reflection.DependencyResolver = s
-	if (len(info.Parameters) > 0 || len(descriptor.decorators) > 0) &&
-		(s.isRoot || parent != nil || descriptor.injectsContainer) {
-		frame := &resolveFrame{scope: s, parent: parent, descriptor: descriptor}
-		frame.active.Store(true)
-		// The construction lasts until its outputs are decorated and
-		// published.
-		defer frame.active.Store(false)
-		resolver = frame
-	}
 	results, err := invoker.Invoke(info, resolver)
 	if err != nil {
 		// Check if it's a panic error and wrap appropriately
@@ -1056,59 +1142,139 @@ func (s *scope) createInstance(parent *resolveFrame, descriptor *descriptor) (in
 	return s.publishValue(parent, descriptor, instance, resolver)
 }
 
+// stagedOutput is one output of a construction, decorated and ready to
+// publish.
+type stagedOutput struct {
+	target *descriptor
+	key    instanceKey
+	// layers holds the constructed value, then each decorator's result.
+	layers    []any
+	isPrimary bool
+}
+
+func (o *stagedOutput) value() any { return o.layers[len(o.layers)-1] }
+
 // publishValue decorates and publishes the single value a constructor (or an
-// instance registration) produced for descriptor, under every interface
-// alias, and returns the value descriptor resolves to.
+// instance registration) produced for d, under every interface alias, and
+// returns the value d resolves to.
 func (s *scope) publishValue(parent *resolveFrame, d *descriptor, value any, resolver reflection.DependencyResolver) (any, error) {
 	aliased := d.isAlias && d.Lifetime != Transient && len(d.siblings) > 0
-	if !aliased {
-		decorated, err := s.decorateOutput(parent, d, value, resolver)
-		if err != nil {
-			return nil, err
+	if !aliased && len(d.decorators) == 0 {
+		// Common case, kept allocation-free: one undecorated output.
+		if d.Lifetime == Singleton {
+			s.rootProvider.recordConstructed(d.Type, value)
 		}
-		s.setInstance(parent, d, d.instanceKey(), decorated)
-		return decorated, nil
+		s.setInstance(parent, d, d.instanceKey(), value)
+		return value, nil
 	}
-	if !hasDecorators(d.siblings...) {
+	if aliased && !hasDecorators(d.siblings...) {
+		if d.Lifetime == Singleton {
+			s.rootProvider.recordConstructed(d.Type, value)
+		}
 		s.setAliasedInstance(parent, d, d.instanceKey(), value)
 		return value, nil
 	}
 
-	// Decorated aliases: each interface gets its own decorators' result.
-	decorated := make([]any, len(d.siblings))
-	for i, alias := range d.siblings {
-		v, err := applyDecorators(alias, value, resolver)
+	targets := []*descriptor{d}
+	if aliased {
+		// Decorated aliases: each interface gets its own decorators' result.
+		targets = d.siblings
+	}
+	outputs := make([]stagedOutput, len(targets))
+	for i, target := range targets {
+		outputs[i] = stagedOutput{target: target, key: target.instanceKey(), layers: []any{value}, isPrimary: target == d}
+	}
+	primary, err := s.publishOutputs(parent, d, outputs, resolver)
+	if err == nil && aliased && d.Lifetime == Singleton {
+		s.rootProvider.recordConstructed(d.Type, value)
+	}
+	return primary, err
+}
+
+// publishOutputs decorates every output, then publishes them all: either
+// every output is published, or — when a decorator fails — none is and every
+// value produced so far (constructed values and decorator results) is
+// released.
+func (s *scope) publishOutputs(
+	parent *resolveFrame,
+	requested *descriptor,
+	outputs []stagedOutput,
+	resolver reflection.DependencyResolver,
+) (primary any, err error) {
+	for i := range outputs {
+		if len(outputs[i].target.decorators) == 0 {
+			continue
+		}
+		outputs[i].layers, err = applyDecorators(outputs[i].target, outputs[i].layers[0], resolver)
 		if err != nil {
-			s.discardProduced(d, value)
+			s.discardOutputs(requested, outputs)
 			return nil, err
 		}
-		decorated[i] = v
 	}
-	s.trackProduced(parent, d, value)
-	var primary any
-	for i, alias := range d.siblings {
-		s.setInstance(parent, alias, alias.instanceKey(), decorated[i])
-		if alias == d {
-			primary = decorated[i]
+	for i := range outputs {
+		s.commitOutput(parent, &outputs[i])
+		if outputs[i].isPrimary {
+			primary = outputs[i].value()
 		}
 	}
 	return primary, nil
 }
 
-// decorateOutput applies d's decorators to value. When value is wrapped, it
-// stays owned (disposed after the wrapper); when a decorator fails, value is
-// discarded.
-func (s *scope) decorateOutput(parent *resolveFrame, d *descriptor, value any, resolver reflection.DependencyResolver) (any, error) {
-	if len(d.decorators) == 0 {
-		return value, nil
+// commitOutput takes ownership of a staged output and caches it. Of its
+// layers, godi disposes only the outermost disposable one (see ownerLayer);
+// the others are recorded as owned so no scope adopts them.
+func (s *scope) commitOutput(parent *resolveFrame, out *stagedOutput) {
+	t := out.target
+	if t.Lifetime == Singleton && !t.isAlias {
+		// Start and HealthCheck act on the constructed service, not on
+		// decorators' results. (Interface aliases share one constructed
+		// value, recorded once by publishValue.)
+		s.rootProvider.recordConstructed(t.Type, out.layers[0])
 	}
-	decorated, err := applyDecorators(d, value, resolver)
-	if err != nil {
-		s.discardProduced(d, value)
-		return nil, err
+
+	final := len(out.layers) - 1
+	owner := ownerLayer(out.layers)
+	if owner >= 0 && owner != final {
+		s.trackProduced(parent, t, out.layers[owner])
 	}
-	s.trackProduced(parent, d, value)
-	return decorated, nil
+	s.setInstance(parent, t, out.key, out.layers[final])
+	if t.Lifetime != Transient {
+		for i, layer := range out.layers[:final] {
+			if i != owner && isDisposable(layer) {
+				s.markOwned(t, layer)
+			}
+		}
+	}
+}
+
+// discardOutputs releases the values of outputs that will not be published:
+// the owning layer of each, unless something else owns it.
+func (s *scope) discardOutputs(requested *descriptor, outputs []stagedOutput) {
+	seen := make(map[disposableIdentity]struct{})
+	for _, out := range outputs {
+		owner := ownerLayer(out.layers)
+		if owner < 0 {
+			continue
+		}
+		v := out.layers[owner]
+		if identity, ok := identifyDisposable(v); ok {
+			if _, dup := seen[identity]; dup {
+				continue
+			}
+			seen[identity] = struct{}{}
+		}
+		s.discardProduced(requested, v)
+	}
+}
+
+// markOwned records v as owned without disposing it (the layer that owns it
+// will), so that no scope adopts it.
+func (s *scope) markOwned(d *descriptor, v any) {
+	if d.Lifetime == Singleton {
+		s.rootProvider.track(v, false)
+		return
+	}
+	s.track(v, false)
 }
 
 // discardProduced closes a value produced for d that will not be published,
@@ -1118,42 +1284,6 @@ func (s *scope) discardProduced(d *descriptor, value any) {
 		return
 	}
 	s.rootProvider.closeOrphan(value, s.id)
-}
-
-// producedOutput is one decorated output of a multi-output constructor,
-// ready to publish.
-type producedOutput struct {
-	target    *descriptor
-	key       instanceKey
-	value     any
-	isPrimary bool
-}
-
-// publishOutputs decorates every output, then publishes them all. A failing
-// decorator publishes nothing; the outputs not yet owned are discarded.
-func (s *scope) publishOutputs(
-	parent *resolveFrame,
-	requested *descriptor,
-	outputs []producedOutput,
-	resolver reflection.DependencyResolver,
-) (primary any, err error) {
-	for i := range outputs {
-		decorated, err := s.decorateOutput(parent, outputs[i].target, outputs[i].value, resolver)
-		if err != nil {
-			for _, rest := range outputs[i+1:] {
-				s.discardProduced(requested, rest.value)
-			}
-			return nil, err
-		}
-		outputs[i].value = decorated
-	}
-	for _, out := range outputs {
-		s.setInstance(parent, out.target, out.key, out.value)
-		if out.isPrimary {
-			primary = out.value
-		}
-	}
-	return primary, nil
 }
 
 // publishResultObject caches every field of a constructed result object (Out
@@ -1174,7 +1304,8 @@ func (s *scope) publishResultObject(
 		}
 	}
 
-	outputs := make([]producedOutput, 0, len(fields))
+	outputs := make([]stagedOutput, 0, len(fields))
+	var absent []*descriptor
 	primaryAbsent := false
 	next := 0
 	for i, field := range fields {
@@ -1216,20 +1347,23 @@ func (s *scope) publishResultObject(
 		isPrimary := target == requested ||
 			(ret.Type == requested.Type && target.Key == requested.Key && target.Group == requested.Group)
 
-		key := target.instanceKey()
 		if !field.Present {
-			s.setAbsent(target, key)
+			absent = append(absent, target)
 			if isPrimary {
 				primaryAbsent = true
 			}
 			continue
 		}
-		outputs = append(outputs, producedOutput{target: target, key: key, value: field.Value, isPrimary: isPrimary})
+		outputs = append(outputs, stagedOutput{target: target, key: target.instanceKey(), layers: []any{field.Value}, isPrimary: isPrimary})
 	}
 
 	primaryService, err := s.publishOutputs(parent, requested, outputs, resolver)
 	if err != nil {
 		return nil, err
+	}
+	// Record the absent fields only once the construction succeeded.
+	for _, target := range absent {
+		s.setAbsent(target, target.instanceKey())
 	}
 	if primaryService == nil {
 		if primaryAbsent {
@@ -1257,15 +1391,15 @@ func (s *scope) publishMultiReturn(
 	results []reflect.Value,
 	resolver reflection.DependencyResolver,
 ) (any, error) {
-	outputs := make([]producedOutput, 0, len(info.Returns))
+	outputs := make([]stagedOutput, 0, len(info.Returns))
 	if len(requested.siblings) > 0 {
 		// Cache every return value under its sibling's registration
 		// (which carries the actual key or group assigned at Add time).
 		for _, sibling := range requested.siblings {
-			outputs = append(outputs, producedOutput{
+			outputs = append(outputs, stagedOutput{
 				target:    sibling,
 				key:       sibling.instanceKey(),
-				value:     results[sibling.MultiReturnIndex].Interface(),
+				layers:    []any{results[sibling.MultiReturnIndex].Interface()},
 				isPrimary: sibling == requested,
 			})
 		}
@@ -1294,14 +1428,14 @@ func (s *scope) publishMultiReturn(
 				}
 			}
 
-			outputs = append(outputs, producedOutput{
+			outputs = append(outputs, stagedOutput{
 				target: serviceDescriptor,
 				key: instanceKey{
 					Type:  ret.Type,
 					Key:   serviceDescriptor.Key,
 					Group: serviceDescriptor.Group,
 				},
-				value:     results[ret.Index].Interface(),
+				layers:    []any{results[ret.Index].Interface()},
 				isPrimary: ret.Index == requested.MultiReturnIndex,
 			})
 		}

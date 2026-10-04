@@ -420,6 +420,18 @@ func TestReplace(t *testing.T) {
 		assert.Equal(t, "other", plain.ID, "only the matching key is replaced")
 	})
 
+	t.Run("rejects_constructors_without_a_service", func(t *testing.T) {
+		t.Parallel()
+		// A void constructor's key is generated per registration, so it
+		// could never match anything.
+		c := NewCollection()
+		c.AddSingleton(func() {})
+		c.AddModules(ReplaceSingleton(func() {}), TryAddSingleton(func() {}))
+		err := c.Err()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no service")
+	})
+
 	t.Run("nothing_to_replace_is_an_error", func(t *testing.T) {
 		t.Parallel()
 		// Unlike Remove, a Replace that matches nothing (e.g. ordered before

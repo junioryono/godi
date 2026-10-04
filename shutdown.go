@@ -2,6 +2,7 @@ package godi
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"time"
@@ -36,7 +37,8 @@ type Shutdowner interface {
 // preempted, so it keeps running in the background; a later Close waits for
 // it to finish and returns its result.
 //
-// Any other Disposable is closed the same way, bounded by ctx.
+// Any other Disposable is closed the same way, bounded by ctx; if ctx is done
+// first, the returned error matches the context error (errors.Is).
 func Shutdown(ctx context.Context, d Disposable) error {
 	if d == nil {
 		return nil
@@ -62,8 +64,20 @@ func Shutdown(ctx context.Context, d Disposable) error {
 			return err
 		default:
 		}
-		return fmt.Errorf("shutdown incomplete: %w", context.Cause(ctx))
+		return fmt.Errorf("shutdown incomplete: %w", contextFailure(ctx))
 	}
+}
+
+// contextFailure returns why ctx is done: ctx.Err(), plus a custom cause
+// (context.WithCancelCause, WithTimeoutCause) when there is one, so that both
+// errors.Is(err, context.Canceled) and errors.Is(err, cause) match.
+func contextFailure(ctx context.Context) error {
+	err := ctx.Err()
+	cause := context.Cause(ctx)
+	if cause == nil || errors.Is(cause, err) {
+		return err
+	}
+	return fmt.Errorf("%w: %w", err, cause)
 }
 
 // NoDispose is an AddOption declaring that the registered service's lifetime
@@ -148,7 +162,7 @@ func (p *provider) closeOrphan(v any, scopeID string) {
 // disposeObserved disposes v (see safeDispose) and reports it to the
 // provider's observer.
 func (p *provider) disposeObserved(ctx context.Context, v any, scopeID string) error {
-	if p == nil || p.observer == nil {
+	if p == nil || p.observer.Disposed == nil {
 		return safeDispose(ctx, v)
 	}
 	start := time.Now()
@@ -167,7 +181,7 @@ func (p *provider) disposeObserved(ctx context.Context, v any, scopeID string) e
 func shutdownIncomplete(owner string, ctx context.Context) error {
 	return &DisposalError{
 		Context: owner,
-		Errors:  []error{fmt.Errorf("shutdown incomplete, cleanup continues in the background: %w", context.Cause(ctx))},
+		Errors:  []error{fmt.Errorf("shutdown incomplete, cleanup continues in the background: %w", contextFailure(ctx))},
 	}
 }
 

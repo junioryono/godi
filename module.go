@@ -126,6 +126,9 @@ func (o *addOptions) Validate() error {
 			return &ValidationError{Cause: fmt.Errorf("cannot use both godi.Key and godi.Group")}
 		case !reflect.ValueOf(o.Key).Comparable():
 			return &ValidationError{Cause: fmt.Errorf("invalid godi.Key(%v): key of type %T is not comparable", o.Key, o.Key)}
+		case !reflect.ValueOf(o.Key).Equal(reflect.ValueOf(o.Key)):
+			// e.g. NaN: comparable, but a lookup could never match it.
+			return &ValidationError{Cause: fmt.Errorf("invalid godi.Key(%v): the key is not equal to itself", o.Key)}
 		}
 	}
 	if o.Group != "" {

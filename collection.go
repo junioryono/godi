@@ -159,13 +159,6 @@ type ServiceInfo struct {
 	Group string
 	// Lifetime is the service's lifetime (Singleton, Scoped, or Transient).
 	Lifetime Lifetime
-	// Constructor names the constructor function and its source location
-	// ("pkg.NewService (file.go:12)"), or the value's type for an instance
-	// registration.
-	Constructor string
-	// Dependencies are the services the constructor (and any decorators)
-	// receive, in parameter order.
-	Dependencies []DependencyInfo
 }
 
 // NewCollection creates a new empty Collection instance.
@@ -223,7 +216,7 @@ func (sc *collection) BuildWithOptions(options *ProviderOptions) (Provider, erro
 // observerOf returns the observer configured in options, or nil.
 func observerOf(options *ProviderOptions) Observer {
 	if options == nil {
-		return nil
+		return Observer{}
 	}
 	return options.Observer
 }
@@ -281,6 +274,7 @@ func (sc *collection) doBuild(parent, ctx context.Context, options *ProviderOpti
 			p.voidReturnScopedDescriptors = append(p.voidReturnScopedDescriptors, descriptor)
 		}
 	}
+	p.registered = p.computeRegisteredTypes()
 
 	// Phase 5: Create root scope
 	select {
@@ -397,10 +391,11 @@ func (sc *collection) plan(ctx context.Context) (*buildPlan, error) {
 
 	// Decorators add dependencies to the services they decorate, so attach
 	// them before the graph and validation see those dependencies.
-	if err := attachDecorators(decorators, services, groups); err != nil {
+	decoratorSources, err := attachDecorators(decorators, services, groups)
+	if err != nil {
 		return nil, &BuildError{
 			Phase:   PhaseRegistration,
-			Details: "decorators match no registration",
+			Details: "invalid decorators",
 			Cause:   err,
 		}
 	}
@@ -467,7 +462,7 @@ func (sc *collection) plan(ctx context.Context) (*buildPlan, error) {
 		}
 	}
 
-	if err := validateDependencies(allDescriptors, services); err != nil {
+	if err := validateDependencies(allDescriptors, services, decoratorSources); err != nil {
 		return nil, &BuildError{
 			Phase:   PhaseValidation,
 			Details: "missing dependencies",
@@ -805,7 +800,7 @@ func (r *collection) ToSlice() []ServiceInfo {
 		if d == nil {
 			continue
 		}
-		result = append(result, describeDescriptor(d))
+		result = append(result, describeDescriptor(d).ServiceInfo)
 	}
 	return result
 }
@@ -1373,7 +1368,16 @@ func validateLifetimes(all []*descriptor, services map[TypeKey]*descriptor, grou
 // service with a missing dependency would only fail at its first resolution.
 // Optional and group dependencies may legitimately be empty, and reserved
 // types (context.Context, Provider, Scope) are supplied by the container.
-func validateDependencies(all []*descriptor, services map[TypeKey]*descriptor) error {
+// dependencySource names the function that declared dep: the decorator that
+// added it, else d's constructor.
+func dependencySource(d *descriptor, dep *reflection.Dependency, decoratorSources map[*reflection.Dependency]string) string {
+	if source, ok := decoratorSources[dep]; ok {
+		return source
+	}
+	return d.source
+}
+
+func validateDependencies(all []*descriptor, services map[TypeKey]*descriptor, decoratorSources map[*reflection.Dependency]string) error {
 	var errs []error
 	// Descriptors derived from one constructor (multi-return values, result
 	// object fields, interface aliases) share its dependencies: report each
@@ -1408,7 +1412,7 @@ func validateDependencies(all []*descriptor, services map[TypeKey]*descriptor) e
 				ServiceType:    serviceType,
 				DependencyType: dep.Type,
 				DependencyKey:  dep.Key,
-				Constructor:    d.source,
+				Constructor:    dependencySource(d, dep, decoratorSources),
 			})
 		}
 	}

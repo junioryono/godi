@@ -3,8 +3,10 @@ package godi
 import (
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -24,6 +26,32 @@ type wrapGreeter struct {
 }
 
 func (w *wrapGreeter) Greet() string { return w.inner.Greet() + w.suffix }
+
+// decorateNeedingService is a decorator with a dependency.
+func decorateNeedingService(g greeter, _ *TService) greeter { return g }
+
+// plainGreeter is a decorator that is not disposable.
+type plainGreeter struct{ inner greeter }
+
+func (g plainGreeter) Greet() string { return g.inner.Greet() }
+
+// closingGreeter is a disposable decorator that closes the value it wraps.
+type closingGreeter struct {
+	TDisposable
+	inner greeter
+}
+
+func (g *closingGreeter) Greet() string { return g.inner.Greet() }
+
+func (g *closingGreeter) Close() error {
+	if err := g.TDisposable.Close(); err != nil {
+		return err
+	}
+	if c, ok := g.inner.(io.Closer); ok {
+		return c.Close()
+	}
+	return nil
+}
 
 func TestDecorate(t *testing.T) {
 	t.Parallel()
@@ -142,21 +170,145 @@ func TestDecorate(t *testing.T) {
 		require.ErrorIs(t, err, boom)
 	})
 
-	t.Run("wrapper_disposed_before_the_wrapped_value", func(t *testing.T) {
+	t.Run("a_non_disposable_decorator_leaves_the_wrapped_value_to_godi", func(t *testing.T) {
 		t.Parallel()
 		base := &baseGreeter{}
-		var wrapper *wrapGreeter
 		c := NewCollection()
 		c.AddSingleton(func() greeter { return base })
-		c.AddModules(Decorate(func(g greeter) greeter {
-			wrapper = &wrapGreeter{inner: g}
-			return wrapper
-		}))
+		c.AddModules(Decorate(func(g greeter) greeter { return plainGreeter{inner: g} }))
 		p, err := c.Build()
 		require.NoError(t, err)
 		require.NoError(t, p.Close())
-		assert.True(t, base.IsClosed(), "the undecorated value is still disposed")
-		assert.True(t, wrapper.IsClosed())
+		assert.True(t, base.IsClosed(), "the wrapped value is still disposed")
+	})
+
+	t.Run("decorator_resolving_its_own_service_reports_a_cycle", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddScoped(func() greeter { return &baseGreeter{} })
+		c.AddModules(Decorate(func(g greeter, s Scope) (greeter, error) {
+			_, err := Resolve[greeter](s)
+			return g, err
+		}))
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+		scope, err := p.CreateScope(context.Background())
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = scope.Close() })
+
+		done := make(chan error, 1)
+		go func() {
+			_, err := Resolve[greeter](scope)
+			done <- err
+		}()
+		select {
+		case err := <-done:
+			var cycle *CircularDependencyError
+			require.ErrorAs(t, err, &cycle)
+		case <-time.After(5 * time.Second):
+			t.Fatal("deadlocked: the decorator's Scope was not part of the construction")
+		}
+	})
+
+	t.Run("decorator_depending_on_a_sibling_output_is_rejected", func(t *testing.T) {
+		t.Parallel()
+		type First struct{}
+		c := NewCollection()
+		c.AddScoped(func() (*First, greeter) { return &First{}, &baseGreeter{} })
+		// Decorating greeter needs *First, which the same constructor call
+		// is still producing: it could never be resolved.
+		c.AddModules(Decorate(func(g greeter, _ *First) greeter { return g }))
+		require.Error(t, Validate(c))
+		_, err := c.Build()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "same constructor")
+	})
+
+	t.Run("indirect_dependency_on_a_sibling_output_is_rejected", func(t *testing.T) {
+		t.Parallel()
+		type First struct{}
+		type Middle struct{}
+		c := NewCollection()
+		c.AddScoped(func() (*First, greeter) { return &First{}, &baseGreeter{} })
+		c.AddScoped(func(*First) *Middle { return &Middle{} })
+		// greeter's decorator needs *Middle, which needs *First: the same
+		// construction again.
+		c.AddModules(Decorate(func(g greeter, _ *Middle) greeter { return g }))
+		err := Validate(c)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "same constructor")
+	})
+
+	t.Run("missing_decorator_dependency_names_the_decorator", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddSingleton(func() greeter { return &baseGreeter{} })
+		c.AddModules(Decorate(decorateNeedingService))
+		_, err := c.Build()
+		var missing *MissingDependencyError
+		require.ErrorAs(t, err, &missing)
+		assert.Contains(t, missing.Constructor, "decorateNeedingService")
+	})
+
+	t.Run("a_disposable_decorator_owns_what_it_wraps", func(t *testing.T) {
+		t.Parallel()
+		base := &baseGreeter{}
+		var outer, inner *closingGreeter
+		c := NewCollection()
+		c.AddSingleton(func() greeter { return base })
+		c.AddModules(
+			Decorate(func(g greeter) greeter { inner = &closingGreeter{inner: g}; return inner }),
+			Decorate(func(g greeter) greeter { outer = &closingGreeter{inner: g}; return outer }),
+		)
+		p, err := c.Build()
+		require.NoError(t, err)
+
+		// Each layer closes the value it wraps; godi closes only the
+		// outermost disposable layer, so each layer is closed exactly once
+		// (TDisposable fails on a second Close).
+		require.NoError(t, p.Close())
+		assert.True(t, outer.IsClosed())
+		assert.True(t, inner.IsClosed(), "the middle layer used to be dropped")
+		assert.True(t, base.IsClosed())
+	})
+
+	t.Run("a_failing_decorator_releases_every_produced_output", func(t *testing.T) {
+		t.Parallel()
+		var first *TDisposable
+		c := NewCollection()
+		c.AddScoped(func() (*TDisposable, greeter) {
+			first = NewTDisposable()
+			return first, &baseGreeter{}
+		})
+		c.AddModules(Decorate(func(g greeter) (greeter, error) { return nil, errors.New("boom") }))
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+		scope, err := p.CreateScope(context.Background())
+		require.NoError(t, err)
+
+		_, err = Resolve[greeter](scope)
+		require.Error(t, err)
+		require.NoError(t, scope.Close())
+		require.NotNil(t, first)
+		assert.True(t, first.IsClosed(), "the undecorated sibling must not leak")
+	})
+
+	t.Run("lifecycle_hooks_reach_the_decorated_service", func(t *testing.T) {
+		t.Parallel()
+		rec := &startRecorder{}
+		c := NewCollection()
+		c.AddSingleton(func() *startableB { return &startableB{rec: rec} })
+		c.AddModules(Decorate(func(s *startableB) *startableB { return &startableB{rec: &startRecorder{}} }))
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+
+		// Start and HealthCheck use the constructed service, not the
+		// decorators' results.
+		require.NoError(t, Start(context.Background(), p))
+		assert.Equal(t, []string{"B"}, rec.order)
 	})
 
 	t.Run("no_matching_registration_is_an_error", func(t *testing.T) {

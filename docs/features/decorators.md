@@ -31,9 +31,20 @@ store := godi.MustResolve[Store](provider) // *loggingStore wrapping *PostgresSt
   resolution of a transient.
 - **Order.** Several decorators of one service apply in registration order;
   the first is innermost.
-- **Disposal.** Both the original value and the decorator's result are
-  disposed, the decorator's result first.
-- **Matching.** It is a `Build` error if a decorator matches no registration.
+- **Disposal.** A decorator's result that is itself disposable (has `Close`
+  or `Shutdown`) owns the value it wraps: godi closes only the outermost
+  disposable layer, and that layer should close what it wraps. A wrapper that
+  is not disposable leaves the wrapped value to godi. Either way each value is
+  closed exactly once.
+- **Lifecycle hooks.** `godi.Start` and `godi.HealthCheck` act on the
+  constructed service, not on decorators' results.
+- **Restrictions.** It is a `Build` (and `Validate`) error if a decorator
+  matches no registration, or if it depends — directly or through other
+  services — on another output of the decorated service's own constructor,
+  which is still being produced when the decorator runs.
+- **Root-resolved transients.** A decorated transient resolved directly from
+  the provider is owned by the caller, like any such transient: close the
+  value you receive, so make wrappers of disposable transients disposable.
 
 ## Example: metrics around every handler
 

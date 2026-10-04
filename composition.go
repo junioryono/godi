@@ -161,6 +161,12 @@ func (sc *collection) registrationTargets(service any, lifetime Lifetime, opts [
 			Cause:       errors.New("godi.Replace and godi.TryAdd do not support godi.Group; use Remove and Add for group members"),
 		}
 	}
+	if d.VoidReturn {
+		return nil, &ValidationError{
+			ServiceType: d.Type,
+			Cause:       errors.New("godi.Replace and godi.TryAdd need a constructor that returns a service; this one returns no service"),
+		}
+	}
 	if d.info.IsResultObject {
 		return nil, &ValidationError{
 			ServiceType: d.Type,
@@ -277,6 +283,10 @@ func Invoke(p Provider, fn any) error {
 		if panicErr, ok := errors.AsType[*reflection.PanicError](err); ok {
 			return &ConstructorPanicError{Constructor: fnType, Panic: panicErr.Panic, Stack: panicErr.Stack}
 		}
+		// fn's own error is returned unchanged.
+		if returned, ok := err.(*reflection.ReturnedError); ok {
+			return returned.Err
+		}
 		return err
 	}
 	return nil
@@ -293,8 +303,7 @@ func IsService(p Provider, serviceType reflect.Type) bool {
 	if _, reserved := reservedTypes[serviceType]; reserved {
 		return true
 	}
-	root := rootProviderOf(p)
-	return root != nil && root.findDescriptor(serviceType, nil) != nil
+	return resolvableFrom(p, serviceType, nil)
 }
 
 // IsKeyedService reports whether serviceType is registered under key in p,
@@ -303,8 +312,36 @@ func IsKeyedService(p Provider, serviceType reflect.Type, key any) bool {
 	if serviceType == nil || key == nil || !reflect.ValueOf(key).Comparable() {
 		return false
 	}
+	return resolvableFrom(p, serviceType, key)
+}
+
+// resolvableFrom reports whether a registration of serviceType and key exists
+// and can be resolved from p: with ValidateScopes, scoped services cannot be
+// resolved from the root provider.
+func resolvableFrom(p Provider, serviceType reflect.Type, key any) bool {
 	root := rootProviderOf(p)
-	return root != nil && root.findDescriptor(serviceType, key) != nil
+	if root == nil {
+		return false
+	}
+	d := root.findDescriptor(serviceType, key)
+	if d == nil {
+		return false
+	}
+	return d.Lifetime != Scoped || !root.validateScopes || !resolvesFromRoot(p)
+}
+
+// resolvesFromRoot reports whether p resolves from the provider's root scope.
+func resolvesFromRoot(p Provider) bool {
+	switch v := p.(type) {
+	case *provider, *frameProvider:
+		return true
+	case *scope:
+		return v.isRoot
+	case *frameScope:
+		return v.isRoot
+	default:
+		return false
+	}
 }
 
 // rootProviderOf returns the godi provider behind p, or nil if p is not
@@ -407,31 +444,32 @@ type createdSingleton struct {
 	instance    any
 }
 
-// createdSingletons returns the singleton instances created so far, in
-// creation order, each once (interface aliases and sibling outputs share an
-// instance).
-func (p *provider) createdSingletons() []createdSingleton {
-	p.singletonKeysMu.Lock()
-	keys := append([]instanceKey(nil), p.singletonKeys...)
-	p.singletonKeysMu.Unlock()
+// recordConstructed adds a constructed singleton (before decoration) to the
+// inventory that Start and HealthCheck act on.
+func (p *provider) recordConstructed(serviceType reflect.Type, instance any) {
+	p.constructedMu.Lock()
+	p.constructed = append(p.constructed, createdSingleton{serviceType: serviceType, instance: instance})
+	p.constructedMu.Unlock()
+}
 
-	seen := make(map[any]struct{}, len(keys))
-	created := make([]createdSingleton, 0, len(keys))
-	for _, key := range keys {
-		instance, ok := p.getSingleton(key)
-		if !ok {
-			continue
-		}
-		if _, absent := instance.(absentOutput); absent {
-			continue
-		}
-		if identity, identifiable := identifyDisposable(instance); identifiable {
+// createdSingletons returns the singletons constructed so far, before
+// decoration, in creation order, each once (interface aliases and sibling
+// outputs share an instance).
+func (p *provider) createdSingletons() []createdSingleton {
+	p.constructedMu.Lock()
+	constructed := append([]createdSingleton(nil), p.constructed...)
+	p.constructedMu.Unlock()
+
+	seen := make(map[disposableIdentity]struct{}, len(constructed))
+	created := constructed[:0]
+	for _, c := range constructed {
+		if identity, identifiable := identifyDisposable(c.instance); identifiable {
 			if _, dup := seen[identity]; dup {
 				continue
 			}
 			seen[identity] = struct{}{}
 		}
-		created = append(created, createdSingleton{serviceType: key.Type, instance: instance})
+		created = append(created, c)
 	}
 	return created
 }
