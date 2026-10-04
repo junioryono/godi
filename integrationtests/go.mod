@@ -7,13 +7,13 @@ require (
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-chi/chi/v5 v5.3.2
 	github.com/gofiber/fiber/v2 v2.52.15
-	github.com/junioryono/godi/chi/v5 v5.1.0
-	github.com/junioryono/godi/echo/v5 v5.1.0
-	github.com/junioryono/godi/fiber/v5 v5.1.0
-	github.com/junioryono/godi/gin/v5 v5.1.0
-	github.com/junioryono/godi/http/v5 v5.1.0
-	github.com/junioryono/godi/huma/v5 v5.1.0
-	github.com/junioryono/godi/v5 v5.1.0
+	github.com/junioryono/godi/chi/v5 v5.2.0
+	github.com/junioryono/godi/echo/v5 v5.2.0
+	github.com/junioryono/godi/fiber/v5 v5.2.0
+	github.com/junioryono/godi/gin/v5 v5.2.0
+	github.com/junioryono/godi/http/v5 v5.2.0
+	github.com/junioryono/godi/huma/v5 v5.2.0
+	github.com/junioryono/godi/v5 v5.2.0
 	github.com/labstack/echo/v4 v4.16.0
 	go.uber.org/goleak v1.3.0
 )
@@ -36,8 +36,8 @@ require (
 	github.com/gofiber/utils/v2 v2.6.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
-	github.com/junioryono/godi/echov5/v5 v5.1.0
-	github.com/junioryono/godi/fiberv3/v5 v5.1.0
+	github.com/junioryono/godi/echov5/v5 v5.2.0
+	github.com/junioryono/godi/fiberv3/v5 v5.2.0
 	github.com/klauspost/compress v1.20.1 // indirect
 	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
 	github.com/labstack/echo/v5 v5.4.0

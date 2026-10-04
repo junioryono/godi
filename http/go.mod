@@ -3,7 +3,7 @@ module github.com/junioryono/godi/http/v5
 go 1.26.0
 
 require (
-	github.com/junioryono/godi/v5 v5.1.0
+	github.com/junioryono/godi/v5 v5.2.0
 	github.com/stretchr/testify v1.12.1
 	go.uber.org/goleak v1.3.0
 )
