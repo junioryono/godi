@@ -1321,74 +1321,84 @@ func TestConcurrentClose(t *testing.T) {
 
 	t.Run("provider_close_waits_and_returns_same_error", func(t *testing.T) {
 		t.Parallel()
-		closeErr := errors.New("provider close failed")
-		disposable := &blockingDisposable{
-			started: make(chan struct{}),
-			release: make(chan struct{}),
-			err:     closeErr,
-		}
+		synctest.Test(t, func(t *testing.T) {
+			closeErr := errors.New("provider close failed")
+			disposable := &blockingDisposable{
+				started: make(chan struct{}),
+				release: make(chan struct{}),
+				err:     closeErr,
+			}
 
-		c := NewCollection()
-		c.AddSingleton(disposable)
-		p, err := c.Build()
-		require.NoError(t, err)
+			c := NewCollection()
+			c.AddSingleton(disposable)
+			p, err := c.Build()
+			require.NoError(t, err)
 
-		firstResult := make(chan error, 1)
-		go func() { firstResult <- p.Close() }()
-		<-disposable.started
+			firstResult := make(chan error, 1)
+			go func() { firstResult <- p.Close() }()
+			<-disposable.started
 
-		secondResult := make(chan error, 1)
-		go func() { secondResult <- p.Close() }()
+			secondResult := make(chan error, 1)
+			go func() { secondResult <- p.Close() }()
 
-		select {
-		case err := <-secondResult:
-			t.Fatalf("second Close returned before cleanup completed: %v", err)
-		case <-time.After(20 * time.Millisecond):
-		}
+			// Once every goroutine is durably blocked, the second Close must
+			// be waiting for the first one's cleanup rather than returning.
+			synctest.Wait()
+			select {
+			case err := <-secondResult:
+				t.Fatalf("second Close returned before cleanup completed: %v", err)
+			default:
+			}
 
-		close(disposable.release)
-		require.ErrorIs(t, <-firstResult, closeErr)
-		require.ErrorIs(t, <-secondResult, closeErr)
-		assert.Equal(t, int64(1), disposable.calls.Load())
+			close(disposable.release)
+			require.ErrorIs(t, <-firstResult, closeErr)
+			require.ErrorIs(t, <-secondResult, closeErr)
+			assert.Equal(t, int64(1), disposable.calls.Load())
+		})
 	})
 
 	t.Run("scope_close_waits_and_returns_same_error", func(t *testing.T) {
 		t.Parallel()
-		closeErr := errors.New("scope close failed")
-		disposable := &blockingDisposable{
-			started: make(chan struct{}),
-			release: make(chan struct{}),
-			err:     closeErr,
-		}
+		synctest.Test(t, func(t *testing.T) {
+			closeErr := errors.New("scope close failed")
+			disposable := &blockingDisposable{
+				started: make(chan struct{}),
+				release: make(chan struct{}),
+				err:     closeErr,
+			}
 
-		c := NewCollection()
-		c.AddScoped(func() *blockingDisposable { return disposable })
-		p, err := c.Build()
-		require.NoError(t, err)
-		t.Cleanup(func() { _ = p.Close() })
+			c := NewCollection()
+			c.AddScoped(func() *blockingDisposable { return disposable })
+			p, err := c.Build()
+			require.NoError(t, err)
+			defer func() { _ = p.Close() }()
 
-		s, err := p.CreateScope(context.Background())
-		require.NoError(t, err)
-		_, err = Resolve[*blockingDisposable](s)
-		require.NoError(t, err)
+			s, err := p.CreateScope(context.Background())
+			require.NoError(t, err)
+			_, err = Resolve[*blockingDisposable](s)
+			require.NoError(t, err)
 
-		firstResult := make(chan error, 1)
-		go func() { firstResult <- s.Close() }()
-		<-disposable.started
+			firstResult := make(chan error, 1)
+			go func() { firstResult <- s.Close() }()
+			<-disposable.started
 
-		secondResult := make(chan error, 1)
-		go func() { secondResult <- s.Close() }()
+			secondResult := make(chan error, 1)
+			go func() { secondResult <- s.Close() }()
 
-		select {
-		case err := <-secondResult:
-			t.Fatalf("second Close returned before cleanup completed: %v", err)
-		case <-time.After(20 * time.Millisecond):
-		}
+			// Once every goroutine is durably blocked, the second Close must
+			// be waiting for the first one's cleanup rather than returning.
+			synctest.Wait()
+			select {
+			case err := <-secondResult:
+				t.Fatalf("second Close returned before cleanup completed: %v", err)
+			default:
+			}
 
-		close(disposable.release)
-		require.ErrorIs(t, <-firstResult, closeErr)
-		require.ErrorIs(t, <-secondResult, closeErr)
-		assert.Equal(t, int64(1), disposable.calls.Load())
+			close(disposable.release)
+			require.ErrorIs(t, <-firstResult, closeErr)
+			require.ErrorIs(t, <-secondResult, closeErr)
+			assert.Equal(t, int64(1), disposable.calls.Load())
+		})
 	})
 }
 

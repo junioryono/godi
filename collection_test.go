@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -1740,20 +1741,24 @@ func TestBuildCancellation(t *testing.T) {
 
 	t.Run("constructor_observes_deadline_cancellation", func(t *testing.T) {
 		t.Parallel()
-		observedCancellation := false
-		c := NewCollection()
-		c.AddSingleton(func(ctx context.Context) (*TService, error) {
-			// Cooperative constructor: block until the build deadline fires.
-			<-ctx.Done()
-			observedCancellation = true
-			return nil, ctx.Err()
+		// The bubble's fake clock fires the deadline as soon as the
+		// constructor blocks, without waiting in real time.
+		synctest.Test(t, func(t *testing.T) {
+			observedCancellation := false
+			c := NewCollection()
+			c.AddSingleton(func(ctx context.Context) (*TService, error) {
+				// Cooperative constructor: block until the build deadline fires.
+				<-ctx.Done()
+				observedCancellation = true
+				return nil, ctx.Err()
+			})
+
+			p, err := c.BuildWithOptions(&ProviderOptions{BuildTimeout: 200 * time.Millisecond})
+
+			require.ErrorIs(t, err, context.DeadlineExceeded)
+			assert.Nil(t, p)
+			assert.True(t, observedCancellation)
 		})
-
-		p, err := c.BuildWithOptions(&ProviderOptions{BuildTimeout: 200 * time.Millisecond})
-
-		require.ErrorIs(t, err, context.DeadlineExceeded)
-		assert.Nil(t, p)
-		assert.True(t, observedCancellation)
 	})
 
 	t.Run("cancellation_cleans_partial_singletons", func(t *testing.T) {
