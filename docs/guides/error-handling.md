@@ -327,10 +327,14 @@ func main() {
 
 ### 4. Get the Full Explanation
 
-Error messages are one line, safe for logs and never containing stack traces.
-`godi.Explain(err)` (or `fmt.Printf("%+v", err)`) adds the detail: remediation
-hints, "did you mean" suggestions, the dependency cycle drawn out, and the
-stack trace of a constructor panic. It walks wrapped and joined errors.
+Each godi error's message is a single line without stack traces, safe for
+logs. (An aggregate — several validation failures joined together, or a
+`DisposalError` with several failures — lists one per line.)
+`godi.Explain(err)` adds the detail: remediation hints, "did you mean"
+suggestions, the dependency cycle drawn out, and the stack trace of a
+constructor panic. It walks any wrapped or joined error, so it is the reliable
+entry point; `fmt.Printf("%+v", err)` gives the same output only when `err` is
+itself a godi error, not one wrapped with `fmt.Errorf`.
 
 ```go
 if _, err := services.Build(); err != nil {
@@ -347,32 +351,29 @@ package-qualified (`*db.Config`).
 `ProviderOptions.Observer` receives an event for every constructor call and
 every disposal, with durations and errors — including cleanup failures of
 values produced after their scope closed, which have no caller to return an
-error to:
+error to. Set the callbacks you need:
 
 ```go
-type logObserver struct{ log *slog.Logger }
-
-func (o logObserver) Constructed(e *godi.ConstructedEvent) {
-    o.log.Debug("constructed", "service", e.ServiceType, "scope", e.ScopeID,
-        "took", e.Duration, "err", e.Err)
-}
-
-func (o logObserver) Disposed(e *godi.DisposedEvent) {
-    if e.Err != nil {
-        o.log.Warn("cleanup failed", "type", e.Type, "err", e.Err)
-    }
-}
-
 provider, err := services.BuildWithOptions(&godi.ProviderOptions{
-    Observer: logObserver{log: slog.Default()},
+    Observer: godi.Observer{
+        Constructed: func(e *godi.ConstructedEvent) {
+            slog.Debug("constructed", "service", e.ServiceType, "scope", e.ScopeID,
+                "took", e.Duration, "err", e.Err)
+        },
+        Disposed: func(e *godi.DisposedEvent) {
+            if e.Err != nil {
+                slog.Warn("cleanup failed", "type", e.Type, "err", e.Err)
+            }
+        },
+    },
 })
 ```
 
 ### 6. Inspect the Graph
 
-`godi.Describe(provider)` (or `collection.ToSlice()`) lists every registration
-with its lifetime, constructor location and dependencies, without constructing
-anything. `godi.WriteDOT` renders it for Graphviz:
+`godi.Describe(provider)` lists every registration with its lifetime,
+constructor location and dependencies (including decorators'), without
+constructing anything. `godi.WriteDOT` renders it for Graphviz:
 
 ```go
 godi.WriteDOT(os.Stdout, godi.Describe(provider)) // go run . | dot -Tsvg > graph.svg

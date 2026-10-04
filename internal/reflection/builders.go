@@ -350,6 +350,15 @@ type DependencyResolver interface {
 	GetGroup(t reflect.Type, group string) ([]any, error)
 }
 
+// ReturnedError is the error a constructor (or invoked function) returned.
+type ReturnedError struct {
+	Err error
+}
+
+func (e *ReturnedError) Error() string { return "constructor error: " + e.Err.Error() }
+
+func (e *ReturnedError) Unwrap() error { return e.Err }
+
 // PanicError represents a panic that occurred during constructor invocation.
 // It captures the panic value and stack trace for debugging.
 type PanicError struct {
@@ -416,7 +425,7 @@ func (ci *ConstructorInvoker) Invoke(
 		// typed nil inside an error interface stays non-nil, as in Go.
 		if !canBeNil(lastResult.Kind()) || !lastResult.IsNil() {
 			if err, ok := lastResult.Interface().(error); ok {
-				return nil, fmt.Errorf("constructor error: %w", err)
+				return nil, &ReturnedError{Err: err}
 			}
 		}
 	}

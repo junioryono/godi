@@ -3,7 +3,10 @@ package godi
 import (
 	"context"
 	"errors"
+	"io"
+	"math"
 	"reflect"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -725,6 +728,26 @@ func TestShutdown(t *testing.T) {
 		assert.Equal(t, []string{"child", "parent"}, order)
 	})
 
+	t.Run("matches_the_context_error_with_a_custom_cause", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			stuck := &stuckCloser{release: make(chan struct{})}
+			c := NewCollection()
+			c.AddSingleton(func() *stuckCloser { return stuck })
+			p, err := c.Build()
+			require.NoError(t, err)
+
+			reason := errors.New("terminating")
+			ctx, cancel := context.WithCancelCause(context.Background())
+			cancel(reason)
+			err = Shutdown(ctx, p)
+			assert.ErrorIs(t, err, context.Canceled, "the context error must stay matchable")
+			assert.ErrorIs(t, err, reason)
+			close(stuck.release)
+			require.NoError(t, p.Close())
+		})
+	})
+
 	t.Run("bounds_any_disposable", func(t *testing.T) {
 		t.Parallel()
 		synctest.Test(t, func(t *testing.T) {
@@ -861,7 +884,8 @@ func TestInvoke(t *testing.T) {
 	t.Run("returns_the_function_error", func(t *testing.T) {
 		t.Parallel()
 		boom := errors.New("boom")
-		require.ErrorIs(t, Invoke(p, func(*TService) error { return boom }), boom)
+		// Unchanged: it is the caller's own error, not a constructor's.
+		require.Equal(t, boom, Invoke(p, func(*TService) error { return boom }))
 	})
 
 	t.Run("reports_missing_dependencies", func(t *testing.T) {
@@ -885,6 +909,22 @@ func TestIsService(t *testing.T) {
 	assert.False(t, IsKeyedService(p, PtrTypeOf[TDependency](), "other"))
 	assert.True(t, IsService(p, reflect.TypeFor[Scope]()), "the container's own types are services")
 	assert.True(t, IsService(p, reflect.TypeFor[context.Context]()))
+
+	t.Run("agrees_with_validate_scopes", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddScoped(NewTService)
+		vp, err := c.BuildWithOptions(&ProviderOptions{ValidateScopes: true})
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = vp.Close() })
+		scope, err := vp.CreateScope(context.Background())
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = scope.Close() })
+
+		// Resolving it from the provider fails with ErrScopeRequired.
+		assert.False(t, IsService(vp, PtrTypeOf[TService]()))
+		assert.True(t, IsService(scope, PtrTypeOf[TService]()))
+	})
 }
 
 // recordingObserver collects observer events.
@@ -906,6 +946,10 @@ func (o *recordingObserver) Disposed(e *DisposedEvent) {
 	o.disposed = append(o.disposed, *e)
 }
 
+func (o *recordingObserver) observer() Observer {
+	return Observer{Constructed: o.Constructed, Disposed: o.Disposed}
+}
+
 func TestObserver(t *testing.T) {
 	t.Parallel()
 
@@ -920,7 +964,7 @@ func TestObserver(t *testing.T) {
 			return d
 		})
 		c.AddScoped(NewTServiceError)
-		p, err := c.BuildWithOptions(&ProviderOptions{Observer: obs})
+		p, err := c.BuildWithOptions(&ProviderOptions{Observer: obs.observer()})
 		require.NoError(t, err)
 
 		scope, err := p.CreateScope(context.Background())
@@ -960,7 +1004,7 @@ func TestObserver(t *testing.T) {
 			d.SetCloseError(closeErr)
 			return d
 		})
-		p, err := c.BuildWithOptions(&ProviderOptions{Observer: obs})
+		p, err := c.BuildWithOptions(&ProviderOptions{Observer: obs.observer()})
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = p.Close() })
 		scope, err := p.CreateScope(context.Background())
@@ -1082,6 +1126,42 @@ func TestRegistrationValuesAndKeys(t *testing.T) {
 		c.AddSingleton(NewTService, Key([]int{1}))
 		require.Error(t, c.Err())
 	})
+
+	t.Run("key_must_equal_itself", func(t *testing.T) {
+		t.Parallel()
+		// NaN is comparable but never equal to itself, so the registration
+		// could never be found.
+		c := NewCollection()
+		c.AddSingleton(NewTService, Key(math.NaN()))
+		require.Error(t, c.Err())
+	})
+}
+
+// Not parallel: it counts goroutines.
+func TestRepeatedShutdownDoesNotLeakGoroutines(t *testing.T) {
+	stuck := &stuckCloser{release: make(chan struct{})}
+	c := NewCollection()
+	c.AddSingleton(func() *stuckCloser { return stuck })
+	p, err := c.Build()
+	require.NoError(t, err)
+
+	shutdownWithin := func(d time.Duration) {
+		ctx, cancel := context.WithTimeout(context.Background(), d)
+		defer cancel()
+		require.ErrorIs(t, Shutdown(ctx, p), context.DeadlineExceeded)
+	}
+
+	shutdownWithin(time.Millisecond) // starts the (stuck) teardown
+	before := runtime.NumGoroutine()
+	for range 20 {
+		shutdownWithin(time.Millisecond)
+	}
+	// Each timed-out Shutdown used to leave a goroutine waiting for the
+	// stuck teardown.
+	assert.Less(t, runtime.NumGoroutine()-before, 5)
+
+	close(stuck.release)
+	require.NoError(t, p.Close())
 }
 
 // funcCloser adapts a function to Disposable.
@@ -1118,6 +1198,25 @@ func TestNoDispose(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, scope.Close())
 		assert.False(t, d.IsClosed())
+	})
+
+	t.Run("transient_is_not_adopted_by_a_scoped_consumer", func(t *testing.T) {
+		t.Parallel()
+		external := NewTDisposable()
+		c := NewCollection()
+		c.AddTransient(func() *TDisposable { return external }, NoDispose())
+		// A scoped service that hands out the externally owned value.
+		c.AddScoped(func(d *TDisposable) io.Closer { return d })
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+
+		scope, err := p.CreateScope(context.Background())
+		require.NoError(t, err)
+		_, err = Resolve[io.Closer](scope)
+		require.NoError(t, err)
+		require.NoError(t, scope.Close())
+		assert.False(t, external.IsClosed(), "a NoDispose value must not be adopted")
 	})
 
 	t.Run("interface_aliases", func(t *testing.T) {

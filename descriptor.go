@@ -213,7 +213,7 @@ func newDescriptorWithAnalyzer(service any, lifetime Lifetime, analyzer *reflect
 	descriptor.isParamObject = info.IsParamObject
 	descriptor.info = info
 	for _, param := range info.Parameters {
-		if param.Key == nil && (param.Type == scopeType || param.Type == providerType) {
+		if param.Key == nil && (param.Type == scopeType || param.Type == providerType || param.Type == contextType) {
 			descriptor.injectsContainer = true
 			break
 		}
@@ -423,6 +423,12 @@ func (d *descriptor) Validate() error {
 		return &ValidationError{
 			ServiceType: d.Type,
 			Cause:       fmt.Errorf("godi.Lazy applies only to singletons; %s services are already created on demand", d.Lifetime),
+		}
+	}
+	if d.lazy && d.VoidReturn {
+		return &ValidationError{
+			ServiceType: d.Type,
+			Cause:       fmt.Errorf("godi.Lazy needs a constructor that returns a service: one that returns no service is never resolved, so it would never run"),
 		}
 	}
 	if d.VoidReturn && d.Lifetime == Transient {

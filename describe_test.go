@@ -1,6 +1,7 @@
 package godi
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -34,11 +35,14 @@ func TestDescribe(t *testing.T) {
 		assert.Equal(t, PtrTypeOf[TDependency](), withDeps.Dependencies[1].Type)
 	})
 
-	t.Run("collection_view_matches", func(t *testing.T) {
+	t.Run("service_info_stays_comparable", func(t *testing.T) {
 		t.Parallel()
+		// ServiceInfo shipped comparable in v5.1 (usable with == and as a
+		// map key); the dependency details live in ServiceDescription.
+		assert.True(t, reflect.TypeOf(ServiceInfo{}).Comparable())
 		infos := c.ToSlice()
 		require.Len(t, infos, 3)
-		assert.Len(t, infos[2].Dependencies, 2)
+		assert.True(t, Describe(p)[2].ServiceInfo == infos[2])
 	})
 
 	t.Run("dot_graph", func(t *testing.T) {

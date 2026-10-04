@@ -91,7 +91,9 @@ err := godi.Invoke(provider, func(db *sql.DB, log *slog.Logger) error {
 ```
 
 The function may take a `godi.In` parameter object and return nothing or an
-`error`. Use `godi.IsService(p, t)` and `godi.IsKeyedService(p, t, key)` to
+`error`, which `Invoke` returns unchanged. Transients it receives from the
+provider belong to the function (close them if they need it); invoke on a scope
+to have them disposed with the scope. Use `godi.IsService(p, t)` and `godi.IsKeyedService(p, t, key)` to
 check whether a type can be resolved without constructing anything.
 
 ## Start and health checks

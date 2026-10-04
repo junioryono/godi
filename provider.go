@@ -94,11 +94,24 @@ type provider struct {
 	// started is set by the first godi.Start.
 	started atomic.Bool
 
+	// registered lists the registered service types (registeredTypes).
+	// Immutable after build.
+	registered []reflect.Type
+
+	// waitMu guards scopeFlight.waitingFor, the wait-for graph between
+	// in-flight constructions (see awaitFlight).
+	waitMu sync.Mutex
+
+	// constructed lists the singletons constructed so far, before
+	// decoration, in creation order (Start, HealthCheck).
+	constructed   []createdSingleton
+	constructedMu sync.Mutex
+
 	// descriptors are the registrations in registration order (Describe).
 	// Immutable after build.
 	descriptors []*descriptor
 
-	// observer is ProviderOptions.Observer, or nil. Immutable after build.
+	// observer is ProviderOptions.Observer. Immutable after build.
 	observer Observer
 
 	// Reflection analyzer
@@ -307,7 +320,11 @@ func (p *provider) shutdown(ctx context.Context) error {
 	if ctx.Done() == nil {
 		return p.closeAndWait(ctx)
 	}
-	go func() { _ = p.closeAndWait(ctx) }()
+	// Claim the teardown here so that only the first caller starts a worker;
+	// later callers just wait on its completion or their own context.
+	if p.disposed.CompareAndSwap(0, 1) {
+		go p.finishTeardown(ctx)
+	}
 	select {
 	case <-p.closeDone:
 		return p.closeErr
@@ -328,9 +345,15 @@ func (p *provider) closeAndWait(ctx context.Context) error {
 		<-p.closeDone
 		return p.closeErr
 	}
+	p.finishTeardown(ctx)
+	return p.closeErr
+}
+
+// finishTeardown runs the teardown claimed by the caller and publishes its
+// result.
+func (p *provider) finishTeardown(ctx context.Context) {
 	p.closeErr = p.teardown(ctx)
 	close(p.closeDone)
-	return p.closeErr
 }
 
 // teardown closes the provider's scopes, then disposes its resources in
@@ -505,7 +528,12 @@ func (p *provider) findDescriptor(serviceType reflect.Type, key any) *descriptor
 
 // registeredTypes returns the distinct registered service types in
 // registration order, for "did you mean" suggestions on a failed lookup.
+// Computed once at Build.
 func (p *provider) registeredTypes() []reflect.Type {
+	return p.registered
+}
+
+func (p *provider) computeRegisteredTypes() []reflect.Type {
 	seen := make(map[reflect.Type]struct{}, len(p.descriptors))
 	types := make([]reflect.Type, 0, len(p.descriptors))
 	for _, d := range p.descriptors {

@@ -567,6 +567,71 @@ func TestDynamicCircularResolution(t *testing.T) {
 		require.ErrorAs(t, err, &cycleErr)
 	})
 
+	t.Run("cycle_across_goroutines", func(t *testing.T) {
+		t.Parallel()
+		// A and B resolve each other at runtime and are first requested from
+		// different goroutines; each constructor waits until both have
+		// started, so each nested resolution would wait on the other's
+		// in-flight construction.
+		startedA, startedB := make(chan struct{}), make(chan struct{})
+		c := NewCollection()
+		c.AddScoped(func(s Scope) (*SelfA, error) {
+			close(startedA)
+			<-startedB
+			_, err := Resolve[*SelfB](s)
+			return &SelfA{}, err
+		})
+		c.AddScoped(func(s Scope) (*SelfB, error) {
+			close(startedB)
+			<-startedA
+			_, err := Resolve[*SelfA](s)
+			return &SelfB{}, err
+		})
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+		scope, err := p.CreateScope(context.Background())
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = scope.Close() })
+
+		errA, errB := make(chan error, 1), make(chan error, 1)
+		go func() { _, err := Resolve[*SelfA](scope); errA <- err }()
+		go func() { _, err := Resolve[*SelfB](scope); errB <- err }()
+
+		var results []error
+		for _, ch := range []chan error{errA, errB} {
+			select {
+			case err := <-ch:
+				results = append(results, err)
+			case <-time.After(5 * time.Second):
+				t.Fatal("deadlocked: each goroutine waits on the other's construction")
+			}
+		}
+		var cycle *CircularDependencyError
+		assert.True(t, errors.As(results[0], &cycle) || errors.As(results[1], &cycle),
+			"the cycle is reported: %v / %v", results[0], results[1])
+	})
+
+	t.Run("cycle_through_the_injected_context", func(t *testing.T) {
+		t.Parallel()
+		// A resolves B through its context.Context during Build, and B
+		// depends on A: the scope found in the context must carry A's
+		// construction, or B waits on A's own in-progress construction.
+		c := NewCollection()
+		c.AddSingleton(func(ctx context.Context) (*SelfA, error) {
+			_, err := ResolveFromContext[*SelfB](ctx)
+			return &SelfA{}, err
+		})
+		c.AddSingleton(func(*SelfA) *SelfB { return &SelfB{} })
+
+		err := resolveWithin(t, func() error {
+			_, err := c.Build()
+			return err
+		})
+		var cycle *CircularDependencyError
+		require.ErrorAs(t, err, &cycle)
+	})
+
 	t.Run("stored_scope_is_unrestricted_after_construction", func(t *testing.T) {
 		t.Parallel()
 		type Factory struct{ Scope Scope }

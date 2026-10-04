@@ -22,6 +22,13 @@ type decoration struct {
 
 	// dependencies are the decorator's parameters after the decorated value.
 	dependencies []*reflection.Dependency
+
+	// source names the decorator function and its location.
+	source string
+
+	// injectsContainer reports whether the decorator receives godi.Scope or
+	// godi.Provider.
+	injectsContainer bool
 }
 
 // Decorate is a ModuleOption that wraps a registered service with fn, which
@@ -39,9 +46,16 @@ type decoration struct {
 // The decorated service keeps its lifetime: fn runs once per singleton, once
 // per scope for scoped services, and on every resolution of a transient.
 // Several decorators of one service apply in registration order, the first
-// innermost. Both the original value and the decorator's result are disposed,
-// the decorator's result first. It is a Build error if a decorator matches no
-// registration.
+// innermost.
+//
+// A decorator's result that is itself disposable owns the value it wraps:
+// godi disposes only the outermost disposable layer, which should close what
+// it wraps; a non-disposable wrapper leaves the wrapped value to godi. Start
+// and HealthCheck act on the constructed service, not on decorators' results.
+//
+// It is a Build error if a decorator matches no registration, or depends
+// (directly or through other services) on another output of the decorated
+// service's own constructor.
 func Decorate(fn any, opts ...AddOption) ModuleOption {
 	return func(c Collection) error {
 		sc, ok := c.(*collection)
@@ -111,11 +125,17 @@ func newDecoration(analyzer *reflection.Analyzer, fn any, opts []AddOption) (*de
 
 	dec := &decoration{
 		fn:           reflect.ValueOf(fn),
+		source:       funcLocation(reflect.ValueOf(fn)),
 		fnType:       fnType,
 		info:         info,
 		target:       target,
 		group:        options.Group,
 		dependencies: info.Dependencies()[1:],
+	}
+	for _, param := range info.Parameters[1:] {
+		if param.Key == nil && (param.Type == scopeType || param.Type == providerType || param.Type == contextType) {
+			dec.injectsContainer = true
+		}
 	}
 	dec.key = options.key()
 	return dec, nil
@@ -129,7 +149,8 @@ func attachDecorators(
 	decorators []*decoration,
 	services map[TypeKey]*descriptor,
 	groups map[GroupKey][]*descriptor,
-) error {
+) (sources map[*reflection.Dependency]string, err error) {
+	sources = make(map[*reflection.Dependency]string)
 	var errs []error
 	for _, dec := range decorators {
 		var targets []*descriptor
@@ -147,40 +168,107 @@ func attachDecorators(
 			continue
 		}
 		for _, d := range targets {
+			if err := checkDecoratorDependencies(dec, d, services, groups); err != nil {
+				errs = append(errs, err)
+				continue
+			}
 			d.decorators = append(d.decorators[:len(d.decorators):len(d.decorators)], dec)
 			d.Dependencies = append(d.Dependencies[:len(d.Dependencies):len(d.Dependencies)], dec.dependencies...)
+			for _, dep := range dec.dependencies {
+				sources[dep] = dec.source
+			}
+			// A decorator that receives the container can resolve
+			// dynamically: its construction needs a frame for cycle
+			// detection.
+			if dec.injectsContainer {
+				d.injectsContainer = true
+			}
 		}
 	}
-	return errors.Join(errs...)
+	return sources, errors.Join(errs...)
+}
+
+// checkDecoratorDependencies rejects a decorator of d that depends, directly
+// or through other services, on an output of d's own constructor: that output
+// is still being produced when the decorator runs, so it could never be
+// resolved.
+func checkDecoratorDependencies(dec *decoration, d *descriptor, services map[TypeKey]*descriptor, groups map[GroupKey][]*descriptor) error {
+	target := flightKey(d)
+	visited := make(map[*descriptor]bool)
+	var reach func(deps []*reflection.Dependency) *descriptor
+	reach = func(deps []*reflection.Dependency) *descriptor {
+		for _, dep := range deps {
+			for _, depDescriptor := range dependencyDescriptors(dep, services, groups) {
+				if flightKey(depDescriptor) == target {
+					return depDescriptor
+				}
+				if visited[depDescriptor] {
+					continue
+				}
+				visited[depDescriptor] = true
+				if hit := reach(depDescriptor.Dependencies); hit != nil {
+					return hit
+				}
+			}
+		}
+		return nil
+	}
+	if hit := reach(dec.dependencies); hit != nil {
+		return &RegistrationError{
+			ServiceType: dec.target,
+			Operation:   "decorate",
+			Cause: fmt.Errorf("decorator %s depends on %s, which the same constructor produces (%s)",
+				dec.source, formatType(hit.Type), d.source),
+		}
+	}
+	return nil
 }
 
 // applyDecorators runs d's decorators over value, resolving their
-// dependencies through resolver.
-func applyDecorators(d *descriptor, value any, resolver reflection.DependencyResolver) (any, error) {
+// dependencies through resolver. It returns every layer: value, then each
+// decorator's result. On failure the layers produced so far are returned with
+// the error, so the caller can release them.
+func applyDecorators(d *descriptor, value any, resolver reflection.DependencyResolver) ([]any, error) {
+	layers := make([]any, 1, len(d.decorators)+1)
+	layers[0] = value
 	for _, dec := range d.decorators {
 		args := make([]reflect.Value, 1, len(dec.info.Parameters))
 		args[0] = reflect.ValueOf(value)
 		for i, param := range dec.info.Parameters[1:] {
 			arg, err := resolveDecoratorParam(resolver, &dec.info.Parameters[i+1])
 			if err != nil {
-				return nil, fmt.Errorf("decorate %s: resolve %s: %w", formatType(dec.target), formatType(param.Type), err)
+				return layers, fmt.Errorf("decorate %s: resolve %s: %w", formatType(dec.target), formatType(param.Type), err)
 			}
 			args = append(args, reflect.ValueOf(arg))
 		}
 
 		results, err := callDecorator(dec, args)
 		if err != nil {
-			return nil, err
+			return layers, err
 		}
 		if len(results) == 2 && !results[1].IsNil() {
-			return nil, fmt.Errorf("decorate %s: %w", formatType(dec.target), results[1].Interface().(error))
+			return layers, fmt.Errorf("decorate %s: %w", formatType(dec.target), results[1].Interface().(error))
 		}
 		if reflection.IsNilValue(results[0]) {
-			return nil, fmt.Errorf("decorate %s: decorator returned nil", formatType(dec.target))
+			return layers, fmt.Errorf("decorate %s: decorator returned nil", formatType(dec.target))
 		}
 		value = results[0].Interface()
+		layers = append(layers, value)
 	}
-	return value, nil
+	return layers, nil
+}
+
+// ownerLayer returns the index of the layer godi disposes: the outermost
+// disposable one. A disposable decorator result owns (and closes) the value
+// it wraps; a non-disposable one leaves it to godi. It returns -1 when no
+// layer is disposable.
+func ownerLayer(layers []any) int {
+	for i := len(layers) - 1; i >= 0; i-- {
+		if isDisposable(layers[i]) {
+			return i
+		}
+	}
+	return -1
 }
 
 func resolveDecoratorParam(resolver reflection.DependencyResolver, param *reflection.ParameterInfo) (any, error) {
