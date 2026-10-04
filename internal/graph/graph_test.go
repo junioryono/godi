@@ -1003,6 +1003,40 @@ func TestResolveGroupDependencies(t *testing.T) {
 	})
 }
 
+// With several cycles, the one reported must not depend on map iteration.
+func TestDetectCycles_Deterministic(t *testing.T) {
+	type A struct{}
+	type B struct{}
+	type C struct{}
+	type D struct{}
+	typeA, typeB := reflect.TypeFor[A](), reflect.TypeFor[B]()
+	typeC, typeD := reflect.TypeFor[C](), reflect.TypeFor[D]()
+
+	report := func() string {
+		g := graph.NewDependencyGraph()
+		providers := []*testProvider{
+			{Type: typeA, Dependencies: []*reflection.Dependency{{Type: typeB}}},
+			{Type: typeB, Dependencies: []*reflection.Dependency{{Type: typeA}}},
+			{Type: typeC, Dependencies: []*reflection.Dependency{{Type: typeD}}},
+			{Type: typeD, Dependencies: []*reflection.Dependency{{Type: typeC}}},
+		}
+		for _, p := range providers {
+			assert.NoError(t, g.AddProviderDeferred(p))
+		}
+		err := g.DetectCycles()
+		if !assert.Error(t, err) {
+			return ""
+		}
+		return err.Error()
+	}
+
+	first := report()
+	assert.Contains(t, first, "graph_test.A", "the first registered cycle is reported")
+	for range 50 {
+		assert.Equal(t, first, report())
+	}
+}
+
 // BenchmarkResolveGroupDependencies measures expanding group dependencies when
 // many consumers each depend on their own value group.
 func BenchmarkResolveGroupDependencies(b *testing.B) {

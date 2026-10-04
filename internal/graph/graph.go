@@ -29,6 +29,10 @@ type Provider interface {
 type DependencyGraph struct {
 	mu    sync.RWMutex
 	nodes map[NodeKey]*Node
+	// order lists node keys in insertion order, so traversals (and so cycle
+	// reports and sort order) do not depend on map iteration. It may still
+	// hold keys of removed nodes, which traversals skip.
+	order []NodeKey
 	edges map[NodeKey][]NodeKey // adjacency list representation
 
 	// Cache for performance
@@ -94,12 +98,7 @@ func (g *DependencyGraph) AddProvider(provider Provider) error {
 	// Create or update node
 	node, exists := g.nodes[nodeKey]
 	if !exists {
-		node = &Node{
-			Key:          nodeKey,
-			Dependencies: make([]NodeKey, 0),
-			Dependents:   make([]NodeKey, 0),
-		}
-		g.nodes[nodeKey] = node
+		node = g.addNode(nodeKey)
 	}
 	node.Provider = provider
 
@@ -119,11 +118,7 @@ func (g *DependencyGraph) AddProvider(provider Provider) error {
 
 		// Ensure dependency node exists
 		if _, exists := g.nodes[depKey]; !exists {
-			g.nodes[depKey] = &Node{
-				Key:          depKey,
-				Dependencies: make([]NodeKey, 0),
-				Dependents:   make([]NodeKey, 0),
-			}
+			g.addNode(depKey)
 		}
 	}
 
@@ -168,12 +163,7 @@ func (g *DependencyGraph) AddProviderDeferred(provider Provider) error {
 	// Create or update node
 	node, exists := g.nodes[nodeKey]
 	if !exists {
-		node = &Node{
-			Key:          nodeKey,
-			Dependencies: make([]NodeKey, 0, 4),
-			Dependents:   make([]NodeKey, 0, 4),
-		}
-		g.nodes[nodeKey] = node
+		node = g.addNode(nodeKey)
 	}
 	node.Provider = provider
 
@@ -193,11 +183,7 @@ func (g *DependencyGraph) AddProviderDeferred(provider Provider) error {
 
 			// Ensure dependency node exists (minimal allocation)
 			if _, exists := g.nodes[depKey]; !exists {
-				g.nodes[depKey] = &Node{
-					Key:          depKey,
-					Dependencies: make([]NodeKey, 0, 4),
-					Dependents:   make([]NodeKey, 0, 4),
-				}
+				g.addNode(depKey)
 			}
 		}
 		node.Dependencies = dependencies
@@ -233,7 +219,8 @@ func (g *DependencyGraph) ResolveGroupDependencies() {
 
 	// Step 1: Build an index of real group members
 	groupMembers := make(map[groupIndex][]NodeKey)
-	for key, node := range g.nodes {
+	for _, key := range g.liveKeys() {
+		node := g.nodes[key]
 		if key.Group != "" && key.Key != nil && node.Provider != nil {
 			idx := groupIndex{Type: key.Type, Group: key.Group}
 			groupMembers[idx] = append(groupMembers[idx], key)
@@ -242,8 +229,8 @@ func (g *DependencyGraph) ResolveGroupDependencies() {
 
 	// Step 2: Find phantom group nodes (Group != "", Key == nil, no Provider)
 	phantoms := make(map[NodeKey]struct{})
-	for key, node := range g.nodes {
-		if isPhantomGroupNode(key, node) {
+	for _, key := range g.liveKeys() {
+		if isPhantomGroupNode(key, g.nodes[key]) {
 			phantoms[key] = struct{}{}
 		}
 	}
@@ -283,6 +270,44 @@ func (g *DependencyGraph) ResolveGroupDependencies() {
 	g.sortedNodesDirty = true
 }
 
+// addNode creates the node for key and records its insertion order. The
+// caller must hold the write lock and know that the node does not exist.
+func (g *DependencyGraph) addNode(key NodeKey) *Node {
+	node := &Node{
+		Key:          key,
+		Dependencies: make([]NodeKey, 0, 4),
+		Dependents:   make([]NodeKey, 0, 4),
+	}
+	g.nodes[key] = node
+	g.order = append(g.order, key)
+	return node
+}
+
+// liveKeys returns the keys of the existing nodes in insertion order,
+// compacting the order list past removed nodes.
+func (g *DependencyGraph) liveKeys() []NodeKey {
+	live := g.order[:0]
+	for _, key := range g.order {
+		if _, exists := g.nodes[key]; exists {
+			live = append(live, key)
+		}
+	}
+	// A node removed and re-added appears twice; keep its first position.
+	if len(live) != len(g.nodes) {
+		seen := make(map[NodeKey]struct{}, len(g.nodes))
+		unique := live[:0]
+		for _, key := range live {
+			if _, dup := seen[key]; !dup {
+				seen[key] = struct{}{}
+				unique = append(unique, key)
+			}
+		}
+		live = unique
+	}
+	g.order = live
+	return live
+}
+
 func isPhantomGroupNode(key NodeKey, node *Node) bool {
 	return key.Group != "" && key.Key == nil && node.Provider == nil
 }
@@ -296,9 +321,11 @@ func (g *DependencyGraph) updateDegrees() {
 		node.Dependents = make([]NodeKey, 0, 4) // Pre-allocate with reasonable capacity
 	}
 
-	// Calculate degrees from edges in a single pass
-	for from, tos := range g.edges {
-		if fromNode, exists := g.nodes[from]; exists {
+	// Calculate degrees from edges in a single pass, in insertion order so
+	// that dependents (and so the sort order) are deterministic.
+	for _, from := range g.liveKeys() {
+		tos, hasEdges := g.edges[from]
+		if fromNode := g.nodes[from]; hasEdges {
 			fromNode.OutDegree = len(tos)
 			fromNode.Dependencies = make([]NodeKey, len(tos))
 			copy(fromNode.Dependencies, tos)
@@ -334,15 +361,16 @@ func (g *DependencyGraph) TopologicalSort() ([]*Node, error) {
 
 	// Create working copies of dependency counts
 	// We need to count how many dependencies each node has
-	depCounts := make(map[NodeKey]int)
-	for key, node := range g.nodes {
-		depCounts[key] = len(node.Dependencies)
+	keys := g.liveKeys()
+	depCounts := make(map[NodeKey]int, len(keys))
+	for _, key := range keys {
+		depCounts[key] = len(g.nodes[key].Dependencies)
 	}
 
-	// Find all nodes with no dependencies
+	// Find all nodes with no dependencies, in insertion order
 	queue := make([]NodeKey, 0)
-	for key, count := range depCounts {
-		if count == 0 {
+	for _, key := range keys {
+		if depCounts[key] == 0 {
 			queue = append(queue, key)
 		}
 	}
@@ -395,7 +423,7 @@ func (g *DependencyGraph) DetectCycles() error {
 	// Check each node for cycles using DFS, sharing the visited set across
 	// starting points so each node is explored at most once.
 	visited := make(map[NodeKey]bool, len(g.nodes))
-	for key := range g.nodes {
+	for _, key := range g.liveKeys() {
 		if !visited[key] {
 			if err := g.detectCyclesFrom(key, visited); err != nil {
 				return err

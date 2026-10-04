@@ -178,7 +178,7 @@ func (sc *collection) BuildWithContext(ctx context.Context) (Provider, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return sc.doBuild(ctx, ctx)
+	return sc.doBuild(ctx, ctx, nil)
 }
 
 // BuildWithOptions creates a Provider with custom options for validation and behavior configuration.
@@ -193,13 +193,13 @@ func (sc *collection) BuildWithOptions(options *ProviderOptions) (Provider, erro
 		defer cancel()
 	}
 
-	return sc.doBuild(context.Background(), ctx)
+	return sc.doBuild(context.Background(), ctx, options)
 }
 
 // doBuild builds a provider. parent becomes the parent of the provider's root
 // context; ctx bounds the build itself and is visible (deadline and
-// cancellation) to constructors that run during Build.
-func (sc *collection) doBuild(parent, ctx context.Context) (Provider, error) {
+// cancellation) to constructors that run during Build. options may be nil.
+func (sc *collection) doBuild(parent, ctx context.Context, options *ProviderOptions) (Provider, error) {
 	// Check context before starting
 	select {
 	case <-ctx.Done():
@@ -293,7 +293,7 @@ func (sc *collection) doBuild(parent, ctx context.Context) (Provider, error) {
 	default:
 	}
 
-	if err := validateLifetimes(services, groups); err != nil {
+	if err := validateLifetimes(allDescriptors, services, groups); err != nil {
 		return nil, &BuildError{
 			Phase:   "validation",
 			Details: "lifetime validation failed",
@@ -322,7 +322,8 @@ func (sc *collection) doBuild(parent, ctx context.Context) (Provider, error) {
 		id:                          "p" + strconv.FormatUint(providerIDCounter.Add(1), 36),
 		services:                    services,
 		groups:                      groups,
-		graph:                       g,
+		singletonOrder:              singletonsInCreationOrder(allDescriptors, services, groups),
+		validateScopes:              options != nil && options.ValidateScopes,
 		analyzer:                    sc.analyzer, // Share analyzer from collection
 		singletonKeys:               make([]instanceKey, 0, len(allDescriptors)),
 		voidReturnScopedDescriptors: make([]*descriptor, 0, voidCount),
@@ -375,13 +376,17 @@ func (sc *collection) doBuild(parent, ctx context.Context) (Provider, error) {
 
 	// Phase 7: Initialize root-scoped side-effect constructors only after all
 	// singletons exist. Request/child scopes still initialize them in newScope.
-	if err := p.rootScope.initializeScopedServices(); err != nil {
-		buildErr := &BuildError{
-			Phase:   "scope-initialization",
-			Details: "failed to initialize root scoped services",
-			Cause:   err,
+	// With ValidateScopes the root scope holds no scoped services, so it runs
+	// no scoped initializers either.
+	if !p.validateScopes {
+		if err := p.rootScope.initializeScopedServices(); err != nil {
+			buildErr := &BuildError{
+				Phase:   "scope-initialization",
+				Details: "failed to initialize root scoped services",
+				Cause:   err,
+			}
+			return nil, joinBuildCleanupError(buildErr, p.Close())
 		}
-		return nil, joinBuildCleanupError(buildErr, p.Close())
 	}
 	if err := ctx.Err(); err != nil {
 		buildErr := &BuildError{
@@ -717,12 +722,21 @@ func (r *collection) ToSlice() []ServiceInfo {
 		}
 		result = append(result, ServiceInfo{
 			ServiceType: d.Type,
-			Key:         d.Key,
+			Key:         serviceInfoKey(d),
 			Group:       d.Group,
 			Lifetime:    d.Lifetime,
 		})
 	}
 	return result
+}
+
+// serviceInfoKey returns the key a caller can resolve d with, hiding keys
+// godi generated internally (void initializers, group member positions).
+func serviceInfoKey(d *descriptor) any {
+	if d.syntheticKey {
+		return nil
+	}
+	return d.Key
 }
 
 // Count returns the number of registered services in the collection.
@@ -1186,6 +1200,7 @@ func (r *collection) registerDescriptor(descriptor *descriptor) error {
 
 		// Set a numeric key for group members
 		descriptor.Key = len(r.groups[groupKey])
+		descriptor.syntheticKey = true
 	}
 
 	// Track in allDescriptors for efficient iteration
@@ -1194,99 +1209,83 @@ func (r *collection) registerDescriptor(descriptor *descriptor) error {
 	return nil
 }
 
-// validateLifetimes ensures singleton and transient services don't depend on scoped services.
-// This validation prevents runtime errors where:
-// - A singleton (created once) would incorrectly hold a reference to a scoped service
-// - A transient (created per request) could outlive and hold a reference to a disposed scoped service
-func validateLifetimes(services map[TypeKey]*descriptor, groups map[GroupKey][]*descriptor) error {
-	// Create a map of service lifetimes
-	lifetimes := make(map[instanceKey]Lifetime)
-
-	// Populate lifetimes from all services
-	for serviceType, descriptor := range services {
-		if descriptor != nil {
-			key := instanceKey{Type: serviceType.Type, Key: descriptor.Key}
-			lifetimes[key] = descriptor.Lifetime
-		}
+// validateLifetimes rejects singletons that capture a scoped service, either
+// directly or through a chain of transients: the singleton would keep one
+// scope's instance for the application's lifetime. Every conflict is
+// reported, in registration order.
+//
+// Transients may depend on scoped services: resolved from a scope, they share
+// that scope's instances. (Resolving them from the root provider is what
+// ProviderOptions.ValidateScopes rejects.)
+func validateLifetimes(all []*descriptor, services map[TypeKey]*descriptor, groups map[GroupKey][]*descriptor) error {
+	// scopedReach memoizes, per descriptor, the scoped service reachable
+	// from it through transients only, and the transients on the way.
+	type reach struct {
+		scoped *descriptor
+		via    []*descriptor
 	}
-
-	for groupKey, descriptors := range groups {
-		for _, descriptor := range descriptors {
-			if descriptor != nil {
-				key := instanceKey{Type: groupKey.Type, Key: descriptor.Key, Group: groupKey.Group}
-				lifetimes[key] = descriptor.Lifetime
+	memo := make(map[*descriptor]*reach)
+	var reachScoped func(d *descriptor) *reach
+	reachScoped = func(d *descriptor) *reach {
+		switch d.Lifetime {
+		case Scoped:
+			return &reach{scoped: d}
+		case Transient:
+			if r, ok := memo[d]; ok {
+				return r
 			}
-		}
-	}
-
-	checkDescriptor := func(descriptor *descriptor) error {
-		if descriptor == nil {
-			return nil
-		}
-
-		// Skip scoped services - they can depend on anything
-		if descriptor.Lifetime == Scoped {
-			return nil
-		}
-
-		// Both Singleton and Transient cannot depend on Scoped
-		for _, dep := range descriptor.Dependencies {
-			if dep == nil {
-				continue
-			}
-
-			// Group dependencies have Key=nil but group members have numeric keys.
-			// Check each member's lifetime individually.
-			if dep.Group != "" && dep.Key == nil {
-				groupKey := GroupKey{Type: dep.Type, Group: dep.Group}
-				for _, memberDesc := range groups[groupKey] {
-					if memberDesc != nil && memberDesc.Lifetime == Scoped {
-						return &LifetimeConflictError{
-							ServiceType:        descriptor.Type,
-							ServiceLifetime:    descriptor.Lifetime,
-							DependencyType:     dep.Type,
-							DependencyLifetime: Scoped,
-						}
+			memo[d] = &reach{} // the graph is acyclic; this only guards re-entry
+			for _, dep := range d.Dependencies {
+				for _, depDescriptor := range dependencyDescriptors(dep, services, groups) {
+					if r := reachScoped(depDescriptor); r.scoped != nil {
+						found := &reach{scoped: r.scoped, via: append([]*descriptor{d}, r.via...)}
+						memo[d] = found
+						return found
 					}
 				}
-				continue
 			}
+			return memo[d]
+		default:
+			// A singleton dependency is validated as a singleton itself.
+			return &reach{}
+		}
+	}
 
-			depKey := instanceKey{Type: dep.Type, Key: dep.Key, Group: dep.Group}
-			depLifetime, ok := lifetimes[depKey]
-			if !ok {
-				continue
-			}
-
-			if depLifetime == Scoped {
-				return &LifetimeConflictError{
-					ServiceType:        descriptor.Type,
-					ServiceLifetime:    descriptor.Lifetime,
-					DependencyType:     dep.Type,
-					DependencyLifetime: depLifetime,
+	var errs []error
+	reported := make(map[any]struct{})
+	for _, d := range all {
+		if d == nil || d.Lifetime != Singleton {
+			continue
+		}
+		// Sibling outputs of one constructor share its dependencies.
+		fkey := flightKey(d)
+		if _, done := reported[fkey]; done {
+			continue
+		}
+	dependencies:
+		for _, dep := range d.Dependencies {
+			for _, depDescriptor := range dependencyDescriptors(dep, services, groups) {
+				r := reachScoped(depDescriptor)
+				if r.scoped == nil {
+					continue
 				}
-			}
-		}
-
-		return nil
-	}
-
-	// Check all services
-	for _, descriptor := range services {
-		if err := checkDescriptor(descriptor); err != nil {
-			return err
-		}
-	}
-
-	for _, descriptors := range groups {
-		for _, descriptor := range descriptors {
-			if err := checkDescriptor(descriptor); err != nil {
-				return err
+				via := make([]reflect.Type, len(r.via))
+				for i, transient := range r.via {
+					via[i] = transient.Type
+				}
+				errs = append(errs, &LifetimeConflictError{
+					ServiceType:        d.Type,
+					ServiceLifetime:    Singleton,
+					DependencyType:     r.scoped.Type,
+					DependencyLifetime: Scoped,
+					Via:                via,
+				})
+				reported[fkey] = struct{}{}
+				break dependencies
 			}
 		}
 	}
-
-	return nil
+	return errors.Join(errs...)
 }
 
 // validateDependencies reports every required constructor dependency that has

@@ -1451,6 +1451,163 @@ func TestBuildWithOptions(t *testing.T) {
 	})
 }
 
+func TestLifetimeRules(t *testing.T) {
+	t.Parallel()
+
+	type Unit struct{ ID int }
+	type Handler struct{ Unit *Unit }
+	type Cache struct{ Handler *Handler }
+
+	t.Run("transient_may_depend_on_scoped", func(t *testing.T) {
+		t.Parallel()
+		var units atomic.Int32
+		c := NewCollection()
+		c.AddScoped(func() *Unit { return &Unit{ID: int(units.Add(1))} })
+		c.AddTransient(func(u *Unit) *Handler { return &Handler{Unit: u} })
+
+		// A fresh-per-use handler sharing the request's unit of work used to
+		// be rejected at Build.
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+		scope, err := p.CreateScope(context.Background())
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = scope.Close() })
+
+		h1, err := Resolve[*Handler](scope)
+		require.NoError(t, err)
+		h2, err := Resolve[*Handler](scope)
+		require.NoError(t, err)
+		assert.NotSame(t, h1, h2)
+		assert.Same(t, h1.Unit, h2.Unit, "transients in one scope share its scoped services")
+	})
+
+	t.Run("singleton_capturing_scoped_through_transient_is_rejected", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddScoped(func() *Unit { return &Unit{} })
+		c.AddTransient(func(u *Unit) *Handler { return &Handler{Unit: u} })
+		c.AddSingleton(func(h *Handler) *Cache { return &Cache{Handler: h} })
+
+		_, err := c.Build()
+		var conflict *LifetimeConflictError
+		require.ErrorAs(t, err, &conflict)
+		assert.Equal(t, reflect.TypeFor[*Cache](), conflict.ServiceType)
+		assert.Equal(t, reflect.TypeFor[*Unit](), conflict.DependencyType)
+		assert.Equal(t, []reflect.Type{reflect.TypeFor[*Handler]()}, conflict.Via)
+		assert.Contains(t, err.Error(), "*Handler")
+	})
+
+	t.Run("conflicts_are_reported_together_in_registration_order", func(t *testing.T) {
+		t.Parallel()
+		type SingletonA struct{}
+		type SingletonB struct{}
+		build := func() error {
+			c := NewCollection()
+			c.AddScoped(func() *Unit { return &Unit{} })
+			c.AddSingleton(func(*Unit) *SingletonA { return &SingletonA{} })
+			c.AddSingleton(func(*Unit) *SingletonB { return &SingletonB{} })
+			_, err := c.Build()
+			return err
+		}
+
+		first := build()
+		require.Error(t, first)
+		msg := first.Error()
+		assert.Less(t, strings.Index(msg, "SingletonA"), strings.Index(msg, "SingletonB"))
+		assert.Greater(t, strings.Index(msg, "SingletonB"), -1, "every conflict is reported")
+		for range 20 {
+			assert.Equal(t, msg, build().Error(), "validation errors must be deterministic")
+		}
+	})
+}
+
+func TestBuildOrder(t *testing.T) {
+	t.Parallel()
+
+	t.Run("independent_singletons_follow_registration_order", func(t *testing.T) {
+		t.Parallel()
+		type S0 struct{}
+		type S1 struct{}
+		type S2 struct{}
+		type S3 struct{}
+		type S4 struct{}
+		type S5 struct{}
+		for range 20 {
+			var order []string
+			record := func(name string) { order = append(order, name) }
+			c := NewCollection()
+			c.AddSingleton(func() *S0 { record("S0"); return &S0{} })
+			c.AddSingleton(func() *S1 { record("S1"); return &S1{} })
+			c.AddSingleton(func() *S2 { record("S2"); return &S2{} })
+			c.AddSingleton(func() *S3 { record("S3"); return &S3{} })
+			c.AddSingleton(func() *S4 { record("S4"); return &S4{} })
+			c.AddSingleton(func() *S5 { record("S5"); return &S5{} })
+			p, err := c.Build()
+			require.NoError(t, err)
+			require.NoError(t, p.Close())
+			// Construction (and so disposal) order used to follow map
+			// iteration and change from run to run.
+			require.Equal(t, []string{"S0", "S1", "S2", "S3", "S4", "S5"}, order)
+		}
+	})
+
+	t.Run("dependencies_are_created_first", func(t *testing.T) {
+		t.Parallel()
+		var order []string
+		c := NewCollection()
+		c.AddSingleton(func(*TDependency) *TService { order = append(order, "service"); return &TService{} })
+		c.AddSingleton(func() *TDependency { order = append(order, "dependency"); return &TDependency{} })
+		p, err := c.Build()
+		require.NoError(t, err)
+		require.NoError(t, p.Close())
+		assert.Equal(t, []string{"dependency", "service"}, order)
+	})
+
+	t.Run("singleton_resolved_dynamically_during_build", func(t *testing.T) {
+		t.Parallel()
+		type Early struct{ Late *TService }
+		for range 20 {
+			var lateCalls atomic.Int32
+			c := NewCollection()
+			// Early resolves Late at runtime, so the static graph cannot
+			// order them; Late is registered (and so ordered) after Early.
+			c.AddSingleton(func(p Provider) (*Early, error) {
+				late, err := Resolve[*TService](p)
+				return &Early{Late: late}, err
+			})
+			c.AddSingleton(func() *TService { lateCalls.Add(1); return NewTService() })
+
+			p, err := c.Build()
+			require.NoError(t, err, "a singleton needed during Build is created on demand")
+			early, err := Resolve[*Early](p)
+			require.NoError(t, err)
+			late, err := Resolve[*TService](p)
+			require.NoError(t, err)
+			assert.Same(t, late, early.Late)
+			assert.Equal(t, int32(1), lateCalls.Load())
+			require.NoError(t, p.Close())
+		}
+	})
+}
+
+func TestToSliceHidesInternalKeys(t *testing.T) {
+	t.Parallel()
+	c := NewCollection()
+	c.AddScoped(func() {})                         // void initializer
+	c.AddSingleton(NewTService, Group("services")) // group member
+	c.AddSingleton(NewTDependency, Name("dep"))    // real key
+
+	infos := c.ToSlice()
+	require.Len(t, infos, 3)
+	// Void initializers get a synthetic key and group members a positional
+	// one; neither is a key a caller can resolve with.
+	assert.Nil(t, infos[0].Key)
+	assert.Nil(t, infos[1].Key)
+	assert.Equal(t, "services", infos[1].Group)
+	assert.Equal(t, "dep", infos[2].Key)
+}
+
 // ToSlice returns a read-only ServiceInfo view exposing identity + lifetime,
 // not the internal descriptor.
 func TestToSliceServiceInfo(t *testing.T) {

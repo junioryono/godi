@@ -154,10 +154,13 @@ builder2 := godi.MustResolve[*EmailBuilder](provider)
 
 ## The Golden Rule
 
-**Only scoped services may depend on scoped services.**
+**A singleton must never hold a scoped service.**
 
-Scoped services can depend on anything. Singletons and transients cannot
-depend on scoped services — godi rejects both at build time.
+Scoped and transient services can depend on anything. A singleton cannot depend
+on a scoped service — directly, or through a chain of transients — and godi
+rejects that at build time. Resolve scoped services (and transients that need
+them) from a scope, never from the root provider; set
+`ProviderOptions.ValidateScopes` to have godi enforce it (see below).
 
 ### Valid Dependencies
 
@@ -182,10 +185,19 @@ services.AddScoped(func(ctx *RequestContext) *Handler {
 
 // ✓ Singleton depending on Transient
 // Allowed: the transient is created once at build and captured
-// by the singleton for its whole lifetime.
+// by the singleton for its whole lifetime (so it must be safe for
+// concurrent use, like the singleton itself).
 services.AddTransient(NewIDGenerator)
 services.AddSingleton(func(gen *IDGenerator) *Storage {
     return &Storage{gen: gen}
+})
+
+// ✓ Transient depending on Scoped
+// A fresh handler per use, sharing the request's unit of work.
+// Resolve it from the request scope.
+services.AddScoped(NewUnitOfWork)
+services.AddTransient(func(uow *UnitOfWork) *CreateOrderHandler {
+    return &CreateOrderHandler{uow: uow}
 })
 ```
 
@@ -201,15 +213,40 @@ services.AddSingleton(func(ctx *RequestContext) *Cache {
 // is destroyed when the scope closes. The singleton would
 // hold a dangling reference.
 
-// ✗ Transient depending on Scoped
+// ✗ Singleton reaching Scoped through a Transient
 services.AddScoped(NewRequestContext)
 services.AddTransient(func(ctx *RequestContext) *Handler {
-    return &Handler{ctx: ctx}  // Build error!
+    return &Handler{ctx: ctx}
 })
-// Why? A transient can be resolved from the root provider or
-// outlive the scope it was created in, so it could hold a
-// reference to a disposed scoped service.
+services.AddSingleton(func(h *Handler) *Router {
+    return &Router{h: h}  // Build error! (via *Handler)
+})
+// Why? The singleton is built once, so its transient Handler
+// (and the scoped value inside it) would be captured forever.
 ```
+
+### Validating Scopes at Runtime
+
+Resolving a scoped service from the root provider caches it in the root scope
+for the whole application — one "per-request" instance shared by every request,
+with no error. Turn on scope validation to reject it:
+
+```go
+provider, err := services.BuildWithOptions(&godi.ProviderOptions{
+    ValidateScopes: true,
+})
+
+godi.Resolve[*RequestContext](provider)  // error: godi.ErrScopeRequired
+
+scope, _ := provider.CreateScope(ctx)
+defer scope.Close()
+godi.Resolve[*RequestContext](scope)     // ✓
+```
+
+With `ValidateScopes`, transients that need scoped services must also be
+resolved from a scope, and the root scope runs no scoped initializers. It is
+recommended for all applications and will be the default in the next major
+version.
 
 ## Performance Considerations
 

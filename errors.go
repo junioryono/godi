@@ -32,6 +32,11 @@ var (
 	ErrProviderDisposed = errors.New("service provider has been disposed")
 	ErrScopeDisposed    = errors.New("scope has been disposed")
 
+	// ErrScopeRequired is the cause reported when ProviderOptions.ValidateScopes
+	// is set and a scoped service is resolved from the provider's root scope
+	// rather than from a scope created with CreateScope.
+	ErrScopeRequired = errors.New("scoped service resolved from the root provider; resolve it from a scope created with CreateScope")
+
 	// Validation errors.
 	ErrConstructorNil          = errors.New("constructor cannot be nil")
 	ErrGroupNameEmpty          = errors.New("group name cannot be empty")
@@ -87,32 +92,38 @@ type LifetimeConflictError struct {
 	ServiceLifetime    Lifetime
 	DependencyType     reflect.Type
 	DependencyLifetime Lifetime
+	// Via lists the transient services through which ServiceType reaches
+	// DependencyType, in dependency order; empty for a direct dependency.
+	Via []reflect.Type
 }
 
 func (e LifetimeConflictError) Error() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "lifetime conflict: %s (%s) cannot depend on %s (%s)\n\n",
+	fmt.Fprintf(&b, "lifetime conflict: %s (%s) cannot depend on %s (%s)",
 		formatType(e.ServiceType), e.ServiceLifetime,
 		formatType(e.DependencyType), e.DependencyLifetime)
+	if len(e.Via) > 0 {
+		via := make([]string, len(e.Via))
+		for i, t := range e.Via {
+			via[i] = formatType(t)
+		}
+		fmt.Fprintf(&b, " (via %s)", strings.Join(via, " -> "))
+	}
+	b.WriteString("\n\n")
 
 	// Explain the issue
-	switch e.ServiceLifetime {
-	case Singleton:
+	if e.ServiceLifetime == Singleton {
 		b.WriteString("Singleton services are created once and live for the application lifetime.\n")
 		b.WriteString("Scoped services are created per-scope and may have different values in different scopes.\n\n")
 		b.WriteString("A singleton depending on a scoped service would capture a single scope's value,\n")
 		b.WriteString("which is almost certainly not what you want.\n\n")
-	case Transient:
-		b.WriteString("Transient services are created every time they are resolved.\n")
-		b.WriteString("Scoped services are created per-scope and may have different values in different scopes.\n\n")
-		b.WriteString("A transient depending on a scoped service could outlive and hold a reference\n")
-		b.WriteString("to a disposed scoped service.\n\n")
 	}
 
 	b.WriteString("To resolve this:\n")
 	fmt.Fprintf(&b, "  • Change %s to Scoped lifetime\n", formatType(e.ServiceType))
 	fmt.Fprintf(&b, "  • Change %s to Singleton lifetime\n", formatType(e.DependencyType))
-	fmt.Fprintf(&b, "  • Use a factory function to resolve %s lazily\n", formatType(e.DependencyType))
+	fmt.Fprintf(&b, "  • Pass %s to %s's methods per call instead of holding it\n",
+		formatType(e.DependencyType), formatType(e.ServiceType))
 
 	return b.String()
 }

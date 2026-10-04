@@ -237,6 +237,67 @@ func TestScopeContextCancellation(t *testing.T) {
 	}
 }
 
+func TestValidateScopes(t *testing.T) {
+	t.Parallel()
+
+	type Unit struct{}
+	type Handler struct{ Unit *Unit }
+	build := func(t *testing.T, validate bool, register func(Collection)) Provider {
+		t.Helper()
+		c := NewCollection()
+		register(c)
+		p, err := c.BuildWithOptions(&ProviderOptions{ValidateScopes: validate})
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+		return p
+	}
+
+	t.Run("scoped_from_root_is_rejected", func(t *testing.T) {
+		t.Parallel()
+		p := build(t, true, func(c Collection) { c.AddScoped(func() *Unit { return &Unit{} }) })
+
+		// Resolved from the root, a "per-request" service would be one
+		// instance shared by the whole application.
+		_, err := Resolve[*Unit](p)
+		require.ErrorIs(t, err, ErrScopeRequired)
+
+		scope, err := p.CreateScope(context.Background())
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = scope.Close() })
+		_, err = Resolve[*Unit](scope)
+		require.NoError(t, err)
+	})
+
+	t.Run("transient_needing_scoped_from_root_is_rejected", func(t *testing.T) {
+		t.Parallel()
+		p := build(t, true, func(c Collection) {
+			c.AddScoped(func() *Unit { return &Unit{} })
+			c.AddTransient(func(u *Unit) *Handler { return &Handler{Unit: u} })
+		})
+		_, err := Resolve[*Handler](p)
+		require.ErrorIs(t, err, ErrScopeRequired)
+	})
+
+	t.Run("root_scope_runs_no_scoped_initializers", func(t *testing.T) {
+		t.Parallel()
+		var runs atomic.Int32
+		p := build(t, true, func(c Collection) { c.AddScoped(func() { runs.Add(1) }) })
+		assert.Zero(t, runs.Load(), "the root scope is not a request scope")
+
+		scope, err := p.CreateScope(context.Background())
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = scope.Close() })
+		assert.Equal(t, int32(1), runs.Load())
+	})
+
+	t.Run("off_by_default", func(t *testing.T) {
+		t.Parallel()
+		p := build(t, false, func(c Collection) { c.AddScoped(func() *Unit { return &Unit{} }) })
+		_, err := Resolve[*Unit](p)
+		require.NoError(t, err)
+	})
+}
+
 func TestNestedScopes(t *testing.T) {
 	t.Parallel()
 

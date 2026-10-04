@@ -835,6 +835,49 @@ func (s *scope) resolveScopedSingleFlight(parent *resolveFrame, key instanceKey,
 	return flight.instance, flight.err
 }
 
+// resolveSingletonDuringBuild creates a singleton under single-flight while
+// the provider is building, in the root scope. Build's own creation loop and
+// on-demand resolutions from constructors (possibly on other goroutines)
+// share one construction per registration.
+func (s *scope) resolveSingletonDuringBuild(parent *resolveFrame, key instanceKey, descriptor *descriptor) (any, error) {
+	if err := s.checkCycle(parent, descriptor); err != nil {
+		return nil, err
+	}
+
+	fkey := flightKey(descriptor)
+	newFlight := &scopeFlight{done: make(chan struct{})}
+	raw, loaded := s.inflight.LoadOrStore(fkey, newFlight)
+	flight := raw.(*scopeFlight)
+
+	if loaded {
+		<-flight.done
+		if instance, ok := s.rootProvider.getSingleton(key); ok {
+			return cachedInstance(key, instance)
+		}
+		if flight.err != nil {
+			return nil, flight.err
+		}
+		return nil, &ResolutionError{
+			ServiceType: key.Type,
+			ServiceKey:  key.Key,
+			Cause:       ErrSingletonNotInitialized,
+		}
+	}
+
+	defer func() {
+		s.inflight.Delete(fkey)
+		close(flight.done)
+	}()
+
+	if instance, ok := s.rootProvider.getSingleton(key); ok {
+		flight.instance, flight.err = cachedInstance(key, instance)
+		return flight.instance, flight.err
+	}
+
+	flight.instance, flight.err = s.createInstance(parent, descriptor)
+	return flight.instance, flight.err
+}
+
 var (
 	contextType  = reflect.TypeFor[context.Context]()
 	providerType = reflect.TypeFor[Provider]()
@@ -882,6 +925,12 @@ func (s *scope) resolve(parent *resolveFrame, key instanceKey, descriptor *descr
 			return cachedInstance(key, instance)
 		}
 
+		// A singleton resolved before its turn during Build (at runtime,
+		// through an injected Provider or Scope) is created on demand.
+		if s.rootProvider.building.Load() {
+			return s.rootProvider.rootScope.resolveSingletonDuringBuild(parent, key, descriptor)
+		}
+
 		// Singleton should have been created at build time
 		return nil, &ResolutionError{
 			ServiceType: key.Type,
@@ -890,6 +939,13 @@ func (s *scope) resolve(parent *resolveFrame, key instanceKey, descriptor *descr
 		}
 
 	case Scoped:
+		if s.isRoot && s.rootProvider.validateScopes {
+			return nil, &ResolutionError{
+				ServiceType: key.Type,
+				ServiceKey:  key.Key,
+				Cause:       ErrScopeRequired,
+			}
+		}
 		if instance, ok := s.getInstance(key); ok {
 			return cachedInstance(key, instance)
 		}

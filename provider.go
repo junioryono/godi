@@ -8,7 +8,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/junioryono/godi/v5/internal/graph"
 	"github.com/junioryono/godi/v5/internal/reflection"
 )
 
@@ -51,6 +50,14 @@ type ProviderOptions struct {
 	// to singletons is no longer subject to it and is cancelled when the
 	// provider closes.
 	BuildTimeout time.Duration
+
+	// ValidateScopes rejects resolving a scoped service, directly or through
+	// transients, from the provider's root scope (ErrScopeRequired). Resolved
+	// from the root, a "per-request" service becomes one instance shared by
+	// the whole application. With it set, the root scope also runs no scoped
+	// initializers. Recommended; it will be the default in the next major
+	// version.
+	ValidateScopes bool
 }
 
 // provider is the concrete implementation of Provider
@@ -61,8 +68,16 @@ type provider struct {
 	services map[TypeKey]*descriptor
 	groups   map[GroupKey][]*descriptor
 
-	// Dependency graph (immutable after build)
-	graph *graph.DependencyGraph
+	// Singletons in creation order (see creationOrder). Immutable after build.
+	singletonOrder []*descriptor
+
+	// building is true while Build creates singletons: a singleton resolved
+	// before its turn (at runtime, through an injected Provider or Scope)
+	// is then created on demand.
+	building atomic.Bool
+
+	// validateScopes is ProviderOptions.ValidateScopes. Immutable after build.
+	validateScopes bool
 
 	// Reflection analyzer
 	analyzer *reflection.Analyzer
@@ -440,19 +455,14 @@ func (p *provider) findGroupDescriptors(serviceType reflect.Type, group string) 
 // The context is checked before each singleton creation, allowing for graceful cancellation
 // during the build process.
 func (p *provider) createAllSingletonsWithContext(ctx context.Context) error {
-	// Get topological sort from dependency graph
-	sorted, err := p.graph.TopologicalSort()
-	if err != nil {
-		return &GraphOperationError{
-			Operation: "topological sort",
-			NodeType:  nil,
-			NodeKey:   nil,
-			Cause:     err,
-		}
-	}
+	// Singletons a constructor resolves at runtime (through an injected
+	// Provider or Scope) are invisible to the static order below; while
+	// building, they are created on demand instead of failing.
+	p.building.Store(true)
+	defer p.building.Store(false)
 
-	// Create instances in dependency order
-	for _, node := range sorted {
+	// Create instances in dependency order (see creationOrder)
+	for _, descriptor := range p.singletonOrder {
 		// Check context before each singleton creation
 		select {
 		case <-ctx.Done():
@@ -464,35 +474,14 @@ func (p *provider) createAllSingletonsWithContext(ctx context.Context) error {
 		default:
 		}
 
-		if node == nil || node.Provider == nil {
-			continue
-		}
+		key := descriptor.instanceKey()
 
-		descriptor, ok := node.Provider.(*descriptor)
-		if !ok {
-			return &ValidationError{
-				ServiceType: nil,
-				Cause:       fmt.Errorf("invalid provider type: %T", node.Provider),
-			}
-		}
-
-		if descriptor.Lifetime != Singleton {
-			continue
-		}
-
-		// Create instance key
-		key := instanceKey{
-			Type:  descriptor.Type,
-			Key:   descriptor.Key,
-			Group: descriptor.Group,
-		}
-
-		// Check if already created
+		// Check if already created (by a sibling output or on demand)
 		if _, exists := p.getSingleton(key); exists {
 			continue
 		}
 
-		_, err := p.rootScope.createInstance(nil, descriptor)
+		_, err := p.rootScope.resolveSingletonDuringBuild(nil, key, descriptor)
 		if err != nil && !isOutputNotProvided(err) {
 			return &ResolutionError{
 				ServiceType: descriptor.Type,
@@ -517,6 +506,62 @@ func (p *provider) createAllSingletonsWithContext(ctx context.Context) error {
 		}
 	}
 
+	return nil
+}
+
+// creationOrder orders descriptors so that every static dependency precedes
+// its dependents, and otherwise follows registration order. The order is
+// deterministic, so construction (and reverse disposal) order is the same on
+// every run. The dependency graph must already be known to be acyclic.
+func creationOrder(all []*descriptor, services map[TypeKey]*descriptor, groups map[GroupKey][]*descriptor) []*descriptor {
+	order := make([]*descriptor, 0, len(all))
+	visited := make(map[*descriptor]bool, len(all))
+	var visit func(d *descriptor)
+	visit = func(d *descriptor) {
+		if visited[d] {
+			return
+		}
+		visited[d] = true
+		for _, dep := range d.Dependencies {
+			for _, depDescriptor := range dependencyDescriptors(dep, services, groups) {
+				visit(depDescriptor)
+			}
+		}
+		order = append(order, d)
+	}
+	for _, d := range all {
+		if d != nil {
+			visit(d)
+		}
+	}
+	return order
+}
+
+// singletonsInCreationOrder returns the singleton registrations in creation
+// order.
+func singletonsInCreationOrder(all []*descriptor, services map[TypeKey]*descriptor, groups map[GroupKey][]*descriptor) []*descriptor {
+	ordered := creationOrder(all, services, groups)
+	singletons := ordered[:0]
+	for _, d := range ordered {
+		if d.Lifetime == Singleton {
+			singletons = append(singletons, d)
+		}
+	}
+	return singletons
+}
+
+// dependencyDescriptors returns the registrations that satisfy dep: every
+// member of a group dependency, else the registration of its type and key.
+func dependencyDescriptors(dep *reflection.Dependency, services map[TypeKey]*descriptor, groups map[GroupKey][]*descriptor) []*descriptor {
+	if dep == nil {
+		return nil
+	}
+	if dep.Group != "" {
+		return groups[GroupKey{Type: dep.Type, Group: dep.Group}]
+	}
+	if d := services[TypeKey{Type: dep.Type, Key: dep.Key}]; d != nil {
+		return []*descriptor{d}
+	}
 	return nil
 }
 
