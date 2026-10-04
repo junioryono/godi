@@ -3,7 +3,7 @@
 Notable changes to godi. Release notes for each version are also generated from
 commit messages on GitHub.
 
-## Unreleased
+## v5.2.0 (2026-10-04)
 
 ### Upgrade notes (behavior changes)
 

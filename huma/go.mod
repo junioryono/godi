@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/danielgtaylor/huma/v2 v2.39.1
-	github.com/junioryono/godi/v5 v5.1.0
+	github.com/junioryono/godi/v5 v5.2.0
 	github.com/stretchr/testify v1.12.1
 	go.uber.org/goleak v1.3.0
 )

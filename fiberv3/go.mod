@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/gofiber/fiber/v3 v3.5.0
-	github.com/junioryono/godi/v5 v5.1.0
+	github.com/junioryono/godi/v5 v5.2.0
 	github.com/stretchr/testify v1.12.1
 )
 
