@@ -1,21 +1,23 @@
 version: "2"
 run:
-  # Language version only; the CI toolchain is pinned in test.yml.
+  # Language version only; the CI toolchain is pinned in .go-version.
   go: "1.26"
 linters:
   enable:
     - copyloopvar
+    - errname
     - gocritic
     - gocyclo
-  disable:
-    - exhaustive
-    - gochecknoglobals
-    - gochecknoinits
-    - nestif
+    - gomodguard_v2
+  # Considered but not enabled yet, because they report findings in core
+  # package files and internal/ that are being changed elsewhere:
+  #   - errorlint: errors.go and internal/reflection compare and type-assert
+  #     errors directly (== ErrServiceNotFound, err.(*ResolutionError)).
+  #   - funlen (100 lines / 50 statements): collection.go doBuild and
+  #     descriptor.go newDescriptorWithAnalyzer exceed the limits.
+  # Enable them once those call sites use errors.Is/errors.As and the long
+  # functions are split.
   settings:
-    funlen:
-      lines: 100
-      statements: 50
     gocritic:
       enabled-tags:
         - diagnostic
@@ -25,14 +27,13 @@ linters:
         - style
     gocyclo:
       min-complexity: 30
-    gomodguard:
+    gomodguard_v2:
       blocked:
-        modules:
-          - github.com/pkg/errors:
-              recommendations:
-                - errors
-                - fmt
-              reason: use standard library errors package
+        - module: github.com/pkg/errors
+          recommendations:
+            - errors
+            - fmt
+          reason: use standard library errors package
     govet:
       enable:
         - shadow
@@ -46,11 +47,7 @@ linters:
     rules:
       - linters:
           - errcheck
-          - funlen
-          - gochecknoglobals
-          - goconst
           - gocyclo
-          - gosec
         path: _test\.go
       - linters:
           - unused
