@@ -312,11 +312,29 @@ func TestValidateScopes(t *testing.T) {
 		assert.Equal(t, int32(1), runs.Load())
 	})
 
-	t.Run("off_by_default", func(t *testing.T) {
+	t.Run("on_by_default", func(t *testing.T) {
 		t.Parallel()
-		p := build(t, false, func(c Collection) { c.AddScoped(func() *Unit { return &Unit{} }) })
+		c := NewCollection()
+		c.AddScoped(func() *Unit { return &Unit{} })
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+		_, err = Resolve[*Unit](p)
+		require.ErrorIs(t, err, ErrScopeRequired)
+	})
+
+	// Turned off, the root scope acts as a scope: it resolves scoped services
+	// and runs scoped initializers.
+	t.Run("can_be_turned_off", func(t *testing.T) {
+		t.Parallel()
+		var runs atomic.Int32
+		p := build(t, false, func(c Collection) {
+			c.AddScoped(func() *Unit { return &Unit{} })
+			c.AddScoped(func() { runs.Add(1) })
+		})
 		_, err := Resolve[*Unit](p)
 		require.NoError(t, err)
+		assert.Equal(t, int32(1), runs.Load())
 	})
 }
 
@@ -577,7 +595,8 @@ func TestDynamicCircularResolution(t *testing.T) {
 			}
 			return &SelfA{}, nil
 		})
-		p, err := c.Build()
+		// The injected Provider resolves from the root scope.
+		p, err := c.Build(WithScopeValidation(false))
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = p.Close() })
 
@@ -1375,14 +1394,11 @@ func TestScopeInitFailureCleansUpPartialState(t *testing.T) {
 	c.AddScoped(func(d *TDisposable) {
 		captured = d
 	})
-	// Second void-return initializer: succeeds for the root scope (build),
-	// fails for every subsequently created scope.
+	// Second void-return initializer: fails for every created scope (the
+	// root scope runs no scoped initializers).
 	c.AddScoped(func() error {
 		initCalls++
-		if initCalls > 1 {
-			return errors.New("init failure")
-		}
-		return nil
+		return errors.New("init failure")
 	})
 
 	p, err := c.Build()
@@ -1407,15 +1423,8 @@ func TestScopeInitFailureCleansUpPartialState(t *testing.T) {
 func TestNewScopeFailureCancelsDerivedContext(t *testing.T) {
 	t.Parallel()
 
-	initCalls := 0
 	c := NewCollection()
-	c.AddScoped(func() error {
-		initCalls++
-		if initCalls > 1 {
-			return errors.New("init failure")
-		}
-		return nil
-	})
+	c.AddScoped(func() error { return errors.New("init failure") })
 
 	pAny, err := c.Build()
 	require.NoError(t, err)

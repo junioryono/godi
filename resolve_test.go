@@ -104,7 +104,7 @@ func TestInvoke(t *testing.T) {
 
 func TestIsService(t *testing.T) {
 	t.Parallel()
-	p := BuildProvider(t, AddSingleton(NewTService), AddScoped(NewTDependency, Name("named")))
+	p := BuildProvider(t, AddSingleton(NewTService), AddSingleton(NewTDependency, Name("named")))
 
 	assert.True(t, IsService(p, reflect.TypeFor[*TService]()))
 	assert.False(t, IsService(p, reflect.TypeFor[*TDependency]()), "only registered under a key")

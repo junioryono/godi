@@ -1246,7 +1246,7 @@ func TestOptionalDependencyErrors(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = p.Close() })
 
-		consumer, err := Resolve[*TOptionalConsumer](p)
+		consumer, err := Resolve[*TOptionalConsumer](NewTestScope(t, p))
 		require.NoError(t, err)
 		assert.Nil(t, consumer.Failing)
 	})
@@ -1286,7 +1286,7 @@ func TestOptionalDependencyErrors(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = p.Close() })
 
-		_, err = Resolve[*TOptionalConsumer](p)
+		_, err = Resolve[*TOptionalConsumer](NewTestScope(t, p))
 		require.Error(t, err, "a registered optional dependency whose constructor fails must propagate the error")
 		assert.Contains(t, err.Error(), "constructor exploded")
 	})
@@ -2140,7 +2140,7 @@ func TestBuildContext(t *testing.T) {
 		t.Parallel()
 		type CtxHolder struct{ Ctx context.Context }
 		c := NewCollection()
-		c.AddScoped(func(ctx context.Context) *CtxHolder { return &CtxHolder{Ctx: ctx} })
+		c.AddTransient(func(ctx context.Context) *CtxHolder { return &CtxHolder{Ctx: ctx} })
 
 		p, err := c.Build()
 		require.NoError(t, err)

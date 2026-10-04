@@ -38,10 +38,10 @@
 // carries the scope, so code under a godi HTTP middleware can resolve with
 // [ResolveFromContext] or [FromContext]. Cancelling the context a scope was
 // created with does not close the scope: cancellation tells the work to stop,
-// and the scope's owner closes it once the work is done. With
-// [WithScopeValidation], resolving a scoped service from the root
-// provider fails with [ErrScopeRequired] instead of silently caching one
-// instance for the whole application.
+// and the scope's owner closes it once the work is done. Resolving a scoped
+// service from the root provider fails with [ErrScopeRequired] instead of
+// silently caching one instance for the whole application (see
+// [WithScopeValidation]).
 //
 // # Build
 //

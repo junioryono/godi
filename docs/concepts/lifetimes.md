@@ -159,8 +159,8 @@ builder2 := godi.MustResolve[*EmailBuilder](provider)
 Scoped and transient services can depend on anything. A singleton cannot depend
 on a scoped service — directly, or through a chain of transients — and godi
 rejects that at build time. Resolve scoped services (and transients that need
-them) from a scope, never from the root provider; set
-`godi.WithScopeValidation(true)` to have godi enforce it (see below).
+them) from a scope, never from the root provider; godi enforces this at
+runtime (see below).
 
 ### Valid Dependencies
 
@@ -229,12 +229,12 @@ services.AddSingleton(func(h *Handler) *Router {
 
 ### Validating Scopes at Runtime
 
-Resolving a scoped service from the root provider caches it in the root scope
-for the whole application — one "per-request" instance shared by every request,
-with no error. Turn on scope validation to reject it:
+Resolved from the root provider, a scoped service would be cached in the root
+scope for the whole application: one "per-request" instance shared by every
+request. godi rejects it instead:
 
 ```go
-provider, err := services.Build(godi.WithScopeValidation(true))
+provider, err := services.Build()
 
 godi.Resolve[*RequestContext](provider)  // error: godi.ErrScopeRequired
 
@@ -243,10 +243,13 @@ defer scope.Close()
 godi.Resolve[*RequestContext](scope)     // ✓
 ```
 
-With scope validation, transients that need scoped services must also be
-resolved from a scope, and the root scope runs no scoped initializers. It is
-recommended for all applications and will be the default in the next major
-version.
+Transients that need scoped services must also be resolved from a scope, and
+the root scope runs no scoped initializers.
+
+An application that deliberately treats the root as a scope (a short-lived
+CLI, say) can turn validation off with `godi.WithScopeValidation(false)`.
+The root scope then resolves scoped services and runs their initializers
+during `Build`.
 
 ## Performance Considerations
 

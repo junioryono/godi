@@ -309,7 +309,7 @@ type buildOptions struct {
 }
 
 func newBuildOptions(opts []BuildOption) buildOptions {
-	var options buildOptions
+	options := buildOptions{validateScopes: true}
 	for _, opt := range opts {
 		if opt != nil {
 			opt.applyBuildOption(&options)
@@ -352,7 +352,8 @@ func WithObserver(observer Observer) BuildOption {
 // through transients, from the provider's root scope fails with
 // ErrScopeRequired. Resolved from the root, a "per-request" service becomes
 // one instance shared by the whole application. With validation on, the root
-// scope also runs no scoped initializers.
+// scope also runs no scoped initializers. Validation is on by default; turn
+// it off only for applications that deliberately treat the root as a scope.
 func WithScopeValidation(enabled bool) BuildOption {
 	return buildOptionFunc(func(o *buildOptions) { o.validateScopes = enabled })
 }

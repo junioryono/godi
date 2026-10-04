@@ -28,6 +28,15 @@ func BuildProvider(t *testing.T, opts ...ModuleOption) Provider {
 	return p
 }
 
+// NewTestScope creates a scope of p and closes it when the test ends.
+func NewTestScope(t *testing.T, p Provider) Scope {
+	t.Helper()
+	s, err := p.CreateScope(context.Background())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	return s
+}
+
 func TestProvider(t *testing.T) {
 	t.Parallel()
 
@@ -402,7 +411,8 @@ func TestRootScopeInitializers(t *testing.T) {
 			calls.Add(1)
 		})
 
-		p, err := c.Build()
+		// Only a root scope without scope validation acts as a scope.
+		p, err := c.Build(WithScopeValidation(false))
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = p.Close() })
 		assert.Equal(t, int64(1), calls.Load(), "root scope initializer should run during Build")
