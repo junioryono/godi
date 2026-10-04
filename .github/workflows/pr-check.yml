@@ -48,9 +48,12 @@ jobs:
             http
             chi
             echo
+            echov5
             fiber
+            fiberv3
             gin
             huma
+            integrations
             release
             security
           # Require scope to be provided
