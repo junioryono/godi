@@ -31,14 +31,16 @@ require (
 	github.com/go-playground/validator/v10 v10.30.5 // indirect
 	github.com/goccy/go-json v0.11.2 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect
-	github.com/gofiber/fiber/v3 v3.5.0 // indirect
+	github.com/gofiber/fiber/v3 v3.5.0
 	github.com/gofiber/schema v1.8.8 // indirect
 	github.com/gofiber/utils/v2 v2.6.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
+	github.com/junioryono/godi/echov5/v5 v5.1.0
+	github.com/junioryono/godi/fiberv3/v5 v5.1.0
 	github.com/klauspost/compress v1.20.1 // indirect
 	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
-	github.com/labstack/echo/v5 v5.4.0 // indirect
+	github.com/labstack/echo/v5 v5.4.0
 	github.com/labstack/gommon v0.5.0 // indirect
 	github.com/leodido/go-urn v1.5.0 // indirect
 	github.com/mattn/go-colorable v0.1.15 // indirect
@@ -79,3 +81,7 @@ replace github.com/junioryono/godi/echo/v5 => ../echo
 replace github.com/junioryono/godi/fiber/v5 => ../fiber
 
 replace github.com/junioryono/godi/gin/v5 => ../gin
+
+replace github.com/junioryono/godi/echov5/v5 => ../echov5
+
+replace github.com/junioryono/godi/fiberv3/v5 => ../fiberv3
