@@ -1059,21 +1059,8 @@ func (s *scope) createInstance(parent *resolveFrame, descriptor *descriptor, fli
 		return s.publishValue(parent, descriptor, descriptor.Instance, resolver)
 	}
 
-	// Read the pre-analyzed constructor info stashed on the descriptor at
-	// registration time. Falls back to a fresh Analyze for descriptors that
-	// were created outside the normal Add* path (e.g. constructed directly
-	// in tests).
+	// The constructor was analyzed at registration.
 	info := descriptor.info
-	if info == nil {
-		info, err = s.rootProvider.analyzer.Analyze(descriptor.Constructor.Interface())
-		if err != nil {
-			return nil, &reflectionAnalysisError{
-				Constructor: descriptor.Constructor.Interface(),
-				Operation:   "analyze",
-				Cause:       err,
-			}
-		}
-	}
 
 	// Get cached invoker (reduces allocations)
 	invoker := s.rootProvider.analyzer.GetInvoker()
@@ -1345,33 +1332,17 @@ func (s *scope) publishResultObject(
 		// resolved, matched by field index. This works for keyed and grouped
 		// fields alike, whose registry keys differ from their struct tags.
 		var target *descriptor
-		if len(requested.siblings) > 0 {
-			target, next = requested.siblingForField(field.Index, next)
-			if target == nil {
-				// The field's registration was removed from the collection.
-				// Don't fall back to the registry, which could find (and
-				// wrongly shadow) a replacement registration of the same type;
-				// but the constructor still produced the value, so this
-				// construction must still dispose it.
-				if field.Present {
-					s.trackProduced(parent, requested, field.Value)
-				}
-				continue
+		target, next = requested.siblingForField(field.Index, next)
+		if target == nil {
+			// The field's registration was removed from the collection.
+			// Don't fall back to the registry, which could find (and
+			// wrongly shadow) a replacement registration of the same type;
+			// but the constructor still produced the value, so this
+			// construction must still dispose it.
+			if field.Present {
+				s.trackProduced(parent, requested, field.Value)
 			}
-		} else {
-			// Fallback for descriptors constructed outside the normal Add*
-			// path (no sibling links): registry lookup by type/key.
-			target = s.rootProvider.findDescriptor(ret.Type, ret.Key)
-			if target == nil {
-				if !field.Present {
-					continue
-				}
-				return nil, &ResolutionError{
-					ServiceType: ret.Type,
-					ServiceKey:  ret.Key,
-					Cause:       fmt.Errorf("no descriptor found for return type %v", ret.Type),
-				}
-			}
+			continue
 		}
 
 		isPrimary := target == requested ||
@@ -1421,53 +1392,23 @@ func (s *scope) publishMultiReturn(
 	results []reflect.Value,
 	resolver reflection.DependencyResolver,
 ) (any, error) {
-	outputs := make([]stagedOutput, 0, len(info.Returns))
-	if len(requested.siblings) > 0 {
-		// Cache every return value under its sibling's registration
-		// (which carries the actual key or group assigned at Add time).
-		for _, sibling := range requested.siblings {
-			outputs = append(outputs, stagedOutput{
-				target:    sibling,
-				key:       sibling.instanceKey(),
-				layers:    []any{results[sibling.MultiReturnIndex].Interface()},
-				isPrimary: sibling == requested,
-			})
-		}
+	// Cache every return value under its sibling's registration (which
+	// carries the actual key or group assigned at Add time).
+	outputs := make([]stagedOutput, 0, len(requested.siblings))
+	for _, sibling := range requested.siblings {
+		outputs = append(outputs, stagedOutput{
+			target:    sibling,
+			key:       sibling.instanceKey(),
+			layers:    []any{results[sibling.MultiReturnIndex].Interface()},
+			isPrimary: sibling == requested,
+		})
+	}
 
-		// Return values whose registration was removed are still produced
-		// by this call, so this construction must still dispose them.
-		for _, ret := range info.Returns {
-			if !ret.IsError && !requested.hasSiblingForReturn(ret.Index) {
-				s.trackProduced(parent, requested, results[ret.Index].Interface())
-			}
-		}
-	} else {
-		// Fallback for descriptors constructed outside the normal Add*
-		// path (no sibling links): registry lookup per return type.
-		for _, ret := range info.Returns {
-			if ret.IsError {
-				continue
-			}
-
-			serviceDescriptor := s.rootProvider.findDescriptor(ret.Type, nil)
-			if serviceDescriptor == nil {
-				return nil, &ResolutionError{
-					ServiceType: ret.Type,
-					ServiceKey:  nil,
-					Cause:       fmt.Errorf("no descriptor found for return type %v", ret.Type),
-				}
-			}
-
-			outputs = append(outputs, stagedOutput{
-				target: serviceDescriptor,
-				key: instanceKey{
-					Type:  ret.Type,
-					Key:   serviceDescriptor.Key,
-					Group: serviceDescriptor.Group,
-				},
-				layers:    []any{results[ret.Index].Interface()},
-				isPrimary: ret.Index == requested.MultiReturnIndex,
-			})
+	// Return values whose registration was removed are still produced by
+	// this call, so this construction must still dispose them.
+	for _, ret := range info.Returns {
+		if !ret.IsError && !requested.hasSiblingForReturn(ret.Index) {
+			s.trackProduced(parent, requested, results[ret.Index].Interface())
 		}
 	}
 

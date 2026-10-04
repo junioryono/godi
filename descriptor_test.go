@@ -4,9 +4,15 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/junioryono/godi/v6/internal/reflection"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// newDescriptor builds a descriptor the way Add* does, with its own analyzer.
+func newDescriptor(service any, lifetime Lifetime, opts ...AddOption) (*descriptor, error) {
+	return newDescriptorWithAnalyzer(service, lifetime, reflection.New(), opts...)
+}
 
 func NewTServiceWithError() (*TService, error) {
 	return &TService{ID: "with-error", Value: 1}, nil

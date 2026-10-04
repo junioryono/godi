@@ -112,11 +112,6 @@ type descriptor struct {
 	injectsContainer bool
 }
 
-// newDescriptor creates a new descriptor from a service with the given lifetime and options
-func newDescriptor(service any, lifetime Lifetime, opts ...AddOption) (*descriptor, error) {
-	return newDescriptorWithAnalyzer(service, lifetime, nil, opts...)
-}
-
 // newDescriptorWithAnalyzer creates a new descriptor using the provided analyzer for caching
 func newDescriptorWithAnalyzer(service any, lifetime Lifetime, analyzer *reflection.Analyzer, opts ...AddOption) (*descriptor, error) {
 	if service == nil {
@@ -276,10 +271,6 @@ func analyzeService(service any, analyzer *reflection.Analyzer) (unwrapped any, 
 		return service, true, reflection.InstanceInfo(service), nil
 	}
 
-	// Use provided analyzer or create one (for backward compatibility)
-	if analyzer == nil {
-		analyzer = reflection.New()
-	}
 	info, err = analyzer.Analyze(service)
 	if err != nil {
 		return nil, false, nil, &reflectionAnalysisError{

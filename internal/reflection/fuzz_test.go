@@ -22,8 +22,8 @@ import (
 // referenceTagInfo is an independent statement of the tag rules: optional is
 // on only for "true", name and group are taken verbatim when present, and
 // inject:"-" excludes the field.
-func referenceTagInfo(tag reflect.StructTag) TagInfo {
-	var info TagInfo
+func referenceTagInfo(tag reflect.StructTag) parsedTags {
+	var info parsedTags
 	if v, ok := tag.Lookup("optional"); ok {
 		info.Optional = v == "true"
 	}

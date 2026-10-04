@@ -54,36 +54,6 @@ func NewParamObjectBuilder(analyzer *Analyzer) *ParamObjectBuilder {
 	return &ParamObjectBuilder{analyzer: analyzer}
 }
 
-// BuildParamObject creates and populates an In struct with resolved dependencies.
-func (b *ParamObjectBuilder) BuildParamObject(
-	paramType reflect.Type,
-	resolver DependencyResolver,
-) (reflect.Value, error) {
-	if resolver == nil {
-		return reflect.Value{}, fmt.Errorf("resolver cannot be nil")
-	}
-
-	if paramType == nil {
-		return reflect.Value{}, fmt.Errorf("paramType cannot be nil")
-	}
-
-	structType := paramType
-	if structType.Kind() == reflect.Pointer {
-		structType = structType.Elem()
-	}
-	if structType.Kind() != reflect.Struct {
-		return reflect.Value{}, fmt.Errorf("param type must be struct, got %v", structType.Kind())
-	}
-
-	// Analyze the struct's fields, then populate it from that analysis.
-	info := &ConstructorInfo{}
-	if err := b.analyzer.analyzeParamObject(info, paramType); err != nil {
-		return reflect.Value{}, err
-	}
-
-	return b.buildParamObject(paramType, info.Parameters, resolver)
-}
-
 // buildParamObject creates and populates an In struct from field metadata
 // already produced by Analyze. The hot resolution path uses it so struct
 // fields and tags are not re-walked and re-parsed on every construction.
@@ -196,67 +166,6 @@ func (b *ParamObjectBuilder) resolveFieldDependency(
 	return reflect.ValueOf(value), nil
 }
 
-// ResultObjectProcessor processes result objects (Out structs) after construction.
-type ResultObjectProcessor struct {
-	analyzer *Analyzer
-}
-
-// NewResultObjectProcessor creates a new result object processor.
-func NewResultObjectProcessor(analyzer *Analyzer) *ResultObjectProcessor {
-	return &ResultObjectProcessor{analyzer: analyzer}
-}
-
-// ProcessResultObject extracts services from an Out struct.
-func (p *ResultObjectProcessor) ProcessResultObject(
-	result reflect.Value,
-	resultType reflect.Type,
-) ([]ServiceRegistration, error) {
-	// Handle pointer to struct
-	if result.Kind() == reflect.Pointer {
-		if result.IsNil() {
-			return nil, fmt.Errorf("result object is nil")
-		}
-		result = result.Elem()
-	}
-
-	if resultType.Kind() == reflect.Pointer {
-		resultType = resultType.Elem()
-	}
-
-	if result.Kind() != reflect.Struct {
-		return nil, fmt.Errorf("result must be struct, got %v", result.Kind())
-	}
-
-	info := &ConstructorInfo{}
-	if err := p.analyzer.analyzeResultObject(info, resultType); err != nil {
-		return nil, err
-	}
-
-	outputs, err := ResultObjectOutputs(result, info.Returns)
-	if err != nil {
-		return nil, err
-	}
-
-	registrations := make([]ServiceRegistration, 0, len(outputs))
-	for i, output := range outputs {
-		if !output.Present {
-			continue
-		}
-		ret := info.Returns[i]
-		key, _ := ret.Key.(string)
-		registrations = append(registrations, ServiceRegistration{
-			Type:  ret.Type,
-			Value: output.Value,
-			Name:  ret.Name,
-			Key:   key,
-			Group: ret.Group,
-			Index: ret.Index,
-		})
-	}
-
-	return registrations, nil
-}
-
 // ResultOutput is one field of a constructed result object (Out struct).
 type ResultOutput struct {
 	// Index is the field index in the Out struct.
@@ -330,16 +239,6 @@ func canBeNil(k reflect.Kind) bool {
 // CanBeNil reports whether values of type t can be nil.
 func CanBeNil(t reflect.Type) bool {
 	return canBeNil(t.Kind())
-}
-
-// ServiceRegistration represents a service to be registered from an Out struct.
-type ServiceRegistration struct {
-	Type  reflect.Type
-	Value any
-	Name  string // Field name
-	Key   string // From name tag
-	Group string // From group tag
-	Index int    // Field index in the Out struct
 }
 
 // DependencyResolver is the interface for resolving dependencies.

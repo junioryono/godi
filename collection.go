@@ -420,8 +420,8 @@ func (sc *collection) plan(ctx context.Context) (*buildPlan, error) {
 	// Phase 1.5: Resolve group dependencies
 	// Connect group consumers to actual group member nodes in the graph.
 	// Without this, group consumers depend on phantom nodes (Key=nil) that
-	// don't match the real group members (Key=1,2,...), causing incorrect
-	// topological ordering and errSingletonNotInitialized during build.
+	// don't match the real group members (Key=1,2,...), hiding cycles that
+	// run through a group.
 	g.ResolveGroupDependencies()
 
 	// Phase 2: Validate graph (cycles detected here, not per-add)
@@ -876,19 +876,6 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 	}
 
 	info := descriptor.info
-	if info == nil {
-		// Defensive fallback: a descriptor constructed outside the normal
-		// path won't have info stashed. Re-analyze in that case.
-		var err error
-		info, err = r.analyzer.Analyze(service)
-		if err != nil {
-			return &reflectionAnalysisError{
-				Constructor: service,
-				Operation:   "analyze",
-				Cause:       err,
-			}
-		}
-	}
 
 	// Handle result objects (Out structs)
 	if info.IsResultObject {
