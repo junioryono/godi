@@ -331,6 +331,22 @@ func TestErrors(t *testing.T) {
 		assert.Contains(t, err.Error(), "testutil_test.go:")
 	})
 
+	t.Run("a_reflect_made_constructor_is_named_by_its_type", func(t *testing.T) {
+		t.Parallel()
+		fnType := reflect.TypeFor[func() (*TService, error)]()
+		ctor := reflect.MakeFunc(fnType, func([]reflect.Value) []reflect.Value {
+			return []reflect.Value{reflect.Zero(reflect.TypeFor[*TService]()), reflect.ValueOf(errors.New("boom"))}
+		}).Interface()
+		c := NewCollection()
+		c.AddSingleton(ctor)
+		_, err := c.Build()
+		require.Error(t, err)
+		// Every reflect.MakeFunc function shares one runtime stub, whose
+		// name and assembly location say nothing about the constructor.
+		assert.NotContains(t, err.Error(), "makeFuncStub")
+		assert.Contains(t, err.Error(), "func() (*godi.TService, error)")
+	})
+
 	t.Run("missing_dependency_names_the_constructor", func(t *testing.T) {
 		t.Parallel()
 		c := NewCollection()

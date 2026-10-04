@@ -39,7 +39,9 @@ Review these when upgrading from v5.1:
   `Provider` and `Scope` is one).
 - Previously broken registrations are now rejected: a struct error return,
   `(error, error)`, an `In` field with both `name` and `group`, nil instance
-  values.
+  values, and reserved (`context.Context`, `Provider`, `Scope`), channel,
+  unsafe-pointer or error types as a later return value or a `godi.Out`
+  field.
 - Integrations log scope-creation and middleware failures (they were silent)
   and include stacks in panic logs; responses are unchanged. `godichi` types
   are aliases of `godihttp`'s.

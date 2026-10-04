@@ -482,6 +482,23 @@ func (d *descriptor) validateReturnTypes() error {
 				Cause:       fmt.Errorf("constructor returning a result object (godi.Out) must have error as its second return value, got %s", d.ConstructorType.Out(1)),
 			}
 		}
+		// Each field is a service, subject to the rules for a constructor's
+		// return values; an error field would be registered as a service of
+		// type error.
+		if d.info != nil {
+			for _, field := range d.info.Returns {
+				where := "field " + field.Name
+				if field.Type.Implements(reflect.TypeFor[error]()) {
+					return &ValidationError{
+						ServiceType: d.Type,
+						Cause:       fmt.Errorf("result object %s has error type %s, which is not supported as a service type; return the error as the constructor's last value", where, field.Type),
+					}
+				}
+				if err := d.validateServiceType(field.Type, where); err != nil {
+					return err
+				}
+			}
+		}
 	}
 
 	for i := range numOut {
@@ -515,23 +532,35 @@ func (d *descriptor) validateReturnTypes() error {
 			continue
 		}
 
-		// Check for chan return types (generally not suitable for DI)
-		if outType.Kind() == reflect.Chan {
-			return &ValidationError{
-				ServiceType: d.Type,
-				Cause:       fmt.Errorf("constructor return type at index %d is a channel type, which is not supported as a service type", i),
-			}
-		}
-
-		// Check for unsafe pointer
-		if outType.Kind() == reflect.UnsafePointer {
-			return &ValidationError{
-				ServiceType: d.Type,
-				Cause:       fmt.Errorf("constructor return type at index %d is an unsafe pointer, which is not supported as a service type", i),
-			}
+		if err := d.validateServiceType(outType, fmt.Sprintf("return type at index %d", i)); err != nil {
+			return err
 		}
 	}
 
+	return nil
+}
+
+// validateServiceType rejects a constructor output type that cannot be a
+// service. where names the output in the error.
+func (d *descriptor) validateServiceType(t reflect.Type, where string) error {
+	if _, reserved := reservedTypes[t]; reserved {
+		return &ValidationError{
+			ServiceType: d.Type,
+			Cause:       fmt.Errorf("constructor %s is %s, which is reserved and cannot be registered", where, formatType(t)),
+		}
+	}
+	switch t.Kind() {
+	case reflect.Chan:
+		return &ValidationError{
+			ServiceType: d.Type,
+			Cause:       fmt.Errorf("constructor %s is a channel type, which is not supported as a service type", where),
+		}
+	case reflect.UnsafePointer:
+		return &ValidationError{
+			ServiceType: d.Type,
+			Cause:       fmt.Errorf("constructor %s is an unsafe pointer, which is not supported as a service type", where),
+		}
+	}
 	return nil
 }
 

@@ -183,6 +183,51 @@ func TestCollectionRegistrationErrors(t *testing.T) {
 		assert.Contains(t, err.Error(), "reserved")
 	})
 
+	// Found by FuzzRegistrationValidation: every output of a constructor is a
+	// service, so the rules for its first return value apply to all of them.
+	t.Run("rejects_reserved_types_as_any_output", func(t *testing.T) {
+		t.Parallel()
+		type Results struct {
+			Out
+			Ctx context.Context
+		}
+		for name, ctor := range map[string]any{
+			"multi_return": func() (*TService, context.Context) { return &TService{}, context.Background() },
+			"out_field":    func() Results { return Results{Ctx: context.Background()} },
+		} {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				c := NewCollection()
+				c.AddSingleton(ctor)
+				require.Error(t, c.Err())
+				assert.Contains(t, c.Err().Error(), "reserved")
+			})
+		}
+	})
+
+	t.Run("rejects_out_fields_of_unsupported_types", func(t *testing.T) {
+		t.Parallel()
+		type ChanOut struct {
+			Out
+			C chan int
+		}
+		type ErrorOut struct {
+			Out
+			Err error
+		}
+		for name, ctor := range map[string]any{
+			"chan":  func() ChanOut { return ChanOut{C: make(chan int)} },
+			"error": func() ErrorOut { return ErrorOut{Err: errors.New("x")} },
+		} {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				c := NewCollection()
+				c.AddSingleton(ctor)
+				require.Error(t, c.Err(), "an Out field is checked like a constructor result")
+			})
+		}
+	})
+
 	t.Run("rejects_as_on_result_object", func(t *testing.T) {
 		t.Parallel()
 		type SimpleOut struct {
@@ -1506,6 +1551,24 @@ func TestLifetimeRules(t *testing.T) {
 		assert.Equal(t, reflect.TypeFor[*Unit](), conflict.DependencyType)
 		assert.Equal(t, []reflect.Type{reflect.TypeFor[*Handler]()}, conflict.Via)
 		assert.Contains(t, err.Error(), "*godi.Handler")
+	})
+
+	t.Run("singleton_capturing_scoped_through_a_sibling_outputs_decorator_is_rejected", func(t *testing.T) {
+		t.Parallel()
+		type Pair struct{}
+		c := NewCollection()
+		c.AddScoped(func() *Unit { return &Unit{} })
+		c.AddTransient(func() (*Handler, *Pair) { return &Handler{}, &Pair{} })
+		// Every construction of the transient pair runs this decorator of
+		// *Pair, which needs the scoped *Unit...
+		c.AddModules(Decorate(func(p *Pair, _ *Unit) *Pair { return p }))
+		// ...so a singleton of the other output captures one scope's *Unit.
+		c.AddSingleton(func(*Handler) *Cache { return &Cache{} })
+
+		var conflict *LifetimeConflictError
+		require.ErrorAs(t, Validate(c), &conflict)
+		assert.Equal(t, reflect.TypeFor[*Cache](), conflict.ServiceType)
+		assert.Equal(t, reflect.TypeFor[*Unit](), conflict.DependencyType)
 	})
 
 	t.Run("conflicts_are_reported_together_in_registration_order", func(t *testing.T) {

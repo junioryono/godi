@@ -153,12 +153,7 @@ func attachDecorators(
 	sources = make(map[*reflection.Dependency]string)
 	var errs []error
 	for _, dec := range decorators {
-		var targets []*descriptor
-		if dec.group != "" {
-			targets = groups[GroupKey{Type: dec.target, Group: dec.group}]
-		} else if d := services[TypeKey{Type: dec.target, Key: dec.key}]; d != nil {
-			targets = []*descriptor{d}
-		}
+		targets := decoratorTargets(dec, services, groups)
 		if len(targets) == 0 {
 			errs = append(errs, &RegistrationError{
 				ServiceType: dec.target,
@@ -168,10 +163,6 @@ func attachDecorators(
 			continue
 		}
 		for _, d := range targets {
-			if err := checkDecoratorDependencies(dec, d, services, groups); err != nil {
-				errs = append(errs, err)
-				continue
-			}
 			d.decorators = append(d.decorators[:len(d.decorators):len(d.decorators)], dec)
 			d.Dependencies = append(d.Dependencies[:len(d.Dependencies):len(d.Dependencies)], dec.dependencies...)
 			for _, dep := range dec.dependencies {
@@ -185,7 +176,27 @@ func attachDecorators(
 			}
 		}
 	}
+	// Checked once every decorator is attached: a decorator can reach its
+	// own constructor through another service's decorators.
+	for _, dec := range decorators {
+		for _, d := range decoratorTargets(dec, services, groups) {
+			if err := checkDecoratorDependencies(dec, d, services, groups); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
 	return sources, errors.Join(errs...)
+}
+
+// decoratorTargets returns the descriptors dec decorates.
+func decoratorTargets(dec *decoration, services map[TypeKey]*descriptor, groups map[GroupKey][]*descriptor) []*descriptor {
+	if dec.group != "" {
+		return groups[GroupKey{Type: dec.target, Group: dec.group}]
+	}
+	if d := services[TypeKey{Type: dec.target, Key: dec.key}]; d != nil {
+		return []*descriptor{d}
+	}
+	return nil
 }
 
 // checkDecoratorDependencies rejects a decorator of d that depends, directly
@@ -206,7 +217,7 @@ func checkDecoratorDependencies(dec *decoration, d *descriptor, services map[Typ
 					continue
 				}
 				visited[depDescriptor] = true
-				if hit := reach(depDescriptor.Dependencies); hit != nil {
+				if hit := reach(constructionDependencies(depDescriptor)); hit != nil {
 					return hit
 				}
 			}
@@ -222,6 +233,23 @@ func checkDecoratorDependencies(dec *decoration, d *descriptor, services map[Typ
 		}
 	}
 	return nil
+}
+
+// constructionDependencies returns everything one construction of d resolves:
+// its constructor's and its decorators' dependencies, and those of the
+// decorators of every other output the same construction publishes (the
+// outputs of a multi-return or result-object constructor, or the interface
+// aliases of a cached service).
+func constructionDependencies(d *descriptor) []*reflection.Dependency {
+	if len(d.siblings) == 0 || d.isAlias && d.Lifetime == Transient {
+		// Transient aliases are each constructed separately.
+		return d.Dependencies
+	}
+	var deps []*reflection.Dependency
+	for _, sibling := range d.siblings {
+		deps = append(deps, sibling.Dependencies...)
+	}
+	return deps
 }
 
 // applyDecorators runs d's decorators over value, resolving their

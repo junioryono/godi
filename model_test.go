@@ -60,19 +60,32 @@ type modelNode struct {
 	decs      []int        // decorator IDs applied, innermost first
 	scopeID   string       // scope whose context the constructor received; "" for instances
 	deps      []*modelNode // values the constructor or decorator received
+	wraps     *modelNode   // for decorator results: the value it wraps, closed by its Close
 	closable  bool
 	noDispose bool
 
 	// guarded by tr.mu
-	closes      int
+	closes      int // by godi or by a wrapper
+	byWrapper   int // closes by a decorator result that wraps it
+	wrappedBy   int // disposable decorator results wrapping it
 	closeSeq    int
 	closedEarly bool // closed while its owner was still open
 	inBuild     bool // closed while Build was running
 }
 
 func (n *modelNode) Close() error {
-	n.tr.onClose(n)
+	n.tr.onClose(n, false)
+	n.closeWrapped()
 	return nil
+}
+
+// closeWrapped closes the value n wraps: a disposable decorator result owns
+// it (the documented rule), and godi closes only the outermost layer.
+func (n *modelNode) closeWrapped() {
+	if w := n.wraps; w != nil && w.closable {
+		w.tr.onClose(w, true)
+		w.closeWrapped()
+	}
 }
 
 func (n *modelNode) modelNodeOf() *modelNode { return n }
@@ -183,11 +196,14 @@ func (tr *modelTracker) newNode(typ int, reg *modelReg, slot int, scopeID string
 	return n
 }
 
-func (tr *modelTracker) onClose(n *modelNode) {
+func (tr *modelTracker) onClose(n *modelNode, byWrapper bool) {
 	tr.mu.Lock()
 	defer tr.mu.Unlock()
 	tr.seq++
 	n.closes++
+	if byWrapper {
+		n.byWrapper++
+	}
 	if n.closes == 1 {
 		n.closeSeq = tr.seq
 	}
@@ -518,13 +534,15 @@ func (m *modelRegistry) missingDependency() bool {
 }
 
 // lifetimeConflict reports a singleton that reaches a scoped service directly
-// or through transients.
+// or through transients, following everything each construction resolves
+// (including the decorators of a constructor's other outputs).
 func (m *modelRegistry) lifetimeConflict() bool {
-	return m.lifetimeConflictVia(entryDeps)
+	return m.lifetimeConflictVia(m.constructionDeps)
 }
 
-// constructionDeps returns everything one construction for e resolves: its
+// constructionDeps returns everything one construction for e may resolve: its
 // constructor's dependencies and the decorators of every output it publishes.
+// (Validation is static: it cannot know that an output will be absent.)
 func (m *modelRegistry) constructionDeps(e *modelEntry) []modelDep {
 	reg := e.reg
 	if reg.shape == shapePlain || reg.shape == shapeInstance ||
@@ -533,7 +551,7 @@ func (m *modelRegistry) constructionDeps(e *modelEntry) []modelDep {
 	}
 	deps := slices.Clone(reg.deps)
 	for _, sib := range m.order {
-		if sib.reg != reg || reg.outputs[sib.slot].absent {
+		if sib.reg != reg {
 			continue
 		}
 		for _, d := range sib.decs {
@@ -543,13 +561,6 @@ func (m *modelRegistry) constructionDeps(e *modelEntry) []modelDep {
 		}
 	}
 	return deps
-}
-
-// lifetimeGap reports a singleton that captures a scoped service only through
-// a decorator of another output of a constructor it depends on, which godi's
-// lifetime validation does not follow.
-func (m *modelRegistry) lifetimeGap() bool {
-	return !m.lifetimeConflict() && m.lifetimeConflictVia(m.constructionDeps)
 }
 
 func (m *modelRegistry) lifetimeConflictVia(depsOf func(*modelEntry) []modelDep) bool {
@@ -617,24 +628,8 @@ func (m *modelRegistry) reaches(dep modelDep, target *modelReg, seen map[*modelE
 			continue
 		}
 		seen[de] = true
-		for _, dd := range entryDeps(de) {
+		for _, dd := range m.constructionDeps(de) {
 			if m.reaches(dd, target, seen) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// instanceDecoratorDeps reports whether a decorator of an instance (value)
-// registration has dependencies.
-func (m *modelRegistry) instanceDecoratorDeps() bool {
-	for _, e := range m.order {
-		if e.reg.shape != shapeInstance {
-			continue
-		}
-		for _, d := range e.decs {
-			if len(d.deps) > 0 {
 				return true
 			}
 		}
@@ -795,8 +790,9 @@ type modelRun struct {
 }
 
 type modelStats struct {
-	runs, built, skipped    int
+	runs, built             int
 	registrationErrs        int
+	selfDeps                int
 	unmatched, missing      int
 	conflicts, eagerFails   int
 	resolves, nodes, closes int
@@ -1244,6 +1240,12 @@ func (r *modelRun) decorator(dec *modelDec) any {
 		n := r.tr.newNode(dec.target, wrapped.reg, wrapped.slot, scopeID, deps)
 		n.decs = append(slices.Clone(wrapped.decs), dec.id)
 		n.noDispose = wrapped.noDispose
+		n.wraps = wrapped
+		if wrapped.closable {
+			r.tr.mu.Lock()
+			wrapped.wrappedBy++
+			r.tr.mu.Unlock()
+		}
 		results := []reflect.Value{reflect.ValueOf(modelTypes[dec.target].wrap(n))}
 		if dec.errReturn {
 			results = append(results, reflect.Zero(modelErrorType))
@@ -1539,12 +1541,15 @@ func (r *modelRun) checkRegistry(op string) {
 
 func (r *modelRun) build() bool {
 	matched := r.m.attach()
-	modelValid := !r.m.err && matched && !r.m.missingDependency() && !r.m.lifetimeConflict()
+	selfDep := matched && r.m.decoratorReachesOwnConstructor()
+	modelValid := !r.m.err && matched && !selfDep && !r.m.missingDependency() && !r.m.lifetimeConflict()
 	switch {
 	case r.m.err:
 		r.stats.registrationErrs++
 	case !matched:
 		r.stats.unmatched++
+	case selfDep:
+		r.stats.selfDeps++
 	case r.m.missingDependency():
 		r.stats.missing++
 	case r.m.lifetimeConflict():
@@ -1553,20 +1558,8 @@ func (r *modelRun) build() bool {
 
 	validateErr := godi.Validate(r.c)
 	if (validateErr == nil) != modelValid {
-		r.failf("Validate: err=%v, model valid=%v (decorators matched=%v missing=%v conflict=%v)",
-			validateErr, modelValid, matched, r.m.missingDependency(), r.m.lifetimeConflict())
-	}
-
-	if knownDecoratorSelfDependency && modelValid && r.m.decoratorReachesOwnConstructor() {
-		// Build or resolution would deadlock (or overflow the stack).
-		r.logf("skipped: a decorator depends on its own constructor (known bug)")
-		r.stats.skipped++
-		return false
-	}
-	if knownSiblingDecoratorLifetimeGap && modelValid && r.m.lifetimeGap() {
-		r.logf("skipped: a singleton captures a scoped service through a sibling output's decorator (known bug)")
-		r.stats.skipped++
-		return false
+		r.failf("Validate: err=%v, model valid=%v (decorators matched=%v self-dependent=%v missing=%v conflict=%v)",
+			validateErr, modelValid, matched, selfDep, r.m.missingDependency(), r.m.lifetimeConflict())
 	}
 
 	r.res = &resolution{m: r.m, memo: map[*modelEntry]modelStatus{}}
@@ -1998,66 +1991,6 @@ func (r *modelRun) closeProvider() {
 // Invariants
 // ---------------------------------------------------------------------------
 
-// Known bugs the model works around. Each has a skipped regression test in
-// known_bugs_test.go; set the constant to false once the bug is fixed.
-const (
-	// The results of all but the last decorator of a service are never
-	// closed (TestDecoratorChainClosesIntermediateResults).
-	knownDecoratorChainLeak = true
-
-	// When a decorator of one output of a multi-output constructor (multi
-	// return, godi.Out, or godi.As aliases) fails, the outputs decorated
-	// before it are never closed
-	// (TestDecoratorFailureClosesSiblingOutputs).
-	knownSiblingDecoratorFailureLeak = true
-
-	// A decorator that depends on another output of its service's own
-	// constructor deadlocks Build or resolution; such programs are skipped
-	// (TestDecoratorDependingOnSiblingOutput).
-	knownDecoratorSelfDependency = true
-
-	// Transient dependencies of a decorator of an instance registration are
-	// never closed (TestInstanceDecoratorClosesTransientDependencies).
-	knownInstanceDecoratorTransientLeak = true
-
-	// Lifetime validation ignores the decorators of a constructor's other
-	// outputs, so a singleton can capture a scoped service through them;
-	// such programs are skipped (TestLifetimeValidationFollowsSiblingDecorators).
-	knownSiblingDecoratorLifetimeGap = true
-)
-
-// knownLeak reports whether n may be left unclosed because of a known bug.
-func (r *modelRun) knownLeak(n *modelNode) bool {
-	if knownDecoratorChainLeak && r.isIntermediateDecoration(n) {
-		return true
-	}
-	if knownSiblingDecoratorFailureLeak && r.res != nil && n.reg.shape != shapePlain &&
-		n.reg.shape != shapeInstance && r.res.regDiscards(n.reg) {
-		return true
-	}
-	// Before Build succeeds, every construction runs in the root scope.
-	inRoot := r.p == nil || n.scopeID == r.rootID
-	if knownInstanceDecoratorTransientLeak && n.reg.lifetime == godi.Transient &&
-		inRoot && r.m.instanceDecoratorDeps() {
-		return true
-	}
-	return false
-}
-
-// isIntermediateDecoration reports whether n is the result of a decorator
-// other than the last one applied to its service.
-func (r *modelRun) isIntermediateDecoration(n *modelNode) bool {
-	if len(n.decs) == 0 || r.res == nil {
-		return false
-	}
-	for _, e := range r.res.liveEntries(n.reg) {
-		if e.typ == n.typ && e.slot == n.slot {
-			return len(n.decs) < len(e.decs)
-		}
-	}
-	return false
-}
-
 func (r *modelRun) checkLifecycle(built bool) {
 	r.tr.mu.Lock()
 	defer r.tr.mu.Unlock()
@@ -2068,21 +2001,23 @@ func (r *modelRun) checkLifecycle(built bool) {
 	for _, n := range r.tr.nodes {
 		desc := fmt.Sprintf("node %d (%v of %s, decorators %v, scope %q)", n.id, modelTypes[n.typ].rt, describeReg(n.reg), n.decs, n.scopeID)
 		r.stats.closes += n.closes
+		byGodi := n.closes - n.byWrapper
 		switch {
-		case n.closes > 1:
-			r.failf("%s closed %d times", desc, n.closes)
+		case byGodi > 1:
+			r.failf("%s closed %d times", desc, byGodi)
+		case byGodi > 0 && n.wrappedBy > 0:
+			// Several wrappers of one value (decorators of two aliases)
+			// each close it: that is the wrappers' doing, not godi's.
+			r.failf("%s was closed by godi, but a disposable decorator result wrapping it owns it", desc)
 		case n.noDispose && n.closes > 0:
 			r.failf("%s is NoDispose but was closed", desc)
 		case !n.closable || n.noDispose:
 		case n.reg.shape == shapeInstance && n.scopeID == "":
 			// An instance is owned once Build publishes it.
-			if built && n.closes != 1 && r.liveAtBuild(n.reg) {
+			if built && n.closes == 0 && r.liveAtBuild(n.reg) {
 				r.failf("%s: instance live at Build was not closed", desc)
 			}
 		case n.closes == 0:
-			if r.knownLeak(n) {
-				continue
-			}
 			r.failf("%s was never closed", desc)
 		}
 		if n.closedEarly && !discards(n) {
@@ -2096,6 +2031,9 @@ func (r *modelRun) checkLifecycle(built bool) {
 			continue
 		}
 		for _, d := range n.deps {
+			if n.wraps == d && d.wrappedBy > 1 {
+				continue // the first of its wrappers to close closes it
+			}
 			if d.closes > 0 && d.closeSeq < n.closeSeq && !discards(n) {
 				r.failf("node %d (%v) was closed after its dependency node %d (%v)",
 					n.id, modelTypes[n.typ].rt, d.id, modelTypes[d.typ].rt)
@@ -2255,8 +2193,8 @@ func TestModelBasedInvariants(t *testing.T) {
 		}
 	}
 	t.Logf("%d programs: %d built; Build failed on %d registration errors, %d unmatched decorators, "+
-		"%d missing dependencies, %d lifetime conflicts, %d failing singletons; %d skipped (known bug)",
-		stats.runs, stats.built, stats.registrationErrs, stats.unmatched, stats.missing, stats.conflicts,
-		stats.eagerFails, stats.skipped)
+		"%d self-dependent decorators, %d missing dependencies, %d lifetime conflicts, %d failing singletons",
+		stats.runs, stats.built, stats.registrationErrs, stats.unmatched, stats.selfDeps, stats.missing,
+		stats.conflicts, stats.eagerFails)
 	t.Logf("%d resolutions, %d values constructed, %d closes", stats.resolves, stats.nodes, stats.closes)
 }

@@ -214,15 +214,26 @@ func TestDecorate(t *testing.T) {
 	t.Run("decorator_depending_on_a_sibling_output_is_rejected", func(t *testing.T) {
 		t.Parallel()
 		type First struct{}
-		c := NewCollection()
-		c.AddScoped(func() (*First, greeter) { return &First{}, &baseGreeter{} })
-		// Decorating greeter needs *First, which the same constructor call
-		// is still producing: it could never be resolved.
-		c.AddModules(Decorate(func(g greeter, _ *First) greeter { return g }))
-		require.Error(t, Validate(c))
-		_, err := c.Build()
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "same constructor")
+		for _, lifetime := range []Lifetime{Singleton, Scoped} {
+			t.Run(lifetime.String(), func(t *testing.T) {
+				t.Parallel()
+				c := NewCollection()
+				ctor := func() (*First, greeter) { return &First{}, &baseGreeter{} }
+				if lifetime == Singleton {
+					c.AddSingleton(ctor)
+				} else {
+					c.AddScoped(ctor)
+				}
+				// Decorating greeter needs *First, which the same
+				// constructor call is still producing: it could never be
+				// resolved (Build used to deadlock on it).
+				c.AddModules(Decorate(func(g greeter, _ *First) greeter { return g }))
+				require.Error(t, Validate(c))
+				_, err := c.Build()
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "same constructor")
+			})
+		}
 	})
 
 	t.Run("indirect_dependency_on_a_sibling_output_is_rejected", func(t *testing.T) {
@@ -235,6 +246,45 @@ func TestDecorate(t *testing.T) {
 		// greeter's decorator needs *Middle, which needs *First: the same
 		// construction again.
 		c.AddModules(Decorate(func(g greeter, _ *Middle) greeter { return g }))
+		err := Validate(c)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "same constructor")
+	})
+
+	t.Run("dependency_on_a_sibling_output_through_another_decorator_is_rejected", func(t *testing.T) {
+		t.Parallel()
+		type First struct{}
+		type Middle struct{}
+		c := NewCollection()
+		c.AddSingleton(func() (*First, greeter) { return &First{}, &baseGreeter{} })
+		c.AddSingleton(func() *Middle { return &Middle{} })
+		// greeter's decorator needs *Middle, whose own decorator (registered
+		// later) needs *First: the same construction again.
+		c.AddModules(
+			Decorate(func(g greeter, _ *Middle) greeter { return g }),
+			Decorate(func(m *Middle, _ *First) *Middle { return m }),
+		)
+		err := Validate(c)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "same constructor")
+		_, err = c.Build()
+		assert.ErrorContains(t, err, "same constructor")
+	})
+
+	t.Run("dependency_on_a_sibling_output_through_another_constructions_decorator_is_rejected", func(t *testing.T) {
+		t.Parallel()
+		type First struct{}
+		type Other struct{}
+		type OtherSibling struct{}
+		c := NewCollection()
+		c.AddScoped(func() (*First, greeter) { return &First{}, &baseGreeter{} })
+		c.AddScoped(func() (*Other, *OtherSibling) { return &Other{}, &OtherSibling{} })
+		// greeter's decorator needs *Other; constructing *Other also
+		// decorates *OtherSibling, whose decorator needs *First.
+		c.AddModules(
+			Decorate(func(g greeter, _ *Other) greeter { return g }),
+			Decorate(func(o *OtherSibling, _ *First) *OtherSibling { return o }),
+		)
 		err := Validate(c)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "same constructor")
@@ -273,6 +323,48 @@ func TestDecorate(t *testing.T) {
 		assert.True(t, base.IsClosed())
 	})
 
+	t.Run("a_disposable_decorator_of_an_alias_owns_the_shared_value", func(t *testing.T) {
+		t.Parallel()
+		aliasOrders := map[string][]AddOption{
+			"decorated_alias_first": {As[greeter](), As[io.Closer]()},
+			"bare_alias_first":      {As[io.Closer](), As[greeter]()},
+		}
+		for _, lifetime := range []Lifetime{Singleton, Scoped} {
+			for order, aliases := range aliasOrders {
+				t.Run(lifetime.String()+"/"+order, func(t *testing.T) {
+					t.Parallel()
+					base := &baseGreeter{}
+					c := NewCollection()
+					ctor := func() *baseGreeter { return base }
+					if lifetime == Singleton {
+						c.AddSingleton(ctor, aliases...)
+					} else {
+						c.AddScoped(ctor, aliases...)
+					}
+					// Only the greeter alias is decorated; the io.Closer alias
+					// is the same value published bare, but the wrapper owns it.
+					c.AddModules(Decorate(func(g greeter) greeter { return &closingGreeter{inner: g} }))
+					p, err := c.Build()
+					require.NoError(t, err)
+					scope, err := p.CreateScope(context.Background())
+					require.NoError(t, err)
+
+					got, err := Resolve[io.Closer](scope)
+					require.NoError(t, err)
+					assert.Same(t, base, got)
+					wrapper, err := Resolve[greeter](scope)
+					require.NoError(t, err)
+
+					// TDisposable fails on a second Close.
+					require.NoError(t, scope.Close())
+					require.NoError(t, p.Close())
+					assert.True(t, wrapper.(*closingGreeter).IsClosed())
+					assert.True(t, base.IsClosed())
+				})
+			}
+		}
+	})
+
 	t.Run("a_failing_decorator_releases_every_produced_output", func(t *testing.T) {
 		t.Parallel()
 		var first *TDisposable
@@ -293,6 +385,52 @@ func TestDecorate(t *testing.T) {
 		require.NoError(t, scope.Close())
 		require.NotNil(t, first)
 		assert.True(t, first.IsClosed(), "the undecorated sibling must not leak")
+	})
+
+	t.Run("a_failing_decorator_dependency_releases_every_produced_output", func(t *testing.T) {
+		t.Parallel()
+		type failing struct{}
+		var first *TDisposable
+		var base *baseGreeter
+		c := NewCollection()
+		c.AddScoped(func() (*TDisposable, greeter) {
+			first, base = NewTDisposable(), &baseGreeter{}
+			return first, base
+		})
+		c.AddScoped(func() (*failing, error) { return nil, errors.New("dependency failed") })
+		c.AddModules(Decorate(func(g greeter, _ *failing) greeter { return g }))
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+		scope, err := p.CreateScope(context.Background())
+		require.NoError(t, err)
+
+		// The construction publishes all of its outputs or none.
+		_, err = Resolve[*TDisposable](scope)
+		require.Error(t, err)
+		require.NoError(t, scope.Close())
+		require.NotNil(t, first)
+		assert.True(t, first.IsClosed(), "the undecorated sibling must not leak")
+		assert.True(t, base.IsClosed())
+	})
+
+	t.Run("an_instance_decorators_transient_dependencies_are_owned_with_it", func(t *testing.T) {
+		t.Parallel()
+		base := &baseGreeter{}
+		var dep *TDisposable
+		c := NewCollection()
+		c.AddSingleton(base)
+		c.AddTransient(func() *TDisposable { dep = NewTDisposable(); return dep })
+		// Like a constructor's, the decorator's transient dependency belongs
+		// to the singleton it decorates.
+		c.AddModules(Decorate(func(g *baseGreeter, _ *TDisposable) *baseGreeter { return g }))
+		p, err := c.Build()
+		require.NoError(t, err)
+
+		require.NoError(t, p.Close())
+		assert.True(t, base.IsClosed())
+		require.NotNil(t, dep)
+		assert.True(t, dep.IsClosed())
 	})
 
 	t.Run("lifecycle_hooks_reach_the_decorated_service", func(t *testing.T) {

@@ -290,14 +290,12 @@ func fuzzUnsupportedService(t reflect.Type) bool {
 
 // expectAccepted is the oracle: whether registering reg should succeed, given
 // the registry keys already occupied. rule names the rule that rejects it.
-// knownBug is set when the oracle (the documented rule) and the
-// implementation are known to disagree.
-func expectAccepted(reg *fuzzRegistration, occupied map[TypeKey]bool) (ok bool, rule, knownBug string) {
+func expectAccepted(reg *fuzzRegistration, occupied map[TypeKey]bool) (ok bool, rule string) {
 	fn := reg.fnType
 	numOut := fn.NumOut()
 
 	if fn.IsVariadic() {
-		return false, "variadic", ""
+		return false, "variadic"
 	}
 
 	void := true
@@ -309,34 +307,34 @@ func expectAccepted(reg *fuzzRegistration, occupied map[TypeKey]bool) (ok bool, 
 	// Void constructors get a synthetic key unless named, so they can't join
 	// a group.
 	if (void || reg.optName != "") && reg.optGroup != "" {
-		return false, "key and group", ""
+		return false, "key and group"
 	}
 	if void && reg.lifetime == Transient {
-		return false, "void transient", ""
+		return false, "void transient"
 	}
 
 	resultObject := numOut > 0 && fuzzEmbeds(fn.Out(0), fuzzOutType)
 	if resultObject {
 		if numOut > 2 {
-			return false, "Out with more than (Out, error)", ""
+			return false, "Out with more than (Out, error)"
 		}
 		if numOut == 2 && !fn.Out(1).Implements(fuzzErrType) {
-			return false, "Out with a non-error second result", ""
+			return false, "Out with a non-error second result"
 		}
 	}
 	for i := range numOut {
 		t := fn.Out(i)
 		if t.Implements(fuzzErrType) {
 			if i != numOut-1 {
-				return false, "error not last", ""
+				return false, "error not last"
 			}
 			if !fuzzCanBeNil(t) {
-				return false, "error type that cannot be nil", ""
+				return false, "error type that cannot be nil"
 			}
 			continue
 		}
 		if fuzzUnsupportedService(t) {
-			return false, "chan or unsafe.Pointer result", ""
+			return false, "chan or unsafe.Pointer result"
 		}
 	}
 
@@ -344,22 +342,22 @@ func expectAccepted(reg *fuzzRegistration, occupied map[TypeKey]bool) (ok bool, 
 		for _, f := range fuzzStructFields(fn.In(0), fuzzInType) {
 			tag := fuzzTagOf(f.Tag)
 			if tag.name != "" && tag.group != "" {
-				return false, "In field with name and group", ""
+				return false, "In field with name and group"
 			}
 			if tag.group != "" && f.Type.Kind() != reflect.Slice {
-				return false, "In group field not a slice", ""
+				return false, "In group field not a slice"
 			}
 			if tag.group == "" && fuzzUnsupportedService(f.Type) {
-				return false, "chan or unsafe.Pointer dependency", ""
+				return false, "chan or unsafe.Pointer dependency"
 			}
 		}
 	} else {
 		for in := range fn.Ins() {
 			if fuzzEmbeds(in, fuzzInType) {
-				return false, "In mixed with other parameters", ""
+				return false, "In mixed with other parameters"
 			}
 			if fuzzUnsupportedService(in) {
-				return false, "chan or unsafe.Pointer dependency", ""
+				return false, "chan or unsafe.Pointer dependency"
 			}
 		}
 	}
@@ -369,7 +367,7 @@ func expectAccepted(reg *fuzzRegistration, occupied map[TypeKey]bool) (ok bool, 
 		primary = fn.Out(0)
 	}
 	if fuzzReserved(primary) {
-		return false, "reserved type", ""
+		return false, "reserved type"
 	}
 
 	// The registry keys the registration occupies.
@@ -382,12 +380,19 @@ func expectAccepted(reg *fuzzRegistration, occupied map[TypeKey]bool) (ok bool, 
 	switch {
 	case resultObject:
 		if reg.optName != "" || reg.optGroup != "" {
-			return false, "Name or Group on an Out constructor", ""
+			return false, "Name or Group on an Out constructor"
 		}
 		for _, f := range fuzzStructFields(fn.Out(0), fuzzOutType) {
 			tag := fuzzTagOf(f.Tag)
 			if tag.name != "" && tag.group != "" {
-				return false, "Out field with name and group", ""
+				return false, "Out field with name and group"
+			}
+			// Each field is a service, under the rules for return values.
+			if fuzzReserved(f.Type) {
+				return false, "reserved type"
+			}
+			if fuzzUnsupportedService(f.Type) || f.Type.Implements(fuzzErrType) {
+				return false, "Out field of an unsupported type"
 			}
 			o := output{typ: f.Type, group: tag.group}
 			if tag.name != "" {
@@ -405,6 +410,9 @@ func expectAccepted(reg *fuzzRegistration, occupied map[TypeKey]bool) (ok bool, 
 			t := fn.Out(i)
 			if i == numOut-1 && t.Implements(fuzzErrType) {
 				continue
+			}
+			if fuzzReserved(t) {
+				return false, "reserved type"
 			}
 			o := output{typ: t, group: reg.optGroup}
 			if i == 0 && reg.optName != "" {
@@ -424,25 +432,12 @@ func expectAccepted(reg *fuzzRegistration, occupied map[TypeKey]bool) (ok bool, 
 		}
 		key := TypeKey{Type: o.typ, Key: o.key}
 		if seen[key] {
-			return false, "already registered", ""
+			return false, "already registered"
 		}
 		seen[key] = true
 	}
 
-	// Known gaps: outputs other than the primary one skip some of the
-	// service-type checks. The rules above say they should be rejected; the
-	// skipped tests below reproduce each gap.
-	for i, o := range outputs {
-		if resultObject || i > 0 {
-			if fuzzReserved(o.typ) {
-				knownBug = "reserved type accepted as a later output (TestRegistrationRejectsReservedSecondaryOutputs)"
-			}
-			if resultObject && (fuzzUnsupportedService(o.typ) || o.typ == fuzzErrType) {
-				knownBug = "Out field type not validated (TestRegistrationValidatesOutFieldTypes)"
-			}
-		}
-	}
-	return true, "", knownBug
+	return true, ""
 }
 
 var registrationSeeds = [][]byte{
@@ -518,7 +513,7 @@ func FuzzRegistrationValidation(f *testing.F) {
 		}
 		regErr := c.Err()
 
-		wantOK, rule, knownBug := expectAccepted(&reg, occupied)
+		wantOK, rule := expectAccepted(&reg, occupied)
 		if (regErr == nil) != wantOK {
 			t.Fatalf("Add%s(%s, %v): err = %v; oracle accepts = %v (%s)",
 				reg.lifetime, reg.fnType, opts, regErr, wantOK, rule)
@@ -526,9 +521,6 @@ func FuzzRegistrationValidation(f *testing.F) {
 		if regErr != nil && c.Count() != before {
 			t.Fatalf("Add%s(%s): rejected registration left %d services behind",
 				reg.lifetime, reg.fnType, c.Count()-before)
-		}
-		if knownBug != "" {
-			t.Skip("bug: " + knownBug)
 		}
 
 		// Build and Validate run the same checks: Build fails exactly when
@@ -545,57 +537,4 @@ func FuzzRegistrationValidation(f *testing.F) {
 				reg.lifetime, reg.fnType, opts, validateErr, buildErr)
 		}
 	})
-}
-
-// Found by FuzzRegistrationValidation: a constructor's single result may not
-// be a reserved type (context.Context, Provider, Scope), but a later
-// multi-return value or an Out field of that type is registered, and then
-// silently shadowed by the container's own value at resolution.
-func TestRegistrationRejectsReservedSecondaryOutputs(t *testing.T) {
-	t.Skip("bug: reserved types are accepted as later multi-return values and as Out fields")
-
-	type Results struct {
-		Out
-		Ctx context.Context
-	}
-	for name, ctor := range map[string]any{
-		"multi-return": func() (*fuzzRegA, context.Context) { return &fuzzRegA{}, context.Background() },
-		"Out field":    func() Results { return Results{Ctx: context.Background()} },
-	} {
-		t.Run(name, func(t *testing.T) {
-			c := NewCollection()
-			c.AddSingleton(ctor)
-			if c.Err() == nil {
-				t.Fatal("registering a context.Context output succeeded; want the reserved-type error")
-			}
-		})
-	}
-}
-
-// Found by FuzzRegistrationValidation: constructor results of type chan,
-// unsafe.Pointer, or error (other than a last error) are rejected, but Out
-// fields of those types are registered as services.
-func TestRegistrationValidatesOutFieldTypes(t *testing.T) {
-	t.Skip("bug: Out struct fields skip the service-type checks applied to constructor results")
-
-	type ChanOut struct {
-		Out
-		C chan int
-	}
-	type ErrorOut struct {
-		Out
-		Err error
-	}
-	for name, ctor := range map[string]any{
-		"chan":  func() ChanOut { return ChanOut{C: make(chan int)} },
-		"error": func() ErrorOut { return ErrorOut{Err: fmt.Errorf("x")} },
-	} {
-		t.Run(name, func(t *testing.T) {
-			c := NewCollection()
-			c.AddSingleton(ctor)
-			if c.Err() == nil {
-				t.Fatalf("registering an Out field of type %s succeeded; want it rejected like a constructor result", name)
-			}
-		})
-	}
 }
