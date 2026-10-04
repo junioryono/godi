@@ -423,7 +423,13 @@ type ConstructorInvocationError struct {
 
 func (e ConstructorInvocationError) Error() string {
 	if e.Location != "" {
-		return fmt.Sprintf("constructor %s failed: %v", e.Location, e.Cause)
+		cause := e.Cause
+		// The message already says the constructor failed; print the
+		// error it returned as is.
+		if returned, ok := cause.(*reflection.ReturnedError); ok {
+			cause = returned.Err
+		}
+		return fmt.Sprintf("constructor %s failed: %v", e.Location, cause)
 	}
 	paramStrs := make([]string, len(e.Parameters))
 	for i, p := range e.Parameters {

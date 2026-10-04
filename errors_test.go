@@ -331,6 +331,17 @@ func TestErrors(t *testing.T) {
 		assert.Contains(t, err.Error(), "collection_test.go:")
 	})
 
+	t.Run("a_constructors_own_error_follows_its_name", func(t *testing.T) {
+		t.Parallel()
+		refused := errors.New("connection refused")
+		c := NewCollection()
+		c.AddSingleton(func() (*TService, error) { return nil, refused })
+		_, err := c.Build()
+		require.ErrorIs(t, err, refused)
+		// Not "... failed: constructor error: connection refused".
+		assert.Contains(t, err.Error(), ") failed: connection refused")
+	})
+
 	t.Run("a_reflect_made_constructor_is_named_by_its_type", func(t *testing.T) {
 		t.Parallel()
 		fnType := reflect.TypeFor[func() (*TService, error)]()
