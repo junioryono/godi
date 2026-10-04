@@ -1,4 +1,28 @@
-# godi v4 → v5 Migration
+# Migrating godi
+
+## v5 → v6
+
+v6 is a breaking release at a new import path (`github.com/junioryono/godi/v6`).
+The full guide with before/after examples is
+[docs/guides/v5-to-v6.md](docs/guides/v5-to-v6.md).
+
+| Change | Action |
+| --- | --- |
+| Import path `/v5` → `/v6` (integrations `/<name>/v6`) | Find-and-replace across your module |
+| **Values registered as instances are not disposed** (silent) | Close them yourself, or register a constructor that returns them |
+| Scope validation is on by default | Resolve scoped services from a scope, or `Build(godi.WithScopeValidation(false))` |
+| `BuildWithContext`, `BuildWithOptions`, `ProviderOptions` removed | `Build(godi.WithContext(ctx), godi.WithBuildTimeout(d), godi.WithObserver(o))` |
+| Constructors cannot depend on `Provider` or `Scope`; `Scope.Provider()` removed | Depend on `godi.Resolver` or `godi.ScopeFactory` |
+| `godi.Key` removed; keyed APIs take `name string` | Use `godi.Name`; `ErrServiceKeyNil` is `ErrServiceKeyEmpty` |
+| `godi.Name` keys every output of a multi-return constructor | Resolve the other outputs by name, or use a result object |
+| Error types have pointer receivers | Match with `errors.AsType[*godi.XxxError]`; value-typed `errors.As` targets now panic |
+| `TimeoutError`, `GraphOperationError` removed; some internals unexported | Match `ErrServiceNotFound` and the remaining typed errors |
+| `BuildError.Phase`, `DisposalError.Context` are typed | Compare with the `Phase*`, `DisposalProvider`/`DisposalScope` constants |
+| `Collection`, `Provider`, `Scope` are sealed | Implement `godi.Resolver` in test doubles |
+| `TypeKey`, `GroupKey` unexported | No godi API used them |
+| `echo` and `fiber` integrate Echo v5 and Fiber v3; Echo v4 and Fiber v2 retired | See the integration guides' migration sections |
+
+## v4 → v5
 
 v5 is a breaking release. A v4 program keeps working on v4 — v5 lives at a new
 import path, so nothing changes until you opt in. Most upgrades are a

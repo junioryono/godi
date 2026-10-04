@@ -84,8 +84,8 @@ Requires **Go 1.26+**. Zero external dependencies.
 godi supports the two most recent Go minor releases, like Go itself, and CI
 tests both. See the [Go version policy](CONTRIBUTING.md#go-version-policy).
 
-> **Upgrading from v4?** See the [v4 → v5 migration guide](MIGRATION.md) — v5
-> is a breaking release at a new import path.
+> **Upgrading from v5?** See the [v5 → v6 migration guide](docs/guides/v5-to-v6.md)
+> ([summary](MIGRATION.md)). v6 is a breaking release at a new import path.
 
 ## Quick Start
 
@@ -443,7 +443,7 @@ documents what each benchmark measures.
 - [Getting Started](https://godi.readthedocs.io/en/latest/getting-started/) - 5-minute tutorial
 - [Core Concepts](https://godi.readthedocs.io/en/latest/concepts/) - Lifetimes, scopes, modules
 - [Features](https://godi.readthedocs.io/en/latest/features/) - Keyed services, groups, parameter objects
-- [Integrations](https://godi.readthedocs.io/en/latest/integrations/) - Gin, Chi, Echo (v4 and v5), Fiber (v2 and v3), net/http, Huma
+- [Integrations](https://godi.readthedocs.io/en/latest/integrations/) - Gin, Chi, Echo v5, Fiber v3, net/http, Huma
 - [Guides](https://godi.readthedocs.io/en/latest/guides/) - Web apps, testing, error handling
 - [API Reference](https://pkg.go.dev/github.com/junioryono/godi/v6)
 - [Executable Quick Start](docs/examples/quickstart/main.go)

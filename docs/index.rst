@@ -30,6 +30,7 @@
    guides/testing
    guides/error-handling
    guides/migration
+   guides/v5-to-v6
    guides/v4-to-v5
 
 .. toctree::
