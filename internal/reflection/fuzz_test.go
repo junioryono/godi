@@ -302,7 +302,7 @@ func FuzzAnalyzeGeneratedConstructor(f *testing.F) {
 	f.Fuzz(func(t *testing.T, data []byte) {
 		fnType := genFuncType(data)
 		fn := makeFunc(fnType)
-		a := New()
+		a := New(WithNotFound(NotFoundPolicy))
 
 		info, err := a.Analyze(fn)
 		if err != nil {

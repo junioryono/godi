@@ -1,19 +1,11 @@
 package reflection
 
 import (
-	"errors"
 	"fmt"
 	"reflect"
 	"sync"
 	"sync/atomic"
 )
-
-// ErrServiceNotFound indicates that no provider is registered for a requested
-// type/key. It lives here (rather than in the root package) so the parameter
-// builder can distinguish "not registered" from "registered but failed to
-// construct" without an import cycle. The root package re-exports it as
-// godi.ErrServiceNotFound.
-var ErrServiceNotFound = errors.New("service not found")
 
 type In struct{}
 type Out struct{}
@@ -27,6 +19,9 @@ var (
 // Analyzer performs reflection-based analysis of constructors and types.
 // It caches analysis results for performance.
 type Analyzer struct {
+	// notFound is the WithNotFound policy.
+	notFound func(error) bool
+
 	mu sync.RWMutex
 	// cache keys retain the analyzed function values (and any closure
 	// captures) until Clear is called, trading that retention for correct
@@ -131,13 +126,32 @@ type ParamField struct {
 	Index    int // field index in struct
 }
 
+// Option configures an Analyzer.
+type Option func(*Analyzer)
+
+// WithNotFound sets the policy that tells a dependency that is not
+// registered apart from one whose construction failed: an optional In field
+// is left at its zero value only when notFound reports true for the error
+// resolving it. Without a policy, every resolution error propagates.
+func WithNotFound(notFound func(error) bool) Option {
+	return func(a *Analyzer) { a.notFound = notFound }
+}
+
 // New creates a new Analyzer.
-func New() *Analyzer {
+func New(opts ...Option) *Analyzer {
 	a := &Analyzer{
 		cache: make(map[reflect.Value]*ConstructorInfo),
 	}
+	for _, opt := range opts {
+		opt(a)
+	}
 	a.invoker = NewConstructorInvoker(a)
 	return a
+}
+
+// isNotFound applies the WithNotFound policy.
+func (a *Analyzer) isNotFound(err error) bool {
+	return a != nil && a.notFound != nil && a.notFound(err)
 }
 
 // Analyze analyzes a constructor function and extracts dependency information.

@@ -171,7 +171,7 @@ func NewCollection() Collection {
 		services:       make(map[registryKey]*descriptor, 16), // Pre-size for typical usage
 		groups:         make(map[groupID][]*descriptor, 4),
 		allDescriptors: make([]*descriptor, 0, 16),
-		analyzer:       reflection.New(),
+		analyzer:       reflection.New(reflection.WithNotFound(isNotFound)),
 	}
 }
 

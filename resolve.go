@@ -196,7 +196,7 @@ func ResolveFromContext[T any](ctx context.Context) (T, error) {
 // invokeAnalyzer analyzes functions passed to Invoke without caching them:
 // Invoke is called with fresh closures (e.g. per request), and caching would
 // retain every one of them.
-var invokeAnalyzer = reflection.New()
+var invokeAnalyzer = reflection.New(reflection.WithNotFound(isNotFound))
 
 // Invoke calls fn with its parameters resolved from p (a Provider or Scope),
 // for side effects. fn's parameters follow constructor rules, including a

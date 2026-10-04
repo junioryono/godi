@@ -87,7 +87,7 @@ func (b *ParamObjectBuilder) buildParamObject(
 			// Optional only forgives "not registered". A registered
 			// dependency whose construction failed must propagate the
 			// error instead of silently injecting a zero value.
-			if param.Optional && isServiceNotFound(err) {
+			if param.Optional && b.analyzer.isNotFound(err) {
 				continue
 			}
 			return reflect.Value{}, fmt.Errorf("failed to resolve field %s: %w", param.Name, err)
@@ -105,19 +105,6 @@ func (b *ParamObjectBuilder) buildParamObject(
 		return structPtr, nil
 	}
 	return structValue, nil
-}
-
-// isServiceNotFound reports whether err is a direct "service not registered"
-// failure, as opposed to a registered service whose construction failed.
-// Only the top-level error is inspected deliberately: a missing transitive
-// dependency surfaces as a construction failure of the direct dependency and
-// must propagate even for optional fields.
-func isServiceNotFound(err error) bool {
-	if err == ErrServiceNotFound {
-		return true
-	}
-	nf, ok := err.(interface{ ServiceNotFound() bool })
-	return ok && nf.ServiceNotFound()
 }
 
 // resolveFieldDependency resolves a single field's dependency.

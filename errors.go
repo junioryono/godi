@@ -21,11 +21,9 @@ import (
 // and ErrProviderDisposed) directly. Match them with errors.Is.
 
 var (
-	// Service resolution errors.
-	// ErrServiceNotFound is shared with the internal reflection package so
-	// the parameter builder can distinguish "not registered" from
-	// "registered but failed to construct" for optional dependencies.
-	ErrServiceNotFound = reflection.ErrServiceNotFound
+	// ErrServiceNotFound indicates that no service is registered for the
+	// requested type and key.
+	ErrServiceNotFound = errors.New("service not found")
 	ErrServiceKeyNil   = errors.New("service key cannot be nil")
 	ErrServiceTypeNil  = errors.New("service type cannot be nil")
 
@@ -160,7 +158,7 @@ func (e *ResolutionError) Error() string {
 
 	// Only a missing registration is "not found"; a registered service whose
 	// construction failed is reported as a resolution failure.
-	notFound := e.Cause == nil || e.ServiceNotFound()
+	notFound := e.Cause == nil || e.serviceNotFound()
 	if notFound {
 		b.WriteString("service not found: ")
 	} else {
@@ -181,7 +179,7 @@ func (e *ResolutionError) Error() string {
 // Detail suggests similar registered types for a missing service; see
 // Explain.
 func (e *ResolutionError) Detail() string {
-	if e.Cause != nil && !e.ServiceNotFound() {
+	if e.Cause != nil && !e.serviceNotFound() {
 		return ""
 	}
 	var b strings.Builder
@@ -206,7 +204,7 @@ func (e *ResolutionError) Unwrap() error {
 // registered" failure (as opposed to a registered provider whose construction
 // failed). Used by the parameter builder to decide whether an optional
 // dependency may be skipped.
-func (e *ResolutionError) ServiceNotFound() bool {
+func (e *ResolutionError) serviceNotFound() bool {
 	return e.Cause == ErrServiceNotFound || e.Cause == errOutputNotProvided
 }
 
@@ -223,6 +221,19 @@ func (outputNotProvidedError) Error() string {
 }
 
 func (outputNotProvidedError) Unwrap() error { return ErrServiceNotFound }
+
+// isNotFound is the reflection package's not-found policy: it reports
+// whether err says a dependency is not registered, as opposed to registered
+// but failing to construct. Only the top-level error is inspected on purpose:
+// a missing transitive dependency surfaces as a construction failure of the
+// direct dependency and must propagate even for optional fields.
+func isNotFound(err error) bool {
+	if err == ErrServiceNotFound {
+		return true
+	}
+	resolutionErr, ok := err.(*ResolutionError)
+	return ok && resolutionErr.serviceNotFound()
+}
 
 // isOutputNotProvided reports whether err is a direct "result object field
 // was nil" resolution failure.

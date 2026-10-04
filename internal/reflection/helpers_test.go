@@ -58,7 +58,7 @@ func TestAnalyzer_AdditionalScenarios(t *testing.T) {
 
 // Test more ParamObjectBuilder scenarios
 func TestParamObjectBuilder_MoreScenarios(t *testing.T) {
-	analyzer := reflection.New()
+	analyzer := reflection.New(reflection.WithNotFound(reflection.NotFoundPolicy))
 	builder := reflection.NewParamObjectBuilder(analyzer)
 
 	resolver := NewTestResolver()

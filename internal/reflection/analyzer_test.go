@@ -683,7 +683,7 @@ func TestAnalyzer_MultipleReturns(t *testing.T) {
 
 // Test error handling in builders
 func TestParamObjectBuilder_ErrorCases(t *testing.T) {
-	analyzer := reflection.New()
+	analyzer := reflection.New(reflection.WithNotFound(reflection.NotFoundPolicy))
 	builder := reflection.NewParamObjectBuilder(analyzer)
 
 	// Mock resolver that always fails

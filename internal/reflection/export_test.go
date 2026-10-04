@@ -1,9 +1,17 @@
 package reflection
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 )
+
+// ErrServiceNotFound stands in for godi.ErrServiceNotFound: analyzers built
+// with WithNotFound(NotFoundPolicy) treat it as "not registered".
+var ErrServiceNotFound = errors.New("service not found")
+
+// NotFoundPolicy is the WithNotFound policy for ErrServiceNotFound.
+func NotFoundPolicy(err error) bool { return err == ErrServiceNotFound }
 
 // BuildParamObject creates and populates an In struct with resolved dependencies.
 func (b *ParamObjectBuilder) BuildParamObject(
