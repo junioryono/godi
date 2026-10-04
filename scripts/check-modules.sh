@@ -31,6 +31,7 @@ if [[ ! "$root_module" =~ ^github\.com/junioryono/godi/v[2-9][0-9]*$ ]]; then
 	exit 1
 fi
 major_suffix=${root_module##*/}
+root_go=$(awk '$1 == "go" { print $2; exit }' "$root/go.mod")
 
 while read -r directory kind; do
 	case "$directory" in
@@ -51,6 +52,13 @@ while read -r directory kind; do
 	declared=$(awk '$1 == "module" { print $2; exit }' "$root/$directory/go.mod")
 	if [[ "$declared" != "$expected_path" ]]; then
 		echo "$directory/go.mod declares $declared; expected $expected_path" >&2
+		exit 1
+	fi
+
+	# The root go directive is the minimum supported Go (scripts/go-matrix.sh).
+	go_directive=$(awk '$1 == "go" { print $2; exit }' "$root/$directory/go.mod")
+	if [[ "$go_directive" != "$root_go" ]]; then
+		echo "$directory/go.mod declares go $go_directive; every module must declare go $root_go" >&2
 		exit 1
 	fi
 done < "$root/scripts/modules.txt"

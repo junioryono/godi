@@ -10,9 +10,10 @@ permissions:
   contents: read
 
 # Tool versions (golangci-lint, gosec, govulncheck, actionlint) are
-# single-sourced from the Makefile.
+# single-sourced from the Makefile. Single-toolchain jobs use the Go release
+# pinned in .go-version; module tests also cover the minimum supported Go
+# (scripts/go-matrix.sh).
 env:
-  GO_VERSION: "1.26.5"
   COVERAGE_THRESHOLD: "80"
 
 jobs:
@@ -22,6 +23,7 @@ jobs:
     outputs:
       all: ${{ steps.matrix.outputs.all }}
       coverage: ${{ steps.matrix.outputs.coverage }}
+      go: ${{ steps.matrix.outputs.go }}
     steps:
       - name: Checkout code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -34,6 +36,7 @@ jobs:
         run: |
           echo "all=$(scripts/module-matrix.sh all)" >> "$GITHUB_OUTPUT"
           echo "coverage=$(scripts/module-matrix.sh coverage)" >> "$GITHUB_OUTPUT"
+          echo "go=$(scripts/go-matrix.sh)" >> "$GITHUB_OUTPUT"
 
   # Ubuntu root tests already run in module-test; this job exists for the
   # other operating systems.
@@ -51,20 +54,21 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: .go-version
           cache: true
 
       - name: Run root tests
         run: go test -race ./...
 
   module-test:
-    name: Module Test (${{ matrix.module }})
+    name: Module Test (${{ matrix.module }}, Go ${{ matrix.go }})
     needs: inventory
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         module: ${{ fromJSON(needs.inventory.outputs.all) }}
+        go: ${{ fromJSON(needs.inventory.outputs.go) }}
     steps:
       - name: Checkout code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -72,7 +76,8 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version: ${{ matrix.go }}
+          check-latest: true
           cache: true
           cache-dependency-path: ${{ matrix.module == '.' && 'go.sum' || format('{0}/go.sum', matrix.module) }}
 
@@ -100,7 +105,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: .go-version
           cache: true
           cache-dependency-path: ${{ matrix.module == '.' && 'go.sum' || format('{0}/go.sum', matrix.module) }}
 
@@ -130,7 +135,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: .go-version
           cache: true
           cache-dependency-path: |
             go.sum
@@ -186,7 +191,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: .go-version
           cache: true
           cache-dependency-path: ${{ matrix.module == '.' && 'go.sum' || format('{0}/go.sum', matrix.module) }}
 
@@ -231,7 +236,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: .go-version
           cache: true
           cache-dependency-path: |
             go.sum
@@ -250,7 +255,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: .go-version
           cache: true
           cache-dependency-path: |
             go.sum
@@ -277,7 +282,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: .go-version
           cache: true
           cache-dependency-path: |
             go.sum
