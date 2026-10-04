@@ -137,7 +137,7 @@ func runEcho(t *testing.T, provider godi.Provider, req *http.Request) (status in
 	t.Helper()
 	engine := echo.New()
 	engine.Use(godiecho.ScopeMiddleware(provider))
-	registerGreeting(humaecho.New(engine, huma.DefaultConfig("Integration", "1.0.0")))
+	registerGreeting(humaecho.NewV4(engine, huma.DefaultConfig("Integration", "1.0.0")))
 
 	recorder := httptest.NewRecorder()
 	engine.ServeHTTP(recorder, req)
@@ -148,7 +148,7 @@ func runFiber(t *testing.T, provider godi.Provider, req *http.Request) (status i
 	t.Helper()
 	app := fiber.New()
 	app.Use(godifiber.ScopeMiddleware(provider))
-	registerGreeting(humafiber.New(app, huma.DefaultConfig("Integration", "1.0.0")))
+	registerGreeting(humafiber.NewV2(app, huma.DefaultConfig("Integration", "1.0.0")))
 
 	response, err := app.Test(req)
 	if err != nil {
