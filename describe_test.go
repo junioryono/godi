@@ -39,6 +39,8 @@ func TestDescribe(t *testing.T) {
 		t.Parallel()
 		// ServiceInfo shipped comparable in v5.1 (usable with == and as a
 		// map key); the dependency details live in ServiceDescription.
+		// Not reflect.TypeFor[ServiceInfo]().Comparable(): that panics the
+		// linker (https://github.com/golang/go/issues/81990).
 		assert.True(t, reflect.TypeOf(ServiceInfo{}).Comparable())
 		infos := c.ToSlice()
 		require.Len(t, infos, 3)
