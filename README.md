@@ -200,14 +200,19 @@ func main() {
 
 ### Framework Support
 
-| Framework | Package                               | Install                                      |
-| --------- | ------------------------------------- | -------------------------------------------- |
-| net/http  | `github.com/junioryono/godi/http/v5`  | `go get github.com/junioryono/godi/http/v5`  |
-| Gin       | `github.com/junioryono/godi/gin/v5`   | `go get github.com/junioryono/godi/gin/v5`   |
-| Chi       | `github.com/junioryono/godi/chi/v5`   | `go get github.com/junioryono/godi/chi/v5`   |
-| Echo      | `github.com/junioryono/godi/echo/v5`  | `go get github.com/junioryono/godi/echo/v5`  |
-| Fiber     | `github.com/junioryono/godi/fiber/v5` | `go get github.com/junioryono/godi/fiber/v5` |
-| Huma      | `github.com/junioryono/godi/huma/v5`  | `go get github.com/junioryono/godi/huma/v5`  |
+| Framework | Package                                 | Install                                        |
+| --------- | --------------------------------------- | ---------------------------------------------- |
+| net/http  | `github.com/junioryono/godi/http/v5`    | `go get github.com/junioryono/godi/http/v5`    |
+| Gin       | `github.com/junioryono/godi/gin/v5`     | `go get github.com/junioryono/godi/gin/v5`     |
+| Chi       | `github.com/junioryono/godi/chi/v5`     | `go get github.com/junioryono/godi/chi/v5`     |
+| Echo v4   | `github.com/junioryono/godi/echo/v5`    | `go get github.com/junioryono/godi/echo/v5`    |
+| Echo v5   | `github.com/junioryono/godi/echov5/v5`  | `go get github.com/junioryono/godi/echov5/v5`  |
+| Fiber v2  | `github.com/junioryono/godi/fiber/v5`   | `go get github.com/junioryono/godi/fiber/v5`   |
+| Fiber v3  | `github.com/junioryono/godi/fiberv3/v5` | `go get github.com/junioryono/godi/fiberv3/v5` |
+| Huma      | `github.com/junioryono/godi/huma/v5`    | `go get github.com/junioryono/godi/huma/v5`    |
+
+The trailing `/v5` is godi's major version, not the framework's: `echov5/v5`
+is godi v5's integration for Echo v5.
 
 Huma runs on top of a router, so pair `godi/huma/v5` with the matching router
 integration above — the router middleware owns the request scope, and Huma
@@ -404,7 +409,7 @@ documents what each benchmark measures.
 - [Getting Started](https://godi.readthedocs.io/en/latest/getting-started/) - 5-minute tutorial
 - [Core Concepts](https://godi.readthedocs.io/en/latest/concepts/) - Lifetimes, scopes, modules
 - [Features](https://godi.readthedocs.io/en/latest/features/) - Keyed services, groups, parameter objects
-- [Integrations](https://godi.readthedocs.io/en/latest/integrations/) - Gin, Chi, Echo, Fiber, net/http, Huma
+- [Integrations](https://godi.readthedocs.io/en/latest/integrations/) - Gin, Chi, Echo (v4 and v5), Fiber (v2 and v3), net/http, Huma
 - [Guides](https://godi.readthedocs.io/en/latest/guides/) - Web apps, testing, error handling
 - [API Reference](https://pkg.go.dev/github.com/junioryono/godi/v5)
 - [Executable Quick Start](docs/examples/quickstart/main.go)

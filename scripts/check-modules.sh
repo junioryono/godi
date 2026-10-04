@@ -61,6 +61,29 @@ while read -r directory kind; do
 		echo "$directory/go.mod declares go $go_directive; every module must declare go $root_go" >&2
 		exit 1
 	fi
+
+	# A module that requires another integration module (chi -> http) must
+	# build against the sibling source, never a published copy, so changes to
+	# both land and get tested together.
+	while read -r dependency dependency_path _; do
+		if [[ "$dependency" == "$directory" ]]; then
+			echo "$directory/go.mod requires itself" >&2
+			exit 1
+		fi
+		target=$(awk -v path="$dependency_path" '
+			$1 == "replace" && $2 == "(" { in_replace = 1; next }
+			in_replace && $1 == ")" { in_replace = 0; next }
+			{
+				start = in_replace ? 1 : ($1 == "replace" ? 2 : 0)
+				if (start == 0 || $start != path) next
+				for (i = start + 1; i < NF; i++) if ($i == "=>") { print $(i + 1); exit }
+			}
+		' "$root/$directory/go.mod")
+		if [[ "$target" != "../$dependency" ]]; then
+			echo "$directory/go.mod requires $dependency_path but does not replace it with ../$dependency" >&2
+			exit 1
+		fi
+	done < <("$root/scripts/sibling-requires.sh" "$root/$directory/go.mod")
 done < "$root/scripts/modules.txt"
 
 echo "module inventory and module paths are valid"

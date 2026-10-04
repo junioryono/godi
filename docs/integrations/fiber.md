@@ -1,6 +1,7 @@
 # Fiber Integration
 
-Complete guide for using godi with the [Fiber](https://github.com/gofiber/fiber) web framework.
+Complete guide for using godi with the [Fiber](https://github.com/gofiber/fiber) web framework, version 2 (`github.com/gofiber/fiber/v2`).
+For Fiber v3, see the [Fiber v3 integration](fiber-v3.md).
 
 ## Installation
 
@@ -54,17 +55,30 @@ app := fiber.New()
 app.Use(godifiber.ScopeMiddleware(provider))
 ```
 
-The scope middleware dispatches downstream errors through Fiber's configured
-`ErrorHandler` before closing the request scope, then consumes the error to
-avoid a second dispatch. Middleware that needs the returned error must be
-registered after the scope middleware so it runs inside the scope. Register
-panic recovery in that position as well:
+```{important}
+The scope middleware **consumes errors**. It dispatches downstream errors
+(and `WithMiddleware` errors) through Fiber's configured `ErrorHandler`
+before closing the request scope, then returns `nil` to avoid a second
+dispatch. Handlers registered *before* `ScopeMiddleware` never see the error.
+```
+
+Register middleware that needs the returned error, including panic recovery,
+*after* the scope middleware so it runs inside the scope:
 
 ```go
 app.Use(godifiber.ScopeMiddleware(provider))
 app.Use(logger.New())
 app.Use(recover.New())
 ```
+
+To return errors to outer handlers instead, use
+`godifiber.WithErrorPassthrough(true)`. Fiber then renders the error after the
+scope has closed, so the error handler cannot use request-scoped services.
+See the [integration contract](#echo-and-fiber-errors-are-consumed-inside-the-scope).
+
+When the response body is a stream (`c.SendStream`), the scope stays open
+until fasthttp has written the response, because the stream is usually a
+scoped resource.
 
 ### Configuration Options
 
@@ -76,6 +90,19 @@ app.Use(godifiber.ScopeMiddleware(provider,
             "error": "Service unavailable",
         })
     }),
+
+    // Custom error handler for WithMiddleware failures
+    // (defaults to the error handler above)
+    godifiber.WithMiddlewareErrorHandler(func(c *fiber.Ctx, err error) error {
+        return fiber.ErrUnauthorized
+    }),
+
+    // Logger for the default handlers (defaults to slog.Default())
+    godifiber.WithLogger(logger),
+
+    // Return errors to outer handlers instead of consuming them;
+    // Fiber then renders them after the scope closes (default false)
+    godifiber.WithErrorPassthrough(false),
 
     // Custom handler for scope close errors
     godifiber.WithCloseErrorHandler(func(err error) {
@@ -135,8 +162,15 @@ app.Get("/users", godifiber.Handle(UserController.List,
             "error": "Service unavailable",
         })
     }),
+
+    // Logger for the default handlers (defaults to slog.Default())
+    godifiber.WithHandlerLogger(logger),
 ))
 ```
+
+Default handlers log the cause with `log/slog` (the panic handler also logs
+the stack trace) and respond with a generic 500; they never send internal
+error text to the client.
 
 ## Complete Example
 
@@ -357,4 +391,4 @@ scope, err := godi.FromContext(c.UserContext())
 
 ---
 
-**See also:** [Gin Integration](gin.md) | [Chi Integration](chi.md) | [Echo Integration](echo.md) | [net/http Integration](net-http.md)
+**See also:** [Integration contract](#integration-contract) | [Fiber v3 Integration](fiber-v3.md) | [Gin Integration](gin.md) | [Chi Integration](chi.md) | [Echo Integration](echo.md) | [net/http Integration](net-http.md)

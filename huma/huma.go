@@ -49,6 +49,11 @@ type HandlerConfig struct {
 	// mapped errors become a generic 500. Use it to translate domain errors into
 	// huma.StatusError values; plain internal errors are never exposed.
 	ErrorMapper func(error) error
+
+	// Logger records resolution failures (in the default
+	// ResolutionErrorHandler) and sanitized controller errors. If nil,
+	// slog.Default() is used.
+	Logger *slog.Logger
 }
 
 // HandlerOption configures the Handle wrapper.
@@ -76,29 +81,49 @@ func WithErrorMapper(m func(error) error) HandlerOption {
 	}
 }
 
-func defaultHandlerConfig() *HandlerConfig {
-	return &HandlerConfig{
-		ResolutionErrorHandler: func(err error) error {
-			slog.Error("failed to resolve request controller", "error", err)
-			return huma.Error500InternalServerError("internal server error")
-		},
-		// The mapped error is always sanitized in Handle, so the default
-		// mapper passes the error through untouched.
-		ErrorMapper: func(err error) error { return err },
+// WithLogger sets the logger used by the default ResolutionErrorHandler and
+// for sanitized controller errors. A nil logger keeps the default,
+// slog.Default().
+func WithLogger(l *slog.Logger) HandlerOption {
+	return func(c *HandlerConfig) {
+		if l != nil {
+			c.Logger = l
+		}
 	}
+}
+
+func (c *HandlerConfig) logger() *slog.Logger {
+	if c.Logger != nil {
+		return c.Logger
+	}
+	return slog.Default()
+}
+
+func (c *HandlerConfig) defaultResolutionErrorHandler(err error) error {
+	c.logger().Error("failed to resolve request controller", "error", err)
+	return huma.Error500InternalServerError("internal server error")
+}
+
+// passthroughErrorMapper is the default mapper. The mapped error is always
+// sanitized in Handle, so it passes the error through untouched.
+func passthroughErrorMapper(err error) error { return err }
+
+func defaultHandlerConfig() *HandlerConfig {
+	c := &HandlerConfig{ErrorMapper: passthroughErrorMapper}
+	c.ResolutionErrorHandler = c.defaultResolutionErrorHandler
+	return c
 }
 
 func normalizeHandlerConfig(c *HandlerConfig) {
-	defaults := defaultHandlerConfig()
 	if c.ResolutionErrorHandler == nil {
-		c.ResolutionErrorHandler = defaults.ResolutionErrorHandler
+		c.ResolutionErrorHandler = c.defaultResolutionErrorHandler
 	}
 	if c.ErrorMapper == nil {
-		c.ErrorMapper = defaults.ErrorMapper
+		c.ErrorMapper = passthroughErrorMapper
 	}
 }
 
-func sanitizeControllerError(err error) error {
+func sanitizeControllerError(logger *slog.Logger, err error) error {
 	if err == nil {
 		return nil
 	}
@@ -123,7 +148,7 @@ func sanitizeControllerError(err error) error {
 		// dropped by returning statusErr alone; re-attach a clone.
 		return huma.ErrorWithHeaders(statusErr, headersErr.GetHeaders().Clone())
 	}
-	slog.Error("unexpected error in handler", "error", err)
+	logger.Error("unexpected error in handler", "error", err)
 	sanitized := huma.Error500InternalServerError("internal server error")
 	if hasHeaders {
 		// Headers attached via huma.ErrorWithHeaders are deliberate response
@@ -177,7 +202,7 @@ func Handle[C, I, O any](
 
 		out, err := method(controller, ctx, in)
 		if err != nil {
-			return nil, sanitizeControllerError(cfg.ErrorMapper(err))
+			return nil, sanitizeControllerError(cfg.logger(), cfg.ErrorMapper(err))
 		}
 
 		return out, nil

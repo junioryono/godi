@@ -2,6 +2,11 @@
 
 Complete guide for using godi with the [Chi](https://github.com/go-chi/chi) router.
 
+Chi uses standard net/http handlers, so `godichi` is a thin facade over the
+[net/http integration](net-http.md): its `Config`, `Option`, `HandlerConfig`
+and `HandlerOption` types are aliases of the `godihttp` types, and its
+functions delegate to `godihttp`. The two packages are interchangeable.
+
 ## Installation
 
 ```bash
@@ -77,8 +82,21 @@ r.Use(godichi.ScopeMiddleware(provider,
         reqCtx.UserID = r.Header.Get("X-User-ID")
         return nil
     }),
+
+    // Custom error handler for WithMiddleware failures, e.g. a rejected
+    // authentication check (defaults to the error handler above)
+    godichi.WithMiddlewareErrorHandler(func(w http.ResponseWriter, r *http.Request, err error) {
+        http.Error(w, "Unauthorized", http.StatusUnauthorized)
+    }),
+
+    // Logger for the default handlers (defaults to slog.Default())
+    godichi.WithLogger(logger),
 ))
 ```
+
+Default handlers log the cause with `log/slog` and respond with a generic
+500; they never write internal error text to the client. See the
+[integration contract](#integration-contract).
 
 ## Handle
 
@@ -118,8 +136,14 @@ r.Get("/users", godichi.Handle(UserController.List,
     godichi.WithResolutionErrorHandler(func(w http.ResponseWriter, r *http.Request, err error) {
         http.Error(w, "Service unavailable", http.StatusServiceUnavailable)
     }),
+
+    // Logger for the default handlers (defaults to slog.Default())
+    godichi.WithHandlerLogger(logger),
 ))
 ```
+
+The default panic handler logs the panic value and stack trace, then responds
+with a generic 500. A panic with `http.ErrAbortHandler` is re-panicked.
 
 ## Complete Example
 
@@ -326,4 +350,4 @@ r.Group(func(r chi.Router) {
 
 ---
 
-**See also:** [Gin Integration](gin.md) | [Echo Integration](echo.md) | [Fiber Integration](fiber.md) | [net/http Integration](net-http.md)
+**See also:** [Integration contract](#integration-contract) | [Gin Integration](gin.md) | [Echo Integration](echo.md) | [Fiber Integration](fiber.md) | [net/http Integration](net-http.md)

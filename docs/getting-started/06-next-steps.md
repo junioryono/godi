@@ -5,7 +5,7 @@ You now understand the fundamentals of godi. Here's where to go next based on wh
 ## Building a Web Application?
 
 1. **[Web Applications Guide](../guides/web-applications.md)** - Complete patterns for production web apps
-2. **[Framework Integration](../integrations/index.md)** - Dedicated guides for Gin, Chi, Echo, Fiber, net/http, and Huma
+2. **[Framework Integration](../integrations/index.md)** - Dedicated guides for Gin, Chi, Echo (v4 and v5), Fiber (v2 and v3), net/http, and Huma
 3. **[Scopes & Isolation](../concepts/scopes.md)** - Deep dive into request isolation
 
 ## Organizing a Large Application?
@@ -57,8 +57,10 @@ You now understand the fundamentals of godi. Here's where to go next based on wh
 | --------- | --------------------------------------------------- |
 | Gin       | [Gin Integration](../integrations/gin.md)           |
 | Chi       | [Chi Integration](../integrations/chi.md)           |
-| Echo      | [Echo Integration](../integrations/echo.md)         |
-| Fiber     | [Fiber Integration](../integrations/fiber.md)       |
+| Echo v4   | [Echo Integration](../integrations/echo.md)         |
+| Echo v5   | [Echo v5 Integration](../integrations/echo-v5.md)   |
+| Fiber v2  | [Fiber Integration](../integrations/fiber.md)       |
+| Fiber v3  | [Fiber v3 Integration](../integrations/fiber-v3.md) |
 | net/http  | [net/http Integration](../integrations/net-http.md) |
 
 ## Get Help

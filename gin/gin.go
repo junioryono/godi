@@ -12,11 +12,16 @@
 //
 //	g.POST("/login", godigin.Handle(AuthController.Login))
 //	g.GET("/users/:id", godigin.Handle(UserController.GetByID))
+//
+// Default handlers log the cause with log/slog (see WithLogger and
+// WithHandlerLogger) and respond with a generic 500 Internal Server Error;
+// they never write internal error text to the client.
 package gin
 
 import (
 	"log/slog"
 	"net/http"
+	"runtime/debug"
 
 	"github.com/gin-gonic/gin"
 	"github.com/junioryono/godi/v5"
@@ -24,27 +29,48 @@ import (
 
 // Config holds the configuration for the scope middleware.
 type Config struct {
-	// ErrorHandler is called when scope creation fails.
-	// If nil, a default handler returning 500 Internal Server Error is used.
+	// ErrorHandler is called when scope creation fails. It also handles
+	// middleware failures unless MiddlewareErrorHandler is set.
+	// If nil, a default handler that logs the error and returns a generic
+	// 500 Internal Server Error is used.
 	ErrorHandler func(*gin.Context, error)
 
+	// MiddlewareErrorHandler is called when a function registered with
+	// WithMiddleware returns an error. If nil, ErrorHandler is used.
+	MiddlewareErrorHandler func(*gin.Context, error)
+
 	// CloseErrorHandler is called when scope closing fails.
-	// If nil, errors are logged using slog.
+	// If nil, errors are logged.
 	CloseErrorHandler func(error)
 
 	// Middlewares are functions that run after scope creation.
 	// They can be used to initialize request context, set user claims, etc.
 	Middlewares []func(godi.Scope, *gin.Context) error
+
+	// Logger is used by the default handlers. If nil, slog.Default() is used.
+	Logger *slog.Logger
 }
 
 // Option configures the scope middleware.
 type Option func(*Config)
 
-// WithErrorHandler sets the error handler for scope creation failures.
+// WithErrorHandler sets the error handler for scope creation failures. Unless
+// WithMiddlewareErrorHandler is also used, it handles middleware failures too.
 func WithErrorHandler(h func(*gin.Context, error)) Option {
 	return func(c *Config) {
 		if h != nil {
 			c.ErrorHandler = h
+		}
+	}
+}
+
+// WithMiddlewareErrorHandler sets the error handler for failures returned by
+// functions registered with WithMiddleware, such as authentication checks
+// that respond 401 or 403. Scope creation failures still go to ErrorHandler.
+func WithMiddlewareErrorHandler(h func(*gin.Context, error)) Option {
+	return func(c *Config) {
+		if h != nil {
+			c.MiddlewareErrorHandler = h
 		}
 	}
 }
@@ -78,27 +104,50 @@ func WithMiddleware(mw func(godi.Scope, *gin.Context) error) Option {
 	}
 }
 
-func defaultConfig() *Config {
-	return &Config{
-		ErrorHandler: func(c *gin.Context, err error) {
-			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
-				"error": "Internal Server Error",
-			})
-		},
-		CloseErrorHandler: func(err error) {
-			slog.Error("failed to close scope", "error", err)
-		},
-		Middlewares: nil,
+// WithLogger sets the logger used by the middleware's default handlers.
+// A nil logger keeps the default, slog.Default().
+func WithLogger(l *slog.Logger) Option {
+	return func(c *Config) {
+		if l != nil {
+			c.Logger = l
+		}
 	}
 }
 
+func (c *Config) logger() *slog.Logger {
+	if c.Logger != nil {
+		return c.Logger
+	}
+	return slog.Default()
+}
+
+func (c *Config) defaultErrorHandler(ctx *gin.Context, err error) {
+	c.logger().Error("failed to set up request scope", "error", err)
+	ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
+		"error": "Internal Server Error",
+	})
+}
+
+func (c *Config) defaultCloseErrorHandler(err error) {
+	c.logger().Error("failed to close scope", "error", err)
+}
+
+func defaultConfig() *Config {
+	c := &Config{}
+	c.ErrorHandler = c.defaultErrorHandler
+	c.CloseErrorHandler = c.defaultCloseErrorHandler
+	return c
+}
+
 func normalizeConfig(c *Config) {
-	defaults := defaultConfig()
 	if c.ErrorHandler == nil {
-		c.ErrorHandler = defaults.ErrorHandler
+		c.ErrorHandler = c.defaultErrorHandler
+	}
+	if c.MiddlewareErrorHandler == nil {
+		c.MiddlewareErrorHandler = c.ErrorHandler
 	}
 	if c.CloseErrorHandler == nil {
-		c.CloseErrorHandler = defaults.CloseErrorHandler
+		c.CloseErrorHandler = c.defaultCloseErrorHandler
 	}
 	// Copy while filtering nils: reslicing in place would mutate a
 	// caller-owned slice assigned via a custom option.
@@ -117,9 +166,9 @@ func normalizeConfig(c *Config) {
 //
 // The scope is automatically closed when the request completes. Terminal
 // errors (scope creation or configured middleware failures) abort the handler
-// chain before the configured ErrorHandler renders the response, so later
-// handlers never run without a scope. Error handlers run while the scope is
-// still alive.
+// chain before the configured ErrorHandler or MiddlewareErrorHandler renders
+// the response, so later handlers never run without a scope. Error handlers
+// run while the scope is still alive.
 //
 // Example:
 //
@@ -155,7 +204,7 @@ func ScopeMiddleware(provider godi.Provider, opts ...Option) gin.HandlerFunc {
 		for _, mw := range cfg.Middlewares {
 			if err := mw(scope, c); err != nil {
 				c.Abort()
-				cfg.ErrorHandler(c, err)
+				cfg.MiddlewareErrorHandler(c, err)
 				return
 			}
 		}
@@ -171,7 +220,8 @@ type HandlerConfig struct {
 	PanicRecovery bool
 
 	// PanicHandler is called when a panic occurs (if PanicRecovery is true).
-	// If nil, a default handler returning 500 Internal Server Error is used.
+	// If nil, a default handler that logs the panic value and stack trace and
+	// returns a generic 500 Internal Server Error is used.
 	PanicHandler func(*gin.Context, any)
 
 	// ScopeErrorHandler is called when scope retrieval fails.
@@ -181,6 +231,9 @@ type HandlerConfig struct {
 	// ResolutionErrorHandler is called when service resolution fails.
 	// If nil, a default handler returning 500 Internal Server Error is used.
 	ResolutionErrorHandler func(*gin.Context, error)
+
+	// Logger is used by the default handlers. If nil, slog.Default() is used.
+	Logger *slog.Logger
 }
 
 // HandlerOption configures the Handle wrapper.
@@ -220,40 +273,61 @@ func WithResolutionErrorHandler(h func(*gin.Context, error)) HandlerOption {
 	}
 }
 
-func defaultHandlerConfig() *HandlerConfig {
-	return &HandlerConfig{
-		PanicRecovery: false,
-		PanicHandler: func(c *gin.Context, r any) {
-			slog.Error("panic in handler", "panic", r)
-			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
-				"error": "Internal Server Error",
-			})
-		},
-		ScopeErrorHandler: func(c *gin.Context, err error) {
-			slog.Error("failed to get scope from context", "error", err)
-			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
-				"error": "Internal Server Error",
-			})
-		},
-		ResolutionErrorHandler: func(c *gin.Context, err error) {
-			slog.Error("failed to resolve controller", "error", err)
-			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
-				"error": "Internal Server Error",
-			})
-		},
+// WithHandlerLogger sets the logger used by Handle's default handlers.
+// A nil logger keeps the default, slog.Default().
+func WithHandlerLogger(l *slog.Logger) HandlerOption {
+	return func(c *HandlerConfig) {
+		if l != nil {
+			c.Logger = l
+		}
 	}
 }
 
+func (c *HandlerConfig) logger() *slog.Logger {
+	if c.Logger != nil {
+		return c.Logger
+	}
+	return slog.Default()
+}
+
+func (c *HandlerConfig) defaultPanicHandler(ctx *gin.Context, v any) {
+	c.logger().Error("panic in handler", "panic", v, "stack", string(debug.Stack()))
+	ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
+		"error": "Internal Server Error",
+	})
+}
+
+func (c *HandlerConfig) defaultScopeErrorHandler(ctx *gin.Context, err error) {
+	c.logger().Error("failed to get scope from context", "error", err)
+	ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
+		"error": "Internal Server Error",
+	})
+}
+
+func (c *HandlerConfig) defaultResolutionErrorHandler(ctx *gin.Context, err error) {
+	c.logger().Error("failed to resolve controller", "error", err)
+	ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
+		"error": "Internal Server Error",
+	})
+}
+
+func defaultHandlerConfig() *HandlerConfig {
+	c := &HandlerConfig{PanicRecovery: false}
+	c.PanicHandler = c.defaultPanicHandler
+	c.ScopeErrorHandler = c.defaultScopeErrorHandler
+	c.ResolutionErrorHandler = c.defaultResolutionErrorHandler
+	return c
+}
+
 func normalizeHandlerConfig(c *HandlerConfig) {
-	defaults := defaultHandlerConfig()
 	if c.PanicHandler == nil {
-		c.PanicHandler = defaults.PanicHandler
+		c.PanicHandler = c.defaultPanicHandler
 	}
 	if c.ScopeErrorHandler == nil {
-		c.ScopeErrorHandler = defaults.ScopeErrorHandler
+		c.ScopeErrorHandler = c.defaultScopeErrorHandler
 	}
 	if c.ResolutionErrorHandler == nil {
-		c.ResolutionErrorHandler = defaults.ResolutionErrorHandler
+		c.ResolutionErrorHandler = c.defaultResolutionErrorHandler
 	}
 }
 

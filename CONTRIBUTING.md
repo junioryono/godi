@@ -96,7 +96,7 @@ type(optional-scope): imperative description
 
 Allowed types are `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`.
 
-Useful scopes include core packages (`provider`, `collection`, `module`, `lifetime`, `descriptor`, `errors`, `inout`, `scope`, `resolver`), repository concerns (`deps`, `docs`, `benchmarks`, `release`, `security`), and integrations (`http`, `chi`, `echo`, `fiber`, `gin`, `huma`).
+Useful scopes include core packages (`provider`, `collection`, `module`, `lifetime`, `descriptor`, `errors`, `inout`, `scope`, `resolver`), repository concerns (`deps`, `docs`, `benchmarks`, `release`, `security`), and integrations (`http`, `chi`, `echo`, `echov5`, `fiber`, `fiberv3`, `gin`, `huma`, or `integrations` for changes that span several).
 
 Examples:
 
@@ -213,6 +213,8 @@ Dependabot updates Go modules, documentation dependencies, and GitHub Actions.
 It cannot see the `*_VERSION` tool pins in the `Makefile` or `.go-version`;
 `make tool-updates` and the weekly `Tool Updates` workflow report those. Bump
 the pin, run `make tools verify`, and open a `chore(deps)` pull request.
+
+Some integration modules build on another one (`chi` is a facade over `http`). Such a module develops against the sibling source through a `replace => ../<module>` directive, which `make verify` checks (`scripts/sibling-requires.sh` lists these requirements). Like every godi requirement, the sibling's is raised to the release version by `make prepare-release`.
 
 ## Reporting Security Issues
 

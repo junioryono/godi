@@ -10,7 +10,23 @@ through, so `godi.FromContext` works inside Huma handlers.
 
 So the `godi/huma/v5` package provides only the Huma-specific piece: a type-safe
 controller wrapper for `huma.Register`. Scope creation comes from the router
-integration (`godigin`, `godichi`, `godihttp`, `godiecho`, `godifiber`).
+integration (`godigin`, `godichi`, `godihttp`, `godiecho`, `godiechov5`,
+`godifiber`, `godifiberv3`).
+
+Pair each Huma adapter with the matching router integration. `humafiber.New`
+targets Fiber v3 since Huma v2.38, and `humaecho.New` targets Echo v5 since
+Huma v2.39; use `humafiber.NewV2` and `humaecho.NewV4` for the older framework
+versions.
+
+| Router   | godi integration                        | Huma adapter                           |
+| -------- | --------------------------------------- | -------------------------------------- |
+| net/http | `github.com/junioryono/godi/http/v5`    | `humago.New`                           |
+| Chi      | `github.com/junioryono/godi/chi/v5`     | `humachi.New`                          |
+| Gin      | `github.com/junioryono/godi/gin/v5`     | `humagin.New`                          |
+| Echo v4  | `github.com/junioryono/godi/echo/v5`    | `humaecho.NewV4` (`New` before v2.39)  |
+| Echo v5  | `github.com/junioryono/godi/echov5/v5`  | `humaecho.New`                         |
+| Fiber v2 | `github.com/junioryono/godi/fiber/v5`   | `humafiber.NewV2` (`New` before v2.38) |
+| Fiber v3 | `github.com/junioryono/godi/fiberv3/v5` | `humafiber.New`                        |
 
 ## Installation
 
@@ -140,6 +156,19 @@ Only mapped `huma.StatusError` values are sent to clients. A mapper result that
 is still a plain error is treated as internal, logged, and replaced with a
 generic 500 response.
 
+## Logging
+
+Resolution failures (with the default `ResolutionErrorHandler`) and sanitized
+controller errors are logged with `log/slog`. `WithLogger` chooses the logger;
+it defaults to `slog.Default()`:
+
+```go
+huma.Register(api, op, godihuma.Handle((*UserController).Greet, godihuma.WithLogger(logger)))
+```
+
+The [integration contract](#integration-contract) describes the
+logging and error rules shared by all integrations.
+
 ## Huma-level middleware
 
 Auth, logging, and other per-operation middleware use Huma's **native**
@@ -150,7 +179,8 @@ context, so middleware can resolve services too:
 api.UseMiddleware(func(ctx huma.Context, next func(huma.Context)) {
     scope, err := godi.FromContext(ctx.Context())
     if err != nil {
-        huma.WriteErr(api, ctx, http.StatusInternalServerError, "internal error", err)
+        // Log err; do not send it to the client.
+        huma.WriteErr(api, ctx, http.StatusInternalServerError, "internal error")
         return
     }
     // ... inspect/resolve services, then continue or short-circuit

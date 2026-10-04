@@ -1,6 +1,6 @@
 # HTTP Integration
 
-godi shines in web applications where each request needs its own isolated scope. This tutorial uses the standard library, but godi has integrations for Gin, Chi, Echo, and Fiber too.
+godi shines in web applications where each request needs its own isolated scope. This tutorial uses the standard library, but godi has integrations for Gin, Chi, Echo (v4 and v5), and Fiber (v2 and v3) too.
 
 ## The Pattern
 
@@ -270,13 +270,15 @@ curl http://localhost:8080/me
 
 godi has dedicated integrations for popular frameworks:
 
-| Framework | Package                               | Docs                                                |
-| --------- | ------------------------------------- | --------------------------------------------------- |
-| Gin       | `github.com/junioryono/godi/gin/v5`   | [Gin Integration](../integrations/gin.md)           |
-| Chi       | `github.com/junioryono/godi/chi/v5`   | [Chi Integration](../integrations/chi.md)           |
-| Echo      | `github.com/junioryono/godi/echo/v5`  | [Echo Integration](../integrations/echo.md)         |
-| Fiber     | `github.com/junioryono/godi/fiber/v5` | [Fiber Integration](../integrations/fiber.md)       |
-| net/http  | `github.com/junioryono/godi/http/v5`  | [net/http Integration](../integrations/net-http.md) |
+| Framework | Package                                 | Docs                                                |
+| --------- | --------------------------------------- | --------------------------------------------------- |
+| Gin       | `github.com/junioryono/godi/gin/v5`     | [Gin Integration](../integrations/gin.md)           |
+| Chi       | `github.com/junioryono/godi/chi/v5`     | [Chi Integration](../integrations/chi.md)           |
+| Echo v4   | `github.com/junioryono/godi/echo/v5`    | [Echo Integration](../integrations/echo.md)         |
+| Echo v5   | `github.com/junioryono/godi/echov5/v5`  | [Echo v5 Integration](../integrations/echo-v5.md)   |
+| Fiber v2  | `github.com/junioryono/godi/fiber/v5`   | [Fiber Integration](../integrations/fiber.md)       |
+| Fiber v3  | `github.com/junioryono/godi/fiberv3/v5` | [Fiber v3 Integration](../integrations/fiber-v3.md) |
+| net/http  | `github.com/junioryono/godi/http/v5`    | [net/http Integration](../integrations/net-http.md) |
 
 Each integration provides:
 

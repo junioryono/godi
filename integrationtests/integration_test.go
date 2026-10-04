@@ -19,14 +19,18 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-chi/chi/v5"
 	"github.com/gofiber/fiber/v2"
+	fiber3 "github.com/gofiber/fiber/v3"
 	godichi "github.com/junioryono/godi/chi/v5"
 	godiecho "github.com/junioryono/godi/echo/v5"
+	godiechov5 "github.com/junioryono/godi/echov5/v5"
 	godifiber "github.com/junioryono/godi/fiber/v5"
+	godifiberv3 "github.com/junioryono/godi/fiberv3/v5"
 	godigin "github.com/junioryono/godi/gin/v5"
 	godihttp "github.com/junioryono/godi/http/v5"
 	godihuma "github.com/junioryono/godi/huma/v5"
 	"github.com/junioryono/godi/v5"
 	"github.com/labstack/echo/v4"
+	echo5 "github.com/labstack/echo/v5"
 )
 
 type requestResource struct {
@@ -162,6 +166,35 @@ func runFiber(t *testing.T, provider godi.Provider, req *http.Request) (status i
 	return response.StatusCode, string(responseBody)
 }
 
+func runEchoV5(t *testing.T, provider godi.Provider, req *http.Request) (status int, body string) {
+	t.Helper()
+	engine := echo5.New()
+	engine.Use(godiechov5.ScopeMiddleware(provider))
+	registerGreeting(humaecho.New(engine, huma.DefaultConfig("Integration", "1.0.0")))
+
+	recorder := httptest.NewRecorder()
+	engine.ServeHTTP(recorder, req)
+	return recorder.Code, recorder.Body.String()
+}
+
+func runFiberV3(t *testing.T, provider godi.Provider, req *http.Request) (status int, body string) {
+	t.Helper()
+	app := fiber3.New()
+	app.Use(godifiberv3.ScopeMiddleware(provider))
+	registerGreeting(humafiber.New(app, huma.DefaultConfig("Integration", "1.0.0")))
+
+	response, err := app.Test(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	responseBody, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return response.StatusCode, string(responseBody)
+}
+
 func compositionTargets() []struct {
 	name string
 	run  compositionRunner
@@ -174,7 +207,9 @@ func compositionTargets() []struct {
 		{name: "chi", run: runChi},
 		{name: "gin", run: runGin},
 		{name: "echo", run: runEcho},
+		{name: "echov5", run: runEchoV5},
 		{name: "fiber", run: runFiber},
+		{name: "fiberv3", run: runFiberV3},
 	}
 }
 

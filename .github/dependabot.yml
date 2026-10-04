@@ -68,12 +68,34 @@ updates:
       include: scope
 
   - package-ecosystem: gomod
+    directory: /echov5
+    schedule:
+      interval: weekly
+    groups:
+      go-dependencies:
+        patterns: ["*"]
+    commit-message:
+      prefix: chore
+      include: scope
+
+  - package-ecosystem: gomod
     directory: /fiber
     schedule:
       interval: weekly
     ignore:
       # Godi release floors are raised by scripts/prepare-release.sh.
       - dependency-name: "github.com/junioryono/godi*"
+    groups:
+      go-dependencies:
+        patterns: ["*"]
+    commit-message:
+      prefix: chore
+      include: scope
+
+  - package-ecosystem: gomod
+    directory: /fiberv3
+    schedule:
+      interval: weekly
     groups:
       go-dependencies:
         patterns: ["*"]
