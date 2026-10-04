@@ -259,10 +259,11 @@ func (addLazyOption) applyAddOption(opt *addOptions) {
 	opt.Lazy = true
 }
 
-// NoDispose is an AddOption declaring that the registered service's lifetime
-// is managed outside the container: godi never disposes it. Use it for
-// resources the application shares or closes itself, such as a pre-built
-// *sql.DB or os.Stdout passed to AddSingleton.
+// NoDispose is an AddOption declaring that the values a constructor creates
+// are managed outside the container: godi never disposes them. Use it for a
+// constructor that returns a resource the application shares or closes
+// itself. Values registered as instances (AddSingleton(value)) are never
+// disposed anyway: the caller that created them owns them.
 //
 // A NoDispose value is also never adopted by a scope that merely returns it.
 func NoDispose() AddOption {
@@ -284,7 +285,9 @@ func (addNoDisposeOption) applyAddOption(opt *addOptions) {
 //	type Clock func() time.Time
 //	services.AddSingleton(godi.Instance(Clock(time.Now)))
 //
-// Other values can be passed to AddSingleton directly.
+// Other values can be passed to AddSingleton directly. godi never disposes a
+// value registered as an instance: the caller that created it owns it. To hand
+// ownership to godi, register a constructor that returns the value instead.
 func Instance(v any) any {
 	return instanceValue{value: v}
 }

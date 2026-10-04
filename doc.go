@@ -67,9 +67,10 @@
 // their owner: singletons by the provider, scoped (and transient) values by
 // the scope that created them. Disposal runs in reverse creation order, so
 // consumers are closed before their dependencies, and each value is closed
-// once, by its longest-lived owner. A transient resolved directly from the
-// provider belongs to the caller. [NoDispose] marks values the application
-// owns. [Shutdown] disposes a provider or scope like Close but stops waiting
+// once, by its longest-lived owner. godi disposes only values its
+// constructors create: a value registered as an instance belongs to the
+// caller that created it, and so does a transient resolved directly from the
+// provider. [NoDispose] marks constructed values the application owns. [Shutdown] disposes a provider or scope like Close but stops waiting
 // when its context is done; context-aware resources receive that context.
 //
 // # Modules and composition

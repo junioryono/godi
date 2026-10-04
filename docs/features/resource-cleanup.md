@@ -118,15 +118,26 @@ scope.Close()     // Database stays open
 provider.Close()  // Database.Close() called here, once
 ```
 
-### Values You Own: `NoDispose`
+### Values You Own
 
-By default godi disposes everything it hands out, including pre-built values
-passed to `AddSingleton`. Mark values whose lifetime you manage yourself with
+godi disposes only what its constructors create. A value you pass to
+`AddSingleton` was created by you, so you close it:
+
+```go
+db, err := sql.Open("postgres", dsn)
+// ...
+defer db.Close()
+services.AddSingleton(db)  // godi uses it, but never closes it
+```
+
+To hand a value you created to godi, register a constructor that returns it
+instead: `services.AddSingleton(func() *sql.DB { return db })`.
+
+The other way around, mark a constructor whose values you manage yourself with
 `godi.NoDispose()`; godi never disposes them, and no scope adopts them either:
 
 ```go
-services.AddSingleton(os.Stdout, godi.NoDispose())
-services.AddSingleton(sharedDB, godi.NoDispose())  // closed by your main()
+services.AddSingleton(openSharedPool, godi.NoDispose())  // closed by your main()
 ```
 
 ### Contexts and Cancellation

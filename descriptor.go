@@ -152,7 +152,7 @@ func newDescriptorWithAnalyzer(service any, lifetime Lifetime, analyzer *reflect
 		ConstructorType:  constructorType,
 		Dependencies:     dependencies,
 		Group:            options.Group,
-		noDispose:        options.NoDispose,
+		noDispose:        options.NoDispose || isInstance, // the caller owns a value it supplied
 		lazy:             options.Lazy,
 		IsInstance:       isInstance,
 		Instance:         nil,

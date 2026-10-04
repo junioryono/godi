@@ -428,7 +428,7 @@ func TestDecorate(t *testing.T) {
 		require.NoError(t, err)
 
 		require.NoError(t, p.Close())
-		assert.True(t, base.IsClosed())
+		assert.False(t, base.IsClosed(), "the caller owns an instance registration")
 		require.NotNil(t, dep)
 		assert.True(t, dep.IsClosed())
 	})

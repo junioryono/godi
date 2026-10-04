@@ -182,15 +182,17 @@ func (tr *modelTracker) newNode(typ int, reg *modelReg, slot int, scopeID string
 	tr.mu.Lock()
 	defer tr.mu.Unlock()
 	n := &modelNode{
-		id:        len(tr.nodes) + 1,
-		tr:        tr,
-		typ:       typ,
-		reg:       reg,
-		slot:      slot,
-		scopeID:   scopeID,
-		deps:      deps,
-		closable:  modelTypes[typ].closable,
-		noDispose: reg.noDispose,
+		id:       len(tr.nodes) + 1,
+		tr:       tr,
+		typ:      typ,
+		reg:      reg,
+		slot:     slot,
+		scopeID:  scopeID,
+		deps:     deps,
+		closable: modelTypes[typ].closable,
+		// godi never disposes a value registered as an instance: the caller
+		// that created it owns it.
+		noDispose: reg.noDispose || reg.shape == shapeInstance,
 	}
 	tr.nodes = append(tr.nodes, n)
 	return n
@@ -2012,11 +2014,6 @@ func (r *modelRun) checkLifecycle(built bool) {
 		case n.noDispose && n.closes > 0:
 			r.failf("%s is NoDispose but was closed", desc)
 		case !n.closable || n.noDispose:
-		case n.reg.shape == shapeInstance && n.scopeID == "":
-			// An instance is owned once Build publishes it.
-			if built && n.closes == 0 && r.liveAtBuild(n.reg) {
-				r.failf("%s: instance live at Build was not closed", desc)
-			}
 		case n.closes == 0:
 			r.failf("%s was never closed", desc)
 		}
@@ -2059,15 +2056,6 @@ func (r *modelRun) checkLifecycle(built bool) {
 		}
 		reg.mu.Unlock()
 	}
-}
-
-func (r *modelRun) liveAtBuild(reg *modelReg) bool {
-	for _, e := range r.m.order {
-		if e.reg == reg {
-			return !reg.lazy
-		}
-	}
-	return false
 }
 
 // regFails reports whether a construction of reg can fail after running (so

@@ -640,7 +640,7 @@ func TestConcurrentClose(t *testing.T) {
 			}
 
 			c := NewCollection()
-			c.AddSingleton(disposable)
+			c.AddSingleton(func() *blockingDisposable { return disposable })
 			p, err := c.Build()
 			require.NoError(t, err)
 

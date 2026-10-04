@@ -377,6 +377,48 @@ func TestShutdown(t *testing.T) {
 	})
 }
 
+// The caller created a value registered as an instance, so the caller closes
+// it; godi disposes only what its constructors create.
+func TestInstanceRegistrationsAreNotDisposed(t *testing.T) {
+	t.Parallel()
+
+	t.Run("instance", func(t *testing.T) {
+		t.Parallel()
+		shared := NewTDisposable()
+		c := NewCollection()
+		c.AddSingleton(shared)
+		p, err := c.Build()
+		require.NoError(t, err)
+
+		require.NoError(t, p.Close())
+		assert.False(t, shared.IsClosed())
+	})
+
+	t.Run("instance_wrapper", func(t *testing.T) {
+		t.Parallel()
+		shared := NewTDisposable()
+		c := NewCollection()
+		c.AddSingleton(Instance(shared))
+		p, err := c.Build()
+		require.NoError(t, err)
+
+		require.NoError(t, p.Close())
+		assert.False(t, shared.IsClosed())
+	})
+
+	t.Run("a_constructor_returning_it_hands_ownership_to_godi", func(t *testing.T) {
+		t.Parallel()
+		shared := NewTDisposable()
+		c := NewCollection()
+		c.AddSingleton(func() *TDisposable { return shared })
+		p, err := c.Build()
+		require.NoError(t, err)
+
+		require.NoError(t, p.Close())
+		assert.True(t, shared.IsClosed())
+	})
+}
+
 func TestNoDispose(t *testing.T) {
 	t.Parallel()
 
