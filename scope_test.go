@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -198,32 +199,41 @@ func TestScopeDisposal(t *testing.T) {
 func TestScopeContextCancellation(t *testing.T) {
 	t.Parallel()
 
-	p := BuildProvider(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	scope, err := p.CreateScope(ctx)
-	require.NoError(t, err)
+	for name, nested := range map[string]bool{"top_level": false, "child": true} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				p := BuildProvider(t, AddScoped(NewTDisposable))
+				ctx, cancel := context.WithCancel(context.Background())
+				createScope := p.CreateScope
+				if nested {
+					parent, err := p.CreateScope(context.Background())
+					require.NoError(t, err)
+					t.Cleanup(func() { _ = parent.Close() })
+					createScope = parent.CreateScope
+				}
+				scope, err := createScope(ctx)
+				require.NoError(t, err)
+				d, err := Resolve[*TDisposable](scope)
+				require.NoError(t, err)
 
-	cancel()
-	time.Sleep(50 * time.Millisecond) // Allow cancellation to propagate
+				cancel()
+				synctest.Wait()
 
-	_, err = scope.Get(PtrTypeOf[TService]())
-	assert.ErrorIs(t, err, ErrScopeDisposed)
-}
+				// Cancellation is a signal to stop work, not proof that it
+				// stopped: a handler still unwinding keeps its resources
+				// until the scope's owner closes it. Previously the scope
+				// was closed from another goroutine underneath the handler.
+				require.ErrorIs(t, scope.Context().Err(), context.Canceled)
+				assert.False(t, d.IsClosed(), "cancellation must not dispose the scope")
+				again, err := Resolve[*TDisposable](scope)
+				require.NoError(t, err)
+				assert.Same(t, d, again)
 
-func TestScopeContextWatchIsUnregistered(t *testing.T) {
-	t.Parallel()
-
-	p := BuildProvider(t)
-	parent, err := p.CreateScope(context.Background())
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = parent.Close() })
-	child, err := parent.CreateScope(context.Background())
-	require.NoError(t, err)
-
-	// Close must be able to unregister the context watch; otherwise its own
-	// cancel() starts the AfterFunc goroutine on every explicit Close.
-	for name, s := range map[string]Scope{"top_level": parent, "child": child} {
-		assert.NotNil(t, s.(*scope).stopContextWatch.Load(), "%s scope must keep its context-watch stop func", name)
+				require.NoError(t, scope.Close())
+				assert.True(t, d.IsClosed())
+			})
+		})
 	}
 }
 
@@ -1322,14 +1332,12 @@ func TestScopeCancellationCleanup(t *testing.T) {
 		_, err = Resolve[*TDisposable](s)
 		require.NoError(t, err)
 
+		// Cancellation leaves disposal to the owner, whose Close reports
+		// the cleanup error.
 		cancel()
-		select {
-		case <-disposable.closeChan:
-		case <-time.After(time.Second):
-			t.Fatal("scope was not closed after cancellation")
-		}
-
+		assert.False(t, disposable.IsClosed())
 		require.ErrorIs(t, s.Close(), closeErr)
+		assert.True(t, disposable.IsClosed())
 	})
 
 	t.Run("create_scope_rejects_canceled_context", func(t *testing.T) {

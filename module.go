@@ -90,9 +90,10 @@ type AddOption interface {
 }
 
 type addOptions struct {
-	Name  string
-	Group string
-	As    []any
+	Name      string
+	Group     string
+	As        []any
+	NoDispose bool
 }
 
 func (o *addOptions) Validate() error {

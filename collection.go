@@ -326,7 +326,7 @@ func (sc *collection) doBuild(parent, ctx context.Context) (Provider, error) {
 		analyzer:                    sc.analyzer, // Share analyzer from collection
 		singletonKeys:               make([]instanceKey, 0, len(allDescriptors)),
 		voidReturnScopedDescriptors: make([]*descriptor, 0, voidCount),
-		disposables:                 make([]Disposable, 0, 4),
+		disposables:                 make([]any, 0, 4),
 		disposableSet:               make(map[disposableIdentity]struct{}, 4),
 		scopes:                      make(map[*scope]struct{}, 4),
 		closeDone:                   make(chan struct{}),

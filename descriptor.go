@@ -83,6 +83,10 @@ type descriptor struct {
 	// created from. -1 when the descriptor is not a result-object field.
 	resultFieldIndex int
 
+	// noDispose marks a NoDispose registration: its values are owned
+	// outside the container and never disposed.
+	noDispose bool
+
 	// injectsContainer reports whether the constructor receives the
 	// container itself (godi.Scope or godi.Provider) and so can resolve
 	// services outside the static dependency graph.
@@ -157,6 +161,7 @@ func newDescriptorWithAnalyzer(service any, lifetime Lifetime, analyzer *reflect
 		ConstructorType:  constructorType,
 		Dependencies:     dependencies,
 		Group:            options.Group,
+		noDispose:        options.NoDispose,
 		IsInstance:       isInstance,
 		Instance:         nil,
 		MultiReturnIndex: -1,
