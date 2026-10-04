@@ -225,6 +225,8 @@ services.AddSingleton(func(h *Handler) *Router {
 // (and the scoped value inside it) would be captured forever.
 ```
 
+(validating-scopes-at-runtime)=
+
 ### Validating Scopes at Runtime
 
 Resolving a scoped service from the root provider caches it in the root scope
