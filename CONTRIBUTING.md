@@ -214,6 +214,8 @@ It cannot see the `*_VERSION` tool pins in the `Makefile` or `.go-version`;
 `make tool-updates` and the weekly `Tool Updates` workflow report those. Bump
 the pin, run `make tools verify`, and open a `chore(deps)` pull request.
 
+Some integration modules build on another one (`chi` is a facade over `http`). Such a module develops against the sibling source through a `replace => ../<module>` directive, and because integrations are tagged in lockstep it must require the sibling at the version being released. Before dispatching the `Tag` workflow for `vX.Y.Z`, merge a commit that runs `go mod edit -require=github.com/junioryono/godi/http/v5@vX.Y.Z` in `chi` (and likewise for any other cross-integration requirement); the workflow refuses to tag otherwise. `scripts/sibling-requires.sh` lists these requirements.
+
 ## Reporting Security Issues
 
 Do not disclose suspected vulnerabilities in a public issue. Follow [SECURITY.md](SECURITY.md) to report them privately.

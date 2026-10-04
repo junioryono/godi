@@ -49,6 +49,15 @@ for module in $(scripts/module-matrix.sh release | tr -d '[]"' | tr ',' ' '); do
 		echo "$module_tag contains module path $declared; expected $expected" >&2
 		exit 1
 	fi
+
+	# Sibling integrations (chi -> http) are released in lockstep, so the
+	# requirement must name this release; the sibling tag was checked above.
+	while read -r _ dependency_path version; do
+		if [[ "$version" != "$tag" ]]; then
+			echo "$module_tag requires $dependency_path $version; expected $tag" >&2
+			exit 1
+		fi
+	done < <(git show "$tag:$module/go.mod" | scripts/sibling-requires.sh -)
 done
 
 if ! scripts/check-release-floors.sh --ref "$tag" "$tag" >/dev/null; then
