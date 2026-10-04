@@ -7,13 +7,13 @@ require (
 	github.com/gin-gonic/gin v1.11.0
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/gofiber/fiber/v2 v2.52.12
-	github.com/junioryono/godi/chi/v5 v5.0.1
-	github.com/junioryono/godi/echo/v5 v5.0.1
-	github.com/junioryono/godi/fiber/v5 v5.0.1
-	github.com/junioryono/godi/gin/v5 v5.0.1
-	github.com/junioryono/godi/http/v5 v5.0.1
-	github.com/junioryono/godi/huma/v5 v5.0.1
-	github.com/junioryono/godi/v5 v5.0.1
+	github.com/junioryono/godi/chi/v5 v5.1.0
+	github.com/junioryono/godi/echo/v5 v5.1.0
+	github.com/junioryono/godi/fiber/v5 v5.1.0
+	github.com/junioryono/godi/gin/v5 v5.1.0
+	github.com/junioryono/godi/http/v5 v5.1.0
+	github.com/junioryono/godi/huma/v5 v5.1.0
+	github.com/junioryono/godi/v5 v5.1.0
 	github.com/labstack/echo/v4 v4.15.0
 )
 

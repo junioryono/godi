@@ -36,6 +36,22 @@ jobs:
         id: sha
         run: echo "dispatch_sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
 
+      - name: Checkout main
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      # Fails fast, before the test suite; release-tags.sh repeats the check
+      # against the commit it tags.
+      - name: Require release floors to match the version
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          if ! scripts/check-release-floors.sh "$RELEASE_VERSION"; then
+            echo "::error::Run 'make prepare-release VERSION=$RELEASE_VERSION' and merge the result to main before tagging."
+            exit 1
+          fi
+
   run-tests:
     name: Run Tests
     needs: guard
@@ -102,3 +118,12 @@ jobs:
     with:
       tag: ${{ needs.tag.outputs.release_tag }}
       commit: ${{ needs.tag.outputs.release_commit }}
+
+  consumer-smoke:
+    name: Release Smoke Test
+    needs: tag
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-smoke.yml
+    with:
+      tag: ${{ needs.tag.outputs.release_tag }}

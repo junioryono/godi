@@ -21,10 +21,10 @@ while read -r directory kind; do
 			[[ "$kind" != "integration" ]] && continue
 			;;
 		published)
-			# Integration modules only: test modules compose the sibling
-			# adapters and assert this branch's behavior, which published
-			# adapter versions cannot satisfy until after a release.
-			[[ "$kind" != "integration" ]] && continue
+			# Modules tested against the candidate release set without
+			# replace directives (check-published-modules.sh): the
+			# integrations, and the test module that composes them.
+			[[ "$kind" != "integration" && "$kind" != "test" ]] && continue
 			;;
 		*)
 			echo "unknown module selection: $selection" >&2

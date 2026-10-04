@@ -15,6 +15,9 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # Godi release floors are raised by scripts/prepare-release.sh.
+      - dependency-name: "github.com/junioryono/godi*"
     groups:
       go-dependencies:
         patterns: ["*"]
@@ -26,6 +29,9 @@ updates:
     directory: /http
     schedule:
       interval: weekly
+    ignore:
+      # Godi release floors are raised by scripts/prepare-release.sh.
+      - dependency-name: "github.com/junioryono/godi*"
     groups:
       go-dependencies:
         patterns: ["*"]
@@ -37,6 +43,9 @@ updates:
     directory: /chi
     schedule:
       interval: weekly
+    ignore:
+      # Godi release floors are raised by scripts/prepare-release.sh.
+      - dependency-name: "github.com/junioryono/godi*"
     groups:
       go-dependencies:
         patterns: ["*"]
@@ -48,6 +57,9 @@ updates:
     directory: /echo
     schedule:
       interval: weekly
+    ignore:
+      # Godi release floors are raised by scripts/prepare-release.sh.
+      - dependency-name: "github.com/junioryono/godi*"
     groups:
       go-dependencies:
         patterns: ["*"]
@@ -59,6 +71,9 @@ updates:
     directory: /fiber
     schedule:
       interval: weekly
+    ignore:
+      # Godi release floors are raised by scripts/prepare-release.sh.
+      - dependency-name: "github.com/junioryono/godi*"
     groups:
       go-dependencies:
         patterns: ["*"]
@@ -70,6 +85,9 @@ updates:
     directory: /gin
     schedule:
       interval: weekly
+    ignore:
+      # Godi release floors are raised by scripts/prepare-release.sh.
+      - dependency-name: "github.com/junioryono/godi*"
     groups:
       go-dependencies:
         patterns: ["*"]
@@ -81,6 +99,9 @@ updates:
     directory: /huma
     schedule:
       interval: weekly
+    ignore:
+      # Godi release floors are raised by scripts/prepare-release.sh.
+      - dependency-name: "github.com/junioryono/godi*"
     groups:
       go-dependencies:
         patterns: ["*"]
@@ -92,6 +113,9 @@ updates:
     directory: /benchmarks
     schedule:
       interval: weekly
+    ignore:
+      # Godi release floors are raised by scripts/prepare-release.sh.
+      - dependency-name: "github.com/junioryono/godi*"
     groups:
       go-dependencies:
         patterns: ["*"]
@@ -103,6 +127,9 @@ updates:
     directory: /integrationtests
     schedule:
       interval: weekly
+    ignore:
+      # Godi release floors are raised by scripts/prepare-release.sh.
+      - dependency-name: "github.com/junioryono/godi*"
     groups:
       go-dependencies:
         patterns: ["*"]

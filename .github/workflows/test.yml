@@ -139,6 +139,7 @@ jobs:
       - name: Check inventory, formatting, and module metadata
         run: |
           make module-check
+          make floor-check
           make dependency-check
           make format-check
           make tidy-check
@@ -217,11 +218,11 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
-  # Tests integration modules against the *published* core module, so it
-  # cannot exercise PR changes; it gates main pushes and releases only.
+  # Serves this commit's core and integrations at the release floor version
+  # from a local module proxy and tests the integration and test modules
+  # without replace directives: the graph consumers get once the set is tagged.
   published-compatibility:
-    name: Published Module Compatibility
-    if: github.event_name != 'pull_request'
+    name: Candidate Release Set
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -236,8 +237,8 @@ jobs:
             go.sum
             */go.sum
 
-      - name: Test integrations without local replacements
-        run: scripts/check-published-modules.sh
+      - name: Test the candidate release set without local replacements
+        run: make published-check
 
   benchmark:
     name: Benchmarks

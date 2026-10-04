@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/gin-gonic/gin v1.10.0
-	github.com/junioryono/godi/v5 v5.0.0
+	github.com/junioryono/godi/v5 v5.1.0
 	github.com/stretchr/testify v1.11.1
 )
 
