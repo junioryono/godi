@@ -13,7 +13,7 @@ GOSEC_BIN := $(TOOLS_BIN)/gosec-$(GOSEC_VERSION)
 GOVULNCHECK_BIN := $(TOOLS_BIN)/govulncheck-$(GOVULNCHECK_VERSION)
 ACTIONLINT_BIN := $(TOOLS_BIN)/actionlint-$(ACTIONLINT_VERSION)
 
-.PHONY: verify verify-ci module-check floor-check dependency-check workflow-check format-check tidy-check build vet test test-cover lint docs benchmark published-check security prepare-release release-smoke tools clean
+.PHONY: verify verify-ci module-check floor-check dependency-check workflow-check format-check tidy-check build vet test test-cover lint docs benchmark published-check security vulncheck tool-updates prepare-release release-smoke tools clean
 
 verify: module-check floor-check dependency-check workflow-check format-check tidy-check build vet test lint
 
@@ -67,6 +67,12 @@ published-check:
 
 security: $(GOSEC_BIN) $(GOVULNCHECK_BIN)
 	@GOSEC_BIN="$(GOSEC_BIN)" GOVULNCHECK_BIN="$(GOVULNCHECK_BIN)" scripts/security.sh
+
+vulncheck: $(GOVULNCHECK_BIN)
+	@SECURITY_SCANNERS=govulncheck GOVULNCHECK_BIN="$(GOVULNCHECK_BIN)" scripts/security.sh
+
+tool-updates:
+	@scripts/check-tool-updates.sh
 
 # Usage: make prepare-release VERSION=vX.Y.Z
 prepare-release:

@@ -1,0 +1,74 @@
+name: Scheduled Security Scan
+
+# New advisories appear without any change to this repository, so the
+# dependency graph is rescanned weekly: govulncheck for every Go module on
+# each supported Go release, and pip-audit for the documentation toolchain.
+on:
+  schedule:
+    - cron: "23 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inventory:
+    name: Go Releases
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.matrix.outputs.go }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      - name: Build Go matrix
+        id: matrix
+        run: echo "go=$(scripts/go-matrix.sh)" >> "$GITHUB_OUTPUT"
+
+  govulncheck:
+    name: govulncheck (Go ${{ matrix.go }})
+    needs: inventory
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ${{ fromJSON(needs.inventory.outputs.go) }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: ${{ matrix.go }}
+          check-latest: true
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            */go.sum
+
+      - name: Scan every module
+        run: make vulncheck
+
+  pip-audit:
+    name: pip-audit (docs)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+
+      - name: Audit documentation requirements
+        uses: pypa/gh-action-pip-audit@1220774d901786e6f652ae159f7b6bc8fea6d266 # v1
+        with:
+          inputs: docs/requirements.txt
