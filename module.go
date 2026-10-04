@@ -41,13 +41,12 @@ func NewModule(name string, builders ...ModuleOption) ModuleOption {
 	return func(s Collection) error {
 		// Attribute registration errors recorded by the builders (whose Add*
 		// calls defer errors to Build) to this module by name.
-		if c, ok := s.(*collection); ok {
-			if !c.markModuleApplied(identity) {
-				return nil
-			}
-			c.pushModule(name)
-			defer c.popModule()
+		c := s.impl()
+		if !c.markModuleApplied(identity) {
+			return nil
 		}
+		c.pushModule(name)
+		defer c.popModule()
 
 		// Execute all builders in order
 		for _, builder := range builders {
@@ -175,10 +174,7 @@ func TryAddTransient(service any, opts ...AddOption) ModuleOption {
 
 func replaceService(service any, lifetime Lifetime, opts []AddOption) ModuleOption {
 	return func(c Collection) error {
-		sc, ok := c.(*collection)
-		if !ok {
-			return errUnsupportedCollection("Replace")
-		}
+		sc := c.impl()
 		targets, err := sc.registrationTargets(service, lifetime, opts)
 		if err != nil {
 			return err
@@ -209,10 +205,7 @@ func replaceService(service any, lifetime Lifetime, opts []AddOption) ModuleOpti
 
 func tryAddService(service any, lifetime Lifetime, opts []AddOption) ModuleOption {
 	return func(c Collection) error {
-		sc, ok := c.(*collection)
-		if !ok {
-			return errUnsupportedCollection("TryAdd")
-		}
+		sc := c.impl()
 		targets, err := sc.registrationTargets(service, lifetime, opts)
 		if err != nil {
 			return err
@@ -306,8 +299,4 @@ func describeTargets(targets []registryKey) string {
 		}
 	}
 	return s
-}
-
-func errUnsupportedCollection(operation string) error {
-	return fmt.Errorf("godi.%s requires a Collection created by godi.NewCollection", operation)
 }

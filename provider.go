@@ -13,6 +13,11 @@ import (
 
 // Provider is the main dependency injection container interface
 type Provider interface {
+	// root seals the interface: only godi implements Provider and Scope, so
+	// methods can be added without breaking anyone. Code that only resolves
+	// services, and test doubles, should depend on Resolver instead.
+	root() *provider
+
 	Disposable
 
 	// Returns the unique identifier for this provider instance.

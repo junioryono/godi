@@ -296,13 +296,12 @@ func resolvesFromRoot(p Provider) bool {
 	}
 }
 
-// rootProviderOf returns the godi provider behind p, or nil if p is not
-// implemented by godi.
+// rootProviderOf returns the godi provider behind p, or nil for a nil p.
 func rootProviderOf(p Provider) *provider {
-	if r, ok := p.(interface{ root() *provider }); ok {
-		return r.root()
+	if p == nil {
+		return nil
 	}
-	return nil
+	return p.root()
 }
 
 func (p *provider) root() *provider { return p }

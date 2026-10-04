@@ -58,10 +58,7 @@ type decoration struct {
 // service's own constructor.
 func Decorate(fn any, opts ...AddOption) ModuleOption {
 	return func(c Collection) error {
-		sc, ok := c.(*collection)
-		if !ok {
-			return errUnsupportedCollection("Decorate")
-		}
+		sc := c.impl()
 		dec, err := newDecoration(sc.analyzer, fn, opts)
 		if err != nil {
 			return err

@@ -1696,6 +1696,20 @@ func TestLifetimeRules(t *testing.T) {
 func TestValidate(t *testing.T) {
 	t.Parallel()
 
+	// Collection is sealed, so a user type can only implement it by
+	// embedding one godi returned, and package functions accept it.
+	t.Run("accepts_a_collection_embedded_in_a_user_type", func(t *testing.T) {
+		t.Parallel()
+		type appCollection struct{ Collection }
+		c := appCollection{NewCollection()}
+		c.AddSingleton(NewTService)
+		c.AddModules(Decorate(func(s *TService) *TService { return s }))
+		assert.NoError(t, Validate(c))
+
+		c.AddScoped(NewTServiceWithDeps) // *TDependency is not registered
+		assert.ErrorIs(t, Validate(c), ErrServiceNotFound)
+	})
+
 	t.Run("checks_wiring_without_constructing", func(t *testing.T) {
 		t.Parallel()
 		constructed := false

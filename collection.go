@@ -40,6 +40,10 @@ var providerIDCounter atomic.Uint64
 //	}
 //	defer provider.Close()
 type Collection interface {
+	// impl seals the interface: only godi implements Collection, so methods
+	// can be added without breaking anyone.
+	impl() *collection
+
 	// Build creates a Provider from the registered services
 	// using default options.
 	Build() (Provider, error)
@@ -158,6 +162,8 @@ type ServiceInfo struct {
 	// Lifetime is the service's lifetime (Singleton, Scoped, or Transient).
 	Lifetime Lifetime
 }
+
+func (sc *collection) impl() *collection { return sc }
 
 // NewCollection creates a new empty Collection instance.
 //
@@ -1403,10 +1409,6 @@ func validateDependencies(all []*descriptor, services map[registryKey]*descripto
 // checks before it creates singletons. Use it in tests so they don't need
 // the infrastructure (databases, servers) that singleton constructors open.
 func Validate(c Collection) error {
-	sc, ok := c.(*collection)
-	if !ok {
-		return errUnsupportedCollection("Validate")
-	}
-	_, err := sc.plan(context.Background())
+	_, err := c.impl().plan(context.Background())
 	return err
 }
