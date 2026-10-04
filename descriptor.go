@@ -92,6 +92,15 @@ type descriptor struct {
 	// outside the container and never disposed.
 	noDispose bool
 
+	// lazy marks a Lazy singleton: created on first resolution instead of
+	// at Build.
+	lazy bool
+
+	// decorators wrap this descriptor's output, in application order.
+	// Attached to the provider's snapshot at Build; never set on a
+	// collection's own descriptors.
+	decorators []*decoration
+
 	// injectsContainer reports whether the constructor receives the
 	// container itself (godi.Scope or godi.Provider) and so can resolve
 	// services outside the static dependency graph.
@@ -167,6 +176,7 @@ func newDescriptorWithAnalyzer(service any, lifetime Lifetime, analyzer *reflect
 		Dependencies:     dependencies,
 		Group:            options.Group,
 		noDispose:        options.NoDispose,
+		lazy:             options.Lazy,
 		IsInstance:       isInstance,
 		Instance:         nil,
 		MultiReturnIndex: -1,
@@ -385,6 +395,12 @@ func (d *descriptor) Validate() error {
 		return &ValidationError{
 			ServiceType: d.Type,
 			Cause:       fmt.Errorf("instance values can only be registered with singleton lifetime; use a constructor for %s", d.Lifetime),
+		}
+	}
+	if d.lazy && d.Lifetime != Singleton {
+		return &ValidationError{
+			ServiceType: d.Type,
+			Cause:       fmt.Errorf("godi.Lazy applies only to singletons; %s services are already created on demand", d.Lifetime),
 		}
 	}
 	if d.VoidReturn && d.Lifetime == Transient {

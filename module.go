@@ -33,11 +33,19 @@ type ModuleOption func(Collection) error
 //	    godi.AddScoped(NewService1, godi.Name("service1")),
 //	    godi.AddScoped(NewService1, godi.Name("service2")),
 //	)
+//
+// A module value is applied to a collection at most once, so a module shared
+// by several others (a diamond: users and orders both include logging) is
+// registered once.
 func NewModule(name string, builders ...ModuleOption) ModuleOption {
+	identity := new(moduleIdentity)
 	return func(s Collection) error {
 		// Attribute registration errors recorded by the builders (whose Add*
 		// calls defer errors to Build) to this module by name.
 		if c, ok := s.(*collection); ok {
+			if !c.markModuleApplied(identity) {
+				return nil
+			}
 			c.pushModule(name)
 			defer c.popModule()
 		}
@@ -94,6 +102,7 @@ type addOptions struct {
 	Group     string
 	As        []any
 	NoDispose bool
+	Lazy      bool
 }
 
 func (o *addOptions) Validate() error {

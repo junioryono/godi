@@ -44,6 +44,8 @@
    features/result-objects
    features/interface-binding
    features/resource-cleanup
+   features/decorators
+   features/composition
 
 .. toctree::
    :maxdepth: 2

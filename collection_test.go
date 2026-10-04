@@ -1522,6 +1522,55 @@ func TestLifetimeRules(t *testing.T) {
 	})
 }
 
+func TestValidate(t *testing.T) {
+	t.Parallel()
+
+	t.Run("checks_wiring_without_constructing", func(t *testing.T) {
+		t.Parallel()
+		constructed := false
+		c := NewCollection()
+		c.AddSingleton(func(*TDependency) *TService { constructed = true; return NewTService() })
+		c.AddSingleton(NewTDependency)
+
+		// Build constructs every singleton (opening databases, ...); a
+		// wiring test should not need production infrastructure.
+		require.NoError(t, Validate(c))
+		assert.False(t, constructed)
+	})
+
+	t.Run("reports_missing_dependencies", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddScoped(func(*TDependency) *TService { return NewTService() })
+		require.ErrorIs(t, Validate(c), ErrServiceNotFound)
+	})
+
+	t.Run("reports_cycles", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddSingleton(NewTCircularA)
+		c.AddSingleton(NewTCircularB)
+		var cycle *CircularDependencyError
+		require.ErrorAs(t, Validate(c), &cycle)
+	})
+
+	t.Run("reports_lifetime_conflicts", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddScoped(NewTDependency)
+		c.AddSingleton(func(*TDependency) *TService { return NewTService() })
+		var conflict *LifetimeConflictError
+		require.ErrorAs(t, Validate(c), &conflict)
+	})
+
+	t.Run("reports_registration_errors", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddSingleton(nil)
+		require.ErrorIs(t, Validate(c), ErrConstructorNil)
+	})
+}
+
 func TestBuildOrder(t *testing.T) {
 	t.Parallel()
 
