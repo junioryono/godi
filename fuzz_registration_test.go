@@ -433,8 +433,9 @@ func expectAccepted(reg *fuzzRegistration, occupied map[registryKey]bool) (ok bo
 			if fuzzReserved(t) {
 				return false, "reserved type"
 			}
+			// A name applies to every output, as a group does.
 			o := output{typ: t, group: reg.optGroup}
-			if i == 0 && reg.optName != "" {
+			if reg.optName != "" {
 				o.key = reg.optName
 			}
 			outputs = append(outputs, o)

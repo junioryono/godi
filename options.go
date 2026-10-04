@@ -105,8 +105,8 @@ func (o *addOptions) Validate() error {
 // Name is an AddOption that registers the value produced by a constructor as
 // a keyed service under the given name. Resolve it with ResolveKeyed or an In
 // field tagged `name:"..."`. For a constructor with several non-error
-// returns, the name applies to the first non-error return only; the other
-// returns are registered without a name.
+// returns, every return is registered under the name (as Group adds every
+// return to the group); give outputs different names with a result object.
 //
 // Given,
 //

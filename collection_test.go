@@ -1120,11 +1120,27 @@ func TestMultiReturnWithName(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, a.N)
 
-	b, err := Resolve[*TMultiB](p)
+	// The name applies to every output, as Group does.
+	b, err := ResolveKeyed[*TMultiB](p, "primary")
 	require.NoError(t, err)
 	assert.Equal(t, 2, b.N)
+	_, err = Resolve[*TMultiB](p)
+	require.ErrorIs(t, err, ErrServiceNotFound, "no output is registered without the name")
 
 	assert.Equal(t, 1, calls, "singleton multi-return constructor must run exactly once")
+
+	t.Run("replace_targets_every_named_output", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddSingleton(func() (*TMultiA, *TMultiB) { return &TMultiA{N: 1}, &TMultiB{N: 2} }, Name("primary"))
+		c.AddModules(ReplaceSingleton(func() (*TMultiA, *TMultiB) { return &TMultiA{N: 3}, &TMultiB{N: 4} }, Name("primary")))
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+		b, err := ResolveKeyed[*TMultiB](p, "primary")
+		require.NoError(t, err)
+		assert.Equal(t, 4, b.N)
+	})
 }
 
 func TestMultiReturnWithGroup(t *testing.T) {

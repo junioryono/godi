@@ -16,8 +16,8 @@ func NewDatabaseConnection(config *Config) (*Database, *HealthChecker) {
 ```
 
 godi registers each non-error return of a multi-return constructor as its own
-service, but every return shares the registration's options: `godi.Name` keys
-only the first return, and `godi.Group` adds every return to the group. To
+service, and every return shares the registration's options: `godi.Name` keys
+every return with the name, and `godi.Group` adds every return to the group. To
 give each output its own name or group, use a result object.
 
 ## The Solution: Result Objects

@@ -269,17 +269,11 @@ func (sc *collection) registrationTargets(service any, lifetime Lifetime, opts [
 	}
 
 	var targets []registryKey
-	first := true
 	for _, ret := range d.info.Returns {
 		if ret.IsError {
 			continue
 		}
-		var key any
-		if first {
-			key = d.Key
-		}
-		first = false
-		targets = append(targets, registryKey{Type: ret.Type, Key: key})
+		targets = append(targets, registryKey{Type: ret.Type, Key: d.Key})
 	}
 	if len(targets) == 0 {
 		targets = append(targets, registryKey{Type: d.Type, Key: d.Key})

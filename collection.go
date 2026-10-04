@@ -1129,16 +1129,13 @@ func (r *collection) registerMultiReturn(d *descriptor, info *reflection.Constru
 	}
 
 	typeDescriptors := make([]*descriptor, 0, len(nonErrorReturns))
-	for i, ret := range nonErrorReturns {
+	for _, ret := range nonErrorReturns {
 		typeDescriptor := d.clone()
 		typeDescriptor.Type = ret.Type
 		typeDescriptor.MultiReturnIndex = ret.Index
 
-		// Apply name/key only to the first return if specified
-		typeDescriptor.Key = nil
-		if options.key() != nil && i == 0 {
-			typeDescriptor.Key = options.key()
-		}
+		// A name or key applies to every output, as a group does.
+		typeDescriptor.Key = options.key()
 
 		typeDescriptors = append(typeDescriptors, typeDescriptor)
 	}

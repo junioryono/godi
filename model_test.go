@@ -368,11 +368,8 @@ func (m *modelRegistry) entriesFor(reg *modelReg) []*modelEntry {
 	default:
 		var out []*modelEntry
 		for slot, o := range reg.outputs {
-			e := &modelEntry{reg: reg, slot: slot, typ: o.typ, group: reg.group}
-			if slot == 0 {
-				e.key = reg.key
-			}
-			out = append(out, e)
+			// A name applies to every output, as a group does.
+			out = append(out, &modelEntry{reg: reg, slot: slot, typ: o.typ, key: reg.key, group: reg.group})
 		}
 		return out
 	}
