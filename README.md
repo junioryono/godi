@@ -73,6 +73,9 @@ go get github.com/junioryono/godi/v5
 
 Requires **Go 1.26+**. Zero external dependencies.
 
+godi supports the two most recent Go minor releases, like Go itself, and CI
+tests both. See the [Go version policy](CONTRIBUTING.md#go-version-policy).
+
 > **Upgrading from v4?** See the [v4 → v5 migration guide](MIGRATION.md) — v5
 > is a breaking release at a new import path.
 
@@ -386,11 +389,13 @@ commit, timestamp, Go version, OS, and architecture alongside the raw results.
 make benchmark
 ```
 
-Benchmark results depend on the machine, toolchain, and system load. CI publishes the
-raw `benchmark-results` artifact for each run; compare repeated samples with
-[`benchstat`](https://pkg.go.dev/golang.org/x/perf/cmd/benchstat) instead of treating a
-single run as a stable product claim. See the [comparison source](benchmarks/comparison_test.go)
-for the exact workloads.
+Benchmark results depend on the machine, toolchain, and system load. A nightly CI
+workflow publishes the raw `benchmark-results` artifact and compares it with the
+previous run using [`benchstat`](https://pkg.go.dev/golang.org/x/perf/cmd/benchstat);
+compare repeated samples instead of treating a single run as a stable product claim.
+The libraries do not expose identical operations (dig, for example, has no
+resolve-by-type API), so the [comparison source](benchmarks/comparison_test.go)
+documents what each benchmark measures.
 
 ## Documentation
 
