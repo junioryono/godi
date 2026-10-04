@@ -35,11 +35,6 @@ type scope struct {
 	// instances it depends on are then disposed in reverse creation order.
 	isRoot bool
 
-	// stopContextWatch unregisters the context.AfterFunc that closes this
-	// scope when its context is cancelled, so an explicit Close does not
-	// spawn the callback's goroutine.
-	stopContextWatch atomic.Pointer[func() bool]
-
 	// Scoped instances (isolated per scope)
 	instances   map[instanceKey]any
 	instancesMu sync.RWMutex
@@ -53,7 +48,7 @@ type scope struct {
 	inflight sync.Map // map[any]*scopeFlight
 
 	// Track disposable scoped instances
-	disposables   []Disposable
+	disposables   []any // resources to dispose, in creation order
 	disposableSet map[disposableIdentity]struct{}
 	disposablesMu sync.Mutex
 
@@ -477,44 +472,60 @@ func (s *scope) CreateScope(ctx context.Context) (Scope, error) {
 		_ = child.Close()
 		return nil, ErrScopeDisposed
 	}
-	s.rootProvider.scopes[child] = struct{}{}
 	s.rootProvider.scopesMu.Unlock()
-
-	child.closeOnContextDone(ctx)
 
 	return child, nil
 }
 
-// closeOnContextDone closes the scope when ctx is cancelled. AfterFunc avoids
-// dedicating a goroutine per scope; Close unregisters it, so an explicit
-// Close (which cancels ctx) does not start the callback's goroutine either.
-func (s *scope) closeOnContextDone(ctx context.Context) {
-	stop := context.AfterFunc(ctx, func() {
-		// Context cancellation cleanup errors are expected during shutdown
-		// and cannot be meaningfully handled, so we ignore them.
-		_ = s.Close()
-	})
-	s.stopContextWatch.Store(&stop)
+// Close disposes the scope and all its resources, waiting for cleanup to
+// finish. Use Shutdown to bound the wait with a context.
+//
+// Cancelling the context the scope was created with does not close it:
+// cancellation tells the work in the scope to stop, not that it has stopped,
+// so the scope's owner closes it once the work is done.
+func (s *scope) Close() error {
+	return s.shutdown(context.Background())
 }
 
-// Close disposes the scope and all its resources
-func (s *scope) Close() (result error) {
+// shutdown disposes the scope, waiting until cleanup finishes or ctx is done;
+// see Shutdown.
+func (s *scope) shutdown(ctx context.Context) error {
+	if ctx.Done() == nil {
+		return s.closeAndWait(ctx)
+	}
+	go func() { _ = s.closeAndWait(ctx) }()
+	select {
+	case <-s.closeDone:
+		return s.closeErr
+	case <-ctx.Done():
+		select {
+		case <-s.closeDone:
+			return s.closeErr
+		default:
+		}
+		return shutdownIncomplete("scope", ctx)
+	}
+}
+
+// closeAndWait runs the teardown on the calling goroutine if it is the first
+// to close the scope, otherwise waits for the teardown in progress.
+func (s *scope) closeAndWait(ctx context.Context) error {
 	if !s.disposed.CompareAndSwap(0, 1) {
 		<-s.closeDone
 		return s.closeErr
 	}
-	defer func() {
-		s.closeErr = result
-		close(s.closeDone)
-	}()
+	s.closeErr = s.teardown(ctx)
+	close(s.closeDone)
+	return s.closeErr
+}
 
+// teardown cancels the scope's context, closes its child scopes (waiting for
+// each, so children are fully disposed before their parent's resources), then
+// disposes its resources in reverse creation order. ctx reaches
+// context-aware resources.
+func (s *scope) teardown(ctx context.Context) error {
 	var errs []error
 
-	// Unregister the context watch (a no-op if it already fired), then
-	// cancel the context.
-	if stop := s.stopContextWatch.Load(); stop != nil {
-		(*stop)()
-	}
 	if s.cancel != nil {
 		s.cancel()
 	}
@@ -529,7 +540,7 @@ func (s *scope) Close() (result error) {
 	s.childrenMu.Unlock()
 
 	for _, child := range children {
-		if err := child.Close(); err != nil {
+		if err := child.closeAndWait(ctx); err != nil {
 			errs = append(errs, fmt.Errorf("failed to close child scope: %w", err))
 		}
 	}
@@ -544,7 +555,7 @@ func (s *scope) Close() (result error) {
 	s.disposablesMu.Unlock()
 
 	for i := len(disposables) - 1; i >= 0; i-- {
-		if err := safeClose(disposables[i]); err != nil {
+		if err := safeDispose(ctx, disposables[i]); err != nil {
 			errs = append(errs, fmt.Errorf("failed to dispose scoped instance: %w", err))
 		}
 	}
@@ -604,13 +615,16 @@ func cachedInstance(key instanceKey, instance any) (any, error) {
 // lifetimes) and takes ownership of its disposal. parent is the construction
 // that requested the instance's constructor.
 func (s *scope) setInstance(parent *resolveFrame, descriptor *descriptor, key instanceKey, instance any) {
+	dispose := !descriptor.noDispose
 	switch descriptor.Lifetime {
 	case Singleton:
-		s.rootProvider.setSingleton(instance, key)
+		s.rootProvider.setSingleton(instance, dispose, key)
 	case Scoped:
-		s.publishScoped(instance, key)
+		s.publishScoped(instance, dispose, key)
 	case Transient:
-		s.trackTransient(parent, instance)
+		if dispose {
+			s.trackTransient(parent, instance)
+		}
 	}
 }
 
@@ -633,12 +647,15 @@ func (s *scope) setAbsent(descriptor *descriptor, key instanceKey) {
 // trackProduced takes ownership of a value a constructor produced that is not
 // cached under any registration (its registration was removed), so it is
 // still disposed with the construction's owner.
-func (s *scope) trackProduced(parent *resolveFrame, lifetime Lifetime, instance any) {
-	switch lifetime {
+func (s *scope) trackProduced(parent *resolveFrame, requested *descriptor, instance any) {
+	if requested.noDispose {
+		return
+	}
+	switch requested.Lifetime {
 	case Singleton:
 		s.rootProvider.trackDisposable(instance)
 	case Scoped:
-		closeOrphan(s.track(instance))
+		closeOrphan(s.track(instance, true))
 	case Transient:
 		s.trackTransient(parent, instance)
 	}
@@ -651,10 +668,11 @@ func (s *scope) trackProduced(parent *resolveFrame, lifetime Lifetime, instance 
 // resolution that finds it in the cache and builds a consumer on it must be
 // tracked after it, so that reverse-order disposal closes the consumer first.
 // If the scope has been closed while the constructor ran, the instance is
-// closed eagerly (if Disposable) and not cached.
-func (s *scope) publishScoped(instance any, keys ...instanceKey) {
+// closed eagerly (if Disposable) and not cached. With dispose false
+// (NoDispose) ownership is only recorded, so child scopes don't adopt it.
+func (s *scope) publishScoped(instance any, dispose bool, keys ...instanceKey) {
 	s.instancesMu.Lock()
-	orphan := s.track(instance)
+	orphan := s.track(instance, dispose)
 	if orphan == nil && s.instances != nil {
 		for _, key := range keys {
 			s.instances[key] = instance
@@ -676,24 +694,24 @@ func (s *scope) trackTransient(parent *resolveFrame, instance any) {
 	if s.isRoot && !hasCachedOwner(s, parent) {
 		return
 	}
-	closeOrphan(s.track(instance))
+	closeOrphan(s.track(instance, true))
 }
 
-// track takes ownership of instance's disposal if it is Disposable. It
+// track takes ownership of instance's disposal if it is disposable. It
 // returns the instance as an orphan, for the caller to close outside any
 // lock, if the owner was already closed. Instances already owned by this
 // scope, or by a longer-lived owner (a parent scope or the provider) that
-// merely lent them, are not tracked again.
-func (s *scope) track(instance any) (orphan Disposable) {
-	d, ok := instance.(Disposable)
-	if !ok {
+// merely lent them, are not tracked again. With dispose false (NoDispose)
+// ownership is only recorded and the instance is never disposed.
+func (s *scope) track(instance any, dispose bool) (orphan any) {
+	if !isDisposable(instance) {
 		return nil
 	}
 	if s.isRoot {
-		return s.rootProvider.track(d)
+		return s.rootProvider.track(instance, dispose)
 	}
 
-	identity, identifiable := identifyDisposable(d)
+	identity, identifiable := identifyDisposable(instance)
 	// e.g. a scoped service that returns a singleton: the singleton is
 	// borrowed, and closing it with this scope would break the provider.
 	if identifiable && s.ownedByLongerLived(identity) {
@@ -711,10 +729,13 @@ func (s *scope) track(instance any) (orphan Disposable) {
 		}
 		s.disposableSet[identity] = struct{}{}
 	}
-	if s.disposed.Load() != 0 {
-		return d
+	if !dispose {
+		return nil
 	}
-	s.disposables = append(s.disposables, d)
+	if s.disposed.Load() != 0 {
+		return instance
+	}
+	s.disposables = append(s.disposables, instance)
 	return nil
 }
 
@@ -739,9 +760,9 @@ func (s *scope) owns(identity disposableIdentity) bool {
 }
 
 // ownedByAnyone reports whether this scope or a longer-lived owner owns the
-// disposal of d.
-func (s *scope) ownedByAnyone(d Disposable) bool {
-	identity, identifiable := identifyDisposable(d)
+// disposal of v.
+func (s *scope) ownedByAnyone(v any) bool {
+	identity, identifiable := identifyDisposable(v)
 	if !identifiable {
 		return false
 	}
@@ -749,34 +770,6 @@ func (s *scope) ownedByAnyone(d Disposable) bool {
 		return s.rootProvider.owns(identity)
 	}
 	return s.owns(identity) || s.ownedByLongerLived(identity)
-}
-
-// closeOrphan closes a Disposable produced for a scope that has already been
-// torn down. Panics from the disposable's Close are recovered (we have no
-// caller to report to and we don't want to crash the goroutine that produced
-// the orphan).
-func closeOrphan(v any) {
-	d, ok := v.(Disposable)
-	if !ok {
-		return
-	}
-	defer func() {
-		_ = recover()
-	}()
-	_ = d.Close()
-}
-
-// safeClose calls d.Close() with panic recovery so a single misbehaving
-// disposable can't abort the rest of a teardown loop. Recovered panics are
-// returned as a wrapped error so the caller can aggregate them into a
-// DisposalError.
-func safeClose(d Disposable) (err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("panic during Close: %v", r)
-		}
-	}()
-	return d.Close()
 }
 
 // flightKey computes a single-flight key for a descriptor. Multi-return and
@@ -842,6 +835,49 @@ func (s *scope) resolveScopedSingleFlight(parent *resolveFrame, key instanceKey,
 	return flight.instance, flight.err
 }
 
+// resolveSingletonDuringBuild creates a singleton under single-flight while
+// the provider is building, in the root scope. Build's own creation loop and
+// on-demand resolutions from constructors (possibly on other goroutines)
+// share one construction per registration.
+func (s *scope) resolveSingletonDuringBuild(parent *resolveFrame, key instanceKey, descriptor *descriptor) (any, error) {
+	if err := s.checkCycle(parent, descriptor); err != nil {
+		return nil, err
+	}
+
+	fkey := flightKey(descriptor)
+	newFlight := &scopeFlight{done: make(chan struct{})}
+	raw, loaded := s.inflight.LoadOrStore(fkey, newFlight)
+	flight := raw.(*scopeFlight)
+
+	if loaded {
+		<-flight.done
+		if instance, ok := s.rootProvider.getSingleton(key); ok {
+			return cachedInstance(key, instance)
+		}
+		if flight.err != nil {
+			return nil, flight.err
+		}
+		return nil, &ResolutionError{
+			ServiceType: key.Type,
+			ServiceKey:  key.Key,
+			Cause:       ErrSingletonNotInitialized,
+		}
+	}
+
+	defer func() {
+		s.inflight.Delete(fkey)
+		close(flight.done)
+	}()
+
+	if instance, ok := s.rootProvider.getSingleton(key); ok {
+		flight.instance, flight.err = cachedInstance(key, instance)
+		return flight.instance, flight.err
+	}
+
+	flight.instance, flight.err = s.createInstance(parent, descriptor)
+	return flight.instance, flight.err
+}
+
 var (
 	contextType  = reflect.TypeFor[context.Context]()
 	providerType = reflect.TypeFor[Provider]()
@@ -889,6 +925,12 @@ func (s *scope) resolve(parent *resolveFrame, key instanceKey, descriptor *descr
 			return cachedInstance(key, instance)
 		}
 
+		// A singleton resolved before its turn during Build (at runtime,
+		// through an injected Provider or Scope) is created on demand.
+		if s.rootProvider.building.Load() {
+			return s.rootProvider.rootScope.resolveSingletonDuringBuild(parent, key, descriptor)
+		}
+
 		// Singleton should have been created at build time
 		return nil, &ResolutionError{
 			ServiceType: key.Type,
@@ -897,6 +939,13 @@ func (s *scope) resolve(parent *resolveFrame, key instanceKey, descriptor *descr
 		}
 
 	case Scoped:
+		if s.isRoot && s.rootProvider.validateScopes {
+			return nil, &ResolutionError{
+				ServiceType: key.Type,
+				ServiceKey:  key.Key,
+				Cause:       ErrScopeRequired,
+			}
+		}
 		if instance, ok := s.getInstance(key); ok {
 			return cachedInstance(key, instance)
 		}
@@ -1016,7 +1065,7 @@ func (s *scope) createInstance(parent *resolveFrame, descriptor *descriptor) (an
 	if err := validateServiceResults(info, results); err != nil {
 		// Nothing will own the outputs that were produced successfully;
 		// close them rather than leak them.
-		s.closeProducedOutputs(info, results)
+		s.closeProducedOutputs(descriptor, info, results)
 		return nil, err
 	}
 
@@ -1076,7 +1125,7 @@ func (s *scope) publishResultObject(
 				// but the constructor still produced the value, so this
 				// construction must still dispose it.
 				if output.Present {
-					s.trackProduced(parent, requested.Lifetime, output.Value)
+					s.trackProduced(parent, requested, output.Value)
 				}
 				continue
 			}
@@ -1151,7 +1200,7 @@ func (s *scope) publishMultiReturn(
 		// by this call, so this construction must still dispose them.
 		for _, ret := range info.Returns {
 			if !ret.IsError && !requested.hasSiblingForReturn(ret.Index) {
-				s.trackProduced(parent, requested.Lifetime, results[ret.Index].Interface())
+				s.trackProduced(parent, requested, results[ret.Index].Interface())
 			}
 		}
 	} else {
@@ -1188,15 +1237,19 @@ func (s *scope) publishMultiReturn(
 
 // closeProducedOutputs closes the disposable service values of a constructor
 // call whose results were rejected, unless a longer-lived owner already owns
-// them (e.g. a singleton the constructor merely returned).
-func (s *scope) closeProducedOutputs(info *reflection.ConstructorInfo, results []reflect.Value) {
+// them (e.g. a singleton the constructor merely returned) or the registration
+// is NoDispose.
+func (s *scope) closeProducedOutputs(requested *descriptor, info *reflection.ConstructorInfo, results []reflect.Value) {
+	if requested.noDispose {
+		return
+	}
 	var closed map[disposableIdentity]struct{}
 	for _, ret := range info.Returns {
 		if ret.IsError || reflection.IsNilValue(results[ret.Index]) {
 			continue
 		}
-		d, ok := results[ret.Index].Interface().(Disposable)
-		if !ok || s.ownedByAnyone(d) {
+		d := results[ret.Index].Interface()
+		if !isDisposable(d) || s.ownedByAnyone(d) {
 			continue
 		}
 		if identity, identifiable := identifyDisposable(d); identifiable {
@@ -1250,9 +1303,9 @@ func (s *scope) setAliasedInstance(parent *resolveFrame, descriptor *descriptor,
 
 	switch descriptor.Lifetime {
 	case Singleton:
-		s.rootProvider.setSingleton(instance, keys...)
+		s.rootProvider.setSingleton(instance, !descriptor.noDispose, keys...)
 	case Scoped:
-		s.publishScoped(instance, keys...)
+		s.publishScoped(instance, !descriptor.noDispose, keys...)
 	}
 }
 

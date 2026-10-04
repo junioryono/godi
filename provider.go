@@ -8,42 +8,17 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/junioryono/godi/v5/internal/graph"
 	"github.com/junioryono/godi/v5/internal/reflection"
 )
 
-// Disposable is implemented by resources that need cleanup.
+// Disposable is implemented by resources that need cleanup. godi also disposes
+// services implementing ContextCloser or Shutdowner; see Shutdown.
 //
 // Close must not recursively call Close on the Provider or Scope that owns the
 // resource. Shutdown is serialized so concurrent callers receive the same
 // final result, which makes recursive owner shutdown deadlock by definition.
 type Disposable interface {
 	Close() error
-}
-
-type disposableIdentity struct {
-	typ   reflect.Type
-	value any
-}
-
-// identifyDisposable returns a stable identity for reference-backed disposable
-// values. Equal struct values are not deduplicated because they may represent
-// independently produced resources that must each be closed.
-func identifyDisposable(d Disposable) (disposableIdentity, bool) {
-	if d == nil {
-		return disposableIdentity{}, false
-	}
-	value := reflect.ValueOf(d)
-	if !value.IsValid() {
-		return disposableIdentity{}, false
-	}
-	if value.Kind() != reflect.Pointer && value.Kind() != reflect.Chan {
-		return disposableIdentity{}, false
-	}
-	if value.IsNil() {
-		return disposableIdentity{}, false
-	}
-	return disposableIdentity{typ: value.Type(), value: d}, true
 }
 
 // Provider is the main dependency injection container interface
@@ -75,6 +50,14 @@ type ProviderOptions struct {
 	// to singletons is no longer subject to it and is cancelled when the
 	// provider closes.
 	BuildTimeout time.Duration
+
+	// ValidateScopes rejects resolving a scoped service, directly or through
+	// transients, from the provider's root scope (ErrScopeRequired). Resolved
+	// from the root, a "per-request" service becomes one instance shared by
+	// the whole application. With it set, the root scope also runs no scoped
+	// initializers. Recommended; it will be the default in the next major
+	// version.
+	ValidateScopes bool
 }
 
 // provider is the concrete implementation of Provider
@@ -85,8 +68,16 @@ type provider struct {
 	services map[TypeKey]*descriptor
 	groups   map[GroupKey][]*descriptor
 
-	// Dependency graph (immutable after build)
-	graph *graph.DependencyGraph
+	// Singletons in creation order (see creationOrder). Immutable after build.
+	singletonOrder []*descriptor
+
+	// building is true while Build creates singletons: a singleton resolved
+	// before its turn (at runtime, through an injected Provider or Scope)
+	// is then created on demand.
+	building atomic.Bool
+
+	// validateScopes is ProviderOptions.ValidateScopes. Immutable after build.
+	validateScopes bool
 
 	// Reflection analyzer
 	analyzer *reflection.Analyzer
@@ -104,7 +95,7 @@ type provider struct {
 	voidReturnScopedDescriptors []*descriptor
 
 	// Track disposable instances for cleanup
-	disposables   []Disposable
+	disposables   []any // resources to dispose, in creation order
 	disposableSet map[disposableIdentity]struct{}
 	disposablesMu sync.Mutex
 
@@ -238,22 +229,50 @@ func (p *provider) CreateScope(ctx context.Context) (Scope, error) {
 	p.scopes[s] = struct{}{}
 	p.scopesMu.Unlock()
 
-	s.closeOnContextDone(ctx)
-
 	return s, nil
 }
 
-// Close disposes the provider and all its resources
-func (p *provider) Close() (result error) {
+// Close disposes the provider and all its resources, waiting for cleanup to
+// finish. Use Shutdown to bound the wait with a context.
+func (p *provider) Close() error {
+	return p.shutdown(context.Background())
+}
+
+// shutdown disposes the provider, waiting until cleanup finishes or ctx is
+// done; see Shutdown.
+func (p *provider) shutdown(ctx context.Context) error {
+	if ctx.Done() == nil {
+		return p.closeAndWait(ctx)
+	}
+	go func() { _ = p.closeAndWait(ctx) }()
+	select {
+	case <-p.closeDone:
+		return p.closeErr
+	case <-ctx.Done():
+		select {
+		case <-p.closeDone:
+			return p.closeErr
+		default:
+		}
+		return shutdownIncomplete("provider", ctx)
+	}
+}
+
+// closeAndWait runs the teardown on the calling goroutine if it is the first
+// to close the provider, otherwise waits for the teardown in progress.
+func (p *provider) closeAndWait(ctx context.Context) error {
 	if !p.disposed.CompareAndSwap(0, 1) {
 		<-p.closeDone
 		return p.closeErr
 	}
-	defer func() {
-		p.closeErr = result
-		close(p.closeDone)
-	}()
+	p.closeErr = p.teardown(ctx)
+	close(p.closeDone)
+	return p.closeErr
+}
 
+// teardown closes the provider's scopes, then disposes its resources in
+// reverse creation order. ctx reaches context-aware resources.
+func (p *provider) teardown(ctx context.Context) error {
 	var errors []error
 
 	// Close all scopes
@@ -269,7 +288,7 @@ func (p *provider) Close() (result error) {
 
 	for _, s := range scopes {
 		if s != nil {
-			if err := s.Close(); err != nil {
+			if err := s.closeAndWait(ctx); err != nil {
 				errors = append(errors, fmt.Errorf("scope %s: %w", s.ID(), err))
 			}
 		}
@@ -281,7 +300,7 @@ func (p *provider) Close() (result error) {
 	// Get/GetKeyed/GetGroup calls read it without synchronization, and a
 	// closed root scope already rejects resolution with ErrScopeDisposed.
 	if p.rootScope != nil {
-		if err := p.rootScope.Close(); err != nil {
+		if err := p.rootScope.closeAndWait(ctx); err != nil {
 			errors = append(errors, fmt.Errorf("root scope: %w", err))
 		}
 	}
@@ -299,7 +318,7 @@ func (p *provider) Close() (result error) {
 	// misbehaving disposable cannot abort the rest of the teardown loop.
 	for i := len(disposables) - 1; i >= 0; i-- {
 		if disposables[i] != nil {
-			if err := safeClose(disposables[i]); err != nil {
+			if err := safeDispose(ctx, disposables[i]); err != nil {
 				errors = append(errors, fmt.Errorf("singleton disposable %d: %w", i, err))
 			}
 		}
@@ -332,21 +351,20 @@ func (p *provider) getSingleton(key instanceKey) (any, bool) {
 }
 
 // setSingleton stores a singleton instance under keys (one per interface
-// alias) using lock-free sync.Map. It also tracks the instance if it
-// implements the Disposable interface for proper cleanup during provider
-// disposal. Ownership is taken before the instance is published, so anything
-// built on the published instance is disposed before it.
-func (p *provider) setSingleton(instance any, keys ...instanceKey) {
+// alias) using lock-free sync.Map. It also takes ownership of the instance's
+// disposal (unless the registration is NoDispose, in which case ownership is
+// only recorded so no scope adopts it). Ownership is taken before the
+// instance is published, so anything built on the published instance is
+// disposed before it.
+func (p *provider) setSingleton(instance any, dispose bool, keys ...instanceKey) {
 	if instance == nil {
 		return
 	}
 
-	if d, ok := instance.(Disposable); ok {
-		if orphan := p.track(d); orphan != nil {
-			// The provider was closed while the constructor was running.
-			closeOrphan(orphan)
-			return
-		}
+	if orphan := p.track(instance, dispose); orphan != nil {
+		// The provider was closed while the constructor was running.
+		closeOrphan(orphan)
+		return
 	}
 	for _, key := range keys {
 		p.cacheSingleton(key, instance)
@@ -362,23 +380,28 @@ func (p *provider) cacheSingleton(key instanceKey, instance any) {
 	p.singletonKeysMu.Unlock()
 }
 
-// trackDisposable takes ownership of instance's disposal if it is Disposable,
+// trackDisposable takes ownership of instance's disposal if it is disposable,
 // closing it eagerly if the provider has already been closed.
 func (p *provider) trackDisposable(instance any) {
-	if d, ok := instance.(Disposable); ok {
-		closeOrphan(p.track(d))
-	}
+	closeOrphan(p.track(instance, true))
 }
 
-// track takes ownership of d's disposal. The provider's list holds the
-// singletons and the root scope's disposables in creation order, so
-// reverse-order disposal closes every consumer before its dependencies. It
-// returns d as an orphan, for the caller to close outside any lock, if the
-// provider was already closed (the constructor outlived Close).
-func (p *provider) track(d Disposable) (orphan Disposable) {
+// track takes ownership of instance's disposal if it is disposable. The
+// provider's list holds the singletons and the root scope's disposables in
+// creation order, so reverse-order disposal closes every consumer before its
+// dependencies. It returns the instance as an orphan, for the caller to close
+// outside any lock, if the provider was already closed (the constructor
+// outlived Close).
+//
+// With dispose false (NoDispose registrations) ownership is only recorded,
+// so no scope adopts the value, and it is never disposed.
+func (p *provider) track(instance any, dispose bool) (orphan any) {
+	if !isDisposable(instance) {
+		return nil
+	}
 	p.disposablesMu.Lock()
 	defer p.disposablesMu.Unlock()
-	if identity, identifiable := identifyDisposable(d); identifiable {
+	if identity, identifiable := identifyDisposable(instance); identifiable {
 		if _, exists := p.disposableSet[identity]; exists {
 			return nil
 		}
@@ -387,10 +410,13 @@ func (p *provider) track(d Disposable) (orphan Disposable) {
 		}
 		p.disposableSet[identity] = struct{}{}
 	}
-	if p.disposed.Load() != 0 {
-		return d
+	if !dispose {
+		return nil
 	}
-	p.disposables = append(p.disposables, d)
+	if p.disposed.Load() != 0 {
+		return instance
+	}
+	p.disposables = append(p.disposables, instance)
 	return nil
 }
 
@@ -429,19 +455,14 @@ func (p *provider) findGroupDescriptors(serviceType reflect.Type, group string) 
 // The context is checked before each singleton creation, allowing for graceful cancellation
 // during the build process.
 func (p *provider) createAllSingletonsWithContext(ctx context.Context) error {
-	// Get topological sort from dependency graph
-	sorted, err := p.graph.TopologicalSort()
-	if err != nil {
-		return &GraphOperationError{
-			Operation: "topological sort",
-			NodeType:  nil,
-			NodeKey:   nil,
-			Cause:     err,
-		}
-	}
+	// Singletons a constructor resolves at runtime (through an injected
+	// Provider or Scope) are invisible to the static order below; while
+	// building, they are created on demand instead of failing.
+	p.building.Store(true)
+	defer p.building.Store(false)
 
-	// Create instances in dependency order
-	for _, node := range sorted {
+	// Create instances in dependency order (see creationOrder)
+	for _, descriptor := range p.singletonOrder {
 		// Check context before each singleton creation
 		select {
 		case <-ctx.Done():
@@ -453,35 +474,14 @@ func (p *provider) createAllSingletonsWithContext(ctx context.Context) error {
 		default:
 		}
 
-		if node == nil || node.Provider == nil {
-			continue
-		}
+		key := descriptor.instanceKey()
 
-		descriptor, ok := node.Provider.(*descriptor)
-		if !ok {
-			return &ValidationError{
-				ServiceType: nil,
-				Cause:       fmt.Errorf("invalid provider type: %T", node.Provider),
-			}
-		}
-
-		if descriptor.Lifetime != Singleton {
-			continue
-		}
-
-		// Create instance key
-		key := instanceKey{
-			Type:  descriptor.Type,
-			Key:   descriptor.Key,
-			Group: descriptor.Group,
-		}
-
-		// Check if already created
+		// Check if already created (by a sibling output or on demand)
 		if _, exists := p.getSingleton(key); exists {
 			continue
 		}
 
-		_, err := p.rootScope.createInstance(nil, descriptor)
+		_, err := p.rootScope.resolveSingletonDuringBuild(nil, key, descriptor)
 		if err != nil && !isOutputNotProvided(err) {
 			return &ResolutionError{
 				ServiceType: descriptor.Type,
@@ -506,6 +506,62 @@ func (p *provider) createAllSingletonsWithContext(ctx context.Context) error {
 		}
 	}
 
+	return nil
+}
+
+// creationOrder orders descriptors so that every static dependency precedes
+// its dependents, and otherwise follows registration order. The order is
+// deterministic, so construction (and reverse disposal) order is the same on
+// every run. The dependency graph must already be known to be acyclic.
+func creationOrder(all []*descriptor, services map[TypeKey]*descriptor, groups map[GroupKey][]*descriptor) []*descriptor {
+	order := make([]*descriptor, 0, len(all))
+	visited := make(map[*descriptor]bool, len(all))
+	var visit func(d *descriptor)
+	visit = func(d *descriptor) {
+		if visited[d] {
+			return
+		}
+		visited[d] = true
+		for _, dep := range d.Dependencies {
+			for _, depDescriptor := range dependencyDescriptors(dep, services, groups) {
+				visit(depDescriptor)
+			}
+		}
+		order = append(order, d)
+	}
+	for _, d := range all {
+		if d != nil {
+			visit(d)
+		}
+	}
+	return order
+}
+
+// singletonsInCreationOrder returns the singleton registrations in creation
+// order.
+func singletonsInCreationOrder(all []*descriptor, services map[TypeKey]*descriptor, groups map[GroupKey][]*descriptor) []*descriptor {
+	ordered := creationOrder(all, services, groups)
+	singletons := ordered[:0]
+	for _, d := range ordered {
+		if d.Lifetime == Singleton {
+			singletons = append(singletons, d)
+		}
+	}
+	return singletons
+}
+
+// dependencyDescriptors returns the registrations that satisfy dep: every
+// member of a group dependency, else the registration of its type and key.
+func dependencyDescriptors(dep *reflection.Dependency, services map[TypeKey]*descriptor, groups map[GroupKey][]*descriptor) []*descriptor {
+	if dep == nil {
+		return nil
+	}
+	if dep.Group != "" {
+		return groups[GroupKey{Type: dep.Type, Group: dep.Group}]
+	}
+	if d := services[TypeKey{Type: dep.Type, Key: dep.Key}]; d != nil {
+		return []*descriptor{d}
+	}
 	return nil
 }
 

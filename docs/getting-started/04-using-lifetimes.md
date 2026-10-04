@@ -177,10 +177,12 @@ TempFile: temp_3.txt, temp_4.txt
 
 ## The Golden Rule
 
-**Only scoped services may depend on scoped services.**
+**A singleton must never hold a scoped service.**
 
-Scoped services can depend on anything. Singletons and transients cannot
-depend on scoped services — godi rejects both at build time.
+Scoped and transient services can depend on anything. A singleton cannot depend
+on a scoped service, directly or through transients — godi rejects that at
+build time. Resolve scoped services from a scope, not the provider (see
+[Validating Scopes](../concepts/lifetimes.md#validating-scopes-at-runtime)).
 
 ```go
 // ✓ OK: Scoped can depend on Singleton

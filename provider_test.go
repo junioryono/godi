@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -535,6 +536,254 @@ func TestDisposableCloseDeduplication(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, p.Close())
 		assert.Equal(t, int64(1), closeCalls.Load())
+	})
+}
+
+// stuckCloser blocks Close until released.
+type stuckCloser struct {
+	release chan struct{}
+	closed  atomic.Bool
+}
+
+func (c *stuckCloser) Close() error {
+	<-c.release
+	c.closed.Store(true)
+	return nil
+}
+
+// ctxCloser records the context its Close(ctx) received.
+type ctxCloser struct {
+	deadline    time.Time
+	hasDeadline bool
+	calls       atomic.Int32
+}
+
+func (c *ctxCloser) Close(ctx context.Context) error {
+	c.deadline, c.hasDeadline = ctx.Deadline()
+	c.calls.Add(1)
+	return nil
+}
+
+// gracefulServer models *http.Server: a graceful Shutdown(ctx) that can
+// time out, plus an abrupt Close().
+type gracefulServer struct {
+	shutdownBlocks bool
+	shutdowns      atomic.Int32
+	closes         atomic.Int32
+}
+
+func (s *gracefulServer) Shutdown(ctx context.Context) error {
+	s.shutdowns.Add(1)
+	if s.shutdownBlocks {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	return nil
+}
+
+func (s *gracefulServer) Close() error {
+	s.closes.Add(1)
+	return nil
+}
+
+// shutdownOnly has graceful shutdown but no Close.
+type shutdownOnly struct{ shutdowns atomic.Int32 }
+
+func (s *shutdownOnly) Shutdown(context.Context) error {
+	s.shutdowns.Add(1)
+	return nil
+}
+
+func TestShutdown(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns_when_the_deadline_passes", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			stuck := &stuckCloser{release: make(chan struct{})}
+			c := NewCollection()
+			c.AddSingleton(func() *stuckCloser { return stuck })
+			p, err := c.Build()
+			require.NoError(t, err)
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			// Close() has no bound: one stuck disposer would hang shutdown.
+			err = Shutdown(ctx, p)
+			require.ErrorIs(t, err, context.DeadlineExceeded)
+			var disposalErr *DisposalError
+			require.ErrorAs(t, err, &disposalErr)
+			assert.False(t, stuck.closed.Load())
+
+			// Cleanup keeps running; Close waits for it to finish.
+			close(stuck.release)
+			require.NoError(t, p.Close())
+			assert.True(t, stuck.closed.Load())
+		})
+	})
+
+	t.Run("context_aware_closers_receive_the_shutdown_context", func(t *testing.T) {
+		t.Parallel()
+		closer := &ctxCloser{}
+		c := NewCollection()
+		c.AddSingleton(func() *ctxCloser { return closer })
+		p, err := c.Build()
+		require.NoError(t, err)
+
+		deadline := time.Now().Add(time.Hour)
+		ctx, cancel := context.WithDeadline(context.Background(), deadline)
+		defer cancel()
+		require.NoError(t, Shutdown(ctx, p))
+
+		assert.Equal(t, int32(1), closer.calls.Load())
+		assert.True(t, closer.hasDeadline)
+		assert.Equal(t, deadline, closer.deadline)
+	})
+
+	t.Run("graceful_shutdown_falls_back_to_close_on_timeout", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			server := &gracefulServer{shutdownBlocks: true}
+			c := NewCollection()
+			c.AddSingleton(func() *gracefulServer { return server })
+			p, err := c.Build()
+			require.NoError(t, err)
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			_ = Shutdown(ctx, p)
+			require.NoError(t, p.Close())
+
+			// The http.Server pattern: Shutdown(ctx), then Close() when the
+			// graceful shutdown runs out of time.
+			assert.Equal(t, int32(1), server.shutdowns.Load())
+			assert.Equal(t, int32(1), server.closes.Load())
+		})
+	})
+
+	t.Run("plain_close_keeps_using_close", func(t *testing.T) {
+		t.Parallel()
+		server := &gracefulServer{shutdownBlocks: true}
+		c := NewCollection()
+		c.AddSingleton(func() *gracefulServer { return server })
+		p, err := c.Build()
+		require.NoError(t, err)
+
+		// Without a deadline, a graceful shutdown could wait forever.
+		require.NoError(t, p.Close())
+		assert.Zero(t, server.shutdowns.Load())
+		assert.Equal(t, int32(1), server.closes.Load())
+	})
+
+	t.Run("shutdown_only_resources_are_disposed", func(t *testing.T) {
+		t.Parallel()
+		resource := &shutdownOnly{}
+		c := NewCollection()
+		c.AddSingleton(func() *shutdownOnly { return resource })
+		p, err := c.Build()
+		require.NoError(t, err)
+
+		require.NoError(t, p.Close())
+		assert.Equal(t, int32(1), resource.shutdowns.Load())
+	})
+
+	t.Run("scope_shutdown_disposes_children_first", func(t *testing.T) {
+		t.Parallel()
+		var order []string
+		var mu sync.Mutex
+		record := func(name string) func() error {
+			return func() error {
+				mu.Lock()
+				defer mu.Unlock()
+				order = append(order, name)
+				return nil
+			}
+		}
+		type ParentRes struct{ funcCloser }
+		type ChildRes struct{ funcCloser }
+		c := NewCollection()
+		c.AddScoped(func() *ParentRes { return &ParentRes{funcCloser{record("parent")}} })
+		c.AddScoped(func() *ChildRes { return &ChildRes{funcCloser{record("child")}} })
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+
+		parent, err := p.CreateScope(context.Background())
+		require.NoError(t, err)
+		_, err = Resolve[*ParentRes](parent)
+		require.NoError(t, err)
+		child, err := parent.CreateScope(context.Background())
+		require.NoError(t, err)
+		_, err = Resolve[*ChildRes](child)
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		require.NoError(t, Shutdown(ctx, parent))
+		assert.Equal(t, []string{"child", "parent"}, order)
+	})
+
+	t.Run("bounds_any_disposable", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			stuck := &stuckCloser{release: make(chan struct{})}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			require.ErrorIs(t, Shutdown(ctx, stuck), context.DeadlineExceeded)
+			close(stuck.release)
+			synctest.Wait()
+			assert.True(t, stuck.closed.Load())
+		})
+	})
+}
+
+// funcCloser adapts a function to Disposable.
+type funcCloser struct{ close func() error }
+
+func (c funcCloser) Close() error { return c.close() }
+
+func TestNoDispose(t *testing.T) {
+	t.Parallel()
+
+	t.Run("instance_supplied_by_the_caller", func(t *testing.T) {
+		t.Parallel()
+		shared := NewTDisposable()
+		c := NewCollection()
+		c.AddSingleton(shared, NoDispose())
+		p, err := c.Build()
+		require.NoError(t, err)
+
+		require.NoError(t, p.Close())
+		assert.False(t, shared.IsClosed(), "the caller owns a NoDispose registration")
+	})
+
+	t.Run("scoped_constructor", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddScoped(NewTDisposable, NoDispose())
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+
+		scope, err := p.CreateScope(context.Background())
+		require.NoError(t, err)
+		d, err := Resolve[*TDisposable](scope)
+		require.NoError(t, err)
+		require.NoError(t, scope.Close())
+		assert.False(t, d.IsClosed())
+	})
+
+	t.Run("interface_aliases", func(t *testing.T) {
+		t.Parallel()
+		disposable := &countedAliasDisposable{}
+		c := NewCollection()
+		c.AddSingleton(func() *countedAliasDisposable { return disposable },
+			As[closeAliasA](), As[closeAliasB](), NoDispose())
+		p, err := c.Build()
+		require.NoError(t, err)
+		require.NoError(t, p.Close())
+		assert.Zero(t, disposable.closeCalls.Load())
 	})
 }
 

@@ -118,11 +118,66 @@ scope.Close()     // Database stays open
 provider.Close()  // Database.Close() called here, once
 ```
 
-### Contexts
+### Values You Own: `NoDispose`
+
+By default godi disposes everything it hands out, including pre-built values
+passed to `AddSingleton`. Mark values whose lifetime you manage yourself with
+`godi.NoDispose()`; godi never disposes them, and no scope adopts them either:
+
+```go
+services.AddSingleton(os.Stdout, godi.NoDispose())
+services.AddSingleton(sharedDB, godi.NoDispose())  // closed by your main()
+```
+
+### Contexts and Cancellation
 
 Closing a scope cancels its context before disposing its services. The
 provider's root context (passed to singletons and to services resolved directly
 from the provider) is cancelled when the provider closes.
+
+Cancelling the context a scope was created with does **not** close the scope.
+Cancellation tells the work in the scope to stop; it does not mean the work has
+stopped, and disposing a transaction or file under a handler that is still
+unwinding would corrupt it. The scope's owner closes it once the work is done,
+which is what the HTTP integrations do (`defer scope.Close()`). For a scope
+whose lifetime really should end with a context, close it explicitly:
+
+```go
+scope, _ := provider.CreateScope(jobCtx)
+context.AfterFunc(jobCtx, func() { _ = scope.Close() })
+```
+
+## Graceful Shutdown
+
+`Close` waits for every resource to finish closing. To bound shutdown, use
+`godi.Shutdown` with a deadline:
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+defer cancel()
+
+if err := godi.Shutdown(ctx, provider); err != nil {
+    // errors.Is(err, context.DeadlineExceeded) if cleanup was still running
+    log.Printf("shutdown: %v", err)
+}
+```
+
+When the deadline passes, `Shutdown` returns while cleanup continues in the
+background (Go cannot preempt a blocked `Close`); a later `Close` waits for it.
+Child scopes are still fully closed before their parent's resources.
+
+Resources can take part in the shutdown budget by implementing one of:
+
+| Method | Called on `Close` | Called on `Shutdown(ctx)` |
+| --- | --- | --- |
+| `Close() error` (`godi.Disposable`) | `Close()` | `Close()` |
+| `Close(ctx) error` (`godi.ContextCloser`) | `Close(context.Background())` | `Close(ctx)` |
+| `Shutdown(ctx) error` (`godi.Shutdowner`) | `Close()` if present, else `Shutdown(context.Background())` | `Shutdown(ctx)`, then `Close()` if it times out |
+
+The last row is the `*http.Server` pattern: a graceful `Shutdown` within the
+budget, forced with `Close` when it runs out. A plain `Close` of the provider
+prefers `Close()` because a graceful shutdown without a deadline could wait
+forever.
 
 ## Disposal Order
 
