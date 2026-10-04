@@ -234,7 +234,7 @@ func tryAddService(service any, lifetime Lifetime, opts []AddOption) ModuleOptio
 // registrationTargets returns the registry keys a registration of service
 // with opts would occupy. Group registrations and result objects are not
 // supported by Replace and TryAdd.
-func (sc *collection) registrationTargets(service any, lifetime Lifetime, opts []AddOption) ([]TypeKey, error) {
+func (sc *collection) registrationTargets(service any, lifetime Lifetime, opts []AddOption) ([]registryKey, error) {
 	d, err := newDescriptorWithAnalyzer(service, lifetime, sc.analyzer, opts...)
 	if err != nil {
 		return nil, err
@@ -268,14 +268,14 @@ func (sc *collection) registrationTargets(service any, lifetime Lifetime, opts [
 	}
 
 	if len(options.As) > 0 {
-		targets := make([]TypeKey, 0, len(options.As))
+		targets := make([]registryKey, 0, len(options.As))
 		for _, iface := range options.As {
-			targets = append(targets, TypeKey{Type: reflect.TypeOf(iface).Elem(), Key: d.Key})
+			targets = append(targets, registryKey{Type: reflect.TypeOf(iface).Elem(), Key: d.Key})
 		}
 		return targets, nil
 	}
 
-	var targets []TypeKey
+	var targets []registryKey
 	first := true
 	for _, ret := range d.info.Returns {
 		if ret.IsError {
@@ -286,15 +286,15 @@ func (sc *collection) registrationTargets(service any, lifetime Lifetime, opts [
 			key = d.Key
 		}
 		first = false
-		targets = append(targets, TypeKey{Type: ret.Type, Key: key})
+		targets = append(targets, registryKey{Type: ret.Type, Key: key})
 	}
 	if len(targets) == 0 {
-		targets = append(targets, TypeKey{Type: d.Type, Key: d.Key})
+		targets = append(targets, registryKey{Type: d.Type, Key: d.Key})
 	}
 	return targets, nil
 }
 
-func describeTargets(targets []TypeKey) string {
+func describeTargets(targets []registryKey) string {
 	s := ""
 	for i, t := range targets {
 		if i > 0 {

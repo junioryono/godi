@@ -290,7 +290,7 @@ func fuzzUnsupportedService(t reflect.Type) bool {
 
 // expectAccepted is the oracle: whether registering reg should succeed, given
 // the registry keys already occupied. rule names the rule that rejects it.
-func expectAccepted(reg *fuzzRegistration, occupied map[TypeKey]bool) (ok bool, rule string) {
+func expectAccepted(reg *fuzzRegistration, occupied map[registryKey]bool) (ok bool, rule string) {
 	fn := reg.fnType
 	numOut := fn.NumOut()
 
@@ -422,7 +422,7 @@ func expectAccepted(reg *fuzzRegistration, occupied map[TypeKey]bool) (ok bool, 
 		}
 	}
 
-	seen := make(map[TypeKey]bool)
+	seen := make(map[registryKey]bool)
 	for key := range occupied {
 		seen[key] = true
 	}
@@ -430,7 +430,7 @@ func expectAccepted(reg *fuzzRegistration, occupied map[TypeKey]bool) (ok bool, 
 		if o.key == nil && o.group != "" {
 			continue // group members never collide
 		}
-		key := TypeKey{Type: o.typ, Key: o.key}
+		key := registryKey{Type: o.typ, Key: o.key}
 		if seen[key] {
 			return false, "already registered"
 		}
@@ -480,7 +480,7 @@ func FuzzRegistrationValidation(f *testing.F) {
 		reg := decodeRegistration(data)
 
 		c := NewCollection()
-		occupied := map[TypeKey]bool{}
+		occupied := map[registryKey]bool{}
 		if reg.withDeps {
 			c.AddSingleton(&fuzzRegA{})
 			c.AddSingleton(func() fuzzRegLogger { return fuzzRegConsole{} })
@@ -489,9 +489,9 @@ func FuzzRegistrationValidation(f *testing.F) {
 			if err := c.Err(); err != nil {
 				t.Fatalf("registering dependencies: %v", err)
 			}
-			occupied[TypeKey{Type: reflect.TypeFor[*fuzzRegA]()}] = true
-			occupied[TypeKey{Type: reflect.TypeFor[fuzzRegLogger]()}] = true
-			occupied[TypeKey{Type: reflect.TypeFor[*fuzzRegA](), Key: "k"}] = true
+			occupied[registryKey{Type: reflect.TypeFor[*fuzzRegA]()}] = true
+			occupied[registryKey{Type: reflect.TypeFor[fuzzRegLogger]()}] = true
+			occupied[registryKey{Type: reflect.TypeFor[*fuzzRegA](), Key: "k"}] = true
 		}
 
 		var opts []AddOption

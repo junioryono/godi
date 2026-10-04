@@ -67,8 +67,8 @@ type provider struct {
 	id string
 
 	// Service registry (immutable after build)
-	services map[TypeKey]*descriptor
-	groups   map[GroupKey][]*descriptor
+	services map[registryKey]*descriptor
+	groups   map[groupID][]*descriptor
 
 	// Singletons in creation order (see creationOrder). Immutable after build.
 	singletonOrder []*descriptor
@@ -512,7 +512,7 @@ func (p *provider) findDescriptor(serviceType reflect.Type, key any) *descriptor
 		return nil
 	}
 
-	typeKey := TypeKey{Type: serviceType, Key: key}
+	typeKey := registryKey{Type: serviceType, Key: key}
 	return p.services[typeKey]
 }
 
@@ -545,7 +545,7 @@ func (p *provider) findGroupDescriptors(serviceType reflect.Type, group string) 
 		return nil
 	}
 
-	groupKey := GroupKey{Type: serviceType, Group: group}
+	groupKey := groupID{Type: serviceType, Group: group}
 	return p.groups[groupKey]
 }
 
@@ -611,7 +611,7 @@ func (p *provider) createAllSingletonsWithContext(ctx context.Context) error {
 // its dependents, and otherwise follows registration order. The order is
 // deterministic, so construction (and reverse disposal) order is the same on
 // every run. The dependency graph must already be known to be acyclic.
-func creationOrder(all []*descriptor, services map[TypeKey]*descriptor, groups map[GroupKey][]*descriptor) []*descriptor {
+func creationOrder(all []*descriptor, services map[registryKey]*descriptor, groups map[groupID][]*descriptor) []*descriptor {
 	order := make([]*descriptor, 0, len(all))
 	visited := make(map[*descriptor]bool, len(all))
 	var visit func(d *descriptor)
@@ -637,7 +637,7 @@ func creationOrder(all []*descriptor, services map[TypeKey]*descriptor, groups m
 
 // singletonsInCreationOrder returns the eager (non-Lazy) singleton
 // registrations in creation order.
-func singletonsInCreationOrder(all []*descriptor, services map[TypeKey]*descriptor, groups map[GroupKey][]*descriptor) []*descriptor {
+func singletonsInCreationOrder(all []*descriptor, services map[registryKey]*descriptor, groups map[groupID][]*descriptor) []*descriptor {
 	ordered := creationOrder(all, services, groups)
 	singletons := ordered[:0]
 	for _, d := range ordered {
@@ -650,14 +650,14 @@ func singletonsInCreationOrder(all []*descriptor, services map[TypeKey]*descript
 
 // dependencyDescriptors returns the registrations that satisfy dep: every
 // member of a group dependency, else the registration of its type and key.
-func dependencyDescriptors(dep *reflection.Dependency, services map[TypeKey]*descriptor, groups map[GroupKey][]*descriptor) []*descriptor {
+func dependencyDescriptors(dep *reflection.Dependency, services map[registryKey]*descriptor, groups map[groupID][]*descriptor) []*descriptor {
 	if dep == nil {
 		return nil
 	}
 	if dep.Group != "" {
-		return groups[GroupKey{Type: dep.Type, Group: dep.Group}]
+		return groups[groupID{Type: dep.Type, Group: dep.Group}]
 	}
-	if d := services[TypeKey{Type: dep.Type, Key: dep.Key}]; d != nil {
+	if d := services[registryKey{Type: dep.Type, Key: dep.Key}]; d != nil {
 		return []*descriptor{d}
 	}
 	return nil

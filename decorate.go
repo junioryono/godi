@@ -147,8 +147,8 @@ func newDecoration(analyzer *reflection.Analyzer, fn any, opts []AddOption) (*de
 // dependencies.
 func attachDecorators(
 	decorators []*decoration,
-	services map[TypeKey]*descriptor,
-	groups map[GroupKey][]*descriptor,
+	services map[registryKey]*descriptor,
+	groups map[groupID][]*descriptor,
 ) (sources map[*reflection.Dependency]string, err error) {
 	sources = make(map[*reflection.Dependency]string)
 	var errs []error
@@ -189,11 +189,11 @@ func attachDecorators(
 }
 
 // decoratorTargets returns the descriptors dec decorates.
-func decoratorTargets(dec *decoration, services map[TypeKey]*descriptor, groups map[GroupKey][]*descriptor) []*descriptor {
+func decoratorTargets(dec *decoration, services map[registryKey]*descriptor, groups map[groupID][]*descriptor) []*descriptor {
 	if dec.group != "" {
-		return groups[GroupKey{Type: dec.target, Group: dec.group}]
+		return groups[groupID{Type: dec.target, Group: dec.group}]
 	}
-	if d := services[TypeKey{Type: dec.target, Key: dec.key}]; d != nil {
+	if d := services[registryKey{Type: dec.target, Key: dec.key}]; d != nil {
 		return []*descriptor{d}
 	}
 	return nil
@@ -203,7 +203,7 @@ func decoratorTargets(dec *decoration, services map[TypeKey]*descriptor, groups 
 // or through other services, on an output of d's own constructor: that output
 // is still being produced when the decorator runs, so it could never be
 // resolved.
-func checkDecoratorDependencies(dec *decoration, d *descriptor, services map[TypeKey]*descriptor, groups map[GroupKey][]*descriptor) error {
+func checkDecoratorDependencies(dec *decoration, d *descriptor, services map[registryKey]*descriptor, groups map[groupID][]*descriptor) error {
 	target := flightKey(d)
 	visited := make(map[*descriptor]bool)
 	var reach func(deps []*reflection.Dependency) *descriptor

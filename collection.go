@@ -106,10 +106,10 @@ type collection struct {
 	mu sync.RWMutex
 
 	// services stores all non-keyed services by type
-	services map[TypeKey]*descriptor
+	services map[registryKey]*descriptor
 
 	// groups stores services that belong to groups
-	groups map[GroupKey][]*descriptor
+	groups map[groupID][]*descriptor
 
 	// allDescriptors tracks all unique descriptors for efficient iteration
 	allDescriptors []*descriptor
@@ -132,20 +132,15 @@ type collection struct {
 	decorators []*decoration
 }
 
-// TypeKey uniquely identifies a keyed service.
-//
-// Deprecated: TypeKey is an internal registry key that appears in no godi API;
-// it will be unexported in the next major version.
-type TypeKey struct {
+// registryKey identifies a registration: its service type and key (nil for
+// unkeyed services).
+type registryKey struct {
 	Type reflect.Type
 	Key  any
 }
 
-// GroupKey uniquely identifies a group of services.
-//
-// Deprecated: GroupKey is an internal registry key that appears in no godi
-// API; it will be unexported in the next major version.
-type GroupKey struct {
+// groupID identifies a value group: its member type and name.
+type groupID struct {
 	Type  reflect.Type
 	Group string
 }
@@ -173,8 +168,8 @@ type ServiceInfo struct {
 //	provider, err := collection.Build()
 func NewCollection() Collection {
 	return &collection{
-		services:       make(map[TypeKey]*descriptor, 16), // Pre-size for typical usage
-		groups:         make(map[GroupKey][]*descriptor, 4),
+		services:       make(map[registryKey]*descriptor, 16), // Pre-size for typical usage
+		groups:         make(map[groupID][]*descriptor, 4),
 		allDescriptors: make([]*descriptor, 0, 16),
 		analyzer:       reflection.New(),
 	}
@@ -347,8 +342,8 @@ func (sc *collection) doBuild(parent, ctx context.Context, options *ProviderOpti
 // buildPlan is a validated, provider-owned snapshot of a collection.
 type buildPlan struct {
 	all      []*descriptor
-	services map[TypeKey]*descriptor
-	groups   map[GroupKey][]*descriptor
+	services map[registryKey]*descriptor
+	groups   map[groupID][]*descriptor
 }
 
 // plan snapshots the collection and validates it (registration errors,
@@ -643,7 +638,7 @@ func (r *collection) Contains(t reflect.Type) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	typeKey := TypeKey{Type: t}
+	typeKey := registryKey{Type: t}
 	_, ok := r.services[typeKey]
 	return ok
 }
@@ -662,7 +657,7 @@ func (r *collection) ContainsKeyed(t reflect.Type, key any) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	typeKey := TypeKey{Type: t, Key: key}
+	typeKey := registryKey{Type: t, Key: key}
 	_, ok := r.services[typeKey]
 	return ok
 }
@@ -677,7 +672,7 @@ func (r *collection) HasGroup(t reflect.Type, group string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	groupKey := GroupKey{Type: t, Group: group}
+	groupKey := groupID{Type: t, Group: group}
 	services, ok := r.groups[groupKey]
 	return ok && len(services) > 0
 }
@@ -725,7 +720,7 @@ func (r *collection) RemoveKeyed(t reflect.Type, key any) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	typeKey := TypeKey{Type: t, Key: key}
+	typeKey := registryKey{Type: t, Key: key}
 	d, ok := r.services[typeKey]
 	if !ok {
 		return
@@ -1016,12 +1011,12 @@ func (r *collection) registerAliases(d *descriptor, options *addOptions) error {
 // Remove, so those links must be remapped to provider-owned clones.
 func snapshotRegistrations(
 	all []*descriptor,
-	services map[TypeKey]*descriptor,
-	groups map[GroupKey][]*descriptor,
+	services map[registryKey]*descriptor,
+	groups map[groupID][]*descriptor,
 ) (
 	snapshotAll []*descriptor,
-	snapshotServices map[TypeKey]*descriptor,
-	snapshotGroups map[GroupKey][]*descriptor,
+	snapshotServices map[registryKey]*descriptor,
+	snapshotGroups map[groupID][]*descriptor,
 ) {
 	clones := make(map[*descriptor]*descriptor, len(all))
 	snapshotAll = make([]*descriptor, 0, len(all))
@@ -1052,14 +1047,14 @@ func snapshotRegistrations(
 		}
 	}
 
-	snapshotServices = make(map[TypeKey]*descriptor, len(services))
+	snapshotServices = make(map[registryKey]*descriptor, len(services))
 	for key, original := range services {
 		if clone, ok := clones[original]; ok {
 			snapshotServices[key] = clone
 		}
 	}
 
-	snapshotGroups = make(map[GroupKey][]*descriptor, len(groups))
+	snapshotGroups = make(map[groupID][]*descriptor, len(groups))
 	for key, originals := range groups {
 		members := make([]*descriptor, 0, len(originals))
 		for _, original := range originals {
@@ -1220,7 +1215,7 @@ func (r *collection) unregisterDescriptors(batch []*descriptor) {
 			// Registered as a group member (key and group are mutually
 			// exclusive at registration; the numeric key was assigned by
 			// registerDescriptor).
-			groupKey := GroupKey{Type: descriptor.Type, Group: descriptor.Group}
+			groupKey := groupID{Type: descriptor.Type, Group: descriptor.Group}
 			members := r.groups[groupKey]
 			kept := members[:0]
 			for _, member := range members {
@@ -1236,7 +1231,7 @@ func (r *collection) unregisterDescriptors(batch []*descriptor) {
 			continue
 		}
 
-		key := TypeKey{Type: descriptor.Type, Key: descriptor.Key}
+		key := registryKey{Type: descriptor.Type, Key: descriptor.Key}
 		if r.services[key] == descriptor {
 			delete(r.services, key)
 		}
@@ -1251,7 +1246,7 @@ func (r *collection) unregisterDescriptors(batch []*descriptor) {
 func (r *collection) registerDescriptor(descriptor *descriptor) error {
 	// Register based on type of service
 	if descriptor.Key != nil || descriptor.Group == "" {
-		key := TypeKey{Type: descriptor.Type, Key: descriptor.Key}
+		key := registryKey{Type: descriptor.Type, Key: descriptor.Key}
 		if _, exists := r.services[key]; exists {
 			if descriptor.Key == nil {
 				return &AlreadyRegisteredError{ServiceType: descriptor.Type}
@@ -1265,7 +1260,7 @@ func (r *collection) registerDescriptor(descriptor *descriptor) error {
 
 		r.services[key] = descriptor
 	} else {
-		groupKey := GroupKey{Type: descriptor.Type, Group: descriptor.Group}
+		groupKey := groupID{Type: descriptor.Type, Group: descriptor.Group}
 		r.groups[groupKey] = append(r.groups[groupKey], descriptor)
 
 		// Set a numeric key for group members
@@ -1287,7 +1282,7 @@ func (r *collection) registerDescriptor(descriptor *descriptor) error {
 // Transients may depend on scoped services: resolved from a scope, they share
 // that scope's instances. (Resolving them from the root provider is what
 // ProviderOptions.ValidateScopes rejects.)
-func validateLifetimes(all []*descriptor, services map[TypeKey]*descriptor, groups map[GroupKey][]*descriptor) error {
+func validateLifetimes(all []*descriptor, services map[registryKey]*descriptor, groups map[groupID][]*descriptor) error {
 	// scopedReach memoizes, per descriptor, the scoped service reachable
 	// from it through transients only, and the transients on the way.
 	type reach struct {
@@ -1373,7 +1368,7 @@ func dependencySource(d *descriptor, dep *reflection.Dependency, decoratorSource
 	return d.source
 }
 
-func validateDependencies(all []*descriptor, services map[TypeKey]*descriptor, decoratorSources map[*reflection.Dependency]string) error {
+func validateDependencies(all []*descriptor, services map[registryKey]*descriptor, decoratorSources map[*reflection.Dependency]string) error {
 	var errs []error
 	// Descriptors derived from one constructor (multi-return values, result
 	// object fields, interface aliases) share its dependencies: report each
@@ -1401,7 +1396,7 @@ func validateDependencies(all []*descriptor, services map[TypeKey]*descriptor, d
 					continue
 				}
 			}
-			if _, ok := services[TypeKey{Type: dep.Type, Key: dep.Key}]; ok {
+			if _, ok := services[registryKey{Type: dep.Type, Key: dep.Key}]; ok {
 				continue
 			}
 			errs = append(errs, &MissingDependencyError{
