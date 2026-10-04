@@ -148,8 +148,7 @@ If you request a type that wasn't registered, you get an error
 (`MustResolve` panics with it; `Resolve` returns it):
 
 ```go
-// service not found: *NotRegistered
-// Make sure the service is registered with the correct lifetime and type.
+// service not found: *main.NotRegistered
 thing := godi.MustResolve[*NotRegistered](provider)
 ```
 
@@ -182,19 +181,8 @@ services.AddSingleton(func(b *B) *A { return &A{} })
 services.AddSingleton(func(a *A) *B { return &B{} })
 
 provider, err := services.Build()
-// build failed during validation phase: dependency graph validation failed: circular dependency detected:
-//
-//     *main.A
-//       ↓
-//     *main.B
-//       ↓
-//     *main.A
-//       ↓
-//     *main.A (cycle)
-//
-// To resolve this:
-//   • Use an interface to break the dependency
-//   • ...
+// build failed during validation phase: dependency graph validation failed: circular dependency detected: *main.A -> *main.B -> *main.A
+// godi.Explain(err) draws the cycle and suggests fixes.
 ```
 
 **Missing Dependencies**
@@ -205,7 +193,7 @@ services.AddSingleton(func(missing *NotRegistered) *MyService {
 })
 
 provider, err := services.Build()
-// build failed during validation phase: missing dependencies: *MyService requires *NotRegistered (not registered)
+// build failed during validation phase: missing dependencies: *main.MyService requires *main.NotRegistered (not registered) [constructor main.main.func1 (main.go:9)]
 // Checked at Build for singleton, scoped, and transient services alike.
 ```
 
@@ -218,8 +206,8 @@ services.AddSingleton(func(ctx *RequestContext) *Cache {
 })
 
 provider, err := services.Build()
-// build failed during validation phase: lifetime validation failed: lifetime conflict: *Cache (Singleton) cannot depend on *RequestContext (Scoped)
-// (followed by an explanation and suggested fixes)
+// build failed during validation phase: lifetime validation failed: lifetime conflict: *main.Cache (Singleton) cannot depend on *main.RequestContext (Scoped)
+// godi.Explain(err) explains the conflict and suggests fixes.
 ```
 
 ## Cleanup

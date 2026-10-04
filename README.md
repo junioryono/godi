@@ -362,27 +362,12 @@ if err != nil {
 
 Common errors caught at build time (each is wrapped in a `build failed during ... phase:` prefix):
 
-- **Circular dependencies** - a multi-line message that draws the cycle:
+- **Circular dependencies** - `circular dependency detected: *main.A -> *main.B -> *main.A`
+- **Missing dependencies** - `missing dependencies: *main.UserService requires *main.Database (not registered) [constructor main.NewUserService (user.go:12)]`
+- **Lifetime conflicts** - `lifetime conflict: *main.Cache (Singleton) cannot depend on *main.RequestContext (Scoped)`
+- **Singleton constructor failures** - singletons are created during `Build`, so their errors surface here too: `build failed during singleton-creation phase: failed to initialize singletons: failed to resolve *main.Database: constructor main.NewDatabase (database.go:20) failed: connection refused`
 
-  ```text
-  circular dependency detected:
-
-      *main.A
-        ↓
-      *main.B
-        ↓
-      *main.A
-        ↓
-      *main.A (cycle)
-
-  To resolve this:
-    • Use an interface to break the dependency
-    • ...
-  ```
-
-- **Missing dependencies** - `missing dependencies: *UserService requires *Database (not registered)`
-- **Lifetime conflicts** - `lifetime conflict: *Cache (Singleton) cannot depend on *RequestContext (Scoped)`, followed by an explanation and suggested fixes
-- **Singleton constructor failures** - singletons are created during `Build`, so their errors surface here too: `build failed during singleton-creation phase: failed to initialize singletons: failed to resolve *Database: failed to invoke func() (*main.Database, error) with parameters []: constructor error: connection refused`
+Each message is one line. `godi.Explain(err)` adds the detail: the cycle drawn out, why a lifetime conflict is a problem, and suggested fixes.
 
 Use `errors.As` with `*godi.CircularDependencyError`, `*godi.MissingDependencyError` or `*godi.LifetimeConflictError` to handle a specific case.
 
