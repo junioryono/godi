@@ -160,6 +160,8 @@ Output:
 [APP] Executing: SELECT * FROM users WHERE id = 42
 ```
 
+A runnable program wired the same way is the [`ExampleNewCollection`](https://pkg.go.dev/github.com/junioryono/godi/v5#example-NewCollection) example in the package documentation (`example_test.go`), verified by `go test`.
+
 ## Constructor Patterns
 
 godi supports several constructor patterns:

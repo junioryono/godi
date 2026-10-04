@@ -175,6 +175,8 @@ RequestID (same scope): 2 == 2? true
 TempFile: temp_3.txt, temp_4.txt
 ```
 
+A runnable version of the scoped part of this program, including scope disposal, is the [`ExampleProvider_CreateScope`](https://pkg.go.dev/github.com/junioryono/godi/v5#example-Provider.CreateScope) example in the package documentation (`example_test.go`), verified by `go test`.
+
 ## The Golden Rule
 
 **A singleton must never hold a scoped service.**

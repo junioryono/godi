@@ -346,6 +346,8 @@ Constructor failures name the function and its source location, for example
 `constructor users.NewService (service.go:42) failed: ...`, and types are
 package-qualified (`*db.Config`).
 
+A runnable `Explain` of a lifetime conflict is the [`ExampleExplain`](https://pkg.go.dev/github.com/junioryono/godi/v5#example-Explain) example in the package documentation (`example_test.go`), verified by `go test`.
+
 ### 5. Observe Construction and Disposal
 
 `ProviderOptions.Observer` receives an event for every constructor call and
