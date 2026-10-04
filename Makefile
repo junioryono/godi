@@ -1,8 +1,8 @@
 SHELL := /usr/bin/env bash
 
-GOLANGCI_LINT_VERSION ?= v2.12.2
-GOSEC_VERSION ?= v2.27.1
-GOVULNCHECK_VERSION ?= v1.6.0
+GOLANGCI_LINT_VERSION ?= v2.14.0
+GOSEC_VERSION ?= v2.29.0
+GOVULNCHECK_VERSION ?= v1.8.0
 ACTIONLINT_VERSION ?= v1.7.12
 BENCH_COUNT ?= 1
 
@@ -13,15 +13,17 @@ GOSEC_BIN := $(TOOLS_BIN)/gosec-$(GOSEC_VERSION)
 GOVULNCHECK_BIN := $(TOOLS_BIN)/govulncheck-$(GOVULNCHECK_VERSION)
 ACTIONLINT_BIN := $(TOOLS_BIN)/actionlint-$(ACTIONLINT_VERSION)
 
-.PHONY: verify verify-ci module-check dependency-check workflow-check format-check tidy-check build vet test test-cover lint docs benchmark published-check security tools clean
+.PHONY: verify verify-ci module-check floor-check dependency-check workflow-check format-check tidy-check build vet test test-cover lint docs benchmark published-check security vulncheck tool-updates prepare-release release-smoke tools clean
 
-verify: module-check dependency-check workflow-check format-check tidy-check build vet test lint
+verify: module-check floor-check dependency-check workflow-check format-check tidy-check build vet test lint
 
-verify-ci: BENCH_COUNT = 3
-verify-ci: verify test-cover docs published-check security benchmark
+verify-ci: verify test-cover docs published-check security
 
 module-check:
 	@scripts/check-modules.sh
+
+floor-check:
+	@scripts/check-release-floors.sh >/dev/null
 
 dependency-check:
 	@scripts/check-dependabot.sh
@@ -64,6 +66,22 @@ published-check:
 
 security: $(GOSEC_BIN) $(GOVULNCHECK_BIN)
 	@GOSEC_BIN="$(GOSEC_BIN)" GOVULNCHECK_BIN="$(GOVULNCHECK_BIN)" scripts/security.sh
+
+vulncheck: $(GOVULNCHECK_BIN)
+	@SECURITY_SCANNERS=govulncheck GOVULNCHECK_BIN="$(GOVULNCHECK_BIN)" scripts/security.sh
+
+tool-updates:
+	@scripts/check-tool-updates.sh
+
+# Usage: make prepare-release VERSION=vX.Y.Z
+prepare-release:
+	@test -n "$(VERSION)" || { echo "usage: make prepare-release VERSION=vX.Y.Z" >&2; exit 2; }
+	@scripts/prepare-release.sh "$(VERSION)"
+
+# Usage: make release-smoke VERSION=vX.Y.Z (after the tags are published)
+release-smoke:
+	@test -n "$(VERSION)" || { echo "usage: make release-smoke VERSION=vX.Y.Z" >&2; exit 2; }
+	@scripts/smoke-test-release.sh "$(VERSION)"
 
 tools: $(GOLANGCI_LINT_BIN) $(GOSEC_BIN) $(GOVULNCHECK_BIN) $(ACTIONLINT_BIN)
 

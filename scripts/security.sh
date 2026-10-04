@@ -2,9 +2,12 @@
 
 set -euo pipefail
 
+# SECURITY_SCANNERS selects the scanners to run (default: both).
+
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 gosec_bin=${GOSEC_BIN:-gosec}
 govulncheck_bin=${GOVULNCHECK_BIN:-govulncheck}
+scanners=" ${SECURITY_SCANNERS:-gosec govulncheck} "
 
 require_tool() {
 	local name=$1
@@ -20,12 +23,16 @@ require_tool() {
 	fi
 }
 
-require_tool gosec "$gosec_bin"
-require_tool govulncheck "$govulncheck_bin"
+[[ "$scanners" == *" gosec "* ]] && require_tool gosec "$gosec_bin"
+[[ "$scanners" == *" govulncheck "* ]] && require_tool govulncheck "$govulncheck_bin"
 
 for directory in $(awk '!/^#/ && NF { print $1 }' "$root/scripts/modules.txt"); do
-	printf '\n==> %s: gosec\n' "$directory"
-	(cd "$root/$directory" && "$gosec_bin" -quiet ./... </dev/null)
-	printf '\n==> %s: govulncheck\n' "$directory"
-	(cd "$root/$directory" && "$govulncheck_bin" ./... </dev/null)
+	if [[ "$scanners" == *" gosec "* ]]; then
+		printf '\n==> %s: gosec\n' "$directory"
+		(cd "$root/$directory" && "$gosec_bin" -quiet ./... </dev/null)
+	fi
+	if [[ "$scanners" == *" govulncheck "* ]]; then
+		printf '\n==> %s: govulncheck\n' "$directory"
+		(cd "$root/$directory" && "$govulncheck_bin" ./... </dev/null)
+	fi
 done

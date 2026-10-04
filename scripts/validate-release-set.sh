@@ -51,6 +51,11 @@ for module in $(scripts/module-matrix.sh release | tr -d '[]"' | tr ',' ' '); do
 	fi
 done
 
+if ! scripts/check-release-floors.sh --ref "$tag" "$tag" >/dev/null; then
+	echo "$tag does not require its own release set; floors must equal $tag" >&2
+	exit 1
+fi
+
 if [[ -n ${GITHUB_OUTPUT:-} ]]; then
 	printf 'tag=%s\ncommit=%s\nmodule_path=%s\n' "$tag" "$root_commit" "$module_path" >> "$GITHUB_OUTPUT"
 fi

@@ -1,0 +1,50 @@
+name: Release Smoke Test
+
+# Post-publication check of a pushed release tag set: a clean consumer module
+# requires every released module at the new tag, with no replace directives,
+# and builds and runs a small program. tag.yml calls it after pushing the tags;
+# dispatch it manually to re-check an existing release.
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag to test
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to test (for example v5.2.0)
+        required: true
+        type: string
+      goproxy:
+        description: GOPROXY for the consumer (use "direct" to bypass proxy.golang.org)
+        required: false
+        default: https://proxy.golang.org
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  consumer:
+    name: Clean Consumer (${{ inputs.tag }})
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: .go-version
+          cache: false
+
+      - name: Build and run a consumer of the published release set
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          SMOKE_GOPROXY: ${{ inputs.goproxy || 'https://proxy.golang.org' }}
+        run: scripts/smoke-test-release.sh "$RELEASE_TAG"

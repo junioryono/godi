@@ -4,8 +4,10 @@
 
 Security fixes are provided for the latest patch release of the current major version. Older majors may receive a fix at the maintainer's discretion but are not guaranteed support.
 
-Run godi with the latest security patch of its supported Go release. CI pins a
-patched toolchain and scans every module with `gosec` and `govulncheck`.
+Run godi with the latest security patch of a supported Go release (the two most
+recent Go minors). CI scans every module with `gosec`, `govulncheck`, and CodeQL,
+and rescans the dependency graph weekly so new advisories surface without a code
+change.
 
 ## Private Reporting
 

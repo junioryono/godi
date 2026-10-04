@@ -225,14 +225,14 @@ func TestHandle_ErrorMapperPreservesStatusErrorHeaders(t *testing.T) {
 	assert.Equal(t, expectedHeaders, headersErr.GetHeaders())
 }
 
-// statusWithWrappedHeaders is a StatusError whose chain (not its own type)
+// wrappedHeadersStatusError is a StatusError whose chain (not its own type)
 // carries a HeadersError, mimicking a domain error wrapping
 // huma.ErrorWithHeaders.
-type statusWithWrappedHeaders struct{ inner error }
+type wrappedHeadersStatusError struct{ inner error }
 
-func (e *statusWithWrappedHeaders) Error() string  { return e.inner.Error() }
-func (e *statusWithWrappedHeaders) GetStatus() int { return http.StatusTooManyRequests }
-func (e *statusWithWrappedHeaders) Unwrap() error  { return e.inner }
+func (e *wrappedHeadersStatusError) Error() string  { return e.inner.Error() }
+func (e *wrappedHeadersStatusError) GetStatus() int { return http.StatusTooManyRequests }
+func (e *wrappedHeadersStatusError) Unwrap() error  { return e.inner }
 
 func TestHandle_StatusErrorCarryingHeadersIsNotMutated(t *testing.T) {
 	ctx, cleanup := scopedContext(t)
@@ -240,7 +240,7 @@ func TestHandle_StatusErrorCarryingHeadersIsNotMutated(t *testing.T) {
 
 	// A package-level sentinel error reused across requests: sanitization
 	// must not merge cloned headers back into its map on every request.
-	sentinel := &statusWithWrappedHeaders{
+	sentinel := &wrappedHeadersStatusError{
 		inner: huma.ErrorWithHeaders(huma.Error429TooManyRequests("slow down"), http.Header{
 			"Retry-After": {"30"},
 		}),

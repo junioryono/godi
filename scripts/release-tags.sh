@@ -73,6 +73,13 @@ if [[ "$bump" == "Existing" ]]; then
 	expected_commit=$(git rev-list -n1 "$new_tag")
 fi
 
+# Every module must require the godi modules released with it. Floors are
+# raised by scripts/prepare-release.sh in a pull request merged before tagging.
+if ! scripts/check-release-floors.sh --ref "$expected_commit" "$new_tag" >/dev/null; then
+	echo "refusing to tag $new_tag: release floors at $expected_commit do not match it" >&2
+	exit 1
+fi
+
 if [[ -n ${GITHUB_OUTPUT:-} ]]; then
 	printf 'current_tag=%s\nnew_tag=%s\nbump=%s\ncommit=%s\n' \
 		"$latest" "$new_tag" "$bump" "$expected_commit" >> "$GITHUB_OUTPUT"

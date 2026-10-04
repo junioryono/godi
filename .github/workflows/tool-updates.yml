@@ -1,0 +1,66 @@
+name: Tool Updates
+
+# Dependabot cannot update the tool versions pinned in the Makefile or the Go
+# toolchain in .go-version. This weekly check opens (or refreshes) one issue
+# when any of them has a newer release, and closes it once all are current.
+on:
+  schedule:
+    - cron: "11 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check Pinned Tools
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: .go-version
+          cache: false
+
+      - name: Compare pins with the latest releases
+        id: check
+        run: |
+          if scripts/check-tool-updates.sh > report.md; then
+            echo "outdated=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "outdated=true" >> "$GITHUB_OUTPUT"
+          fi
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open, update, or close the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTDATED: ${{ steps.check.outputs.outdated }}
+          TITLE: "chore(deps): pinned development tools have updates"
+        run: |
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "in:title \"$TITLE\"" \
+            --json number,title --jq ".[] | select(.title == env.TITLE) | .number" | head -n1)
+          if [[ "$OUTDATED" == "true" ]]; then
+            {
+              echo "The scheduled [Tool Updates]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID) check found newer releases:"
+              echo
+              cat report.md
+              echo
+              echo "Update the pins in \`Makefile\` / \`.go-version\`, then run \`make verify\`. See CONTRIBUTING.md (Tooling Updates)."
+            } > body.md
+            if [[ -n "$existing" ]]; then
+              gh issue edit "$existing" --repo "$GITHUB_REPOSITORY" --body-file body.md
+            else
+              gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file body.md
+            fi
+          elif [[ -n "$existing" ]]; then
+            gh issue close "$existing" --repo "$GITHUB_REPOSITORY" --comment "All pinned tools are current."
+          fi
