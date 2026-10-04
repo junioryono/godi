@@ -14,38 +14,64 @@
 //	mux.HandleFunc("/users/", godihttp.Handle(UserController.GetByID))
 //
 //	http.ListenAndServe(":8080", handler)
+//
+// Default handlers log the cause with log/slog (see WithLogger and
+// WithHandlerLogger) and respond with a generic 500 Internal Server Error;
+// they never write internal error text to the client.
 package http
 
 import (
 	"log/slog"
 	"net/http"
+	"runtime/debug"
 
 	"github.com/junioryono/godi/v5"
 )
 
 // Config holds the configuration for the scope middleware.
 type Config struct {
-	// ErrorHandler is called when scope creation fails.
-	// If nil, a default handler returning 500 Internal Server Error is used.
+	// ErrorHandler is called when scope creation fails. It also handles
+	// middleware failures unless MiddlewareErrorHandler is set.
+	// If nil, a default handler that logs the error and returns a generic
+	// 500 Internal Server Error is used.
 	ErrorHandler func(http.ResponseWriter, *http.Request, error)
 
+	// MiddlewareErrorHandler is called when a function registered with
+	// WithMiddleware returns an error. If nil, ErrorHandler is used.
+	MiddlewareErrorHandler func(http.ResponseWriter, *http.Request, error)
+
 	// CloseErrorHandler is called when scope closing fails.
-	// If nil, errors are logged using slog.
+	// If nil, errors are logged.
 	CloseErrorHandler func(error)
 
 	// Middlewares are functions that run after scope creation.
 	// They can be used to initialize request context, set user data, etc.
 	Middlewares []func(godi.Scope, *http.Request) error
+
+	// Logger is used by the default handlers. If nil, slog.Default() is used.
+	Logger *slog.Logger
 }
 
 // Option configures the scope middleware.
 type Option func(*Config)
 
-// WithErrorHandler sets the error handler for scope creation failures.
+// WithErrorHandler sets the error handler for scope creation failures. Unless
+// WithMiddlewareErrorHandler is also used, it handles middleware failures too.
 func WithErrorHandler(h func(http.ResponseWriter, *http.Request, error)) Option {
 	return func(c *Config) {
 		if h != nil {
 			c.ErrorHandler = h
+		}
+	}
+}
+
+// WithMiddlewareErrorHandler sets the error handler for failures returned by
+// functions registered with WithMiddleware, such as authentication checks
+// that respond 401 or 403. Scope creation failures still go to ErrorHandler.
+func WithMiddlewareErrorHandler(h func(http.ResponseWriter, *http.Request, error)) Option {
+	return func(c *Config) {
+		if h != nil {
+			c.MiddlewareErrorHandler = h
 		}
 	}
 }
@@ -69,25 +95,48 @@ func WithMiddleware(mw func(godi.Scope, *http.Request) error) Option {
 	}
 }
 
-func defaultConfig() *Config {
-	return &Config{
-		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		},
-		CloseErrorHandler: func(err error) {
-			slog.Error("failed to close scope", "error", err)
-		},
-		Middlewares: nil,
+// WithLogger sets the logger used by the middleware's default handlers.
+// A nil logger keeps the default, slog.Default().
+func WithLogger(l *slog.Logger) Option {
+	return func(c *Config) {
+		if l != nil {
+			c.Logger = l
+		}
 	}
 }
 
+func (c *Config) logger() *slog.Logger {
+	if c.Logger != nil {
+		return c.Logger
+	}
+	return slog.Default()
+}
+
+func (c *Config) defaultErrorHandler(w http.ResponseWriter, _ *http.Request, err error) {
+	c.logger().Error("failed to set up request scope", "error", err)
+	http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+}
+
+func (c *Config) defaultCloseErrorHandler(err error) {
+	c.logger().Error("failed to close scope", "error", err)
+}
+
+func defaultConfig() *Config {
+	c := &Config{}
+	c.ErrorHandler = c.defaultErrorHandler
+	c.CloseErrorHandler = c.defaultCloseErrorHandler
+	return c
+}
+
 func normalizeConfig(c *Config) {
-	defaults := defaultConfig()
 	if c.ErrorHandler == nil {
-		c.ErrorHandler = defaults.ErrorHandler
+		c.ErrorHandler = c.defaultErrorHandler
+	}
+	if c.MiddlewareErrorHandler == nil {
+		c.MiddlewareErrorHandler = c.ErrorHandler
 	}
 	if c.CloseErrorHandler == nil {
-		c.CloseErrorHandler = defaults.CloseErrorHandler
+		c.CloseErrorHandler = c.defaultCloseErrorHandler
 	}
 	// Copy while filtering nils: reslicing in place would mutate a
 	// caller-owned slice assigned via a custom option.
@@ -140,7 +189,7 @@ func ScopeMiddleware(provider godi.Provider, opts ...Option) func(http.Handler) 
 			// Run middlewares
 			for _, mw := range cfg.Middlewares {
 				if err := mw(scope, r); err != nil {
-					cfg.ErrorHandler(w, r, err)
+					cfg.MiddlewareErrorHandler(w, r, err)
 					return
 				}
 			}
@@ -156,6 +205,8 @@ type HandlerConfig struct {
 	PanicRecovery bool
 
 	// PanicHandler is called when a panic occurs (if PanicRecovery is true).
+	// If nil, a default handler that logs the panic value and stack trace and
+	// returns a generic 500 Internal Server Error is used.
 	PanicHandler func(http.ResponseWriter, *http.Request, any)
 
 	// ScopeErrorHandler is called when scope retrieval fails.
@@ -163,6 +214,9 @@ type HandlerConfig struct {
 
 	// ResolutionErrorHandler is called when service resolution fails.
 	ResolutionErrorHandler func(http.ResponseWriter, *http.Request, error)
+
+	// Logger is used by the default handlers. If nil, slog.Default() is used.
+	Logger *slog.Logger
 }
 
 // HandlerOption configures the Handle wrapper.
@@ -202,34 +256,55 @@ func WithResolutionErrorHandler(h func(http.ResponseWriter, *http.Request, error
 	}
 }
 
-func defaultHandlerConfig() *HandlerConfig {
-	return &HandlerConfig{
-		PanicRecovery: false,
-		PanicHandler: func(w http.ResponseWriter, r *http.Request, v any) {
-			slog.Error("panic in handler", "panic", v)
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		},
-		ScopeErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			slog.Error("failed to get scope from context", "error", err)
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		},
-		ResolutionErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			slog.Error("failed to resolve controller", "error", err)
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		},
+// WithHandlerLogger sets the logger used by Handle's default handlers.
+// A nil logger keeps the default, slog.Default().
+func WithHandlerLogger(l *slog.Logger) HandlerOption {
+	return func(c *HandlerConfig) {
+		if l != nil {
+			c.Logger = l
+		}
 	}
 }
 
+func (c *HandlerConfig) logger() *slog.Logger {
+	if c.Logger != nil {
+		return c.Logger
+	}
+	return slog.Default()
+}
+
+func (c *HandlerConfig) defaultPanicHandler(w http.ResponseWriter, _ *http.Request, v any) {
+	c.logger().Error("panic in handler", "panic", v, "stack", string(debug.Stack()))
+	http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+}
+
+func (c *HandlerConfig) defaultScopeErrorHandler(w http.ResponseWriter, _ *http.Request, err error) {
+	c.logger().Error("failed to get scope from context", "error", err)
+	http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+}
+
+func (c *HandlerConfig) defaultResolutionErrorHandler(w http.ResponseWriter, _ *http.Request, err error) {
+	c.logger().Error("failed to resolve controller", "error", err)
+	http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+}
+
+func defaultHandlerConfig() *HandlerConfig {
+	c := &HandlerConfig{PanicRecovery: false}
+	c.PanicHandler = c.defaultPanicHandler
+	c.ScopeErrorHandler = c.defaultScopeErrorHandler
+	c.ResolutionErrorHandler = c.defaultResolutionErrorHandler
+	return c
+}
+
 func normalizeHandlerConfig(c *HandlerConfig) {
-	defaults := defaultHandlerConfig()
 	if c.PanicHandler == nil {
-		c.PanicHandler = defaults.PanicHandler
+		c.PanicHandler = c.defaultPanicHandler
 	}
 	if c.ScopeErrorHandler == nil {
-		c.ScopeErrorHandler = defaults.ScopeErrorHandler
+		c.ScopeErrorHandler = c.defaultScopeErrorHandler
 	}
 	if c.ResolutionErrorHandler == nil {
-		c.ResolutionErrorHandler = defaults.ResolutionErrorHandler
+		c.ResolutionErrorHandler = c.defaultResolutionErrorHandler
 	}
 }
 

@@ -1,4 +1,6 @@
-// Package echo provides godi integration for the Echo web framework.
+// Package echo provides godi integration for the Echo web framework
+// (github.com/labstack/echo/v4). For Echo v5, use
+// github.com/junioryono/godi/echov5/v5.
 //
 // This package provides middleware for creating request-scoped containers
 // and type-safe handler wrappers for resolving controllers.
@@ -12,11 +14,16 @@
 //
 //	e.POST("/login", godiecho.Handle(AuthController.Login))
 //	e.GET("/users/:id", godiecho.Handle(UserController.GetByID))
+//
+// Default handlers log the cause with log/slog (see WithLogger and
+// WithHandlerLogger) and respond with a generic 500 Internal Server Error;
+// they never write internal error text to the client.
 package echo
 
 import (
 	"log/slog"
 	"net/http"
+	"runtime/debug"
 
 	"github.com/junioryono/godi/v5"
 	"github.com/labstack/echo/v4"
@@ -24,27 +31,53 @@ import (
 
 // Config holds the configuration for the scope middleware.
 type Config struct {
-	// ErrorHandler is called when scope creation fails.
-	// If nil, the error is returned (Echo's default error handling).
+	// ErrorHandler is called when scope creation fails. It also handles
+	// middleware failures unless MiddlewareErrorHandler is set.
+	// If nil, a default handler that logs the error and returns a generic
+	// 500 Internal Server Error is used.
 	ErrorHandler func(echo.Context, error) error
 
+	// MiddlewareErrorHandler is called when a function registered with
+	// WithMiddleware returns an error. If nil, ErrorHandler is used.
+	MiddlewareErrorHandler func(echo.Context, error) error
+
 	// CloseErrorHandler is called when scope closing fails.
-	// If nil, errors are logged using slog.
+	// If nil, errors are logged.
 	CloseErrorHandler func(error)
 
 	// Middlewares are functions that run after scope creation.
 	// They can be used to initialize request context, set user data, etc.
 	Middlewares []func(godi.Scope, echo.Context) error
+
+	// Logger is used by the default handlers. If nil, slog.Default() is used.
+	Logger *slog.Logger
+
+	// ErrorPassthrough returns downstream and middleware errors to the outer
+	// middleware chain instead of dispatching them through Echo's
+	// HTTPErrorHandler while the scope is alive. See WithErrorPassthrough.
+	ErrorPassthrough bool
 }
 
 // Option configures the scope middleware.
 type Option func(*Config)
 
-// WithErrorHandler sets the error handler for scope creation failures.
+// WithErrorHandler sets the error handler for scope creation failures. Unless
+// WithMiddlewareErrorHandler is also used, it handles middleware failures too.
 func WithErrorHandler(h func(echo.Context, error) error) Option {
 	return func(c *Config) {
 		if h != nil {
 			c.ErrorHandler = h
+		}
+	}
+}
+
+// WithMiddlewareErrorHandler sets the error handler for failures returned by
+// functions registered with WithMiddleware, such as authentication checks
+// that respond 401 or 403. Scope creation failures still go to ErrorHandler.
+func WithMiddlewareErrorHandler(h func(echo.Context, error) error) Option {
+	return func(c *Config) {
+		if h != nil {
+			c.MiddlewareErrorHandler = h
 		}
 	}
 }
@@ -68,25 +101,65 @@ func WithMiddleware(mw func(godi.Scope, echo.Context) error) Option {
 	}
 }
 
-func defaultConfig() *Config {
-	return &Config{
-		ErrorHandler: func(c echo.Context, err error) error {
-			return echo.NewHTTPError(http.StatusInternalServerError, "Internal Server Error")
-		},
-		CloseErrorHandler: func(err error) {
-			slog.Error("failed to close scope", "error", err)
-		},
-		Middlewares: nil,
+// WithLogger sets the logger used by the middleware's default handlers.
+// A nil logger keeps the default, slog.Default().
+func WithLogger(l *slog.Logger) Option {
+	return func(c *Config) {
+		if l != nil {
+			c.Logger = l
+		}
 	}
 }
 
+// WithErrorPassthrough controls what happens to errors returned by the
+// handler chain and by WithMiddleware functions.
+//
+// By default (false) the middleware renders them through Echo's
+// HTTPErrorHandler while the request scope is still alive, then returns nil,
+// so middleware registered before ScopeMiddleware never sees them.
+//
+// When enabled, the error is returned to the outer middleware chain instead,
+// and Echo renders it after ScopeMiddleware returns. The scope is closed by
+// then: an HTTPErrorHandler or outer middleware cannot resolve scoped
+// services, and scoped resources have already been disposed.
+func WithErrorPassthrough(enabled bool) Option {
+	return func(c *Config) {
+		c.ErrorPassthrough = enabled
+	}
+}
+
+func (c *Config) logger() *slog.Logger {
+	if c.Logger != nil {
+		return c.Logger
+	}
+	return slog.Default()
+}
+
+func (c *Config) defaultErrorHandler(_ echo.Context, err error) error {
+	c.logger().Error("failed to set up request scope", "error", err)
+	return echo.NewHTTPError(http.StatusInternalServerError, http.StatusText(http.StatusInternalServerError))
+}
+
+func (c *Config) defaultCloseErrorHandler(err error) {
+	c.logger().Error("failed to close scope", "error", err)
+}
+
+func defaultConfig() *Config {
+	c := &Config{}
+	c.ErrorHandler = c.defaultErrorHandler
+	c.CloseErrorHandler = c.defaultCloseErrorHandler
+	return c
+}
+
 func normalizeConfig(c *Config) {
-	defaults := defaultConfig()
 	if c.ErrorHandler == nil {
-		c.ErrorHandler = defaults.ErrorHandler
+		c.ErrorHandler = c.defaultErrorHandler
+	}
+	if c.MiddlewareErrorHandler == nil {
+		c.MiddlewareErrorHandler = c.ErrorHandler
 	}
 	if c.CloseErrorHandler == nil {
-		c.CloseErrorHandler = defaults.CloseErrorHandler
+		c.CloseErrorHandler = c.defaultCloseErrorHandler
 	}
 	// Copy while filtering nils: reslicing in place would mutate a
 	// caller-owned slice assigned via a custom option.
@@ -104,10 +177,14 @@ func normalizeConfig(c *Config) {
 // and can be retrieved using godi.FromContext.
 //
 // The scope is automatically closed when the request completes.
-// Downstream errors are dispatched through Echo's HTTPErrorHandler while the
-// scope is alive, then consumed to prevent duplicate handling. Middleware that
-// must inspect returned errors, including panic recovery, must run inside this
-// middleware in the request chain.
+//
+// Errors are consumed by default: errors returned by the handler chain or by
+// WithMiddleware functions are dispatched through Echo's HTTPErrorHandler
+// while the scope is alive, then this middleware returns nil to prevent
+// duplicate handling. Middleware that must inspect returned errors, including
+// panic recovery, must therefore run inside this middleware (registered after
+// it). Use WithErrorPassthrough(true) to return errors to outer middleware
+// instead, at the cost of rendering them after the scope has closed.
 //
 // Example:
 //
@@ -141,22 +218,22 @@ func ScopeMiddleware(provider godi.Provider, opts ...Option) echo.MiddlewareFunc
 			// Run middlewares
 			for _, mw := range cfg.Middlewares {
 				if err := mw(scope, c); err != nil {
-					return dispatchError(c, cfg.ErrorHandler(c, err))
+					return cfg.dispatchError(c, cfg.MiddlewareErrorHandler(c, err))
 				}
 			}
 
-			return dispatchError(c, next(c))
+			return cfg.dispatchError(c, next(c))
 		}
 	}
 }
 
-func dispatchError(c echo.Context, err error) error {
-	if err == nil {
-		return nil
+func (c *Config) dispatchError(ctx echo.Context, err error) error {
+	if err == nil || c.ErrorPassthrough {
+		return err
 	}
 	// Render while request-scoped services are still alive, then consume the
 	// error so Echo does not invoke the same handler again after scope teardown.
-	c.Echo().HTTPErrorHandler(err, c)
+	ctx.Echo().HTTPErrorHandler(err, ctx)
 	return nil
 }
 
@@ -166,6 +243,8 @@ type HandlerConfig struct {
 	PanicRecovery bool
 
 	// PanicHandler is called when a panic occurs (if PanicRecovery is true).
+	// If nil, a default handler that logs the panic value and stack trace and
+	// returns a generic 500 Internal Server Error is used.
 	PanicHandler func(echo.Context, any) error
 
 	// ScopeErrorHandler is called when scope retrieval fails.
@@ -173,6 +252,9 @@ type HandlerConfig struct {
 
 	// ResolutionErrorHandler is called when service resolution fails.
 	ResolutionErrorHandler func(echo.Context, error) error
+
+	// Logger is used by the default handlers. If nil, slog.Default() is used.
+	Logger *slog.Logger
 }
 
 // HandlerOption configures the Handle wrapper.
@@ -212,34 +294,55 @@ func WithResolutionErrorHandler(h func(echo.Context, error) error) HandlerOption
 	}
 }
 
-func defaultHandlerConfig() *HandlerConfig {
-	return &HandlerConfig{
-		PanicRecovery: false,
-		PanicHandler: func(c echo.Context, v any) error {
-			slog.Error("panic in handler", "panic", v)
-			return echo.NewHTTPError(http.StatusInternalServerError, "Internal Server Error")
-		},
-		ScopeErrorHandler: func(c echo.Context, err error) error {
-			slog.Error("failed to get scope from context", "error", err)
-			return echo.NewHTTPError(http.StatusInternalServerError, "Internal Server Error")
-		},
-		ResolutionErrorHandler: func(c echo.Context, err error) error {
-			slog.Error("failed to resolve controller", "error", err)
-			return echo.NewHTTPError(http.StatusInternalServerError, "Internal Server Error")
-		},
+// WithHandlerLogger sets the logger used by Handle's default handlers.
+// A nil logger keeps the default, slog.Default().
+func WithHandlerLogger(l *slog.Logger) HandlerOption {
+	return func(c *HandlerConfig) {
+		if l != nil {
+			c.Logger = l
+		}
 	}
 }
 
+func (c *HandlerConfig) logger() *slog.Logger {
+	if c.Logger != nil {
+		return c.Logger
+	}
+	return slog.Default()
+}
+
+func (c *HandlerConfig) defaultPanicHandler(_ echo.Context, v any) error {
+	c.logger().Error("panic in handler", "panic", v, "stack", string(debug.Stack()))
+	return echo.NewHTTPError(http.StatusInternalServerError, http.StatusText(http.StatusInternalServerError))
+}
+
+func (c *HandlerConfig) defaultScopeErrorHandler(_ echo.Context, err error) error {
+	c.logger().Error("failed to get scope from context", "error", err)
+	return echo.NewHTTPError(http.StatusInternalServerError, http.StatusText(http.StatusInternalServerError))
+}
+
+func (c *HandlerConfig) defaultResolutionErrorHandler(_ echo.Context, err error) error {
+	c.logger().Error("failed to resolve controller", "error", err)
+	return echo.NewHTTPError(http.StatusInternalServerError, http.StatusText(http.StatusInternalServerError))
+}
+
+func defaultHandlerConfig() *HandlerConfig {
+	c := &HandlerConfig{PanicRecovery: false}
+	c.PanicHandler = c.defaultPanicHandler
+	c.ScopeErrorHandler = c.defaultScopeErrorHandler
+	c.ResolutionErrorHandler = c.defaultResolutionErrorHandler
+	return c
+}
+
 func normalizeHandlerConfig(c *HandlerConfig) {
-	defaults := defaultHandlerConfig()
 	if c.PanicHandler == nil {
-		c.PanicHandler = defaults.PanicHandler
+		c.PanicHandler = c.defaultPanicHandler
 	}
 	if c.ScopeErrorHandler == nil {
-		c.ScopeErrorHandler = defaults.ScopeErrorHandler
+		c.ScopeErrorHandler = c.defaultScopeErrorHandler
 	}
 	if c.ResolutionErrorHandler == nil {
-		c.ResolutionErrorHandler = defaults.ResolutionErrorHandler
+		c.ResolutionErrorHandler = c.defaultResolutionErrorHandler
 	}
 }
 
