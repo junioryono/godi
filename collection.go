@@ -744,11 +744,11 @@ func (r *collection) pruneDescriptors(removed map[*descriptor]struct{}) {
 	// under the removed registration's keys, shadowing any replacement
 	// registered after the removal.
 	for _, d := range r.allDescriptors {
-		if len(d.siblings) == 0 {
+		if len(d.siblings()) == 0 {
 			continue
 		}
 		pruned := false
-		for _, sibling := range d.siblings {
+		for _, sibling := range d.siblings() {
 			if _, ok := removed[sibling]; ok {
 				pruned = true
 				break
@@ -757,15 +757,13 @@ func (r *collection) pruneDescriptors(removed map[*descriptor]struct{}) {
 		if !pruned {
 			continue
 		}
-		surviving := make([]*descriptor, 0, len(d.siblings))
-		for _, sibling := range d.siblings {
+		surviving := make([]*descriptor, 0, len(d.siblings()))
+		for _, sibling := range d.siblings() {
 			if _, ok := removed[sibling]; !ok {
 				surviving = append(surviving, sibling)
 			}
 		}
-		for _, sibling := range surviving {
-			sibling.siblings = surviving
-		}
+		d.reg.outputs = surviving
 	}
 }
 
@@ -963,9 +961,7 @@ func (r *collection) registerAliases(d *descriptor, options *addOptions) error {
 		interfaceDescriptors = append(interfaceDescriptors, interfaceDescriptor)
 	}
 
-	for _, interfaceDescriptor := range interfaceDescriptors {
-		interfaceDescriptor.siblings = interfaceDescriptors
-	}
+	link(interfaceDescriptors)
 
 	registered := make([]*descriptor, 0, len(interfaceDescriptors))
 	for _, interfaceDescriptor := range interfaceDescriptors {
@@ -1004,7 +1000,7 @@ func snapshotRegistrations(
 			continue
 		}
 		clone := *original
-		clone.siblings = nil
+		clone.reg = nil
 		clone.As = append([]any(nil), original.As...)
 		clone.Dependencies = append([]*reflection.Dependency(nil), original.Dependencies...)
 		clone.resultFields = append([]reflection.ResultField(nil), original.resultFields...)
@@ -1013,16 +1009,23 @@ func snapshotRegistrations(
 		snapshotAll = append(snapshotAll, &clone)
 	}
 
+	// Each registration is cloned once, with the clones of its outputs.
+	regClones := make(map[*registration]*registration)
 	for original, clone := range clones {
-		if len(original.siblings) == 0 {
+		if original.reg == nil {
 			continue
 		}
-		clone.siblings = make([]*descriptor, 0, len(original.siblings))
-		for _, sibling := range original.siblings {
-			if siblingClone, ok := clones[sibling]; ok {
-				clone.siblings = append(clone.siblings, siblingClone)
+		reg, ok := regClones[original.reg]
+		if !ok {
+			reg = &registration{outputs: make([]*descriptor, 0, len(original.reg.outputs))}
+			for _, sibling := range original.reg.outputs {
+				if siblingClone, ok := clones[sibling]; ok {
+					reg.outputs = append(reg.outputs, siblingClone)
+				}
 			}
+			regClones[original.reg] = reg
 		}
+		clone.reg = reg
 	}
 
 	snapshotServices = make(map[registryKey]*descriptor, len(services))
@@ -1078,9 +1081,7 @@ func (r *collection) registerResultObjectFields(d *descriptor) error {
 		fieldDescriptors = append(fieldDescriptors, fieldDescriptor)
 	}
 
-	for _, fieldDescriptor := range fieldDescriptors {
-		fieldDescriptor.siblings = fieldDescriptors
-	}
+	link(fieldDescriptors)
 
 	registered := make([]*descriptor, 0, len(fieldDescriptors))
 	for _, fieldDescriptor := range fieldDescriptors {
@@ -1150,9 +1151,7 @@ func (r *collection) registerMultiReturn(d *descriptor, info *reflection.Constru
 	// Link the descriptors as siblings: one constructor invocation produces
 	// every return value, so instance creation caches each of them under its
 	// own registration (key or group).
-	for _, typeDescriptor := range typeDescriptors {
-		typeDescriptor.siblings = typeDescriptors
-	}
+	link(typeDescriptors)
 
 	registered := make([]*descriptor, 0, len(typeDescriptors))
 	for _, typeDescriptor := range typeDescriptors {

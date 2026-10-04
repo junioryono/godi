@@ -66,12 +66,12 @@ type descriptor struct {
 	// boxing per resolve. Populated by newDescriptorWithAnalyzer.
 	info *reflection.ConstructorInfo
 
-	// siblings links every descriptor produced by the same constructor
-	// invocation (multi-return constructors and result objects, including
-	// this descriptor itself). One constructor call must cache an instance
-	// for each sibling, regardless of its key or group. Populated by
-	// collection.addService.
-	siblings []*descriptor
+	// reg links the descriptors produced by one constructor invocation
+	// (multi-return constructors, result objects and interface aliases): one
+	// constructor call must cache an instance for each output, regardless of
+	// its key or group. nil for a registration with a single output.
+	// Populated by collection.addService.
+	reg *registration
 
 	// isAlias marks descriptors registered through godi.As. Alias siblings
 	// advertise one produced value under several interface types and therefore
@@ -290,8 +290,32 @@ func analyzeService(service any, analyzer *reflection.Analyzer) (unwrapped any, 
 // automatically instead of having to be added to each construction site.
 func (d *descriptor) clone() *descriptor {
 	c := *d
-	c.siblings = nil
+	c.reg = nil
 	return &c
+}
+
+// registration is one Add* call that produced several outputs: they share
+// one construction, keyed by the registration (see flightKey).
+type registration struct {
+	// outputs lists the registration's live descriptors, in output order.
+	outputs []*descriptor
+}
+
+// link makes outputs the descriptors of one registration.
+func link(outputs []*descriptor) {
+	reg := &registration{outputs: outputs}
+	for _, d := range outputs {
+		d.reg = reg
+	}
+}
+
+// siblings returns every output of d's registration, including d, or nil
+// for a registration with a single output.
+func (d *descriptor) siblings() []*descriptor {
+	if d.reg == nil {
+		return nil
+	}
+	return d.reg.outputs
 }
 
 // instanceKey returns the cache key of the instances this descriptor produces.
@@ -306,15 +330,16 @@ func (d *descriptor) instanceKey() instanceKey {
 // as the next call's start, making a whole walk linear; an out-of-order
 // lookup falls back to a full scan.
 func (d *descriptor) siblingForField(index, start int) (sibling *descriptor, next int) {
-	for i := start; i < len(d.siblings); i++ {
-		if d.siblings[i].resultFieldIndex == index {
-			return d.siblings[i], i + 1
+	siblings := d.siblings()
+	for i := start; i < len(siblings); i++ {
+		if siblings[i].resultFieldIndex == index {
+			return siblings[i], i + 1
 		}
-		if d.siblings[i].resultFieldIndex > index {
+		if siblings[i].resultFieldIndex > index {
 			break
 		}
 	}
-	for _, s := range d.siblings {
+	for _, s := range siblings {
 		if s.resultFieldIndex == index {
 			return s, start
 		}
@@ -325,7 +350,7 @@ func (d *descriptor) siblingForField(index, start int) (sibling *descriptor, nex
 // hasSiblingForReturn reports whether a sibling is registered for the given
 // multi-return constructor return index.
 func (d *descriptor) hasSiblingForReturn(index int) bool {
-	for _, sibling := range d.siblings {
+	for _, sibling := range d.siblings() {
 		if sibling.MultiReturnIndex == index {
 			return true
 		}

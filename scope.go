@@ -808,17 +808,17 @@ func (s *scope) ownedByAnyone(v any) bool {
 }
 
 // flightKey computes a single-flight key for a descriptor. Multi-return and
-// Out-struct constructors produce several sibling descriptors that share one
-// constructor invocation; flightKey returns the registration's canonical
-// sibling (siblings[0], a pointer shared by every descriptor of one Add*
-// call) so one in-flight call serves all of them. Every other descriptor is
+// Out-struct constructors (and interface aliases) produce several descriptors
+// that share one constructor invocation; flightKey returns their shared
+// registration, so one in-flight call serves all of them, however outputs
+// are later removed. Every other descriptor is
 // its own flight: the same constructor function may be registered several
 // times (under different names, or in different groups), and each
 // registration must produce its own instances — which is why the constructor
 // pointer is NOT a valid key.
 func flightKey(d *descriptor) any {
-	if len(d.siblings) > 0 {
-		return d.siblings[0]
+	if d.reg != nil {
+		return d.reg
 	}
 	return d
 }
@@ -1159,7 +1159,7 @@ func (o *stagedOutput) value() any { return o.layers[len(o.layers)-1] }
 // instance registration) produced for d, under every interface alias, and
 // returns the value d resolves to.
 func (s *scope) publishValue(parent *resolveFrame, d *descriptor, value any, resolver reflection.DependencyResolver) (any, error) {
-	aliased := d.isAlias && d.Lifetime != Transient && len(d.siblings) > 0
+	aliased := d.isAlias && d.Lifetime != Transient && len(d.siblings()) > 0
 	if !aliased && len(d.decorators) == 0 {
 		// Common case, kept allocation-free: one undecorated output.
 		if d.Lifetime == Singleton {
@@ -1168,7 +1168,7 @@ func (s *scope) publishValue(parent *resolveFrame, d *descriptor, value any, res
 		s.setInstance(parent, d, d.instanceKey(), value)
 		return value, nil
 	}
-	if aliased && !hasDecorators(d.siblings...) {
+	if aliased && !hasDecorators(d.siblings()...) {
 		if d.Lifetime == Singleton {
 			s.rootProvider.recordConstructed(d.Type, value)
 		}
@@ -1179,7 +1179,7 @@ func (s *scope) publishValue(parent *resolveFrame, d *descriptor, value any, res
 	targets := []*descriptor{d}
 	if aliased {
 		// Decorated aliases: each interface gets its own decorators' result.
-		targets = d.siblings
+		targets = d.siblings()
 	}
 	outputs := make([]stagedOutput, len(targets))
 	for i, target := range targets {
@@ -1408,8 +1408,8 @@ func (s *scope) publishMultiReturn(
 ) (any, error) {
 	// Cache every return value under its sibling's registration (which
 	// carries the actual key or group assigned at Add time).
-	outputs := make([]stagedOutput, 0, len(requested.siblings))
-	for _, sibling := range requested.siblings {
+	outputs := make([]stagedOutput, 0, len(requested.siblings()))
+	for _, sibling := range requested.siblings() {
 		outputs = append(outputs, stagedOutput{
 			target:    sibling,
 			key:       sibling.instanceKey(),
@@ -1481,13 +1481,13 @@ func validateServiceResults(info *reflection.ConstructorInfo, results []reflect.
 // cacheable lifetimes. Transients deliberately store only the requested alias:
 // each resolution is a distinct constructor invocation.
 func (s *scope) setAliasedInstance(parent *resolveFrame, descriptor *descriptor, key instanceKey, instance any) {
-	if !descriptor.isAlias || descriptor.Lifetime == Transient || len(descriptor.siblings) == 0 {
+	if !descriptor.isAlias || descriptor.Lifetime == Transient || len(descriptor.siblings()) == 0 {
 		s.setInstance(parent, descriptor, key, instance)
 		return
 	}
 
-	keys := make([]instanceKey, len(descriptor.siblings))
-	for i, alias := range descriptor.siblings {
+	keys := make([]instanceKey, len(descriptor.siblings()))
+	for i, alias := range descriptor.siblings() {
 		keys[i] = alias.instanceKey()
 	}
 

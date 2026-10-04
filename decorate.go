@@ -241,12 +241,12 @@ func checkDecoratorDependencies(dec *decoration, d *descriptor, services map[reg
 // outputs of a multi-return or result-object constructor, or the interface
 // aliases of a cached service).
 func constructionDependencies(d *descriptor) []*reflection.Dependency {
-	if len(d.siblings) == 0 || d.isAlias && d.Lifetime == Transient {
+	if len(d.siblings()) == 0 || d.isAlias && d.Lifetime == Transient {
 		// Transient aliases are each constructed separately.
 		return d.Dependencies
 	}
 	var deps []*reflection.Dependency
-	for _, sibling := range d.siblings {
+	for _, sibling := range d.siblings() {
 		deps = append(deps, sibling.Dependencies...)
 	}
 	return deps
