@@ -619,7 +619,7 @@ func TestCollectionBuild(t *testing.T) {
 				_, err := c.Build()
 				require.Error(t, err, "a missing dependency must fail Build, not the first resolution")
 				assert.ErrorIs(t, err, ErrServiceNotFound)
-				assert.Contains(t, err.Error(), "NeedsMissing requires *Missing")
+				assert.Contains(t, err.Error(), "*godi.NeedsMissing requires *godi.Missing")
 			})
 		}
 	})
@@ -1116,7 +1116,7 @@ func TestOptionalDependencyErrors(t *testing.T) {
 		_, err := c.Build()
 		require.Error(t, err, "missing transitive dependency of an optional service must propagate")
 		assert.ErrorIs(t, err, ErrServiceNotFound)
-		assert.Contains(t, err.Error(), "*TFailing requires *TDisposable")
+		assert.Contains(t, err.Error(), "*godi.TFailing requires *godi.TDisposable")
 	})
 
 	t.Run("failing_constructor_of_optional_dependency_propagates", func(t *testing.T) {
@@ -1495,7 +1495,7 @@ func TestLifetimeRules(t *testing.T) {
 		assert.Equal(t, reflect.TypeFor[*Cache](), conflict.ServiceType)
 		assert.Equal(t, reflect.TypeFor[*Unit](), conflict.DependencyType)
 		assert.Equal(t, []reflect.Type{reflect.TypeFor[*Handler]()}, conflict.Via)
-		assert.Contains(t, err.Error(), "*Handler")
+		assert.Contains(t, err.Error(), "*godi.Handler")
 	})
 
 	t.Run("conflicts_are_reported_together_in_registration_order", func(t *testing.T) {
@@ -1859,6 +1859,28 @@ func TestBuildContext(t *testing.T) {
 
 		require.NoError(t, p.Close())
 		assert.ErrorIs(t, holder.Ctx.Err(), context.Canceled, "provider shutdown cancels the context")
+	})
+
+	t.Run("options_accept_a_context_and_a_timeout_together", func(t *testing.T) {
+		t.Parallel()
+		type contextKey struct{}
+		type CtxHolder struct{ Ctx context.Context }
+		parent, cancel := context.WithCancel(context.WithValue(context.Background(), contextKey{}, "app"))
+		c := NewCollection()
+		c.AddSingleton(func(ctx context.Context) *CtxHolder { return &CtxHolder{Ctx: ctx} })
+
+		// BuildWithContext took a context but no options, and
+		// BuildWithOptions options but no context.
+		p, err := c.BuildWithOptions(&ProviderOptions{Context: parent, BuildTimeout: time.Minute})
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+		holder, err := Resolve[*CtxHolder](p)
+		require.NoError(t, err)
+
+		assert.Equal(t, "app", holder.Ctx.Value(contextKey{}))
+		require.NoError(t, holder.Ctx.Err(), "the build timeout does not outlive Build")
+		cancel()
+		assert.ErrorIs(t, holder.Ctx.Err(), context.Canceled, "the parent context's cancellation propagates")
 	})
 
 	t.Run("singleton_context_deadline_is_stable", func(t *testing.T) {

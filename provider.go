@@ -58,6 +58,18 @@ type ProviderOptions struct {
 	// initializers. Recommended; it will be the default in the next major
 	// version.
 	ValidateScopes bool
+
+	// Context is the parent of the provider's root context: its values are
+	// visible to services, and its cancellation propagates (as with
+	// BuildWithContext). It also bounds Build. Defaults to
+	// context.Background().
+	Context context.Context
+
+	// Observer receives construction and disposal events, including
+	// failures of background cleanup that have no caller to report to.
+	// Its methods must be safe for concurrent use and should return
+	// quickly.
+	Observer Observer
 }
 
 // provider is the concrete implementation of Provider
@@ -81,6 +93,13 @@ type provider struct {
 
 	// started is set by the first godi.Start.
 	started atomic.Bool
+
+	// descriptors are the registrations in registration order (Describe).
+	// Immutable after build.
+	descriptors []*descriptor
+
+	// observer is ProviderOptions.Observer, or nil. Immutable after build.
+	observer Observer
 
 	// Reflection analyzer
 	analyzer *reflection.Analyzer
@@ -321,7 +340,7 @@ func (p *provider) teardown(ctx context.Context) error {
 	// misbehaving disposable cannot abort the rest of the teardown loop.
 	for i := len(disposables) - 1; i >= 0; i-- {
 		if disposables[i] != nil {
-			if err := safeDispose(ctx, disposables[i]); err != nil {
+			if err := p.disposeObserved(ctx, disposables[i], ""); err != nil {
 				errors = append(errors, fmt.Errorf("singleton disposable %d: %w", i, err))
 			}
 		}
@@ -366,7 +385,7 @@ func (p *provider) setSingleton(instance any, dispose bool, keys ...instanceKey)
 
 	if orphan := p.track(instance, dispose); orphan != nil {
 		// The provider was closed while the constructor was running.
-		closeOrphan(orphan)
+		p.closeOrphan(orphan, "")
 		return
 	}
 	for _, key := range keys {
@@ -386,7 +405,7 @@ func (p *provider) cacheSingleton(key instanceKey, instance any) {
 // trackDisposable takes ownership of instance's disposal if it is disposable,
 // closing it eagerly if the provider has already been closed.
 func (p *provider) trackDisposable(instance any) {
-	closeOrphan(p.track(instance, true))
+	p.closeOrphan(p.track(instance, true), "")
 }
 
 // track takes ownership of instance's disposal if it is disposable. The
@@ -443,6 +462,23 @@ func (p *provider) findDescriptor(serviceType reflect.Type, key any) *descriptor
 	return p.services[typeKey]
 }
 
+// registeredTypes returns the distinct registered service types in
+// registration order, for "did you mean" suggestions on a failed lookup.
+func (p *provider) registeredTypes() []reflect.Type {
+	seen := make(map[reflect.Type]struct{}, len(p.descriptors))
+	types := make([]reflect.Type, 0, len(p.descriptors))
+	for _, d := range p.descriptors {
+		if d.VoidReturn {
+			continue
+		}
+		if _, dup := seen[d.Type]; !dup {
+			seen[d.Type] = struct{}{}
+			types = append(types, d.Type)
+		}
+	}
+	return types
+}
+
 // findGroupDescriptors finds all descriptors for a specific type within a group.
 // Returns an empty slice if the type is nil, group is empty, or no services are found.
 func (p *provider) findGroupDescriptors(serviceType reflect.Type, group string) []*descriptor {
@@ -470,7 +506,7 @@ func (p *provider) createAllSingletonsWithContext(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return &BuildError{
-				Phase:   "singleton-creation",
+				Phase:   PhaseSingletonCreation,
 				Details: "build cancelled during singleton creation",
 				Cause:   ctx.Err(),
 			}
@@ -494,7 +530,7 @@ func (p *provider) createAllSingletonsWithContext(ctx context.Context) error {
 		}
 		if err := ctx.Err(); err != nil {
 			return &BuildError{
-				Phase:   "singleton-creation",
+				Phase:   PhaseSingletonCreation,
 				Details: "build deadline expired after singleton creation",
 				Cause:   err,
 			}
@@ -503,7 +539,7 @@ func (p *provider) createAllSingletonsWithContext(ctx context.Context) error {
 
 	if err := ctx.Err(); err != nil {
 		return &BuildError{
-			Phase:   "singleton-creation",
+			Phase:   PhaseSingletonCreation,
 			Details: "build deadline expired after singleton creation",
 			Cause:   err,
 		}

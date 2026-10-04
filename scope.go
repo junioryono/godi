@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/junioryono/godi/v5/internal/reflection"
 )
@@ -555,7 +556,7 @@ func (s *scope) teardown(ctx context.Context) error {
 	s.disposablesMu.Unlock()
 
 	for i := len(disposables) - 1; i >= 0; i-- {
-		if err := safeDispose(ctx, disposables[i]); err != nil {
+		if err := s.rootProvider.disposeObserved(ctx, disposables[i], s.id); err != nil {
 			errs = append(errs, fmt.Errorf("failed to dispose scoped instance: %w", err))
 		}
 	}
@@ -655,7 +656,7 @@ func (s *scope) trackProduced(parent *resolveFrame, requested *descriptor, insta
 	case Singleton:
 		s.rootProvider.trackDisposable(instance)
 	case Scoped:
-		closeOrphan(s.track(instance, true))
+		s.rootProvider.closeOrphan(s.track(instance, true), s.id)
 	case Transient:
 		s.trackTransient(parent, instance)
 	}
@@ -680,7 +681,7 @@ func (s *scope) publishScoped(instance any, dispose bool, keys ...instanceKey) {
 	}
 	s.instancesMu.Unlock()
 	// Close outside the lock: Close may resolve from this scope.
-	closeOrphan(orphan)
+	s.rootProvider.closeOrphan(orphan, s.id)
 }
 
 // trackTransient takes ownership of a transient instance's disposal.
@@ -694,7 +695,7 @@ func (s *scope) trackTransient(parent *resolveFrame, instance any) {
 	if s.isRoot && !hasCachedOwner(s, parent) {
 		return
 	}
-	closeOrphan(s.track(instance, true))
+	s.rootProvider.closeOrphan(s.track(instance, true), s.id)
 }
 
 // track takes ownership of instance's disposal if it is disposable. It
@@ -913,6 +914,7 @@ func (s *scope) resolve(parent *resolveFrame, key instanceKey, descriptor *descr
 				ServiceType: key.Type,
 				ServiceKey:  key.Key,
 				Cause:       ErrServiceNotFound,
+				Available:   s.rootProvider.registeredTypes(),
 			}
 		}
 	}
@@ -970,7 +972,7 @@ func (s *scope) resolve(parent *resolveFrame, key instanceKey, descriptor *descr
 // It handles regular constructors, result objects (Out structs), multi-return
 // constructors, and instance descriptors. parent is the construction that
 // requested this one (nil for a direct call).
-func (s *scope) createInstance(parent *resolveFrame, descriptor *descriptor) (any, error) {
+func (s *scope) createInstance(parent *resolveFrame, descriptor *descriptor) (instance any, err error) {
 	if descriptor == nil {
 		return nil, &ValidationError{
 			ServiceType: nil,
@@ -978,16 +980,30 @@ func (s *scope) createInstance(parent *resolveFrame, descriptor *descriptor) (an
 		}
 	}
 
+	if observer := s.rootProvider.observer; observer != nil && !descriptor.IsInstance {
+		start := time.Now()
+		defer func() {
+			observer.Constructed(&ConstructedEvent{
+				ServiceType: descriptor.Type,
+				Key:         serviceInfoKey(descriptor),
+				Lifetime:    descriptor.Lifetime,
+				ScopeID:     s.id,
+				Constructor: descriptor.source,
+				Duration:    time.Since(start),
+				Err:         err,
+			})
+		}()
+	}
+
 	if descriptor.IsInstance {
-		instance := descriptor.Instance
-		if instance == nil {
+		if descriptor.Instance == nil {
 			return nil, &ValidationError{
 				ServiceType: descriptor.Type,
 				Cause:       fmt.Errorf("instance descriptor has nil instance"),
 			}
 		}
 
-		return s.publishValue(parent, descriptor, instance, s)
+		return s.publishValue(parent, descriptor, descriptor.Instance, s)
 	}
 
 	// Read the pre-analyzed constructor info stashed on the descriptor at
@@ -996,7 +1012,6 @@ func (s *scope) createInstance(parent *resolveFrame, descriptor *descriptor) (an
 	// in tests).
 	info := descriptor.info
 	if info == nil {
-		var err error
 		info, err = s.rootProvider.analyzer.Analyze(descriptor.Constructor.Interface())
 		if err != nil {
 			return nil, &ReflectionAnalysisError{
@@ -1034,6 +1049,7 @@ func (s *scope) createInstance(parent *resolveFrame, descriptor *descriptor) (an
 				Constructor: descriptor.ConstructorType,
 				Panic:       panicErr.Panic,
 				Stack:       panicErr.Stack,
+				Location:    descriptor.source,
 			}
 		}
 
@@ -1041,6 +1057,7 @@ func (s *scope) createInstance(parent *resolveFrame, descriptor *descriptor) (an
 			Constructor: descriptor.ConstructorType,
 			Parameters:  extractParameterTypes(info),
 			Cause:       err,
+			Location:    descriptor.source,
 		}
 	}
 
@@ -1077,7 +1094,7 @@ func (s *scope) createInstance(parent *resolveFrame, descriptor *descriptor) (an
 		return s.publishMultiReturn(parent, descriptor, info, results, resolver)
 	}
 
-	instance := results[0].Interface()
+	instance = results[0].Interface()
 	if instance == nil {
 		return nil, &ValidationError{
 			ServiceType: descriptor.Type,
@@ -1149,7 +1166,7 @@ func (s *scope) discardProduced(d *descriptor, value any) {
 	if d.noDispose || !isDisposable(value) || s.ownedByAnyone(value) {
 		return
 	}
-	closeOrphan(value)
+	s.rootProvider.closeOrphan(value, s.id)
 }
 
 // producedOutput is one decorated output of a multi-output constructor,
@@ -1368,7 +1385,7 @@ func (s *scope) closeProducedOutputs(requested *descriptor, info *reflection.Con
 			}
 			closed[identity] = struct{}{}
 		}
-		closeOrphan(d)
+		s.rootProvider.closeOrphan(d, s.id)
 	}
 }
 

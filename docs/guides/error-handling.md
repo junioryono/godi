@@ -325,7 +325,60 @@ func main() {
 }
 ```
 
-### 4. Log Resolution for Debugging
+### 4. Get the Full Explanation
+
+Error messages are one line, safe for logs and never containing stack traces.
+`godi.Explain(err)` (or `fmt.Printf("%+v", err)`) adds the detail: remediation
+hints, "did you mean" suggestions, the dependency cycle drawn out, and the
+stack trace of a constructor panic. It walks wrapped and joined errors.
+
+```go
+if _, err := services.Build(); err != nil {
+    log.Fatal(godi.Explain(err))
+}
+```
+
+Constructor failures name the function and its source location, for example
+`constructor users.NewService (service.go:42) failed: ...`, and types are
+package-qualified (`*db.Config`).
+
+### 5. Observe Construction and Disposal
+
+`ProviderOptions.Observer` receives an event for every constructor call and
+every disposal, with durations and errors — including cleanup failures of
+values produced after their scope closed, which have no caller to return an
+error to:
+
+```go
+type logObserver struct{ log *slog.Logger }
+
+func (o logObserver) Constructed(e *godi.ConstructedEvent) {
+    o.log.Debug("constructed", "service", e.ServiceType, "scope", e.ScopeID,
+        "took", e.Duration, "err", e.Err)
+}
+
+func (o logObserver) Disposed(e *godi.DisposedEvent) {
+    if e.Err != nil {
+        o.log.Warn("cleanup failed", "type", e.Type, "err", e.Err)
+    }
+}
+
+provider, err := services.BuildWithOptions(&godi.ProviderOptions{
+    Observer: logObserver{log: slog.Default()},
+})
+```
+
+### 6. Inspect the Graph
+
+`godi.Describe(provider)` (or `collection.ToSlice()`) lists every registration
+with its lifetime, constructor location and dependencies, without constructing
+anything. `godi.WriteDOT` renders it for Graphviz:
+
+```go
+godi.WriteDOT(os.Stdout, godi.Describe(provider)) // go run . | dot -Tsvg > graph.svg
+```
+
+### 7. Log Scope Creation
 
 ```go
 // Add logging middleware

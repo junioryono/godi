@@ -109,24 +109,27 @@ func (e LifetimeConflictError) Error() string {
 		}
 		fmt.Fprintf(&b, " (via %s)", strings.Join(via, " -> "))
 	}
-	b.WriteString("\n\n")
+	return b.String()
+}
 
-	// Explain the issue
+// Detail explains the conflict and how to resolve it; see Explain.
+func (e LifetimeConflictError) Detail() string {
+	var b strings.Builder
 	if e.ServiceLifetime == Singleton {
 		b.WriteString("Singleton services are created once and live for the application lifetime.\n")
-		b.WriteString("Scoped services are created per-scope and may have different values in different scopes.\n\n")
+		b.WriteString("Scoped services are created per-scope and may have different values in different scopes.\n")
 		b.WriteString("A singleton depending on a scoped service would capture a single scope's value,\n")
 		b.WriteString("which is almost certainly not what you want.\n\n")
 	}
-
 	b.WriteString("To resolve this:\n")
 	fmt.Fprintf(&b, "  • Change %s to Scoped lifetime\n", formatType(e.ServiceType))
 	fmt.Fprintf(&b, "  • Change %s to Singleton lifetime\n", formatType(e.DependencyType))
-	fmt.Fprintf(&b, "  • Pass %s to %s's methods per call instead of holding it\n",
+	fmt.Fprintf(&b, "  • Pass %s to %s's methods per call instead of holding it",
 		formatType(e.DependencyType), formatType(e.ServiceType))
-
 	return b.String()
 }
+
+func (e LifetimeConflictError) Format(s fmt.State, verb rune) { formatError(s, verb, e) }
 
 // AlreadyRegisteredError indicates a service type is already registered.
 type AlreadyRegisteredError struct {
@@ -168,25 +171,28 @@ func (e ResolutionError) Error() string {
 		fmt.Fprintf(&b, ": %v", e.Cause)
 	}
 
-	if !notFound {
-		return b.String()
-	}
-
-	// Suggest similar types if available
-	if len(e.Available) > 0 {
-		similar := findSimilarTypes(e.ServiceType, e.Available)
-		if len(similar) > 0 {
-			b.WriteString("\n\nDid you mean one of these?\n")
-			for _, t := range similar {
-				fmt.Fprintf(&b, "  • %s\n", formatType(t))
-			}
-		}
-	}
-
-	b.WriteString("\nMake sure the service is registered with the correct lifetime and type.")
-
 	return b.String()
 }
+
+// Detail suggests similar registered types for a missing service; see
+// Explain.
+func (e ResolutionError) Detail() string {
+	if e.Cause != nil && !e.ServiceNotFound() {
+		return ""
+	}
+	var b strings.Builder
+	if similar := findSimilarTypes(e.ServiceType, e.Available); len(similar) > 0 {
+		b.WriteString("Did you mean one of these?\n")
+		for _, t := range similar {
+			fmt.Fprintf(&b, "  • %s\n", formatType(t))
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("Make sure the service is registered with the correct lifetime and type.")
+	return b.String()
+}
+
+func (e ResolutionError) Format(s fmt.State, verb rune) { formatError(s, verb, e) }
 
 func (e ResolutionError) Unwrap() error {
 	return e.Cause
@@ -227,14 +233,21 @@ type MissingDependencyError struct {
 	ServiceType    reflect.Type
 	DependencyType reflect.Type
 	DependencyKey  any // nil for non-keyed dependencies
+	// Constructor names the constructor and its source location.
+	Constructor string
 }
 
 func (e MissingDependencyError) Error() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s requires %s", formatType(e.ServiceType), formatType(e.DependencyType))
 	if e.DependencyKey != nil {
-		return fmt.Sprintf("%s requires %s (key: %v) (not registered)",
-			formatType(e.ServiceType), formatType(e.DependencyType), e.DependencyKey)
+		fmt.Fprintf(&b, " (key: %v)", e.DependencyKey)
 	}
-	return fmt.Sprintf("%s requires %s (not registered)", formatType(e.ServiceType), formatType(e.DependencyType))
+	b.WriteString(" (not registered)")
+	if e.Constructor != "" {
+		fmt.Fprintf(&b, " [constructor %s]", e.Constructor)
+	}
+	return b.String()
 }
 
 // Unwrap lets errors.Is(err, ErrServiceNotFound) match.
@@ -286,6 +299,10 @@ func findSimilarTypes(target reflect.Type, available []reflect.Type) []reflect.T
 }
 
 // TimeoutError indicates a service resolution timed out.
+//
+// Deprecated: godi never returns TimeoutError; build timeouts are reported as
+// a BuildError matching context.DeadlineExceeded. It will be removed in the
+// next major version.
 type TimeoutError struct {
 	ServiceType reflect.Type
 	Timeout     time.Duration
@@ -395,9 +412,15 @@ type ConstructorInvocationError struct {
 	Constructor reflect.Type
 	Parameters  []reflect.Type
 	Cause       error
+	// Location names the constructor function and its source location
+	// ("users.NewService (service.go:42)"), when known.
+	Location string
 }
 
 func (e ConstructorInvocationError) Error() string {
+	if e.Location != "" {
+		return fmt.Sprintf("constructor %s failed: %v", e.Location, e.Cause)
+	}
 	paramStrs := make([]string, len(e.Parameters))
 	for i, p := range e.Parameters {
 		paramStrs[i] = formatType(p)
@@ -406,37 +429,49 @@ func (e ConstructorInvocationError) Error() string {
 		formatType(e.Constructor), strings.Join(paramStrs, ", "), e.Cause)
 }
 
+func (e ConstructorInvocationError) Format(s fmt.State, verb rune) { formatError(s, verb, e) }
+
 func (e ConstructorInvocationError) Unwrap() error {
 	return e.Cause
 }
 
 // ConstructorPanicError indicates a constructor panicked during invocation.
-// It captures the panic value and stack trace for debugging.
+// It captures the panic value and stack trace for debugging; they are part
+// of Detail (Explain, %+v), not of Error.
 type ConstructorPanicError struct {
 	Constructor reflect.Type
 	Panic       any
 	Stack       []byte
+	// Location names the constructor function and its source location,
+	// when known.
+	Location string
 }
 
 func (e ConstructorPanicError) Error() string {
+	name := e.Location
+	if name == "" {
+		name = formatType(e.Constructor)
+	}
+	return strings.ReplaceAll(fmt.Sprintf("constructor %s panicked: %v", name, e.Panic), "\n", " ")
+}
+
+// Detail gives guidance and the panic's stack trace; see Explain.
+func (e ConstructorPanicError) Detail() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "constructor %s panicked: %v\n", formatType(e.Constructor), e.Panic)
-
-	b.WriteString("\nConstructors should be pure dependency wiring - avoid operations that can panic.\n")
-	b.WriteString("Critical operations that can fail belong in application initialization, not constructors.\n")
-
-	b.WriteString("\nTo resolve this:\n")
+	b.WriteString("Constructors should be pure dependency wiring - avoid operations that can panic.\n")
+	b.WriteString("Critical operations that can fail belong in application initialization, not constructors.\n\n")
+	b.WriteString("To resolve this:\n")
 	b.WriteString("  • Check for nil pointer dereferences in your constructor\n")
 	b.WriteString("  • Move panic-prone initialization to a separate Init() method\n")
-	b.WriteString("  • Add nil checks for dependencies before using them\n")
-
+	b.WriteString("  • Add nil checks for dependencies before using them")
 	if len(e.Stack) > 0 {
-		b.WriteString("\nStack trace:\n")
+		b.WriteString("\n\nStack trace:\n")
 		b.Write(e.Stack)
 	}
-
 	return b.String()
 }
+
+func (e ConstructorPanicError) Format(s fmt.State, verb rune) { formatError(s, verb, e) }
 
 // BuildError wraps errors that occur during provider building
 type BuildError struct {
@@ -477,63 +512,14 @@ func (e DisposalError) Unwrap() []error {
 	return e.Errors
 }
 
-// formatType formats a reflect.Type for error messages.
-func formatType(t reflect.Type) string {
-	if t == nil {
-		return "<nil>"
-	}
+// fmt.Formatter: %+v prints Explain (message plus detail), other verbs the
+// one-line message.
 
-	// Handle common cases with cleaner output
-	switch t.Kind() {
-	case reflect.Pointer:
-		// Format pointers as *Type instead of *package.Type
-		elem := t.Elem()
-		if elem.PkgPath() != "" && elem.Name() != "" {
-			// Named type with package
-			return "*" + elem.Name()
-		}
-		return t.String()
-	case reflect.Slice:
-		// Format slices as []Type
-		elem := t.Elem()
-		if elem.PkgPath() != "" && elem.Name() != "" {
-			// Named type with package
-			return "[]" + elem.Name()
-		}
-		return t.String()
-	case reflect.Map:
-		// Format maps more concisely
-		key := t.Key()
-		elem := t.Elem()
-		keyStr := key.Name()
-		if keyStr == "" {
-			keyStr = key.String()
-		}
-		elemStr := elem.Name()
-		if elemStr == "" {
-			elemStr = elem.String()
-		}
-		return "map[" + keyStr + "]" + elemStr
-	case reflect.Interface:
-		// For interfaces, just use the name if available
-		if t.Name() != "" {
-			return t.Name()
-		}
-		return t.String()
-	case reflect.Struct:
-		// For structs, use the short name if available
-		if t.Name() != "" {
-			return t.Name()
-		}
-		return t.String()
-	case reflect.Func:
-		// For functions, use String() which gives a nice representation
-		return t.String()
-	default:
-		// For basic types and others, prefer the name if available
-		if t.Name() != "" {
-			return t.Name()
-		}
-		return t.String()
-	}
-}
+func (e BuildError) Format(s fmt.State, verb rune)              { formatError(s, verb, e) }
+func (e DisposalError) Format(s fmt.State, verb rune)           { formatError(s, verb, e) }
+func (e RegistrationError) Format(s fmt.State, verb rune)       { formatError(s, verb, e) }
+func (e ValidationError) Format(s fmt.State, verb rune)         { formatError(s, verb, e) }
+func (e ModuleError) Format(s fmt.State, verb rune)             { formatError(s, verb, e) }
+func (e MissingDependencyError) Format(s fmt.State, verb rune)  { formatError(s, verb, e) }
+func (e GraphOperationError) Format(s fmt.State, verb rune)     { formatError(s, verb, e) }
+func (e ReflectionAnalysisError) Format(s fmt.State, verb rune) { formatError(s, verb, e) }

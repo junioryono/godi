@@ -497,61 +497,32 @@ func (g *DependencyGraph) detectCyclesFrom(start NodeKey, visited map[NodeKey]bo
 	return nil
 }
 
-// findCyclePath reconstructs the cycle path for error reporting
+// findCyclePath returns the nodes of a cycle through start, in dependency
+// order, each once: start depends on path[1], ..., and the last node depends
+// on start. Edges are followed in insertion order, so the result is
+// deterministic.
 func (g *DependencyGraph) findCyclePath(start NodeKey) []NodeKey {
-	path := []NodeKey{}
+	var path []NodeKey
 	visited := make(map[NodeKey]bool)
-	parent := make(map[NodeKey]NodeKey)
-
-	// Use BFS to find the cycle more efficiently
-	var findPath func(current NodeKey) bool
-	findPath = func(current NodeKey) bool {
-		if visited[current] {
-			// Found a node we've seen before - reconstruct cycle
-			cycle := []NodeKey{current}
-			for p := parent[current]; p != current && !visited[p]; p = parent[p] {
-				cycle = append([]NodeKey{p}, cycle...)
-				visited[p] = true
-
-				// Safety check to prevent infinite loop
-				if len(cycle) > len(g.nodes) {
-					break
-				}
+	var dfs func(node NodeKey) bool
+	dfs = func(node NodeKey) bool {
+		path = append(path, node)
+		visited[node] = true
+		for _, next := range g.edges[node] {
+			if next == start {
+				return true
 			}
-			path = cycle
-			return true
-		}
-
-		visited[current] = true
-
-		if edges, exists := g.edges[current]; exists {
-			for _, next := range edges {
-				if _, hasParent := parent[next]; !hasParent {
-					parent[next] = current
-				}
-
-				if next == start || findPath(next) {
-					if len(path) == 0 {
-						path = []NodeKey{current}
-					} else if path[0] != current {
-						path = append([]NodeKey{current}, path...)
-					}
-					return true
-				}
+			if !visited[next] && dfs(next) {
+				return true
 			}
 		}
-
+		path = path[:len(path)-1]
 		return false
 	}
-
-	findPath(start)
-
-	// Ensure the path shows the complete cycle
-	if len(path) > 0 && path[len(path)-1] != start {
-		path = append(path, start)
+	if dfs(start) {
+		return path
 	}
-
-	return path
+	return []NodeKey{start}
 }
 
 // GetDependencies returns the direct dependencies of a service
