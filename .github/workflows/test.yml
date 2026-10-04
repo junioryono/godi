@@ -34,9 +34,11 @@ jobs:
       - name: Build matrices
         id: matrix
         run: |
-          echo "all=$(scripts/module-matrix.sh all)" >> "$GITHUB_OUTPUT"
-          echo "coverage=$(scripts/module-matrix.sh coverage)" >> "$GITHUB_OUTPUT"
-          echo "go=$(scripts/go-matrix.sh)" >> "$GITHUB_OUTPUT"
+          {
+            echo "all=$(scripts/module-matrix.sh all)"
+            echo "coverage=$(scripts/module-matrix.sh coverage)"
+            echo "go=$(scripts/go-matrix.sh)"
+          } >> "$GITHUB_OUTPUT"
 
   # Ubuntu root tests already run in module-test; this job exists for the
   # other operating systems.
