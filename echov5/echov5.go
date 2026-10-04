@@ -1,6 +1,6 @@
 // Package echov5 provides godi integration for Echo v5
 // (github.com/labstack/echo/v5). For Echo v4, use
-// github.com/junioryono/godi/echo/v5.
+// github.com/junioryono/godi/echo/v6.
 //
 // This package provides middleware for creating request-scoped containers
 // and type-safe handler wrappers for resolving controllers. Its API mirrors
@@ -27,7 +27,7 @@ import (
 	"net/http"
 	"runtime/debug"
 
-	"github.com/junioryono/godi/v5"
+	"github.com/junioryono/godi/v6"
 	"github.com/labstack/echo/v5"
 )
 

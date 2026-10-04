@@ -1,10 +1,10 @@
-module github.com/junioryono/godi/gin/v5
+module github.com/junioryono/godi/gin/v6
 
 go 1.26.0
 
 require (
 	github.com/gin-gonic/gin v1.12.0
-	github.com/junioryono/godi/v5 v5.2.0
+	github.com/junioryono/godi/v6 v6.0.0
 	github.com/stretchr/testify v1.12.1
 	go.uber.org/goleak v1.3.0
 )
@@ -42,4 +42,4 @@ require (
 	google.golang.org/protobuf v1.36.12 // indirect
 )
 
-replace github.com/junioryono/godi/v5 => ../
+replace github.com/junioryono/godi/v6 => ../

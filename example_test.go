@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/junioryono/godi/v5"
+	"github.com/junioryono/godi/v6"
 )
 
 // Types shared by the examples.

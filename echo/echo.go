@@ -1,6 +1,6 @@
 // Package echo provides godi integration for the Echo web framework
 // (github.com/labstack/echo/v4). For Echo v5, use
-// github.com/junioryono/godi/echov5/v5.
+// github.com/junioryono/godi/echov5/v6.
 //
 // This package provides middleware for creating request-scoped containers
 // and type-safe handler wrappers for resolving controllers.
@@ -25,7 +25,7 @@ import (
 	"net/http"
 	"runtime/debug"
 
-	"github.com/junioryono/godi/v5"
+	"github.com/junioryono/godi/v6"
 	"github.com/labstack/echo/v4"
 )
 

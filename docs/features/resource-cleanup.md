@@ -179,7 +179,7 @@ budget, forced with `Close` when it runs out. A plain `Close` of the provider
 prefers `Close()` because a graceful shutdown without a deadline could wait
 forever.
 
-A runnable shutdown with a deadline, showing the disposal order, is the [`ExampleShutdown`](https://pkg.go.dev/github.com/junioryono/godi/v5#example-Shutdown) example in the package documentation (`example_test.go`), verified by `go test`.
+A runnable shutdown with a deadline, showing the disposal order, is the [`ExampleShutdown`](https://pkg.go.dev/github.com/junioryono/godi/v6#example-Shutdown) example in the package documentation (`example_test.go`), verified by `go test`.
 
 ## Disposal Order
 

@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"sync"
 
-	"github.com/junioryono/godi/v5/internal/reflection"
+	"github.com/junioryono/godi/v6/internal/reflection"
 )
 
 // Provider defines the interface for service providers that can be added to the graph.

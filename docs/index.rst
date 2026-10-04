@@ -68,7 +68,7 @@
    :hidden:
 
    GitHub <https://github.com/junioryono/godi>
-   API Docs <https://pkg.go.dev/github.com/junioryono/godi/v5>
+   API Docs <https://pkg.go.dev/github.com/junioryono/godi/v6>
    Changelog <https://github.com/junioryono/godi/releases>
 
 godi
@@ -115,7 +115,7 @@ Install godi:
 
 .. code-block:: bash
 
-   go get github.com/junioryono/godi/v5
+   go get github.com/junioryono/godi/v6
 
 Create your first container:
 
@@ -125,7 +125,7 @@ Create your first container:
 
    import (
        "fmt"
-       "github.com/junioryono/godi/v5"
+       "github.com/junioryono/godi/v6"
    )
 
    type Logger struct{}

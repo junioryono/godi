@@ -10,8 +10,8 @@ functions delegate to `godihttp`. The two packages are interchangeable.
 ## Installation
 
 ```bash
-go get github.com/junioryono/godi/v5
-go get github.com/junioryono/godi/chi/v5
+go get github.com/junioryono/godi/v6
+go get github.com/junioryono/godi/chi/v6
 ```
 
 ## Quick Start
@@ -24,8 +24,8 @@ import (
     "net/http"
 
     "github.com/go-chi/chi/v5"
-    "github.com/junioryono/godi/v5"
-    godichi "github.com/junioryono/godi/chi/v5"
+    "github.com/junioryono/godi/v6"
+    godichi "github.com/junioryono/godi/chi/v6"
 )
 
 type UserController struct{}
@@ -159,8 +159,8 @@ import (
     "github.com/go-chi/chi/v5"
     "github.com/go-chi/chi/v5/middleware"
     "github.com/google/uuid"
-    "github.com/junioryono/godi/v5"
-    godichi "github.com/junioryono/godi/chi/v5"
+    "github.com/junioryono/godi/v6"
+    godichi "github.com/junioryono/godi/chi/v6"
 )
 
 // === Services ===

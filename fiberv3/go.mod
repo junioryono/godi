@@ -1,10 +1,10 @@
-module github.com/junioryono/godi/fiberv3/v5
+module github.com/junioryono/godi/fiberv3/v6
 
 go 1.26.0
 
 require (
 	github.com/gofiber/fiber/v3 v3.5.0
-	github.com/junioryono/godi/v5 v5.2.0
+	github.com/junioryono/godi/v6 v6.0.0
 	github.com/stretchr/testify v1.12.1
 )
 
@@ -27,4 +27,4 @@ require (
 	golang.org/x/text v0.40.0 // indirect
 )
 
-replace github.com/junioryono/godi/v5 => ../
+replace github.com/junioryono/godi/v6 => ../

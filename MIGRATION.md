@@ -52,6 +52,6 @@ match individual causes, and module errors carry the module name.
 ```sh
 grep -rl 'junioryono/godi/v4' . | xargs sed -i '' -E 's#junioryono/godi/v4/(http|chi|echo|fiber|gin|huma)#junioryono/godi/\1/v5#g'
 grep -rl 'junioryono/godi/v4' . | xargs sed -i '' 's#junioryono/godi/v4#junioryono/godi/v5#g'
-go get github.com/junioryono/godi/v5@latest
+go get github.com/junioryono/godi/v6@latest
 go mod tidy && go build ./...
 ```

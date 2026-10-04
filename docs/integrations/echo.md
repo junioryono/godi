@@ -5,8 +5,8 @@ Complete guide for using godi with the [Echo](https://github.com/labstack/echo) 
 ## Installation
 
 ```bash
-go get github.com/junioryono/godi/v5
-go get github.com/junioryono/godi/echo/v5
+go get github.com/junioryono/godi/v6
+go get github.com/junioryono/godi/echo/v6
 ```
 
 ## Quick Start
@@ -18,8 +18,8 @@ import (
     "net/http"
 
     "github.com/labstack/echo/v4"
-    "github.com/junioryono/godi/v5"
-    godiecho "github.com/junioryono/godi/echo/v5"
+    "github.com/junioryono/godi/v6"
+    godiecho "github.com/junioryono/godi/echo/v6"
 )
 
 type UserController struct{}
@@ -145,8 +145,8 @@ import (
     "github.com/labstack/echo/v4"
     "github.com/labstack/echo/v4/middleware"
     "github.com/google/uuid"
-    "github.com/junioryono/godi/v5"
-    godiecho "github.com/junioryono/godi/echo/v5"
+    "github.com/junioryono/godi/v6"
+    godiecho "github.com/junioryono/godi/echo/v6"
 )
 
 // === Services ===

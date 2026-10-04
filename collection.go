@@ -9,8 +9,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/junioryono/godi/v5/internal/graph"
-	"github.com/junioryono/godi/v5/internal/reflection"
+	"github.com/junioryono/godi/v6/internal/graph"
+	"github.com/junioryono/godi/v6/internal/reflection"
 )
 
 // Global atomic counter for fast ID generation (replaces UUID)

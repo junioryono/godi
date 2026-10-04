@@ -15,8 +15,8 @@ names the Echo version.
 ## Installation
 
 ```bash
-go get github.com/junioryono/godi/v5
-go get github.com/junioryono/godi/echov5/v5
+go get github.com/junioryono/godi/v6
+go get github.com/junioryono/godi/echov5/v6
 ```
 
 ## Quick Start
@@ -27,8 +27,8 @@ package main
 import (
     "net/http"
 
-    "github.com/junioryono/godi/v5"
-    godiecho "github.com/junioryono/godi/echov5/v5"
+    "github.com/junioryono/godi/v6"
+    godiecho "github.com/junioryono/godi/echov5/v6"
     "github.com/labstack/echo/v5"
 )
 
@@ -224,7 +224,7 @@ e.GET("/custom", func(c *echo.Context) error {
 ## Migrating from the Echo v4 integration
 
 1. Replace the imports: `github.com/labstack/echo/v4` with `github.com/labstack/echo/v5`, and
-   `github.com/junioryono/godi/echo/v5` with `github.com/junioryono/godi/echov5/v5`.
+   `github.com/junioryono/godi/echo/v6` with `github.com/junioryono/godi/echov5/v6`.
 2. Change `echo.Context` to `*echo.Context` in controllers and option callbacks.
 3. Swap the parameters of a custom `HTTPErrorHandler` to `func(c *echo.Context, err error)`.
 

@@ -39,7 +39,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/junioryono/godi/v5"
+	"github.com/junioryono/godi/v6"
 )
 
 // modelDefaultIterations keeps the default run around a second under -race.

@@ -372,4 +372,4 @@ func TestNew(t *testing.T) {
 
 ---
 
-**Need more help?** Check the [API reference](https://pkg.go.dev/github.com/junioryono/godi/v5) or open an issue on [GitHub](https://github.com/junioryono/godi/issues).
+**Need more help?** Check the [API reference](https://pkg.go.dev/github.com/junioryono/godi/v6) or open an issue on [GitHub](https://github.com/junioryono/godi/issues).

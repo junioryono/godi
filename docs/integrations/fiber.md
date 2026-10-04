@@ -6,8 +6,8 @@ For Fiber v3, see the [Fiber v3 integration](fiber-v3.md).
 ## Installation
 
 ```bash
-go get github.com/junioryono/godi/v5
-go get github.com/junioryono/godi/fiber/v5
+go get github.com/junioryono/godi/v6
+go get github.com/junioryono/godi/fiber/v6
 ```
 
 ## Quick Start
@@ -17,8 +17,8 @@ package main
 
 import (
     "github.com/gofiber/fiber/v2"
-    "github.com/junioryono/godi/v5"
-    godifiber "github.com/junioryono/godi/fiber/v5"
+    "github.com/junioryono/godi/v6"
+    godifiber "github.com/junioryono/godi/fiber/v6"
 )
 
 type UserController struct{}
@@ -185,8 +185,8 @@ import (
     "github.com/gofiber/fiber/v2/middleware/logger"
     "github.com/gofiber/fiber/v2/middleware/recover"
     "github.com/google/uuid"
-    "github.com/junioryono/godi/v5"
-    godifiber "github.com/junioryono/godi/fiber/v5"
+    "github.com/junioryono/godi/v6"
+    godifiber "github.com/junioryono/godi/fiber/v6"
 )
 
 // === Services ===

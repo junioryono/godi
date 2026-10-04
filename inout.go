@@ -1,7 +1,7 @@
 package godi
 
 import (
-	"github.com/junioryono/godi/v5/internal/reflection"
+	"github.com/junioryono/godi/v6/internal/reflection"
 )
 
 // In marks a struct as a parameter object.

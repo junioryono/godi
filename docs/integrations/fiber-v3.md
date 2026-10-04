@@ -16,8 +16,8 @@ names the Fiber version.
 ## Installation
 
 ```bash
-go get github.com/junioryono/godi/v5
-go get github.com/junioryono/godi/fiberv3/v5
+go get github.com/junioryono/godi/v6
+go get github.com/junioryono/godi/fiberv3/v6
 ```
 
 ## Quick Start
@@ -27,8 +27,8 @@ package main
 
 import (
     "github.com/gofiber/fiber/v3"
-    "github.com/junioryono/godi/v5"
-    godifiber "github.com/junioryono/godi/fiberv3/v5"
+    "github.com/junioryono/godi/v6"
+    godifiber "github.com/junioryono/godi/fiberv3/v6"
 )
 
 type UserController struct{}
@@ -246,7 +246,7 @@ user values, not the request context: pass `c.Context()` to
 ## Migrating from the Fiber v2 integration
 
 1. Replace the imports: `github.com/gofiber/fiber/v2` with `github.com/gofiber/fiber/v3`, and
-   `github.com/junioryono/godi/fiber/v5` with `github.com/junioryono/godi/fiberv3/v5`.
+   `github.com/junioryono/godi/fiber/v6` with `github.com/junioryono/godi/fiberv3/v6`.
 2. Change `*fiber.Ctx` to `fiber.Ctx` in controllers and option callbacks.
 3. Replace `godi.FromContext(c.UserContext())` with `godi.FromContext(c.Context())`.
 

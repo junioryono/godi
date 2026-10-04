@@ -1,16 +1,16 @@
-module github.com/junioryono/godi/chi/v5
+module github.com/junioryono/godi/chi/v6
 
 go 1.26.0
 
 require (
-	github.com/junioryono/godi/http/v5 v5.2.0
-	github.com/junioryono/godi/v5 v5.2.0
+	github.com/junioryono/godi/http/v6 v6.0.0
+	github.com/junioryono/godi/v6 v6.0.0
 	github.com/stretchr/testify v1.12.1
 	go.uber.org/goleak v1.3.0
 )
 
 require go.yaml.in/yaml/v3 v3.0.5 // indirect
 
-replace github.com/junioryono/godi/v5 => ../
+replace github.com/junioryono/godi/v6 => ../
 
-replace github.com/junioryono/godi/http/v5 => ../http
+replace github.com/junioryono/godi/http/v6 => ../http

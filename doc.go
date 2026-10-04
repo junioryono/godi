@@ -105,5 +105,5 @@
 // Huma): https://godi.readthedocs.io
 //
 // API reference and runnable examples:
-// https://pkg.go.dev/github.com/junioryono/godi/v5
+// https://pkg.go.dev/github.com/junioryono/godi/v6
 package godi

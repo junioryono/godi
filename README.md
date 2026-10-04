@@ -1,6 +1,6 @@
 # godi
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/junioryono/godi/v5.svg)](https://pkg.go.dev/github.com/junioryono/godi/v5)
+[![Go Reference](https://pkg.go.dev/badge/github.com/junioryono/godi/v6.svg)](https://pkg.go.dev/github.com/junioryono/godi/v6)
 [![Go Report Card](https://goreportcard.com/badge/github.com/junioryono/godi)](https://goreportcard.com/report/github.com/junioryono/godi)
 [![Build Status](https://github.com/junioryono/godi/actions/workflows/test.yml/badge.svg)](https://github.com/junioryono/godi/actions/workflows/test.yml)
 [![Coverage](https://codecov.io/gh/junioryono/godi/branch/main/graph/badge.svg)](https://codecov.io/gh/junioryono/godi)
@@ -76,7 +76,7 @@ services.AddScoped(NewUserService)
 ## Installation
 
 ```bash
-go get github.com/junioryono/godi/v5
+go get github.com/junioryono/godi/v6
 ```
 
 Requires **Go 1.26+**. Zero external dependencies.
@@ -96,7 +96,7 @@ import (
     "fmt"
     "log"
 
-    "github.com/junioryono/godi/v5"
+    "github.com/junioryono/godi/v6"
 )
 
 type Logger struct{}
@@ -174,8 +174,8 @@ import (
     "log"
     "net/http"
 
-    "github.com/junioryono/godi/v5"
-    godihttp "github.com/junioryono/godi/http/v5"
+    "github.com/junioryono/godi/v6"
+    godihttp "github.com/junioryono/godi/http/v6"
 )
 
 type Logger struct{}
@@ -218,14 +218,14 @@ func main() {
 
 | Framework | Package                                 | Install                                        |
 | --------- | --------------------------------------- | ---------------------------------------------- |
-| net/http  | `github.com/junioryono/godi/http/v5`    | `go get github.com/junioryono/godi/http/v5`    |
-| Gin       | `github.com/junioryono/godi/gin/v5`     | `go get github.com/junioryono/godi/gin/v5`     |
-| Chi       | `github.com/junioryono/godi/chi/v5`     | `go get github.com/junioryono/godi/chi/v5`     |
-| Echo v4   | `github.com/junioryono/godi/echo/v5`    | `go get github.com/junioryono/godi/echo/v5`    |
-| Echo v5   | `github.com/junioryono/godi/echov5/v5`  | `go get github.com/junioryono/godi/echov5/v5`  |
-| Fiber v2  | `github.com/junioryono/godi/fiber/v5`   | `go get github.com/junioryono/godi/fiber/v5`   |
-| Fiber v3  | `github.com/junioryono/godi/fiberv3/v5` | `go get github.com/junioryono/godi/fiberv3/v5` |
-| Huma      | `github.com/junioryono/godi/huma/v5`    | `go get github.com/junioryono/godi/huma/v5`    |
+| net/http  | `github.com/junioryono/godi/http/v6`    | `go get github.com/junioryono/godi/http/v6`    |
+| Gin       | `github.com/junioryono/godi/gin/v6`     | `go get github.com/junioryono/godi/gin/v6`     |
+| Chi       | `github.com/junioryono/godi/chi/v6`     | `go get github.com/junioryono/godi/chi/v6`     |
+| Echo v4   | `github.com/junioryono/godi/echo/v6`    | `go get github.com/junioryono/godi/echo/v6`    |
+| Echo v5   | `github.com/junioryono/godi/echov5/v6`  | `go get github.com/junioryono/godi/echov5/v6`  |
+| Fiber v2  | `github.com/junioryono/godi/fiber/v6`   | `go get github.com/junioryono/godi/fiber/v6`   |
+| Fiber v3  | `github.com/junioryono/godi/fiberv3/v6` | `go get github.com/junioryono/godi/fiberv3/v6` |
+| Huma      | `github.com/junioryono/godi/huma/v6`    | `go get github.com/junioryono/godi/huma/v6`    |
 
 The trailing `/v5` is godi's major version, not the framework's: `echov5/v5`
 is godi v5's integration for Echo v5.
@@ -448,7 +448,7 @@ documents what each benchmark measures.
 - [Features](https://godi.readthedocs.io/en/latest/features/) - Keyed services, groups, parameter objects
 - [Integrations](https://godi.readthedocs.io/en/latest/integrations/) - Gin, Chi, Echo (v4 and v5), Fiber (v2 and v3), net/http, Huma
 - [Guides](https://godi.readthedocs.io/en/latest/guides/) - Web apps, testing, error handling
-- [API Reference](https://pkg.go.dev/github.com/junioryono/godi/v5)
+- [API Reference](https://pkg.go.dev/github.com/junioryono/godi/v6)
 - [Executable Quick Start](docs/examples/quickstart/main.go)
 
 ## Contributing

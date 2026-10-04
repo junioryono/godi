@@ -8,8 +8,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/junioryono/godi/v5/internal/graph"
-	"github.com/junioryono/godi/v5/internal/reflection"
+	"github.com/junioryono/godi/v6/internal/graph"
+	"github.com/junioryono/godi/v6/internal/reflection"
 	"github.com/stretchr/testify/assert"
 )
 

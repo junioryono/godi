@@ -9,8 +9,8 @@ import (
 	"sync"
 	"testing"
 
-	godihttp "github.com/junioryono/godi/http/v5"
-	"github.com/junioryono/godi/v5"
+	godihttp "github.com/junioryono/godi/http/v6"
+	"github.com/junioryono/godi/v6"
 	"github.com/stretchr/testify/assert"
 )
 

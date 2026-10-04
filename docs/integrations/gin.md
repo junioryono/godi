@@ -5,8 +5,8 @@ Complete guide for using godi with the [Gin](https://github.com/gin-gonic/gin) w
 ## Installation
 
 ```bash
-go get github.com/junioryono/godi/v5
-go get github.com/junioryono/godi/gin/v5
+go get github.com/junioryono/godi/v6
+go get github.com/junioryono/godi/gin/v6
 ```
 
 ## Quick Start
@@ -16,8 +16,8 @@ package main
 
 import (
     "github.com/gin-gonic/gin"
-    "github.com/junioryono/godi/v5"
-    godigin "github.com/junioryono/godi/gin/v5"
+    "github.com/junioryono/godi/v6"
+    godigin "github.com/junioryono/godi/gin/v6"
 )
 
 type UserController struct{}
@@ -134,8 +134,8 @@ import (
 
     "github.com/gin-gonic/gin"
     "github.com/google/uuid"
-    "github.com/junioryono/godi/v5"
-    godigin "github.com/junioryono/godi/gin/v5"
+    "github.com/junioryono/godi/v6"
+    godigin "github.com/junioryono/godi/gin/v6"
 )
 
 // === Services ===

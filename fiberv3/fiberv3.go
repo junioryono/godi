@@ -1,6 +1,6 @@
 // Package fiberv3 provides godi integration for Fiber v3
 // (github.com/gofiber/fiber/v3). For Fiber v2, use
-// github.com/junioryono/godi/fiber/v5.
+// github.com/junioryono/godi/fiber/v6.
 //
 // This package provides middleware for creating request-scoped containers
 // and type-safe handler wrappers for resolving controllers. Its API mirrors
@@ -29,7 +29,7 @@ import (
 	"sync"
 
 	"github.com/gofiber/fiber/v3"
-	"github.com/junioryono/godi/v5"
+	"github.com/junioryono/godi/v6"
 )
 
 // Config holds the configuration for the scope middleware.
