@@ -39,13 +39,13 @@
 // [ResolveFromContext] or [FromContext]. Cancelling the context a scope was
 // created with does not close the scope: cancellation tells the work to stop,
 // and the scope's owner closes it once the work is done. With
-// [ProviderOptions].ValidateScopes, resolving a scoped service from the root
+// [WithScopeValidation], resolving a scoped service from the root
 // provider fails with [ErrScopeRequired] instead of silently caching one
 // instance for the whole application.
 //
 // # Build
 //
-// [Collection.Build] (and BuildWithContext, BuildWithOptions) reports every
+// [Collection.Build] reports every
 // registration error at once, then validates the whole graph before running
 // any constructor: missing dependencies, cycles, lifetime conflicts, and
 // decorators that match no registration. [Validate] runs the same checks
@@ -95,7 +95,7 @@
 //   - [Explain] (or %+v) expands an error with remediation hints, cycle
 //     paths, and constructor stacks; error messages name constructors and
 //     their source locations.
-//   - [ProviderOptions].Observer receives construction and disposal events.
+//   - [WithObserver] receives construction and disposal events.
 //   - [Describe] and [WriteDOT] expose the dependency graph without
 //     constructing anything.
 //

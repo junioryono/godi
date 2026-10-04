@@ -745,7 +745,7 @@ func TestCollectionBuild(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		_, err := c.BuildWithContext(ctx)
+		_, err := c.Build(WithContext(ctx))
 		require.Error(t, err)
 		assert.ErrorIs(t, err, context.Canceled)
 	})
@@ -1569,14 +1569,14 @@ func TestFailedRegistrationRollsBackGroupMember(t *testing.T) {
 	assert.False(t, c.(*collection).HasGroup(reflect.TypeFor[*TService](), "g"))
 }
 
-func TestBuildWithOptions(t *testing.T) {
+func TestBuildOptions(t *testing.T) {
 	t.Parallel()
 
-	t.Run("nil_options_builds", func(t *testing.T) {
+	t.Run("no_options_builds", func(t *testing.T) {
 		t.Parallel()
 		c := NewCollection()
 		c.AddSingleton(NewTService)
-		p, err := c.BuildWithOptions(nil)
+		p, err := c.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = p.Close() })
 
@@ -1585,11 +1585,49 @@ func TestBuildWithOptions(t *testing.T) {
 		assert.NotNil(t, svc)
 	})
 
+	t.Run("nil_option_and_nil_context_are_ignored", func(t *testing.T) {
+		t.Parallel()
+		type CtxHolder struct{ Ctx context.Context }
+		c := NewCollection()
+		c.AddSingleton(func(ctx context.Context) *CtxHolder { return &CtxHolder{Ctx: ctx} })
+		//nolint:staticcheck // a nil context is accepted on purpose
+		p, err := c.Build(nil, WithContext(nil))
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+		holder := RequireResolve[*CtxHolder](t, p)
+		assert.NoError(t, holder.Ctx.Err())
+	})
+
+	t.Run("last_context_wins", func(t *testing.T) {
+		t.Parallel()
+		type marker struct{}
+		type CtxHolder struct{ Ctx context.Context }
+		first := context.WithValue(context.Background(), marker{}, "first")
+		second := context.WithValue(context.Background(), marker{}, "second")
+		c := NewCollection()
+		c.AddSingleton(func(ctx context.Context) *CtxHolder { return &CtxHolder{Ctx: ctx} })
+		p, err := c.Build(WithContext(first), WithContext(second))
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+		assert.Equal(t, "second", RequireResolve[*CtxHolder](t, p).Ctx.Value(marker{}))
+	})
+
+	t.Run("non_positive_timeout_means_none", func(t *testing.T) {
+		t.Parallel()
+		for _, d := range []time.Duration{0, -time.Second} {
+			c := NewCollection()
+			c.AddSingleton(NewTService)
+			p, err := c.Build(WithBuildTimeout(d))
+			require.NoError(t, err, "timeout %v", d)
+			require.NoError(t, p.Close())
+		}
+	})
+
 	t.Run("generous_timeout_builds", func(t *testing.T) {
 		t.Parallel()
 		c := NewCollection()
 		c.AddSingleton(NewTService)
-		p, err := c.BuildWithOptions(&ProviderOptions{BuildTimeout: time.Minute})
+		p, err := c.Build(WithBuildTimeout(time.Minute))
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = p.Close() })
 	})
@@ -1598,7 +1636,7 @@ func TestBuildWithOptions(t *testing.T) {
 		t.Parallel()
 		c := NewCollection()
 		c.AddSingleton(nil)
-		_, err := c.BuildWithOptions(&ProviderOptions{})
+		_, err := c.Build()
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "constructor cannot be nil")
 	})
@@ -1905,7 +1943,7 @@ func TestBuildCancellation(t *testing.T) {
 			return NewTService()
 		})
 
-		p, err := c.BuildWithContext(ctx)
+		p, err := c.Build(WithContext(ctx))
 
 		// Build waits for the non-cooperative constructor and still fails on
 		// the cancellation it cannot deliver mid-flight.
@@ -1928,7 +1966,7 @@ func TestBuildCancellation(t *testing.T) {
 				return nil, ctx.Err()
 			})
 
-			p, err := c.BuildWithOptions(&ProviderOptions{BuildTimeout: 200 * time.Millisecond})
+			p, err := c.Build(WithBuildTimeout(200 * time.Millisecond))
 
 			require.ErrorIs(t, err, context.DeadlineExceeded)
 			assert.Nil(t, p)
@@ -1947,7 +1985,7 @@ func TestBuildCancellation(t *testing.T) {
 			return NewTService()
 		})
 
-		p, err := c.BuildWithContext(ctx)
+		p, err := c.Build(WithContext(ctx))
 		require.ErrorIs(t, err, context.Canceled)
 		assert.Nil(t, p)
 		assert.True(t, resource.IsClosed())
@@ -1968,7 +2006,7 @@ func TestBuildCancellation(t *testing.T) {
 			return NewTService()
 		})
 
-		p, err := c.BuildWithContext(ctx)
+		p, err := c.Build(WithContext(ctx))
 		require.Error(t, err)
 		assert.Nil(t, p)
 		assert.ErrorIs(t, err, context.Canceled)
@@ -1996,7 +2034,7 @@ func TestBuildContext(t *testing.T) {
 			return want, nil
 		})
 
-		p, err := c.BuildWithContext(buildCtx)
+		p, err := c.Build(WithContext(buildCtx))
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = p.Close() })
 	})
@@ -2024,7 +2062,7 @@ func TestBuildContext(t *testing.T) {
 			return NewTService()
 		})
 
-		p, err := c.BuildWithContext(context.Background())
+		p, err := c.Build()
 		close(stop)
 		readers.Wait()
 		require.NoError(t, err)
@@ -2037,7 +2075,7 @@ func TestBuildContext(t *testing.T) {
 		c := NewCollection()
 		c.AddSingleton(func(ctx context.Context) *CtxHolder { return &CtxHolder{Ctx: ctx} })
 
-		p, err := c.BuildWithOptions(&ProviderOptions{BuildTimeout: time.Minute})
+		p, err := c.Build(WithBuildTimeout(time.Minute))
 		require.NoError(t, err)
 		holder, err := Resolve[*CtxHolder](p)
 		require.NoError(t, err)
@@ -2058,9 +2096,9 @@ func TestBuildContext(t *testing.T) {
 		c := NewCollection()
 		c.AddSingleton(func(ctx context.Context) *CtxHolder { return &CtxHolder{Ctx: ctx} })
 
-		// BuildWithContext took a context but no options, and
-		// BuildWithOptions options but no context.
-		p, err := c.BuildWithOptions(&ProviderOptions{Context: parent, BuildTimeout: time.Minute})
+		// A parent context and a build timeout compose: the timeout bounds
+		// Build, the parent the provider.
+		p, err := c.Build(WithContext(parent), WithBuildTimeout(time.Minute))
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = p.Close() })
 		holder, err := Resolve[*CtxHolder](p)
@@ -2085,7 +2123,7 @@ func TestBuildContext(t *testing.T) {
 			return &CtxHolder{Ctx: ctx, BuildTime: deadline, BuildHasDdl: ok}
 		})
 
-		p, err := c.BuildWithOptions(&ProviderOptions{BuildTimeout: time.Minute})
+		p, err := c.Build(WithBuildTimeout(time.Minute))
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = p.Close() })
 		holder, err := Resolve[*CtxHolder](p)

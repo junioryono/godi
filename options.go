@@ -2,9 +2,11 @@ package godi
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"reflect"
 	"strings"
+	"time"
 )
 
 // An AddOption modifies the default behavior of AddSingleton, AddScoped, and AddTransient.
@@ -289,3 +291,68 @@ func Instance(v any) any {
 
 // instanceValue wraps a value registered through Instance.
 type instanceValue struct{ value any }
+
+// ---------------------------------------------------------------------------
+// Build options
+// ---------------------------------------------------------------------------
+
+// A BuildOption configures Collection.Build.
+type BuildOption interface {
+	applyBuildOption(*buildOptions)
+}
+
+type buildOptions struct {
+	context        context.Context
+	timeout        time.Duration
+	observer       Observer
+	validateScopes bool
+}
+
+func newBuildOptions(opts []BuildOption) buildOptions {
+	var options buildOptions
+	for _, opt := range opts {
+		if opt != nil {
+			opt.applyBuildOption(&options)
+		}
+	}
+	return options
+}
+
+type buildOptionFunc func(*buildOptions)
+
+func (f buildOptionFunc) applyBuildOption(o *buildOptions) { f(o) }
+
+// WithContext sets the parent of the provider's root context: its values are
+// visible to services, and its cancellation propagates to them. It also bounds
+// Build: constructors that run during Build receive it (or the build
+// timeout's context derived from it), and Build fails if it is cancelled.
+// A nil ctx means context.Background(); the last WithContext wins.
+func WithContext(ctx context.Context) BuildOption {
+	return buildOptionFunc(func(o *buildOptions) { o.context = ctx })
+}
+
+// WithBuildTimeout sets a cooperative deadline for Build. Constructors that
+// accept context.Context can stop promptly when it expires; others cannot be
+// preempted, but an expired deadline is checked after they return and never
+// produces a provider. The deadline bounds Build only: once Build succeeds,
+// the context given to singletons is no longer subject to it. A duration of
+// zero or less means no timeout.
+func WithBuildTimeout(d time.Duration) BuildOption {
+	return buildOptionFunc(func(o *buildOptions) { o.timeout = d })
+}
+
+// WithObserver sets the Observer that receives construction and disposal
+// events, including failures of background cleanup that have no caller to
+// report to.
+func WithObserver(observer Observer) BuildOption {
+	return buildOptionFunc(func(o *buildOptions) { o.observer = observer })
+}
+
+// WithScopeValidation sets whether resolving a scoped service, directly or
+// through transients, from the provider's root scope fails with
+// ErrScopeRequired. Resolved from the root, a "per-request" service becomes
+// one instance shared by the whole application. With validation on, the root
+// scope also runs no scoped initializers.
+func WithScopeValidation(enabled bool) BuildOption {
+	return buildOptionFunc(func(o *buildOptions) { o.validateScopes = enabled })
+}

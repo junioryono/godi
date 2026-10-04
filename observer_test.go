@@ -24,7 +24,7 @@ func TestObserver(t *testing.T) {
 			return d
 		})
 		c.AddScoped(NewTServiceError)
-		p, err := c.BuildWithOptions(&ProviderOptions{Observer: obs.observer()})
+		p, err := c.Build(WithObserver(obs.observer()))
 		require.NoError(t, err)
 
 		scope, err := p.CreateScope(context.Background())
@@ -64,7 +64,7 @@ func TestObserver(t *testing.T) {
 			d.SetCloseError(closeErr)
 			return d
 		})
-		p, err := c.BuildWithOptions(&ProviderOptions{Observer: obs.observer()})
+		p, err := c.Build(WithObserver(obs.observer()))
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = p.Close() })
 		scope, err := p.CreateScope(context.Background())

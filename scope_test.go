@@ -268,7 +268,7 @@ func TestValidateScopes(t *testing.T) {
 		t.Helper()
 		c := NewCollection()
 		register(c)
-		p, err := c.BuildWithOptions(&ProviderOptions{ValidateScopes: validate})
+		p, err := c.Build(WithScopeValidation(validate))
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = p.Close() })
 		return p

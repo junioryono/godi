@@ -160,7 +160,7 @@ Scoped and transient services can depend on anything. A singleton cannot depend
 on a scoped service — directly, or through a chain of transients — and godi
 rejects that at build time. Resolve scoped services (and transients that need
 them) from a scope, never from the root provider; set
-`ProviderOptions.ValidateScopes` to have godi enforce it (see below).
+`godi.WithScopeValidation(true)` to have godi enforce it (see below).
 
 ### Valid Dependencies
 
@@ -234,9 +234,7 @@ for the whole application — one "per-request" instance shared by every request
 with no error. Turn on scope validation to reject it:
 
 ```go
-provider, err := services.BuildWithOptions(&godi.ProviderOptions{
-    ValidateScopes: true,
-})
+provider, err := services.Build(godi.WithScopeValidation(true))
 
 godi.Resolve[*RequestContext](provider)  // error: godi.ErrScopeRequired
 
@@ -245,7 +243,7 @@ defer scope.Close()
 godi.Resolve[*RequestContext](scope)     // ✓
 ```
 
-With `ValidateScopes`, transients that need scoped services must also be
+With scope validation, transients that need scoped services must also be
 resolved from a scope, and the root scope runs no scoped initializers. It is
 recommended for all applications and will be the default in the next major
 version.

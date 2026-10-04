@@ -1575,7 +1575,7 @@ func (r *modelRun) build() bool {
 
 	r.validateScopes = r.chance(30)
 	r.tr.setBuilding(true)
-	p, err := r.c.BuildWithOptions(&godi.ProviderOptions{ValidateScopes: r.validateScopes})
+	p, err := r.c.Build(godi.WithScopeValidation(r.validateScopes))
 	r.tr.setBuilding(false)
 	r.logf("Build(ValidateScopes=%v): %v", r.validateScopes, err)
 

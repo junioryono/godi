@@ -32,8 +32,8 @@ var (
 	ErrProviderDisposed = errors.New("service provider has been disposed")
 	ErrScopeDisposed    = errors.New("scope has been disposed")
 
-	// ErrScopeRequired is the cause reported when ProviderOptions.ValidateScopes
-	// is set and a scoped service is resolved from the provider's root scope
+	// ErrScopeRequired is the cause reported when scope validation
+	// (WithScopeValidation) is on and a scoped service is resolved from the provider's root scope
 	// rather than from a scope created with CreateScope.
 	ErrScopeRequired = errors.New("scoped service resolved from the root provider; resolve it from a scope created with CreateScope")
 

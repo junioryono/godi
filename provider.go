@@ -6,7 +6,6 @@ import (
 	"reflect"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/junioryono/godi/v6/internal/reflection"
 )
@@ -36,37 +35,6 @@ type Provider interface {
 	CreateScope(ctx context.Context) (Scope, error)
 }
 
-type ProviderOptions struct {
-	// BuildTimeout specifies a cooperative deadline for building the provider.
-	// Constructors that accept context.Context can stop promptly when it is
-	// cancelled. Other constructors cannot be preempted, but an expired deadline
-	// is checked after they return and can never produce a successful provider.
-	// The deadline bounds Build only: once Build succeeds, the context given
-	// to singletons is no longer subject to it and is cancelled when the
-	// provider closes.
-	BuildTimeout time.Duration
-
-	// ValidateScopes rejects resolving a scoped service, directly or through
-	// transients, from the provider's root scope (ErrScopeRequired). Resolved
-	// from the root, a "per-request" service becomes one instance shared by
-	// the whole application. With it set, the root scope also runs no scoped
-	// initializers. Recommended; it will be the default in the next major
-	// version.
-	ValidateScopes bool
-
-	// Context is the parent of the provider's root context: its values are
-	// visible to services, and its cancellation propagates (as with
-	// BuildWithContext). It also bounds Build. Defaults to
-	// context.Background().
-	Context context.Context
-
-	// Observer receives construction and disposal events, including
-	// failures of background cleanup that have no caller to report to.
-	// Its methods must be safe for concurrent use and should return
-	// quickly.
-	Observer Observer
-}
-
 // provider is the concrete implementation of Provider
 type provider struct {
 	id string
@@ -83,7 +51,7 @@ type provider struct {
 	// is then created on demand.
 	building atomic.Bool
 
-	// validateScopes is ProviderOptions.ValidateScopes. Immutable after build.
+	// validateScopes is set by WithScopeValidation. Immutable after build.
 	validateScopes bool
 
 	// started is set by the first godi.Start.
@@ -106,7 +74,7 @@ type provider struct {
 	// Immutable after build.
 	descriptors []*descriptor
 
-	// observer is ProviderOptions.Observer. Immutable after build.
+	// observer is set by WithObserver. Immutable after build.
 	observer Observer
 
 	// Reflection analyzer

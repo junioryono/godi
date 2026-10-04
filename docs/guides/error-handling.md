@@ -401,25 +401,23 @@ A runnable `Explain` of a lifetime conflict is the [`ExampleExplain`](https://pk
 
 ### 5. Observe Construction and Disposal
 
-`ProviderOptions.Observer` receives an event for every constructor call and
+`godi.WithObserver` receives an event for every constructor call and
 every disposal, with durations and errors — including cleanup failures of
 values produced after their scope closed, which have no caller to return an
 error to. Set the callbacks you need:
 
 ```go
-provider, err := services.BuildWithOptions(&godi.ProviderOptions{
-    Observer: godi.Observer{
-        Constructed: func(e *godi.ConstructedEvent) {
-            slog.Debug("constructed", "service", e.ServiceType, "scope", e.ScopeID,
-                "took", e.Duration, "err", e.Err)
-        },
-        Disposed: func(e *godi.DisposedEvent) {
-            if e.Err != nil {
-                slog.Warn("cleanup failed", "type", e.Type, "err", e.Err)
-            }
-        },
+provider, err := services.Build(godi.WithObserver(godi.Observer{
+    Constructed: func(e *godi.ConstructedEvent) {
+        slog.Debug("constructed", "service", e.ServiceType, "scope", e.ScopeID,
+            "took", e.Duration, "err", e.Err)
     },
-})
+    Disposed: func(e *godi.DisposedEvent) {
+        if e.Err != nil {
+            slog.Warn("cleanup failed", "type", e.Type, "err", e.Err)
+        }
+    },
+}))
 ```
 
 ### 6. Inspect the Graph

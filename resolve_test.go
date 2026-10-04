@@ -117,7 +117,7 @@ func TestIsService(t *testing.T) {
 		t.Parallel()
 		c := NewCollection()
 		c.AddScoped(NewTService)
-		vp, err := c.BuildWithOptions(&ProviderOptions{ValidateScopes: true})
+		vp, err := c.Build(WithScopeValidation(true))
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = vp.Close() })
 		scope, err := vp.CreateScope(context.Background())

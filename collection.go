@@ -44,18 +44,10 @@ type Collection interface {
 	// can be added without breaking anyone.
 	impl() *collection
 
-	// Build creates a Provider from the registered services
-	// using default options.
-	Build() (Provider, error)
-
-	// BuildWithContext creates a Provider with the given context.
-	// Eager constructors can depend on context.Context and cooperate with
-	// cancellation; the context is also checked throughout construction.
-	BuildWithContext(ctx context.Context) (Provider, error)
-
-	// BuildWithOptions creates a Provider with custom options
-	// for validation and behavior configuration.
-	BuildWithOptions(options *ProviderOptions) (Provider, error)
+	// Build validates the registrations, creates the eager singletons, and
+	// returns the Provider. Options set a parent context, a build timeout,
+	// an observer, and scope validation (see BuildOption).
+	Build(opts ...BuildOption) (Provider, error)
 
 	// AddModules applies one or more module configurations to the service collection.
 	// Modules provide a way to group related service registrations.
@@ -181,46 +173,30 @@ func NewCollection() Collection {
 	}
 }
 
-// Build creates a Provider from the registered services using default options.
-func (sc *collection) Build() (Provider, error) {
-	return sc.BuildWithContext(context.Background())
-}
-
-// BuildWithContext creates a Provider with the given cooperative build context.
-// The context is available to eager constructors that depend on context.Context
-// and is checked throughout construction. It also parents the provider's root
-// context, so its values remain visible and its cancellation propagates.
-func (sc *collection) BuildWithContext(ctx context.Context) (Provider, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	return sc.doBuild(ctx, ctx, nil)
-}
-
-// BuildWithOptions creates a Provider configured by options (which may be
-// nil): a parent context, a build timeout, scope validation, and an observer.
-func (sc *collection) BuildWithOptions(options *ProviderOptions) (Provider, error) {
-	parent := context.Background()
-	if options != nil && options.Context != nil {
-		parent = options.Context
+// Build creates a Provider from the registered services.
+func (sc *collection) Build(opts ...BuildOption) (Provider, error) {
+	options := newBuildOptions(opts)
+	parent := options.context
+	if parent == nil {
+		parent = context.Background()
 	}
 	ctx := parent
 
-	// Handle build timeout if specified. The timeout bounds Build only: the
-	// provider's root context is detached from it once Build succeeds.
-	if options != nil && options.BuildTimeout > 0 {
+	// The timeout bounds Build only: the provider's root context is detached
+	// from it once Build succeeds.
+	if options.timeout > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, options.BuildTimeout)
+		ctx, cancel = context.WithTimeout(ctx, options.timeout)
 		defer cancel()
 	}
 
-	return sc.doBuild(parent, ctx, options)
+	return sc.doBuild(parent, ctx, &options)
 }
 
 // doBuild builds a provider. parent becomes the parent of the provider's root
 // context; ctx bounds the build itself and is visible (deadline and
-// cancellation) to constructors that run during Build. options may be nil.
-func (sc *collection) doBuild(parent, ctx context.Context, options *ProviderOptions) (Provider, error) {
+// cancellation) to constructors that run during Build.
+func (sc *collection) doBuild(parent, ctx context.Context, options *buildOptions) (Provider, error) {
 	// Check context before starting
 	select {
 	case <-ctx.Done():
@@ -253,9 +229,9 @@ func (sc *collection) doBuild(parent, ctx context.Context, options *ProviderOpti
 		services:                    services,
 		groups:                      groups,
 		singletonOrder:              singletonsInCreationOrder(allDescriptors, services, groups),
-		validateScopes:              options != nil && options.ValidateScopes,
+		validateScopes:              options.validateScopes,
 		descriptors:                 allDescriptors,
-		observer:                    observerOf(options),
+		observer:                    options.observer,
 		analyzer:                    sc.analyzer, // Share analyzer from collection
 		singletonKeys:               make([]instanceKey, 0, len(allDescriptors)),
 		voidReturnScopedDescriptors: make([]*descriptor, 0, voidCount),
@@ -470,7 +446,7 @@ func (sc *collection) plan(ctx context.Context) (*buildPlan, error) {
 }
 
 // providerContext is the root scope's context. It is cancelled by
-// Provider.Close (or by the BuildWithContext parent). While Build runs it is
+// Provider.Close (or by the WithContext parent). While Build runs it is
 // also cancelled by the build context and reports that context's error, so
 // eager constructors observe a build timeout; once Build succeeds it is
 // detached from the build context, so the timeout cannot cancel the context
@@ -1274,7 +1250,7 @@ func (r *collection) registerDescriptor(descriptor *descriptor) error {
 //
 // Transients may depend on scoped services: resolved from a scope, they share
 // that scope's instances. (Resolving them from the root provider is what
-// ProviderOptions.ValidateScopes rejects.)
+// WithScopeValidation rejects.)
 func validateLifetimes(all []*descriptor, services map[registryKey]*descriptor, groups map[groupID][]*descriptor) error {
 	// scopedReach memoizes, per descriptor, the scoped service reachable
 	// from it through transients only, and the transients on the way.
