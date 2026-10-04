@@ -79,8 +79,21 @@ handler := godihttp.ScopeMiddleware(provider,
         reqCtx.UserID = r.Header.Get("X-User-ID")
         return nil
     }),
+
+    // Custom error handler for WithMiddleware failures, e.g. a rejected
+    // authentication check (defaults to the error handler above)
+    godihttp.WithMiddlewareErrorHandler(func(w http.ResponseWriter, r *http.Request, err error) {
+        http.Error(w, "Unauthorized", http.StatusUnauthorized)
+    }),
+
+    // Logger for the default handlers (defaults to slog.Default())
+    godihttp.WithLogger(logger),
 )(mux)
 ```
+
+Default handlers log the cause with `log/slog` and respond with a generic
+500; they never write internal error text to the client. See the
+[integration contract](#integration-contract).
 
 ## Handle
 
@@ -120,8 +133,15 @@ mux.HandleFunc("GET /users", godihttp.Handle(UserController.List,
     godihttp.WithResolutionErrorHandler(func(w http.ResponseWriter, r *http.Request, err error) {
         http.Error(w, "Service unavailable", http.StatusServiceUnavailable)
     }),
+
+    // Logger for the default handlers (defaults to slog.Default())
+    godihttp.WithHandlerLogger(logger),
 ))
 ```
+
+The default panic handler logs the panic value and stack trace, then responds
+with a generic 500. A panic with `http.ErrAbortHandler` is re-panicked so
+net/http can abort the response.
 
 ## Complete Example
 
@@ -399,4 +419,4 @@ func (c *UserController) List(w http.ResponseWriter, r *http.Request) {
 
 ---
 
-**See also:** [Gin Integration](gin.md) | [Chi Integration](chi.md) | [Echo Integration](echo.md) | [Fiber Integration](fiber.md)
+**See also:** [Integration contract](#integration-contract) | [Gin Integration](gin.md) | [Chi Integration](chi.md) | [Echo Integration](echo.md) | [Fiber Integration](fiber.md)

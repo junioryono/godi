@@ -75,6 +75,15 @@ g.Use(godigin.ScopeMiddleware(provider,
         reqCtx.UserID = c.GetHeader("X-User-ID")
         return nil
     }),
+
+    // Custom error handler for WithMiddleware failures, e.g. a rejected
+    // authentication check (defaults to the error handler above)
+    godigin.WithMiddlewareErrorHandler(func(c *gin.Context, err error) {
+        c.AbortWithStatusJSON(401, gin.H{"error": "Unauthorized"})
+    }),
+
+    // Logger for the default handlers (defaults to slog.Default())
+    godigin.WithLogger(logger),
 ))
 ```
 
@@ -116,6 +125,9 @@ g.GET("/users", godigin.Handle(UserController.List,
     godigin.WithResolutionErrorHandler(func(c *gin.Context, err error) {
         c.AbortWithStatusJSON(500, gin.H{"error": "Service unavailable"})
     }),
+
+    // Logger for the default handlers (defaults to slog.Default())
+    godigin.WithHandlerLogger(logger),
 ))
 ```
 
@@ -299,7 +311,9 @@ api := g.Group("/api/v1")
 
 ## Error Responses
 
-Default error responses return JSON:
+Default handlers log the cause with `log/slog` (the panic handler also logs
+the stack trace) and return a generic JSON 500; they never send internal error
+text to the client:
 
 ```json
 {
@@ -307,16 +321,18 @@ Default error responses return JSON:
 }
 ```
 
-Customize with error handlers:
+Customize with error handlers. Log the cause rather than putting it in the
+response:
 
 ```go
 godigin.WithResolutionErrorHandler(func(c *gin.Context, err error) {
-    c.AbortWithStatusJSON(503, gin.H{
-        "error":   "Service temporarily unavailable",
-        "details": err.Error(),
-    })
+    logger.Error("controller unavailable", "error", err)
+    c.AbortWithStatusJSON(503, gin.H{"error": "Service temporarily unavailable"})
 })
 ```
+
+See the [integration contract](#integration-contract) for the rules
+every integration follows.
 
 ---
 
