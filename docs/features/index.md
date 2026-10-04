@@ -8,3 +8,5 @@ Use these guides after the getting-started tutorial to apply godi's advanced reg
 - [Result objects](result-objects.md)
 - [Interface binding](interface-binding.md)
 - [Resource cleanup](resource-cleanup.md)
+- [Decorators](decorators.md)
+- [Composing and testing registrations](composition.md): Replace, TryAdd, Validate, Lazy, Invoke, Start, health checks

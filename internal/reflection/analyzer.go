@@ -208,6 +208,33 @@ func (a *Analyzer) Analyze(constructor any) (*ConstructorInfo, error) {
 	return a.cacheAndReturn(cacheKey, info)
 }
 
+// AnalyzeUncached analyzes a function like Analyze but does not cache the
+// result, so the function value (and its closure) is not retained. Use it
+// for one-off functions such as those passed to godi.Invoke.
+func (a *Analyzer) AnalyzeUncached(fn any) (*ConstructorInfo, error) {
+	if fn == nil {
+		return nil, fmt.Errorf("function cannot be nil")
+	}
+	val := reflect.ValueOf(fn)
+	if val.Kind() != reflect.Func || val.IsNil() {
+		return nil, fmt.Errorf("expected a non-nil function, got %T", fn)
+	}
+
+	info := &ConstructorInfo{
+		Type:   val.Type(),
+		Value:  val,
+		IsFunc: true,
+	}
+	if err := a.analyzeParameters(info); err != nil {
+		return nil, fmt.Errorf("failed to analyze parameters: %w", err)
+	}
+	if err := a.analyzeReturns(info); err != nil {
+		return nil, fmt.Errorf("failed to analyze returns: %w", err)
+	}
+	info.dependencies = a.buildDependencies(info)
+	return info, nil
+}
+
 // GetInvoker returns the shared ConstructorInvoker for this analyzer.
 // The invoker is stateless and thread-safe.
 func (a *Analyzer) GetInvoker() *ConstructorInvoker {

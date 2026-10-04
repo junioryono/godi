@@ -3,6 +3,7 @@ package godi
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -736,6 +737,154 @@ func TestShutdown(t *testing.T) {
 			assert.True(t, stuck.closed.Load())
 		})
 	})
+}
+
+func TestLazySingleton(t *testing.T) {
+	t.Parallel()
+
+	t.Run("created_on_first_resolution", func(t *testing.T) {
+		t.Parallel()
+		var calls atomic.Int32
+		c := NewCollection()
+		c.AddSingleton(func() *TService { calls.Add(1); return NewTService() }, Lazy())
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+		assert.Zero(t, calls.Load(), "a lazy singleton is not created at Build")
+
+		first, err := Resolve[*TService](p)
+		require.NoError(t, err)
+		second, err := Resolve[*TService](p)
+		require.NoError(t, err)
+		assert.Same(t, first, second)
+		assert.Equal(t, int32(1), calls.Load())
+	})
+
+	t.Run("concurrent_first_resolution_constructs_once", func(t *testing.T) {
+		t.Parallel()
+		var calls atomic.Int32
+		c := NewCollection()
+		c.AddSingleton(func() *TService { calls.Add(1); return NewTService() }, Lazy())
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+
+		var wg sync.WaitGroup
+		results := make([]*TService, 16)
+		for i := range results {
+			wg.Go(func() {
+				scope, err := p.CreateScope(context.Background())
+				if !assert.NoError(t, err) {
+					return
+				}
+				defer scope.Close()
+				results[i], _ = Resolve[*TService](scope)
+			})
+		}
+		wg.Wait()
+		assert.Equal(t, int32(1), calls.Load())
+		for _, r := range results {
+			assert.Same(t, results[0], r)
+		}
+	})
+
+	t.Run("a_failed_construction_is_retried", func(t *testing.T) {
+		t.Parallel()
+		var calls atomic.Int32
+		c := NewCollection()
+		c.AddSingleton(func() (*TService, error) {
+			if calls.Add(1) == 1 {
+				return nil, errors.New("not yet")
+			}
+			return NewTService(), nil
+		}, Lazy())
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+
+		_, err = Resolve[*TService](p)
+		require.Error(t, err)
+		_, err = Resolve[*TService](p)
+		require.NoError(t, err, "failures are not cached")
+	})
+
+	t.Run("still_validated_at_build", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddSingleton(func(*TDependency) *TService { return NewTService() }, Lazy())
+		_, err := c.Build()
+		require.ErrorIs(t, err, ErrServiceNotFound)
+	})
+
+	t.Run("disposed_before_its_dependencies", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddSingleton(func() *orderedWriter { return &orderedWriter{} })
+		c.AddSingleton(func(w *orderedWriter) *orderedBuffer { return &orderedBuffer{w: w} }, Lazy())
+		p, err := c.Build()
+		require.NoError(t, err)
+		buf, err := Resolve[*orderedBuffer](p)
+		require.NoError(t, err)
+		require.NoError(t, p.Close())
+		assert.True(t, buf.writerOpenAtClose)
+	})
+}
+
+func TestInvoke(t *testing.T) {
+	t.Parallel()
+
+	p := BuildProvider(t, AddSingleton(NewTService), AddSingleton(NewTDependency))
+
+	t.Run("resolves_parameters_and_calls", func(t *testing.T) {
+		t.Parallel()
+		var got *TService
+		err := Invoke(p, func(s *TService, d *TDependency) {
+			got = s
+		})
+		require.NoError(t, err)
+		assert.NotNil(t, got)
+	})
+
+	t.Run("parameter_object", func(t *testing.T) {
+		t.Parallel()
+		type Params struct {
+			In
+			Service *TService
+			Missing *TScoped `optional:"true"`
+		}
+		var got Params
+		require.NoError(t, Invoke(p, func(params Params) { got = params }))
+		assert.NotNil(t, got.Service)
+		assert.Nil(t, got.Missing)
+	})
+
+	t.Run("returns_the_function_error", func(t *testing.T) {
+		t.Parallel()
+		boom := errors.New("boom")
+		require.ErrorIs(t, Invoke(p, func(*TService) error { return boom }), boom)
+	})
+
+	t.Run("reports_missing_dependencies", func(t *testing.T) {
+		t.Parallel()
+		require.ErrorIs(t, Invoke(p, func(*TScoped) {}), ErrServiceNotFound)
+	})
+
+	t.Run("rejects_non_functions", func(t *testing.T) {
+		t.Parallel()
+		require.Error(t, Invoke(p, 42))
+	})
+}
+
+func TestIsService(t *testing.T) {
+	t.Parallel()
+	p := BuildProvider(t, AddSingleton(NewTService), AddScoped(NewTDependency, Name("named")))
+
+	assert.True(t, IsService(p, PtrTypeOf[TService]()))
+	assert.False(t, IsService(p, PtrTypeOf[TDependency]()), "only registered under a key")
+	assert.True(t, IsKeyedService(p, PtrTypeOf[TDependency](), "named"))
+	assert.False(t, IsKeyedService(p, PtrTypeOf[TDependency](), "other"))
+	assert.True(t, IsService(p, reflect.TypeFor[Scope]()), "the container's own types are services")
+	assert.True(t, IsService(p, reflect.TypeFor[context.Context]()))
 }
 
 // funcCloser adapts a function to Disposable.

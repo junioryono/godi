@@ -121,6 +121,12 @@ type collection struct {
 	// moduleStack tracks the modules currently being applied so that
 	// registration errors recorded inside a module carry the module's name.
 	moduleStack []string
+
+	// appliedModules records the modules (NewModule values) already applied.
+	appliedModules map[*moduleIdentity]struct{}
+
+	// decorators are the registered decorators, in registration order.
+	decorators []*decoration
 }
 
 // TypeKey uniquely identifies a keyed service
@@ -211,103 +217,12 @@ func (sc *collection) doBuild(parent, ctx context.Context, options *ProviderOpti
 	default:
 	}
 
-	// Hold the collection lock only to read it. Constructors run later in
-	// this method and may call collection methods (Count, Contains, ...),
-	// which would deadlock against a lock held for the whole build.
-	sc.mu.Lock()
-
-	// Surface every recorded registration error before doing any work:
-	// the Add* methods defer their errors to Build so callers can register
-	// services without per-call error checks.
-	if len(sc.errs) > 0 {
-		err := errors.Join(sc.errs...)
-		sc.mu.Unlock()
-		return nil, &BuildError{
-			Phase:   "registration",
-			Details: "one or more service registrations failed",
-			Cause:   err,
-		}
+	// Phases 1-3: snapshot and validate (see plan).
+	built, planErr := sc.plan(ctx)
+	if planErr != nil {
+		return nil, planErr
 	}
-
-	// Build a provider-owned snapshot. Collections remain reusable after Build,
-	// so providers must never retain the collection's mutable maps, slices, or
-	// sibling links.
-	allDescriptors, services, groups := snapshotRegistrations(
-		sc.allDescriptors,
-		sc.services,
-		sc.groups,
-	)
-	sc.mu.Unlock()
-
-	// Phase 1: Build dependency graph (validates cycles as part of build)
-	select {
-	case <-ctx.Done():
-		return nil, &BuildError{
-			Phase:   "graph",
-			Details: "build cancelled during graph construction",
-			Cause:   ctx.Err(),
-		}
-	default:
-	}
-
-	g := graph.NewDependencyGraphWithCapacity(len(allDescriptors))
-
-	for _, descriptor := range allDescriptors {
-		if descriptor == nil {
-			continue
-		}
-
-		if err := g.AddProviderDeferred(descriptor); err != nil {
-			return nil, &BuildError{
-				Phase:   "graph",
-				Details: fmt.Sprintf("failed to add provider %v", formatType(descriptor.Type)),
-				Cause:   err,
-			}
-		}
-	}
-
-	// Phase 1.5: Resolve group dependencies
-	// Connect group consumers to actual group member nodes in the graph.
-	// Without this, group consumers depend on phantom nodes (Key=nil) that
-	// don't match the real group members (Key=1,2,...), causing incorrect
-	// topological ordering and ErrSingletonNotInitialized during build.
-	g.ResolveGroupDependencies()
-
-	// Phase 2: Validate graph (cycles detected here, not per-add)
-	if err := g.DetectCycles(); err != nil {
-		return nil, &BuildError{
-			Phase:   "validation",
-			Details: "dependency graph validation failed",
-			Cause:   err,
-		}
-	}
-
-	// Phase 3: Validate lifetimes
-	select {
-	case <-ctx.Done():
-		return nil, &BuildError{
-			Phase:   "validation",
-			Details: "build cancelled during lifetime validation",
-			Cause:   ctx.Err(),
-		}
-	default:
-	}
-
-	if err := validateLifetimes(allDescriptors, services, groups); err != nil {
-		return nil, &BuildError{
-			Phase:   "validation",
-			Details: "lifetime validation failed",
-			Cause:   err,
-		}
-	}
-
-	if err := validateDependencies(allDescriptors, services); err != nil {
-		return nil, &BuildError{
-			Phase:   "validation",
-			Details: "missing dependencies",
-			Cause:   err,
-		}
-	}
+	allDescriptors, services, groups := built.all, built.services, built.groups
 
 	// Phase 4: Create provider with fast ID generation
 	// Count void-return scoped descriptors for pre-allocation
@@ -410,6 +325,129 @@ func (sc *collection) doBuild(parent, ctx context.Context, options *ProviderOpti
 	}
 
 	return p, nil
+}
+
+// buildPlan is a validated, provider-owned snapshot of a collection.
+type buildPlan struct {
+	all      []*descriptor
+	services map[TypeKey]*descriptor
+	groups   map[GroupKey][]*descriptor
+}
+
+// plan snapshots the collection and validates it (registration errors,
+// decorators, cycles, lifetimes, missing dependencies) without constructing
+// anything. ctx is checked between phases.
+func (sc *collection) plan(ctx context.Context) (*buildPlan, error) {
+	// Hold the collection lock only to read it. Constructors run later in
+	// Build and may call collection methods (Count, Contains, ...), which
+	// would deadlock against a lock held for the whole build.
+	sc.mu.Lock()
+
+	// Surface every recorded registration error before doing any work:
+	// the Add* methods defer their errors to Build so callers can register
+	// services without per-call error checks.
+	if len(sc.errs) > 0 {
+		err := errors.Join(sc.errs...)
+		sc.mu.Unlock()
+		return nil, &BuildError{
+			Phase:   "registration",
+			Details: "one or more service registrations failed",
+			Cause:   err,
+		}
+	}
+
+	// Build a provider-owned snapshot. Collections remain reusable after Build,
+	// so providers must never retain the collection's mutable maps, slices, or
+	// sibling links.
+	allDescriptors, services, groups := snapshotRegistrations(
+		sc.allDescriptors,
+		sc.services,
+		sc.groups,
+	)
+	decorators := append([]*decoration(nil), sc.decorators...)
+	sc.mu.Unlock()
+
+	// Decorators add dependencies to the services they decorate, so attach
+	// them before the graph and validation see those dependencies.
+	if err := attachDecorators(decorators, services, groups); err != nil {
+		return nil, &BuildError{
+			Phase:   "registration",
+			Details: "decorators match no registration",
+			Cause:   err,
+		}
+	}
+
+	// Phase 1: Build dependency graph (validates cycles as part of build)
+	select {
+	case <-ctx.Done():
+		return nil, &BuildError{
+			Phase:   "graph",
+			Details: "build cancelled during graph construction",
+			Cause:   ctx.Err(),
+		}
+	default:
+	}
+
+	g := graph.NewDependencyGraphWithCapacity(len(allDescriptors))
+
+	for _, descriptor := range allDescriptors {
+		if descriptor == nil {
+			continue
+		}
+
+		if err := g.AddProviderDeferred(descriptor); err != nil {
+			return nil, &BuildError{
+				Phase:   "graph",
+				Details: fmt.Sprintf("failed to add provider %v", formatType(descriptor.Type)),
+				Cause:   err,
+			}
+		}
+	}
+
+	// Phase 1.5: Resolve group dependencies
+	// Connect group consumers to actual group member nodes in the graph.
+	// Without this, group consumers depend on phantom nodes (Key=nil) that
+	// don't match the real group members (Key=1,2,...), causing incorrect
+	// topological ordering and ErrSingletonNotInitialized during build.
+	g.ResolveGroupDependencies()
+
+	// Phase 2: Validate graph (cycles detected here, not per-add)
+	if err := g.DetectCycles(); err != nil {
+		return nil, &BuildError{
+			Phase:   "validation",
+			Details: "dependency graph validation failed",
+			Cause:   err,
+		}
+	}
+
+	// Phase 3: Validate lifetimes
+	select {
+	case <-ctx.Done():
+		return nil, &BuildError{
+			Phase:   "validation",
+			Details: "build cancelled during lifetime validation",
+			Cause:   ctx.Err(),
+		}
+	default:
+	}
+
+	if err := validateLifetimes(allDescriptors, services, groups); err != nil {
+		return nil, &BuildError{
+			Phase:   "validation",
+			Details: "lifetime validation failed",
+			Cause:   err,
+		}
+	}
+
+	if err := validateDependencies(allDescriptors, services); err != nil {
+		return nil, &BuildError{
+			Phase:   "validation",
+			Details: "missing dependencies",
+			Cause:   err,
+		}
+	}
+
+	return &buildPlan{all: allDescriptors, services: services, groups: groups}, nil
 }
 
 // providerContext is the root scope's context. It is cancelled by
@@ -541,6 +579,25 @@ func (sc *collection) Err() error {
 	defer sc.mu.RUnlock()
 
 	return errors.Join(sc.errs...)
+}
+
+// moduleIdentity identifies a module value created by NewModule. It is a
+// non-zero-size type so every module gets a distinct pointer.
+type moduleIdentity struct{ _ byte }
+
+// markModuleApplied records that the module was applied, reporting false if
+// it already had been.
+func (sc *collection) markModuleApplied(id *moduleIdentity) bool {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	if _, applied := sc.appliedModules[id]; applied {
+		return false
+	}
+	if sc.appliedModules == nil {
+		sc.appliedModules = make(map[*moduleIdentity]struct{})
+	}
+	sc.appliedModules[id] = struct{}{}
+	return true
 }
 
 // pushModule and popModule maintain the module attribution stack used by
@@ -1296,17 +1353,13 @@ func validateLifetimes(all []*descriptor, services map[TypeKey]*descriptor, grou
 func validateDependencies(all []*descriptor, services map[TypeKey]*descriptor) error {
 	var errs []error
 	// Descriptors derived from one constructor (multi-return values, result
-	// object fields, interface aliases) share its dependencies: report once.
-	checked := make(map[any]struct{}, len(all))
+	// object fields, interface aliases) share its dependencies: report each
+	// once. Decorator dependencies are per descriptor and checked as well.
+	checked := make(map[*reflection.Dependency]struct{})
 	for _, d := range all {
 		if d == nil {
 			continue
 		}
-		fkey := flightKey(d)
-		if _, done := checked[fkey]; done {
-			continue
-		}
-		checked[fkey] = struct{}{}
 
 		serviceType := d.Type
 		if d.VoidReturn {
@@ -1316,6 +1369,10 @@ func validateDependencies(all []*descriptor, services map[TypeKey]*descriptor) e
 			if dep == nil || dep.Optional || dep.Group != "" {
 				continue
 			}
+			if _, done := checked[dep]; done {
+				continue
+			}
+			checked[dep] = struct{}{}
 			if dep.Key == nil {
 				if _, reserved := reservedTypes[dep.Type]; reserved {
 					continue

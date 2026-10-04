@@ -79,6 +79,9 @@ type provider struct {
 	// validateScopes is ProviderOptions.ValidateScopes. Immutable after build.
 	validateScopes bool
 
+	// started is set by the first godi.Start.
+	started atomic.Bool
+
 	// Reflection analyzer
 	analyzer *reflection.Analyzer
 
@@ -537,13 +540,13 @@ func creationOrder(all []*descriptor, services map[TypeKey]*descriptor, groups m
 	return order
 }
 
-// singletonsInCreationOrder returns the singleton registrations in creation
-// order.
+// singletonsInCreationOrder returns the eager (non-Lazy) singleton
+// registrations in creation order.
 func singletonsInCreationOrder(all []*descriptor, services map[TypeKey]*descriptor, groups map[GroupKey][]*descriptor) []*descriptor {
 	ordered := creationOrder(all, services, groups)
 	singletons := ordered[:0]
 	for _, d := range ordered {
-		if d.Lifetime == Singleton {
+		if d.Lifetime == Singleton && !d.lazy {
 			singletons = append(singletons, d)
 		}
 	}

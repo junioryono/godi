@@ -927,7 +927,8 @@ func (s *scope) resolve(parent *resolveFrame, key instanceKey, descriptor *descr
 
 		// A singleton resolved before its turn during Build (at runtime,
 		// through an injected Provider or Scope) is created on demand.
-		if s.rootProvider.building.Load() {
+		// A Lazy singleton is created on its first resolution.
+		if s.rootProvider.building.Load() || descriptor.lazy {
 			return s.rootProvider.rootScope.resolveSingletonDuringBuild(parent, key, descriptor)
 		}
 
@@ -986,8 +987,7 @@ func (s *scope) createInstance(parent *resolveFrame, descriptor *descriptor) (an
 			}
 		}
 
-		s.setAliasedInstance(parent, descriptor, descriptor.instanceKey(), instance)
-		return instance, nil
+		return s.publishValue(parent, descriptor, instance, s)
 	}
 
 	// Read the pre-analyzed constructor info stashed on the descriptor at
@@ -1017,16 +1017,16 @@ func (s *scope) createInstance(parent *resolveFrame, descriptor *descriptor) (an
 	// that receives the container itself it detects re-entrance (see
 	// checkCycle). Elsewhere the frame allocation is skipped.
 	var resolver reflection.DependencyResolver = s
-	var frame *resolveFrame
-	if len(info.Parameters) > 0 && (s.isRoot || parent != nil || descriptor.injectsContainer) {
-		frame = &resolveFrame{scope: s, parent: parent, descriptor: descriptor}
+	if (len(info.Parameters) > 0 || len(descriptor.decorators) > 0) &&
+		(s.isRoot || parent != nil || descriptor.injectsContainer) {
+		frame := &resolveFrame{scope: s, parent: parent, descriptor: descriptor}
 		frame.active.Store(true)
+		// The construction lasts until its outputs are decorated and
+		// published.
+		defer frame.active.Store(false)
 		resolver = frame
 	}
 	results, err := invoker.Invoke(info, resolver)
-	if frame != nil {
-		frame.active.Store(false)
-	}
 	if err != nil {
 		// Check if it's a panic error and wrap appropriately
 		if panicErr, ok := errors.AsType[*reflection.PanicError](err); ok {
@@ -1070,11 +1070,11 @@ func (s *scope) createInstance(parent *resolveFrame, descriptor *descriptor) (an
 	}
 
 	if info.IsResultObject {
-		return s.publishResultObject(parent, descriptor, info, results[0])
+		return s.publishResultObject(parent, descriptor, info, results[0], resolver)
 	}
 
 	if descriptor.MultiReturnIndex >= 0 {
-		return s.publishMultiReturn(parent, descriptor, info, results)
+		return s.publishMultiReturn(parent, descriptor, info, results, resolver)
 	}
 
 	instance := results[0].Interface()
@@ -1085,8 +1085,107 @@ func (s *scope) createInstance(parent *resolveFrame, descriptor *descriptor) (an
 		}
 	}
 
-	s.setAliasedInstance(parent, descriptor, descriptor.instanceKey(), instance)
-	return instance, nil
+	return s.publishValue(parent, descriptor, instance, resolver)
+}
+
+// publishValue decorates and publishes the single value a constructor (or an
+// instance registration) produced for descriptor, under every interface
+// alias, and returns the value descriptor resolves to.
+func (s *scope) publishValue(parent *resolveFrame, d *descriptor, value any, resolver reflection.DependencyResolver) (any, error) {
+	aliased := d.isAlias && d.Lifetime != Transient && len(d.siblings) > 0
+	if !aliased {
+		decorated, err := s.decorateOutput(parent, d, value, resolver)
+		if err != nil {
+			return nil, err
+		}
+		s.setInstance(parent, d, d.instanceKey(), decorated)
+		return decorated, nil
+	}
+	if !hasDecorators(d.siblings...) {
+		s.setAliasedInstance(parent, d, d.instanceKey(), value)
+		return value, nil
+	}
+
+	// Decorated aliases: each interface gets its own decorators' result.
+	decorated := make([]any, len(d.siblings))
+	for i, alias := range d.siblings {
+		v, err := applyDecorators(alias, value, resolver)
+		if err != nil {
+			s.discardProduced(d, value)
+			return nil, err
+		}
+		decorated[i] = v
+	}
+	s.trackProduced(parent, d, value)
+	var primary any
+	for i, alias := range d.siblings {
+		s.setInstance(parent, alias, alias.instanceKey(), decorated[i])
+		if alias == d {
+			primary = decorated[i]
+		}
+	}
+	return primary, nil
+}
+
+// decorateOutput applies d's decorators to value. When value is wrapped, it
+// stays owned (disposed after the wrapper); when a decorator fails, value is
+// discarded.
+func (s *scope) decorateOutput(parent *resolveFrame, d *descriptor, value any, resolver reflection.DependencyResolver) (any, error) {
+	if len(d.decorators) == 0 {
+		return value, nil
+	}
+	decorated, err := applyDecorators(d, value, resolver)
+	if err != nil {
+		s.discardProduced(d, value)
+		return nil, err
+	}
+	s.trackProduced(parent, d, value)
+	return decorated, nil
+}
+
+// discardProduced closes a value produced for d that will not be published,
+// unless something else owns it or d is NoDispose.
+func (s *scope) discardProduced(d *descriptor, value any) {
+	if d.noDispose || !isDisposable(value) || s.ownedByAnyone(value) {
+		return
+	}
+	closeOrphan(value)
+}
+
+// producedOutput is one decorated output of a multi-output constructor,
+// ready to publish.
+type producedOutput struct {
+	target    *descriptor
+	key       instanceKey
+	value     any
+	isPrimary bool
+}
+
+// publishOutputs decorates every output, then publishes them all. A failing
+// decorator publishes nothing; the outputs not yet owned are discarded.
+func (s *scope) publishOutputs(
+	parent *resolveFrame,
+	requested *descriptor,
+	outputs []producedOutput,
+	resolver reflection.DependencyResolver,
+) (primary any, err error) {
+	for i := range outputs {
+		decorated, err := s.decorateOutput(parent, outputs[i].target, outputs[i].value, resolver)
+		if err != nil {
+			for _, rest := range outputs[i+1:] {
+				s.discardProduced(requested, rest.value)
+			}
+			return nil, err
+		}
+		outputs[i].value = decorated
+	}
+	for _, out := range outputs {
+		s.setInstance(parent, out.target, out.key, out.value)
+		if out.isPrimary {
+			primary = out.value
+		}
+	}
+	return primary, nil
 }
 
 // publishResultObject caches every field of a constructed result object (Out
@@ -1096,8 +1195,9 @@ func (s *scope) publishResultObject(
 	requested *descriptor,
 	info *reflection.ConstructorInfo,
 	result reflect.Value,
+	resolver reflection.DependencyResolver,
 ) (any, error) {
-	outputs, err := reflection.ResultObjectOutputs(result, info.Returns)
+	fields, err := reflection.ResultObjectOutputs(result, info.Returns)
 	if err != nil {
 		return nil, &ReflectionAnalysisError{
 			Constructor: requested.Constructor.Interface(),
@@ -1106,10 +1206,10 @@ func (s *scope) publishResultObject(
 		}
 	}
 
-	var primaryService any
+	outputs := make([]producedOutput, 0, len(fields))
 	primaryAbsent := false
 	next := 0
-	for i, output := range outputs {
+	for i, field := range fields {
 		ret := info.Returns[i]
 
 		// Each field's registered descriptor is a sibling of the one being
@@ -1117,15 +1217,15 @@ func (s *scope) publishResultObject(
 		// fields alike, whose registry keys differ from their struct tags.
 		var target *descriptor
 		if len(requested.siblings) > 0 {
-			target, next = requested.siblingForField(output.Index, next)
+			target, next = requested.siblingForField(field.Index, next)
 			if target == nil {
 				// The field's registration was removed from the collection.
 				// Don't fall back to the registry, which could find (and
 				// wrongly shadow) a replacement registration of the same type;
 				// but the constructor still produced the value, so this
 				// construction must still dispose it.
-				if output.Present {
-					s.trackProduced(parent, requested, output.Value)
+				if field.Present {
+					s.trackProduced(parent, requested, field.Value)
 				}
 				continue
 			}
@@ -1134,7 +1234,7 @@ func (s *scope) publishResultObject(
 			// path (no sibling links): registry lookup by type/key.
 			target = s.rootProvider.findDescriptor(ret.Type, ret.Key)
 			if target == nil {
-				if !output.Present {
+				if !field.Present {
 					continue
 				}
 				return nil, &ResolutionError{
@@ -1149,20 +1249,20 @@ func (s *scope) publishResultObject(
 			(ret.Type == requested.Type && target.Key == requested.Key && target.Group == requested.Group)
 
 		key := target.instanceKey()
-		if !output.Present {
+		if !field.Present {
 			s.setAbsent(target, key)
 			if isPrimary {
 				primaryAbsent = true
 			}
 			continue
 		}
-
-		s.setInstance(parent, target, key, output.Value)
-		if isPrimary {
-			primaryService = output.Value
-		}
+		outputs = append(outputs, producedOutput{target: target, key: key, value: field.Value, isPrimary: isPrimary})
 	}
 
+	primaryService, err := s.publishOutputs(parent, requested, outputs, resolver)
+	if err != nil {
+		return nil, err
+	}
 	if primaryService == nil {
 		if primaryAbsent {
 			return nil, &ResolutionError{
@@ -1187,13 +1287,19 @@ func (s *scope) publishMultiReturn(
 	requested *descriptor,
 	info *reflection.ConstructorInfo,
 	results []reflect.Value,
+	resolver reflection.DependencyResolver,
 ) (any, error) {
+	outputs := make([]producedOutput, 0, len(info.Returns))
 	if len(requested.siblings) > 0 {
 		// Cache every return value under its sibling's registration
 		// (which carries the actual key or group assigned at Add time).
 		for _, sibling := range requested.siblings {
-			value := results[sibling.MultiReturnIndex].Interface()
-			s.setInstance(parent, sibling, sibling.instanceKey(), value)
+			outputs = append(outputs, producedOutput{
+				target:    sibling,
+				key:       sibling.instanceKey(),
+				value:     results[sibling.MultiReturnIndex].Interface(),
+				isPrimary: sibling == requested,
+			})
 		}
 
 		// Return values whose registration was removed are still produced
@@ -1211,8 +1317,6 @@ func (s *scope) publishMultiReturn(
 				continue
 			}
 
-			value := results[ret.Index].Interface()
-
 			serviceDescriptor := s.rootProvider.findDescriptor(ret.Type, nil)
 			if serviceDescriptor == nil {
 				return nil, &ResolutionError{
@@ -1222,17 +1326,20 @@ func (s *scope) publishMultiReturn(
 				}
 			}
 
-			key := instanceKey{
-				Type:  ret.Type,
-				Key:   serviceDescriptor.Key,
-				Group: serviceDescriptor.Group,
-			}
-
-			s.setInstance(parent, serviceDescriptor, key, value)
+			outputs = append(outputs, producedOutput{
+				target: serviceDescriptor,
+				key: instanceKey{
+					Type:  ret.Type,
+					Key:   serviceDescriptor.Key,
+					Group: serviceDescriptor.Group,
+				},
+				value:     results[ret.Index].Interface(),
+				isPrimary: ret.Index == requested.MultiReturnIndex,
+			})
 		}
 	}
 
-	return results[requested.MultiReturnIndex].Interface(), nil
+	return s.publishOutputs(parent, requested, outputs, resolver)
 }
 
 // closeProducedOutputs closes the disposable service values of a constructor

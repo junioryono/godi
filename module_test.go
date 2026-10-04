@@ -352,3 +352,123 @@ func TestModule(t *testing.T) {
 		})
 	})
 }
+
+func TestModuleDeduplication(t *testing.T) {
+	t.Parallel()
+
+	logging := NewModule("logging", AddSingleton(NewTService))
+	users := NewModule("users", logging, AddScoped(NewTDependency))
+	orders := NewModule("orders", logging, AddScoped(NewTScoped))
+
+	// Both feature modules include the shared logging module: a diamond.
+	// Applying the same module value twice used to fail with
+	// AlreadyRegisteredError.
+	c := NewCollection()
+	c.AddModules(users, orders)
+	require.NoError(t, c.Err())
+	assert.Equal(t, 3, c.Count())
+
+	p, err := c.Build()
+	require.NoError(t, err)
+	require.NoError(t, p.Close())
+}
+
+func TestReplace(t *testing.T) {
+	t.Parallel()
+
+	t.Run("replaces_the_registration", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddSingleton(NewTServiceWithID("real"))
+		c.AddModules(ReplaceSingleton(NewTServiceWithID("fake")))
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+
+		svc, err := Resolve[*TService](p)
+		require.NoError(t, err)
+		assert.Equal(t, "fake", svc.ID)
+	})
+
+	t.Run("replacement_constructor_runs_instead_of_the_original", func(t *testing.T) {
+		t.Parallel()
+		originalRan := false
+		c := NewCollection()
+		c.AddSingleton(func() *TService { originalRan = true; return NewTService() })
+		c.AddModules(ReplaceScoped(NewTServiceWithID("fake")))
+		p, err := c.Build()
+		require.NoError(t, err)
+		require.NoError(t, p.Close())
+		assert.False(t, originalRan)
+	})
+
+	t.Run("keyed", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddSingleton(NewTServiceWithID("primary"), Name("db"))
+		c.AddSingleton(NewTServiceWithID("other"))
+		c.AddModules(ReplaceSingleton(NewTServiceWithID("mock"), Name("db")))
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+
+		keyed, err := ResolveKeyed[*TService](p, "db")
+		require.NoError(t, err)
+		assert.Equal(t, "mock", keyed.ID)
+		plain, err := Resolve[*TService](p)
+		require.NoError(t, err)
+		assert.Equal(t, "other", plain.ID, "only the matching key is replaced")
+	})
+
+	t.Run("nothing_to_replace_is_an_error", func(t *testing.T) {
+		t.Parallel()
+		// Unlike Remove, a Replace that matches nothing (e.g. ordered before
+		// the original registration) is reported instead of being a no-op.
+		c := NewCollection()
+		c.AddModules(ReplaceSingleton(NewTService))
+		err := c.Err()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "nothing to replace")
+	})
+}
+
+func TestTryAdd(t *testing.T) {
+	t.Parallel()
+
+	t.Run("adds_when_absent", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddModules(TryAddSingleton(NewTService))
+		assert.True(t, c.Contains(PtrTypeOf[TService]()))
+	})
+
+	t.Run("keeps_the_existing_registration", func(t *testing.T) {
+		t.Parallel()
+		// A library registers a default that the application may already
+		// have provided.
+		c := NewCollection()
+		c.AddSingleton(NewTServiceWithID("app"))
+		c.AddModules(TryAddSingleton(NewTServiceWithID("library-default")))
+		require.NoError(t, c.Err())
+
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+		svc, err := Resolve[*TService](p)
+		require.NoError(t, err)
+		assert.Equal(t, "app", svc.ID)
+	})
+
+	t.Run("keyed", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddSingleton(NewTServiceWithID("a"), Name("a"))
+		c.AddModules(
+			TryAddSingleton(NewTServiceWithID("ignored"), Name("a")),
+			TryAddSingleton(NewTServiceWithID("b"), Name("b")),
+		)
+		require.NoError(t, c.Err())
+		assert.True(t, c.ContainsKeyed(PtrTypeOf[TService](), "b"))
+		assert.Equal(t, 2, c.Count())
+	})
+}
