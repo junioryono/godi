@@ -117,9 +117,7 @@ func newDecoration(analyzer *reflection.Analyzer, fn any, opts []AddOption) (*de
 		group:        options.Group,
 		dependencies: info.Dependencies()[1:],
 	}
-	if options.Name != "" {
-		dec.key = options.Name
-	}
+	dec.key = options.key()
 	return dec, nil
 }
 

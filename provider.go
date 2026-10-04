@@ -216,12 +216,29 @@ func (p *provider) getGroup(parent *resolveFrame, serviceType reflect.Type, grou
 
 // CreateScope creates a new service scope
 func (p *provider) CreateScope(ctx context.Context) (Scope, error) {
+	s, err := p.createScope(nil, ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+// createScope creates a scope: a top-level scope when parent is nil, else a
+// child of parent (which closes it). ctx defaults to the parent's context, or
+// context.Background() for a top-level scope.
+func (p *provider) createScope(parent *scope, ctx context.Context) (*scope, error) {
 	if p.disposed.Load() != 0 {
 		return nil, ErrProviderDisposed
+	}
+	if parent != nil && parent.disposed.Load() != 0 {
+		return nil, ErrScopeDisposed
 	}
 
 	if ctx == nil {
 		ctx = context.Background()
+		if parent != nil {
+			ctx = parent.context
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -229,29 +246,53 @@ func (p *provider) CreateScope(ctx context.Context) (Scope, error) {
 
 	// Create scope with cancellable context
 	ctx, cancel := context.WithCancel(ctx)
-	s, err := newScope(p, nil, ctx, cancel)
+	child, err := newScope(p, parent, ctx, cancel)
 	if err != nil {
+		if parent != nil {
+			return nil, fmt.Errorf("failed to create child scope: %w", err)
+		}
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
-		_ = s.Close()
+		_ = child.Close()
 		return nil, err
 	}
 
-	// Track scope. Re-check disposal under the lock: Close may have run
-	// (and enumerated scopes) between the check at the top of this method
-	// and here, in which case this scope must be torn down by us instead
-	// of leaking untracked.
+	// Track the child in its parent. Re-check disposal under the lock: Close
+	// may have run (and enumerated children) since the check above, in which
+	// case the child must be torn down by us.
+	if parent != nil {
+		parent.childrenMu.Lock()
+		if parent.disposed.Load() != 0 {
+			parent.childrenMu.Unlock()
+			_ = child.Close()
+			return nil, ErrScopeDisposed
+		}
+		if parent.children == nil {
+			parent.children = make(map[*scope]struct{}, 2)
+		}
+		parent.children[child] = struct{}{}
+		parent.childrenMu.Unlock()
+	}
+
+	// Track in the provider, re-checking both the provider's and the
+	// parent's disposal: inserting an already-closed scope into p.scopes
+	// would leak the entry and hand the caller a disposed scope.
 	p.scopesMu.Lock()
 	if p.disposed.Load() != 0 {
 		p.scopesMu.Unlock()
-		_ = s.Close()
+		_ = child.Close()
 		return nil, ErrProviderDisposed
 	}
-	p.scopes[s] = struct{}{}
+	if parent != nil && parent.disposed.Load() != 0 {
+		p.scopesMu.Unlock()
+		_ = child.Close()
+		return nil, ErrScopeDisposed
+	}
+	p.scopes[child] = struct{}{}
 	p.scopesMu.Unlock()
 
-	return s, nil
+	return child, nil
 }
 
 // Close disposes the provider and all its resources, waiting for cleanup to
@@ -629,7 +670,7 @@ func extractParameterTypes(info *reflection.ConstructorInfo) []reflect.Type {
 //	if err != nil {
 //	    // Handle error
 //	}
-func Resolve[T any](provider Provider) (T, error) {
+func Resolve[T any](provider Resolver) (T, error) {
 	var zero T
 
 	if provider == nil {
@@ -662,10 +703,10 @@ func Resolve[T any](provider Provider) (T, error) {
 //
 //	// Panics if logger cannot be resolved
 //	logger := godi.MustResolve[*Logger](provider)
-func MustResolve[T any](provider Provider) T {
+func MustResolve[T any](provider Resolver) T {
 	service, err := Resolve[T](provider)
 	if err != nil {
-		panic(fmt.Sprintf("failed to resolve service: %v", err))
+		panic(fmt.Errorf("godi: failed to resolve service: %w", err))
 	}
 
 	return service
@@ -676,7 +717,7 @@ func MustResolve[T any](provider Provider) T {
 // Example:
 //
 //	cache, err := godi.ResolveKeyed[Cache](provider, "redis")
-func ResolveKeyed[T any](provider Provider, key any) (T, error) {
+func ResolveKeyed[T any](provider Resolver, key any) (T, error) {
 	var zero T
 
 	if provider == nil {
@@ -712,10 +753,10 @@ func ResolveKeyed[T any](provider Provider, key any) (T, error) {
 //
 //	// Panics if redis cache cannot be resolved
 //	cache := godi.MustResolveKeyed[Cache](provider, "redis")
-func MustResolveKeyed[T any](provider Provider, key any) T {
+func MustResolveKeyed[T any](provider Resolver, key any) T {
 	service, err := ResolveKeyed[T](provider, key)
 	if err != nil {
-		panic(fmt.Sprintf("failed to resolve keyed service %v: %v", key, err))
+		panic(fmt.Errorf("godi: failed to resolve keyed service %v: %w", key, err))
 	}
 
 	return service
@@ -726,7 +767,7 @@ func MustResolveKeyed[T any](provider Provider, key any) T {
 // Example:
 //
 //	handlers, err := godi.ResolveGroup[http.Handler](provider, "routes")
-func ResolveGroup[T any](provider Provider, group string) ([]T, error) {
+func ResolveGroup[T any](provider Resolver, group string) ([]T, error) {
 	if provider == nil {
 		return nil, ErrProviderNil
 	}
@@ -768,10 +809,10 @@ func ResolveGroup[T any](provider Provider, group string) ([]T, error) {
 //
 //	// Panics if handlers cannot be resolved
 //	handlers := godi.MustResolveGroup[http.Handler](provider, "routes")
-func MustResolveGroup[T any](provider Provider, group string) []T {
+func MustResolveGroup[T any](provider Resolver, group string) []T {
 	services, err := ResolveGroup[T](provider, group)
 	if err != nil {
-		panic(fmt.Sprintf("failed to resolve group %s: %v", group, err))
+		panic(fmt.Errorf("godi: failed to resolve group %s: %w", group, err))
 	}
 
 	return services

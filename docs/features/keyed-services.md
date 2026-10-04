@@ -38,6 +38,36 @@ services.AddSingleton(NewRedisCache, godi.Name("redis"))
 services.AddSingleton(NewMemoryCache, godi.Name("memory"))
 ```
 
+Keys can be any comparable value with `godi.Key` — an enum constant or a
+struct, not just a string (`godi.Name(s)` is `godi.Key(s)` for a string):
+
+```go
+type Region int
+
+const (
+    EU Region = iota
+    US
+)
+
+services.AddSingleton(NewEUStore, godi.Key(EU))
+services.AddSingleton(NewUSStore, godi.Key(US))
+
+store := godi.MustResolveKeyed[Store](provider, US)
+```
+
+Struct tags (`name:"..."`) can refer to string keys only.
+
+### Registering a Function Value
+
+`AddSingleton` treats a function as a constructor. To register a function
+*value* — for example a clock — wrap it with `godi.Instance`:
+
+```go
+type Clock func() time.Time
+
+services.AddSingleton(godi.Instance(Clock(time.Now)))
+```
+
 ## Resolution
 
 ```go

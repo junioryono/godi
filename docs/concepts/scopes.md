@@ -149,6 +149,17 @@ func processUser(ctx context.Context) {
 }
 ```
 
+`godi.ResolveFromContext` combines the two steps:
+
+```go
+userService, err := godi.ResolveFromContext[*UserService](ctx)
+```
+
+Code that only resolves services can depend on the narrow `godi.Resolver`
+interface (`Get`, `GetKeyed`, `GetGroup`) instead of `Provider` or `Scope`; the
+generic helpers (`Resolve`, `ResolveKeyed`, `ResolveGroup`) accept any
+`Resolver`.
+
 ## Scope Cleanup
 
 When a scope closes, all scoped and transient services created within it are disposed:

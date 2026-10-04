@@ -139,35 +139,12 @@ func newDescriptorWithAnalyzer(service any, lifetime Lifetime, analyzer *reflect
 		return nil, err
 	}
 
-	// Get constructor value and type
-	constructorValue := reflect.ValueOf(service)
-
-	// Check for nil pointers
-	if !constructorValue.IsValid() || (constructorValue.Kind() == reflect.Pointer && constructorValue.IsNil()) {
-		return nil, &ValidationError{
-			ServiceType: nil,
-			Cause:       ErrConstructorNil,
-		}
-	}
-
-	constructorType := constructorValue.Type()
-
-	// Check if it's an instance (not a function)
-	isInstance := constructorType.Kind() != reflect.Func
-
-	// Use provided analyzer or create one (for backward compatibility)
-	if analyzer == nil {
-		analyzer = reflection.New()
-	}
-
-	info, err := analyzer.Analyze(service)
+	service, isInstance, info, err := analyzeService(service, analyzer)
 	if err != nil {
-		return nil, &ReflectionAnalysisError{
-			Constructor: service,
-			Operation:   "analyze",
-			Cause:       err,
-		}
+		return nil, err
 	}
+	constructorValue := info.Value
+	constructorType := info.Type
 
 	// Reuse the dependencies already computed by Analyze rather than calling
 	// GetDependencies (which would issue a second Analyze cache lookup).
@@ -225,8 +202,8 @@ func newDescriptorWithAnalyzer(service any, lifetime Lifetime, analyzer *reflect
 	}
 
 	// Apply options
-	if options.Name != "" {
-		descriptor.Key = options.Name
+	if key := options.key(); key != nil {
+		descriptor.Key = key
 		descriptor.syntheticKey = false
 	}
 
@@ -274,6 +251,44 @@ func newDescriptorWithAnalyzer(service any, lifetime Lifetime, analyzer *reflect
 	}
 
 	return descriptor, nil
+}
+
+// analyzeService unwraps a godi.Instance value and analyzes service as a
+// constructor or a pre-built value. A value wrapped by godi.Instance is a
+// value even when it is a function.
+func analyzeService(service any, analyzer *reflection.Analyzer) (unwrapped any, isInstance bool, info *reflection.ConstructorInfo, err error) {
+	forceInstance := false
+	if wrapped, ok := service.(instanceValue); ok {
+		service = wrapped.value
+		forceInstance = true
+	}
+
+	// Check for nil pointers (and nil functions given to godi.Instance)
+	value := reflect.ValueOf(service)
+	if !value.IsValid() || (reflection.CanBeNil(value.Type()) && value.IsNil()) {
+		return nil, false, nil, &ValidationError{
+			ServiceType: nil,
+			Cause:       ErrConstructorNil,
+		}
+	}
+
+	if forceInstance || value.Kind() != reflect.Func {
+		return service, true, reflection.InstanceInfo(service), nil
+	}
+
+	// Use provided analyzer or create one (for backward compatibility)
+	if analyzer == nil {
+		analyzer = reflection.New()
+	}
+	info, err = analyzer.Analyze(service)
+	if err != nil {
+		return nil, false, nil, &ReflectionAnalysisError{
+			Constructor: service,
+			Operation:   "analyze",
+			Cause:       err,
+		}
+	}
+	return service, false, info, nil
 }
 
 // clone returns a shallow copy of the descriptor with the sibling links

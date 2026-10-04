@@ -161,13 +161,7 @@ func (a *Analyzer) Analyze(constructor any) (*ConstructorInfo, error) {
 	// ConstructorInfo (and its InstanceValue). The analysis is trivial for
 	// instances, so building it fresh costs almost nothing.
 	if typ.Kind() != reflect.Func {
-		return &ConstructorInfo{
-			Type:          typ,
-			Value:         val,
-			InstanceValue: constructor,
-			Parameters:    []ParameterInfo{},
-			dependencies:  []*Dependency{},
-		}, nil
+		return InstanceInfo(constructor), nil
 	}
 
 	// A function's entry-point pointer does not identify a function value:
@@ -206,6 +200,18 @@ func (a *Analyzer) Analyze(constructor any) (*ConstructorInfo, error) {
 	info.dependencies = a.buildDependencies(info)
 
 	return a.cacheAndReturn(cacheKey, info)
+}
+
+// InstanceInfo describes a pre-built value registered as-is (not invoked),
+// including a function value registered as a value.
+func InstanceInfo(value any) *ConstructorInfo {
+	return &ConstructorInfo{
+		Type:          reflect.TypeOf(value),
+		Value:         reflect.ValueOf(value),
+		InstanceValue: value,
+		Parameters:    []ParameterInfo{},
+		dependencies:  []*Dependency{},
+	}
 }
 
 // AnalyzeUncached analyzes a function like Analyze but does not cache the
