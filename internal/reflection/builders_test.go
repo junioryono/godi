@@ -56,12 +56,11 @@ func (r *TestResolver) Get(t reflect.Type) (any, error) {
 	return reflect.Zero(t).Interface(), nil
 }
 
-func (r *TestResolver) GetKeyed(t reflect.Type, key any) (any, error) {
+func (r *TestResolver) GetKeyed(t reflect.Type, name string) (any, error) {
 	if r.shouldFail {
 		return nil, r.failError
 	}
-	keyStr := fmt.Sprintf("%v", key)
-	if val, ok := r.keyedValues[keyStr]; ok {
+	if val, ok := r.keyedValues[name]; ok {
 		return val, nil
 	}
 	return r.Get(t)

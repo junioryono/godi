@@ -80,14 +80,14 @@ type Collection interface {
 	// Contains checks if a service exists for the type.
 	Contains(serviceType reflect.Type) bool
 
-	// ContainsKeyed checks if a keyed service exists.
-	ContainsKeyed(serviceType reflect.Type, key any) bool
+	// ContainsKeyed checks if a service is registered under name.
+	ContainsKeyed(serviceType reflect.Type, name string) bool
 
 	// Remove removes all services for a given service type.
 	Remove(serviceType reflect.Type)
 
-	// RemoveKeyed removes a specific keyed service.
-	RemoveKeyed(serviceType reflect.Type, key any)
+	// RemoveKeyed removes the service registered under name.
+	RemoveKeyed(serviceType reflect.Type, name string)
 
 	// ToSlice returns a read-only snapshot of all registered services for
 	// inspection and debugging.
@@ -128,6 +128,21 @@ type collection struct {
 	decorators []*decoration
 }
 
+// keyOf converts a service name to a registry key: "" (unnamed) is nil.
+func keyOf(name string) any {
+	if name == "" {
+		return nil
+	}
+	return name
+}
+
+// keyName returns the name a registry key carries, or "" for unnamed
+// services and the keys godi assigns itself (group positions, voidKey).
+func keyName(key any) string {
+	name, _ := key.(string)
+	return name
+}
+
 // registryKey identifies a registration: its service type and key (nil for
 // unkeyed services).
 type registryKey struct {
@@ -148,7 +163,7 @@ type ServiceInfo struct {
 	// ServiceType is the type the service resolves as.
 	ServiceType reflect.Type
 	// Key is the name for keyed services, or nil.
-	Key any
+	Key string
 	// Group is the value-group name for grouped services, or "".
 	Group string
 	// Lifetime is the service's lifetime (Singleton, Scoped, or Transient).
@@ -625,16 +640,12 @@ func (r *collection) Contains(t reflect.Type) bool {
 	return ok
 }
 
-// ContainsKeyed checks if a keyed service exists
-func (r *collection) ContainsKeyed(t reflect.Type, key any) bool {
+// ContainsKeyed checks if a service is registered under name.
+func (r *collection) ContainsKeyed(t reflect.Type, name string) bool {
 	if t == nil {
 		return false
 	}
-	// Value-level comparability: a comparable static type can still wrap a
-	// non-comparable value in an interface field and panic as a map key.
-	if key != nil && !reflect.ValueOf(key).Comparable() {
-		return false
-	}
+	key := keyOf(name)
 
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -688,16 +699,12 @@ func (r *collection) Remove(t reflect.Type) {
 	r.pruneDescriptors(removed)
 }
 
-// RemoveKeyed removes a specific keyed service
-func (r *collection) RemoveKeyed(t reflect.Type, key any) {
+// RemoveKeyed removes the service registered under name.
+func (r *collection) RemoveKeyed(t reflect.Type, name string) {
 	if t == nil {
 		return
 	}
-	// Value-level comparability: a comparable static type can still wrap a
-	// non-comparable value in an interface field and panic as a map key.
-	if key != nil && !reflect.ValueOf(key).Comparable() {
-		return
-	}
+	key := keyOf(name)
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -779,11 +786,11 @@ func (r *collection) ToSlice() []ServiceInfo {
 
 // serviceInfoKey returns the key a caller can resolve d with, hiding keys
 // godi generated internally (void initializers, group member positions).
-func serviceInfoKey(d *descriptor) any {
+func serviceInfoKey(d *descriptor) string {
 	if d.syntheticKey {
-		return nil
+		return ""
 	}
-	return d.Key
+	return keyName(d.Key)
 }
 
 // Count returns the number of registered services in the collection.
@@ -1370,7 +1377,7 @@ func validateDependencies(all []*descriptor, services map[registryKey]*descripto
 			errs = append(errs, &MissingDependencyError{
 				ServiceType:    serviceType,
 				DependencyType: dep.Type,
-				DependencyKey:  dep.Key,
+				DependencyKey:  keyName(dep.Key),
 				Constructor:    dependencySource(d, dep, decoratorSources),
 			})
 		}

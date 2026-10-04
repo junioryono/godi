@@ -24,7 +24,7 @@ var (
 	// ErrServiceNotFound indicates that no service is registered for the
 	// requested type and key.
 	ErrServiceNotFound = errors.New("service not found")
-	ErrServiceKeyNil   = errors.New("service key cannot be nil")
+	ErrServiceKeyEmpty = errors.New("service name cannot be empty")
 	ErrServiceTypeNil  = errors.New("service type cannot be nil")
 
 	// Lifecycle errors.
@@ -148,7 +148,7 @@ type CircularDependencyError = graph.CircularDependencyError
 // ResolutionError wraps errors that occur during service resolution.
 type ResolutionError struct {
 	ServiceType reflect.Type
-	ServiceKey  any // nil for non-keyed services
+	ServiceKey  string // the name; "" for unnamed services
 	Cause       error
 	Available   []reflect.Type // Types that ARE registered (optional, for suggestions)
 }
@@ -165,7 +165,7 @@ func (e *ResolutionError) Error() string {
 		b.WriteString("failed to resolve ")
 	}
 	b.WriteString(formatType(e.ServiceType))
-	if e.ServiceKey != nil {
+	if e.ServiceKey != "" {
 		fmt.Fprintf(&b, " (key: %v)", e.ServiceKey)
 	}
 
@@ -247,7 +247,7 @@ func isOutputNotProvided(err error) bool {
 type MissingDependencyError struct {
 	ServiceType    reflect.Type
 	DependencyType reflect.Type
-	DependencyKey  any // nil for non-keyed dependencies
+	DependencyKey  string // the name; "" for unnamed dependencies
 	// Constructor names the constructor and its source location.
 	Constructor string
 }
@@ -255,7 +255,7 @@ type MissingDependencyError struct {
 func (e *MissingDependencyError) Error() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s requires %s", formatType(e.ServiceType), formatType(e.DependencyType))
-	if e.DependencyKey != nil {
+	if e.DependencyKey != "" {
 		fmt.Fprintf(&b, " (key: %v)", e.DependencyKey)
 	}
 	b.WriteString(" (not registered)")

@@ -304,7 +304,7 @@ func resolveDecoratorParam(resolver reflection.DependencyResolver, param *reflec
 		return nil, fmt.Errorf("group parameters are not supported in decorators")
 	}
 	if param.Key != nil {
-		return resolver.GetKeyed(param.Type, param.Key)
+		return resolver.GetKeyed(param.Type, keyName(param.Key))
 	}
 	return resolver.Get(param.Type)
 }

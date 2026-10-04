@@ -26,7 +26,7 @@ type Provider interface {
 	Get(serviceType reflect.Type) (any, error)
 
 	// Resolves a keyed service of the specified type from the root scope.
-	GetKeyed(serviceType reflect.Type, key any) (any, error)
+	GetKeyed(serviceType reflect.Type, name string) (any, error)
 
 	// Resolves all services of the specified type in a group from the root scope.
 	GetGroup(serviceType reflect.Type, group string) ([]any, error)
@@ -131,9 +131,9 @@ func (p *provider) Get(serviceType reflect.Type) (any, error) {
 	return p.get(nil, serviceType)
 }
 
-// GetKeyed resolves a keyed service from the root scope
-func (p *provider) GetKeyed(serviceType reflect.Type, key any) (any, error) {
-	return p.getKeyed(nil, serviceType, key)
+// GetKeyed resolves the service registered under name from the root scope.
+func (p *provider) GetKeyed(serviceType reflect.Type, name string) (any, error) {
+	return p.getKeyed(nil, serviceType, keyOf(name))
 }
 
 // GetGroup resolves all services in a group from the root scope
@@ -165,7 +165,7 @@ func (p *provider) getKeyed(parent *resolveFrame, serviceType reflect.Type, key 
 	}
 
 	if key == nil {
-		return nil, ErrServiceKeyNil
+		return nil, ErrServiceKeyEmpty
 	}
 
 	return p.rootScope.getKeyed(parent, serviceType, key)
@@ -556,7 +556,7 @@ func (p *provider) createAllSingletonsWithContext(ctx context.Context) error {
 		if err != nil && !isOutputNotProvided(err) {
 			return &ResolutionError{
 				ServiceType: descriptor.Type,
-				ServiceKey:  descriptor.Key,
+				ServiceKey:  keyName(descriptor.Key),
 				Cause:       err,
 			}
 		}

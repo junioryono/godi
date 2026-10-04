@@ -3,7 +3,6 @@ package godi
 import (
 	"fmt"
 	"reflect"
-	"strconv"
 	"sync/atomic"
 
 	"github.com/junioryono/godi/v6/internal/reflection"
@@ -188,7 +187,7 @@ func newDescriptorWithAnalyzer(service any, lifetime Lifetime, analyzer *reflect
 			descriptor.Type = reflect.TypeFor[struct{}]()
 			if descriptor.Key == nil {
 				// Use fast atomic counter instead of UUID
-				descriptor.Key = "v" + strconv.FormatUint(voidKeyCounter.Add(1), 36)
+				descriptor.Key = voidKey(voidKeyCounter.Add(1))
 				descriptor.syntheticKey = true
 			}
 		} else {
@@ -649,3 +648,8 @@ func containerParameterError(t reflect.Type, key any, group string) error {
 	}
 	return fmt.Errorf("cannot depend on %s: depend on godi.Resolver to resolve services, or godi.ScopeFactory to create scopes", formatType(t))
 }
+
+// voidKey is the key godi assigns to each void initializer so that several
+// can be registered. It is not a string, so it never collides with a
+// godi.Name and never reads as one (keyName).
+type voidKey uint64

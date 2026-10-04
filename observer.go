@@ -23,7 +23,7 @@ type Observer struct {
 // ConstructedEvent describes one constructor call.
 type ConstructedEvent struct {
 	ServiceType reflect.Type
-	Key         any
+	Key         string
 	Lifetime    Lifetime
 	// ScopeID is the ID of the scope that ran the constructor (the root
 	// scope for singletons).

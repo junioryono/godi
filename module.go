@@ -120,9 +120,9 @@ func Remove[T any]() ModuleOption {
 //	    // ... other modules
 //	)
 //	// Any registration errors surface from c.Build().
-func RemoveKeyed[T any](key any) ModuleOption {
+func RemoveKeyed[T any](name string) ModuleOption {
 	return func(c Collection) error {
-		c.RemoveKeyed(reflect.TypeFor[T](), key)
+		c.RemoveKeyed(reflect.TypeFor[T](), name)
 		return nil
 	}
 }

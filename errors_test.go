@@ -54,7 +54,6 @@ func TestErrors(t *testing.T) {
 			t.Parallel()
 			err := &ResolutionError{
 				ServiceType: svcType,
-				ServiceKey:  nil,
 				Cause:       ErrServiceNotFound,
 			}
 			errStr := err.Error()

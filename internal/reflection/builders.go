@@ -137,7 +137,7 @@ func (b *ParamObjectBuilder) resolveFieldDependency(
 
 	// Handle keyed dependencies
 	if param.Key != nil {
-		value, err := resolver.GetKeyed(fieldType, param.Key)
+		value, err := resolver.GetKeyed(fieldType, keyName(param.Key))
 		if err != nil {
 			return reflect.Value{}, err
 		}
@@ -232,7 +232,7 @@ func CanBeNil(t reflect.Type) bool {
 // This will be implemented by the actual resolver.
 type DependencyResolver interface {
 	Get(t reflect.Type) (any, error)
-	GetKeyed(t reflect.Type, key any) (any, error)
+	GetKeyed(t reflect.Type, name string) (any, error)
 	GetGroup(t reflect.Type, group string) ([]any, error)
 }
 
@@ -396,9 +396,16 @@ func (ci *ConstructorInvoker) resolveParameter(
 
 	// Handle keyed parameters
 	if param.Key != nil {
-		return resolver.GetKeyed(param.Type, param.Key)
+		return resolver.GetKeyed(param.Type, keyName(param.Key))
 	}
 
 	// Regular parameter
 	return resolver.Get(param.Type)
+}
+
+// keyName returns the name of a parameter key (from a name:"..." tag), or ""
+// for an unnamed parameter.
+func keyName(key any) string {
+	name, _ := key.(string)
+	return name
 }

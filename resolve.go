@@ -15,7 +15,7 @@ import (
 // interface — and tests can supply a small fake.
 type Resolver interface {
 	Get(serviceType reflect.Type) (any, error)
-	GetKeyed(serviceType reflect.Type, key any) (any, error)
+	GetKeyed(serviceType reflect.Type, name string) (any, error)
 	GetGroup(serviceType reflect.Type, group string) ([]any, error)
 }
 
@@ -75,19 +75,19 @@ func MustResolve[T any](provider Resolver) T {
 // Example:
 //
 //	cache, err := godi.ResolveKeyed[Cache](provider, "redis")
-func ResolveKeyed[T any](provider Resolver, key any) (T, error) {
+func ResolveKeyed[T any](provider Resolver, name string) (T, error) {
 	var zero T
 
 	if provider == nil {
 		return zero, ErrProviderNil
 	}
 
-	if key == nil {
-		return zero, ErrServiceKeyNil
+	if name == "" {
+		return zero, ErrServiceKeyEmpty
 	}
 
 	serviceType := reflect.TypeFor[T]()
-	service, err := provider.GetKeyed(serviceType, key)
+	service, err := provider.GetKeyed(serviceType, name)
 	if err != nil {
 		return zero, err
 	}
@@ -111,10 +111,10 @@ func ResolveKeyed[T any](provider Resolver, key any) (T, error) {
 //
 //	// Panics if redis cache cannot be resolved
 //	cache := godi.MustResolveKeyed[Cache](provider, "redis")
-func MustResolveKeyed[T any](provider Resolver, key any) T {
-	service, err := ResolveKeyed[T](provider, key)
+func MustResolveKeyed[T any](provider Resolver, name string) T {
+	service, err := ResolveKeyed[T](provider, name)
 	if err != nil {
-		panic(fmt.Errorf("godi: failed to resolve keyed service %v: %w", key, err))
+		panic(fmt.Errorf("godi: failed to resolve keyed service %q: %w", name, err))
 	}
 
 	return service
@@ -265,11 +265,11 @@ func IsService(r Resolver, serviceType reflect.Type) bool {
 
 // IsKeyedService reports whether serviceType is registered under key in p,
 // a Provider or Scope. It constructs nothing.
-func IsKeyedService(r Resolver, serviceType reflect.Type, key any) bool {
-	if serviceType == nil || key == nil || !reflect.ValueOf(key).Comparable() {
+func IsKeyedService(r Resolver, serviceType reflect.Type, name string) bool {
+	if serviceType == nil || name == "" {
 		return false
 	}
-	return resolvableFrom(r, serviceType, key)
+	return resolvableFrom(r, serviceType, name)
 }
 
 // resolvableFrom reports whether a registration of serviceType and key exists

@@ -160,8 +160,8 @@ func (f *resolveFrame) Get(serviceType reflect.Type) (any, error) {
 	return f.scope.get(f, serviceType)
 }
 
-func (f *resolveFrame) GetKeyed(serviceType reflect.Type, key any) (any, error) {
-	return f.scope.getKeyed(f, serviceType, key)
+func (f *resolveFrame) GetKeyed(serviceType reflect.Type, name string) (any, error) {
+	return f.scope.getKeyed(f, serviceType, keyOf(name))
 }
 
 func (f *resolveFrame) GetGroup(serviceType reflect.Type, group string) ([]any, error) {
@@ -192,8 +192,8 @@ func (f *frameResolver) Get(serviceType reflect.Type) (any, error) {
 	return f.scope.get(f.frame.ifActive(), serviceType)
 }
 
-func (f *frameResolver) GetKeyed(serviceType reflect.Type, key any) (any, error) {
-	return f.scope.getKeyed(f.frame.ifActive(), serviceType, key)
+func (f *frameResolver) GetKeyed(serviceType reflect.Type, name string) (any, error) {
+	return f.scope.getKeyed(f.frame.ifActive(), serviceType, keyOf(name))
 }
 
 func (f *frameResolver) GetGroup(serviceType reflect.Type, group string) ([]any, error) {
@@ -228,8 +228,8 @@ func (f *frameScope) Get(serviceType reflect.Type) (any, error) {
 	return f.get(f.frame.ifActive(), serviceType)
 }
 
-func (f *frameScope) GetKeyed(serviceType reflect.Type, key any) (any, error) {
-	return f.getKeyed(f.frame.ifActive(), serviceType, key)
+func (f *frameScope) GetKeyed(serviceType reflect.Type, name string) (any, error) {
+	return f.getKeyed(f.frame.ifActive(), serviceType, keyOf(name))
 }
 
 func (f *frameScope) GetGroup(serviceType reflect.Type, group string) ([]any, error) {
@@ -357,7 +357,7 @@ func (s *scope) initializeScopedServices() error {
 		if _, err := s.createInstance(nil, descriptor, nil); err != nil {
 			return &ResolutionError{
 				ServiceType: descriptor.Type,
-				ServiceKey:  descriptor.Key,
+				ServiceKey:  keyName(descriptor.Key),
 				Cause:       fmt.Errorf("failed to initialize scoped service: %w", err),
 			}
 		}
@@ -382,9 +382,9 @@ func (s *scope) Get(serviceType reflect.Type) (any, error) {
 	return s.get(nil, serviceType)
 }
 
-// GetKeyed resolves a keyed service in this scope
-func (s *scope) GetKeyed(serviceType reflect.Type, serviceKey any) (any, error) {
-	return s.getKeyed(nil, serviceType, serviceKey)
+// GetKeyed resolves the service registered under name in this scope.
+func (s *scope) GetKeyed(serviceType reflect.Type, name string) (any, error) {
+	return s.getKeyed(nil, serviceType, keyOf(name))
 }
 
 // GetGroup resolves all services in a group
@@ -423,17 +423,7 @@ func (s *scope) getKeyed(parent *resolveFrame, serviceType reflect.Type, service
 	}
 
 	if serviceKey == nil {
-		return nil, ErrServiceKeyNil
-	}
-
-	// Keys are used in map lookups; a non-comparable key would panic there.
-	// Value-level comparability: a comparable static type can still wrap a
-	// non-comparable value in an interface field and panic as a map key.
-	if !reflect.ValueOf(serviceKey).Comparable() {
-		return nil, &ValidationError{
-			ServiceType: serviceType,
-			Cause:       fmt.Errorf("service key of type %T is not comparable and cannot be used as a key", serviceKey),
-		}
+		return nil, ErrServiceKeyEmpty
 	}
 
 	key := instanceKey{Type: serviceType, Key: serviceKey}
@@ -483,7 +473,7 @@ func (s *scope) getGroup(parent *resolveFrame, serviceType reflect.Type, group s
 			}
 			return nil, &ResolutionError{
 				ServiceType: descriptor.Type,
-				ServiceKey:  descriptor.Key,
+				ServiceKey:  keyName(descriptor.Key),
 				Cause:       fmt.Errorf("failed to resolve group member: %w", err),
 			}
 		}
@@ -644,7 +634,7 @@ func cachedInstance(key instanceKey, instance any) (any, error) {
 	if _, absent := instance.(absentOutput); absent {
 		return nil, &ResolutionError{
 			ServiceType: key.Type,
-			ServiceKey:  key.Key,
+			ServiceKey:  keyName(key.Key),
 			Cause:       errOutputNotProvided,
 		}
 	}
@@ -861,7 +851,7 @@ func (s *scope) resolveScopedSingleFlight(parent *resolveFrame, key instanceKey,
 		}
 		return nil, &ResolutionError{
 			ServiceType: key.Type,
-			ServiceKey:  key.Key,
+			ServiceKey:  keyName(key.Key),
 			Cause:       ErrServiceNotFound,
 		}
 	}
@@ -908,7 +898,7 @@ func (s *scope) resolveSingletonDuringBuild(parent *resolveFrame, key instanceKe
 		}
 		return nil, &ResolutionError{
 			ServiceType: key.Type,
-			ServiceKey:  key.Key,
+			ServiceKey:  keyName(key.Key),
 			Cause:       errSingletonNotInitialized,
 		}
 	}
@@ -968,7 +958,7 @@ func (s *scope) resolve(parent *resolveFrame, key instanceKey, descriptor *descr
 		if descriptor == nil {
 			return nil, &ResolutionError{
 				ServiceType: key.Type,
-				ServiceKey:  key.Key,
+				ServiceKey:  keyName(key.Key),
 				Cause:       ErrServiceNotFound,
 				Available:   s.rootProvider.registeredTypes(),
 			}
@@ -993,7 +983,7 @@ func (s *scope) resolve(parent *resolveFrame, key instanceKey, descriptor *descr
 		// Singleton should have been created at build time
 		return nil, &ResolutionError{
 			ServiceType: key.Type,
-			ServiceKey:  key.Key,
+			ServiceKey:  keyName(key.Key),
 			Cause:       errSingletonNotInitialized,
 		}
 
@@ -1001,7 +991,7 @@ func (s *scope) resolve(parent *resolveFrame, key instanceKey, descriptor *descr
 		if s.isRoot && s.rootProvider.validateScopes {
 			return nil, &ResolutionError{
 				ServiceType: key.Type,
-				ServiceKey:  key.Key,
+				ServiceKey:  keyName(key.Key),
 				Cause:       ErrScopeRequired,
 			}
 		}
@@ -1394,7 +1384,7 @@ func (s *scope) publishResultObject(
 		if primaryAbsent {
 			return nil, &ResolutionError{
 				ServiceType: requested.Type,
-				ServiceKey:  requested.Key,
+				ServiceKey:  keyName(requested.Key),
 				Cause:       errOutputNotProvided,
 			}
 		}
@@ -1536,7 +1526,6 @@ func FromContext(ctx context.Context) (Scope, error) {
 	if !ok {
 		return nil, &ResolutionError{
 			ServiceType: scopeType,
-			ServiceKey:  nil,
 			Cause:       errors.New("no scope found in context"),
 		}
 	}

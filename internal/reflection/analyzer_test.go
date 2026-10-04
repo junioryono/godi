@@ -1083,7 +1083,7 @@ func (m *mockResolver) Get(t reflect.Type) (any, error) {
 	return reflect.New(t.Elem()).Interface(), nil
 }
 
-func (m *mockResolver) GetKeyed(t reflect.Type, key any) (any, error) {
+func (m *mockResolver) GetKeyed(t reflect.Type, _ string) (any, error) {
 	if m.shouldFail {
 		return nil, m.failError
 	}

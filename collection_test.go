@@ -1890,8 +1890,8 @@ func TestToSliceHidesInternalKeys(t *testing.T) {
 	require.Len(t, infos, 3)
 	// Void initializers get a synthetic key and group members a positional
 	// one; neither is a key a caller can resolve with.
-	assert.Nil(t, infos[0].Key)
-	assert.Nil(t, infos[1].Key)
+	assert.Empty(t, infos[0].Key)
+	assert.Empty(t, infos[1].Key)
 	assert.Equal(t, "services", infos[1].Group)
 	assert.Equal(t, "dep", infos[2].Key)
 }
@@ -1916,7 +1916,7 @@ func TestToSliceServiceInfo(t *testing.T) {
 	}
 
 	require.Contains(t, byLifetime, Singleton)
-	assert.Nil(t, byLifetime[Singleton].Key)
+	assert.Empty(t, byLifetime[Singleton].Key)
 	assert.Empty(t, byLifetime[Singleton].Group)
 
 	require.Contains(t, byLifetime, Scoped)
@@ -2422,30 +2422,6 @@ func TestUnsupportedConstructorShapes(t *testing.T) {
 		c.AddSingleton(NewTResult, Group("services"))
 		require.Error(t, c.Err())
 	})
-}
-
-func TestCollectionKeyedNonComparableKey(t *testing.T) {
-	t.Parallel()
-
-	c := NewCollection()
-	c.AddSingleton(NewTService, Name("one"))
-
-	// Both a directly non-comparable key and a comparable struct wrapping a
-	// non-comparable value in an interface field (which passes a type-level
-	// comparability check but panics as a map key).
-	keys := []any{
-		[]string{"one"},
-		struct{ V any }{V: []int{1}},
-	}
-	for _, key := range keys {
-		require.NotPanics(t, func() {
-			assert.False(t, c.ContainsKeyed(reflect.TypeFor[*TService](), key))
-		})
-		require.NotPanics(t, func() {
-			c.RemoveKeyed(reflect.TypeFor[*TService](), key)
-		})
-	}
-	assert.Equal(t, 1, c.Count())
 }
 
 func TestTypedNilConstructorResult(t *testing.T) {

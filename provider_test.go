@@ -105,11 +105,11 @@ func TestProvider(t *testing.T) {
 			assert.ErrorIs(t, err, ErrProviderNil)
 		})
 
-		t.Run("nil_key", func(t *testing.T) {
+		t.Run("empty_name", func(t *testing.T) {
 			t.Parallel()
 			p := BuildProvider(t)
-			_, err := ResolveKeyed[*TService](p, nil)
-			assert.ErrorIs(t, err, ErrServiceKeyNil)
+			_, err := ResolveKeyed[*TService](p, "")
+			assert.ErrorIs(t, err, ErrServiceKeyEmpty)
 		})
 
 		t.Run("not_found", func(t *testing.T) {
@@ -534,7 +534,7 @@ func (o *recordingObserver) observer() Observer {
 type resolverOnly struct{ p Provider }
 
 func (r resolverOnly) Get(t reflect.Type) (any, error)                  { return r.p.Get(t) }
-func (r resolverOnly) GetKeyed(t reflect.Type, k any) (any, error)      { return r.p.GetKeyed(t, k) }
+func (r resolverOnly) GetKeyed(t reflect.Type, n string) (any, error)   { return r.p.GetKeyed(t, n) }
 func (r resolverOnly) GetGroup(t reflect.Type, g string) ([]any, error) { return r.p.GetGroup(t, g) }
 
 // funcCloser adapts a function to Disposable.

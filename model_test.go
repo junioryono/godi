@@ -117,9 +117,6 @@ type (
 func (p *modelP0) modelNodeOf() *modelNode { return p.n }
 func (p *modelP1) modelNodeOf() *modelNode { return p.n }
 
-// modelKey is a non-string key registered with godi.Key.
-type modelKey struct{ N int }
-
 type modelType struct {
 	rt       reflect.Type
 	iface    bool
@@ -298,7 +295,7 @@ type modelReg struct {
 	shape     modelShape
 	outputs   []modelOutput
 	as        []int // interface types (shapeAs)
-	key       any   // godi.Name / godi.Key
+	key       any   // godi.Name (a string), or nil
 	group     string
 	deps      []modelDep
 	inStruct  bool
@@ -938,10 +935,8 @@ func (r *modelRun) genDeps(lifetime godi.Lifetime, maxLevel int) (deps []modelDe
 
 func (r *modelRun) genKeyOption(reg *modelReg) {
 	switch v := r.rng.IntN(100); {
-	case v < 20:
-		reg.key = pick(r, []string{"a", "b"})
 	case v < 26:
-		reg.key = modelKey{N: 1 + r.rng.IntN(2)}
+		reg.key = pick(r, []string{"a", "b"})
 	case v < 38 && reg.shape != shapeMulti:
 		reg.group = pick(r, []string{"g", "h"})
 	}
@@ -1011,11 +1006,8 @@ func (r *modelRun) genReg(lifetime godi.Lifetime, shapes []modelShape) *modelReg
 
 func (r *modelRun) options(reg *modelReg) []godi.AddOption {
 	var opts []godi.AddOption
-	switch key := reg.key.(type) {
-	case string:
+	if key, ok := reg.key.(string); ok {
 		opts = append(opts, godi.Name(key))
-	case modelKey:
-		opts = append(opts, godi.Key(key))
 	}
 	if reg.group != "" {
 		opts = append(opts, godi.Group(reg.group))
@@ -1439,12 +1431,12 @@ func (r *modelRun) opRemove() {
 
 func (r *modelRun) opRemoveKeyed() {
 	typ := r.rng.IntN(len(modelTypes))
-	key := pick(r, []any{"a", "b", modelKey{N: 1}})
+	key := pick(r, []any{"a", "b"})
 	if !r.keepRemoval(typ, key, false) {
 		return
 	}
 	r.logf("RemoveKeyed %v %#v", modelTypes[typ].rt, key)
-	r.c.RemoveKeyed(modelTypes[typ].rt, key)
+	r.c.RemoveKeyed(modelTypes[typ].rt, key.(string))
 	r.m.removeKeyed(typ, key)
 }
 
@@ -1500,11 +1492,8 @@ func (r *modelRun) opDecorate() {
 		}
 	}
 	var opts []godi.AddOption
-	switch key := t.key.(type) {
-	case string:
+	if key, ok := t.key.(string); ok {
 		opts = append(opts, godi.Name(key))
-	case modelKey:
-		opts = append(opts, godi.Key(key))
 	}
 	if t.group != "" {
 		opts = append(opts, godi.Group(t.group))
@@ -1719,7 +1708,7 @@ func (r *modelRun) get(res godi.Resolver, e *modelEntry) (any, error) {
 	if e.key == nil {
 		return res.Get(rt)
 	}
-	return res.GetKeyed(rt, e.key)
+	return res.GetKeyed(rt, e.key.(string))
 }
 
 // checkNode checks a resolved value against the model's entry.

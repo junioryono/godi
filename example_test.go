@@ -142,31 +142,6 @@ func ExampleName() {
 	// Output: us eu
 }
 
-// Region is a non-string key type.
-type Region int
-
-const (
-	US Region = iota
-	EU
-)
-
-// Key accepts any comparable key, such as an enum constant.
-func ExampleKey() {
-	services := godi.NewCollection()
-	services.AddSingleton(func() *Cache { return &Cache{region: "us"} }, godi.Key(US))
-	services.AddSingleton(func() *Cache { return &Cache{region: "eu"} }, godi.Key(EU))
-
-	provider, err := services.Build()
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-	defer provider.Close()
-
-	fmt.Println(godi.MustResolveKeyed[*Cache](provider, EU).region)
-	// Output: eu
-}
-
 // Handler is the member type of the "routes" group.
 type Handler interface{ Route() string }
 

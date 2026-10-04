@@ -38,24 +38,23 @@ services.AddSingleton(NewRedisCache, godi.Name("redis"))
 services.AddSingleton(NewMemoryCache, godi.Name("memory"))
 ```
 
-Keys can be any comparable value with `godi.Key` — an enum constant or a
-struct, not just a string (`godi.Name(s)` is `godi.Key(s)` for a string):
+Names are strings, so the same name works everywhere: in `godi.Name`, in
+`godi.ResolveKeyed`, and in `name:"..."` struct tags. For a typed key such as
+an enum, use its string form:
 
 ```go
-type Region int
+type Region string
 
 const (
-    EU Region = iota
-    US
+    EU Region = "eu"
+    US Region = "us"
 )
 
-services.AddSingleton(NewEUStore, godi.Key(EU))
-services.AddSingleton(NewUSStore, godi.Key(US))
+services.AddSingleton(NewEUStore, godi.Name(string(EU)))
+services.AddSingleton(NewUSStore, godi.Name(string(US)))
 
-store := godi.MustResolveKeyed[Store](provider, US)
+store := godi.MustResolveKeyed[Store](provider, string(US))
 ```
-
-Struct tags (`name:"..."`) can refer to string keys only.
 
 ### Registering a Function Value
 

@@ -11,7 +11,7 @@ import (
 // DependencyInfo describes one dependency of a registered service.
 type DependencyInfo struct {
 	Type     reflect.Type
-	Key      any
+	Key      string
 	Group    string
 	Optional bool
 }
@@ -60,7 +60,7 @@ func describeDescriptor(d *descriptor) ServiceDescription {
 		}
 		description.Dependencies = append(description.Dependencies, DependencyInfo{
 			Type:     dep.Type,
-			Key:      dep.Key,
+			Key:      keyName(dep.Key),
 			Group:    dep.Group,
 			Optional: dep.Optional,
 		})
@@ -93,10 +93,10 @@ func WriteDOT(w io.Writer, services []ServiceDescription) error {
 	return bw.Flush()
 }
 
-func dotNodeName(t reflect.Type, key any, group string) string {
+func dotNodeName(t reflect.Type, key, group string) string {
 	name := formatType(t)
-	if key != nil {
-		name += fmt.Sprintf(" (key: %v)", key)
+	if key != "" {
+		name += fmt.Sprintf(" (key: %s)", key)
 	}
 	if group != "" {
 		name += fmt.Sprintf(" [group: %s]", group)

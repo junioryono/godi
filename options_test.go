@@ -3,7 +3,6 @@ package godi
 import (
 	"context"
 	"errors"
-	"math"
 	"reflect"
 	"sync"
 	"sync/atomic"
@@ -35,38 +34,31 @@ func TestRegistrationValuesAndKeys(t *testing.T) {
 		assert.Equal(t, fixed, got())
 	})
 
-	t.Run("non_string_keys", func(t *testing.T) {
+	t.Run("names_are_the_only_keys", func(t *testing.T) {
 		t.Parallel()
-		type Region int
-		const eu, us Region = 1, 2
 		c := NewCollection()
-		c.AddSingleton(NewTServiceWithID("eu"), Key(eu))
-		c.AddSingleton(NewTServiceWithID("us"), Key(us))
+		c.AddSingleton(NewTServiceWithID("eu"), Name("eu"))
+		c.AddSingleton(NewTServiceWithID("unnamed"))
 		p, err := c.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = p.Close() })
 
-		svc, err := ResolveKeyed[*TService](p, us)
+		svc, err := ResolveKeyed[*TService](p, "eu")
 		require.NoError(t, err)
-		assert.Equal(t, "us", svc.ID)
-		assert.True(t, c.ContainsKeyed(reflect.TypeFor[*TService](), eu))
+		assert.Equal(t, "eu", svc.ID)
+
+		// "" is no name: it is rejected where a name is required, and
+		// means the unnamed registration in collection lookups.
+		_, err = ResolveKeyed[*TService](p, "")
+		require.ErrorIs(t, err, ErrServiceKeyEmpty)
+		assert.True(t, c.ContainsKeyed(reflect.TypeFor[*TService](), ""))
+
+		infos := c.ToSlice()
+		require.Len(t, infos, 2)
+		assert.Equal(t, "eu", infos[0].Key)
+		assert.Equal(t, "", infos[1].Key)
 	})
 
-	t.Run("key_must_be_comparable", func(t *testing.T) {
-		t.Parallel()
-		c := NewCollection()
-		c.AddSingleton(NewTService, Key([]int{1}))
-		require.Error(t, c.Err())
-	})
-
-	t.Run("key_must_equal_itself", func(t *testing.T) {
-		t.Parallel()
-		// NaN is comparable but never equal to itself, so the registration
-		// could never be found.
-		c := NewCollection()
-		c.AddSingleton(NewTService, Key(math.NaN()))
-		require.Error(t, c.Err())
-	})
 }
 
 func TestLazySingleton(t *testing.T) {

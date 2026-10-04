@@ -220,7 +220,7 @@ func TestModule(t *testing.T) {
 			c.AddSingleton(NewTService)
 			assert.True(t, c.Contains(reflect.TypeFor[*TService]()))
 
-			c.AddModules(RemoveKeyed[*TService](nil))
+			c.AddModules(RemoveKeyed[*TService](""))
 			assert.False(t, c.Contains(reflect.TypeFor[*TService]()))
 		})
 

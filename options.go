@@ -16,38 +16,18 @@ type AddOption interface {
 
 type addOptions struct {
 	Name      string
-	Key       any
 	Group     string
 	As        []any
 	NoDispose bool
 	Lazy      bool
 }
 
-// key returns the registration key from godi.Key or godi.Name, or nil.
+// key returns the registration key: the godi.Name, or nil.
 func (o *addOptions) key() any {
-	if o.Key != nil {
-		return o.Key
-	}
-	if o.Name != "" {
-		return o.Name
-	}
-	return nil
+	return keyOf(o.Name)
 }
 
 func (o *addOptions) Validate() error {
-	if o.Key != nil {
-		switch {
-		case o.Name != "":
-			return &ValidationError{Cause: fmt.Errorf("cannot use both godi.Key and godi.Name")}
-		case o.Group != "":
-			return &ValidationError{Cause: fmt.Errorf("cannot use both godi.Key and godi.Group")}
-		case !reflect.ValueOf(o.Key).Comparable():
-			return &ValidationError{Cause: fmt.Errorf("invalid godi.Key(%v): key of type %T is not comparable", o.Key, o.Key)}
-		case !reflect.ValueOf(o.Key).Equal(reflect.ValueOf(o.Key)):
-			// e.g. NaN: comparable, but a lookup could never match it.
-			return &ValidationError{Cause: fmt.Errorf("invalid godi.Key(%v): the key is not equal to itself", o.Key)}
-		}
-	}
 	if o.Group != "" {
 		if o.Name != "" {
 			return &ValidationError{
@@ -133,23 +113,6 @@ func (o addNameOption) String() string {
 
 func (o addNameOption) applyAddOption(opt *addOptions) {
 	opt.Name = string(o)
-}
-
-// Key is an AddOption that registers the service under key, which may be any
-// comparable value (a string, an enum constant, a struct). Resolve it with
-// ResolveKeyed or GetKeyed using an equal key. godi.Name(s) is the same as
-// godi.Key(s) for a string s; struct tags (name:"...") can refer to string
-// keys only.
-func Key(key any) AddOption {
-	return addKeyOption{key: key}
-}
-
-type addKeyOption struct{ key any }
-
-func (o addKeyOption) String() string { return fmt.Sprintf("Key(%v)", o.key) }
-
-func (o addKeyOption) applyAddOption(opt *addOptions) {
-	opt.Key = o.key
 }
 
 // Group is an AddOption that adds the values produced by a constructor to the
