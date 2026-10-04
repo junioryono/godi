@@ -17,6 +17,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// BuildProvider builds a provider from the given modules and closes it when
+// the test ends.
+func BuildProvider(t *testing.T, opts ...ModuleOption) Provider {
+	t.Helper()
+	c := NewCollection()
+	if len(opts) > 0 {
+		c.AddModules(opts...)
+	}
+	p, err := c.Build()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = p.Close() })
+	return p
+}
+
 func TestProvider(t *testing.T) {
 	t.Parallel()
 
@@ -219,13 +233,13 @@ func TestProvider(t *testing.T) {
 			p, _ := c.Build()
 			p.Close()
 
-			_, err := p.Get(PtrTypeOf[TService]())
+			_, err := p.Get(reflect.TypeFor[*TService]())
 			assert.ErrorIs(t, err, ErrProviderDisposed)
 
-			_, err = p.GetKeyed(PtrTypeOf[TService](), "key")
+			_, err = p.GetKeyed(reflect.TypeFor[*TService](), "key")
 			assert.ErrorIs(t, err, ErrProviderDisposed)
 
-			_, err = p.GetGroup(PtrTypeOf[TService](), "group")
+			_, err = p.GetGroup(reflect.TypeFor[*TService](), "group")
 			assert.ErrorIs(t, err, ErrProviderDisposed)
 
 			_, err = p.CreateScope(context.Background())
@@ -903,10 +917,10 @@ func TestIsService(t *testing.T) {
 	t.Parallel()
 	p := BuildProvider(t, AddSingleton(NewTService), AddScoped(NewTDependency, Name("named")))
 
-	assert.True(t, IsService(p, PtrTypeOf[TService]()))
-	assert.False(t, IsService(p, PtrTypeOf[TDependency]()), "only registered under a key")
-	assert.True(t, IsKeyedService(p, PtrTypeOf[TDependency](), "named"))
-	assert.False(t, IsKeyedService(p, PtrTypeOf[TDependency](), "other"))
+	assert.True(t, IsService(p, reflect.TypeFor[*TService]()))
+	assert.False(t, IsService(p, reflect.TypeFor[*TDependency]()), "only registered under a key")
+	assert.True(t, IsKeyedService(p, reflect.TypeFor[*TDependency](), "named"))
+	assert.False(t, IsKeyedService(p, reflect.TypeFor[*TDependency](), "other"))
 	assert.True(t, IsService(p, reflect.TypeFor[Scope]()), "the container's own types are services")
 	assert.True(t, IsService(p, reflect.TypeFor[context.Context]()))
 
@@ -922,8 +936,8 @@ func TestIsService(t *testing.T) {
 		t.Cleanup(func() { _ = scope.Close() })
 
 		// Resolving it from the provider fails with ErrScopeRequired.
-		assert.False(t, IsService(vp, PtrTypeOf[TService]()))
-		assert.True(t, IsService(scope, PtrTypeOf[TService]()))
+		assert.False(t, IsService(vp, reflect.TypeFor[*TService]()))
+		assert.True(t, IsService(scope, reflect.TypeFor[*TService]()))
 	})
 }
 
@@ -977,16 +991,16 @@ func TestObserver(t *testing.T) {
 		obs.mu.Lock()
 		defer obs.mu.Unlock()
 		require.Len(t, obs.constructed, 2)
-		assert.Equal(t, PtrTypeOf[TDisposable](), obs.constructed[0].ServiceType)
+		assert.Equal(t, reflect.TypeFor[*TDisposable](), obs.constructed[0].ServiceType)
 		assert.Equal(t, Singleton, obs.constructed[0].Lifetime)
 		assert.NoError(t, obs.constructed[0].Err)
-		assert.Equal(t, PtrTypeOf[TService](), obs.constructed[1].ServiceType)
+		assert.Equal(t, reflect.TypeFor[*TService](), obs.constructed[1].ServiceType)
 		assert.Equal(t, scope.ID(), obs.constructed[1].ScopeID)
 		assert.Error(t, obs.constructed[1].Err)
 		assert.Contains(t, obs.constructed[1].Constructor, "NewTServiceError")
 
 		require.Len(t, obs.disposed, 1)
-		assert.Equal(t, PtrTypeOf[TDisposable](), obs.disposed[0].Type)
+		assert.Equal(t, reflect.TypeFor[*TDisposable](), obs.disposed[0].Type)
 		assert.ErrorIs(t, obs.disposed[0].Err, closeErr)
 	})
 
@@ -1117,7 +1131,7 @@ func TestRegistrationValuesAndKeys(t *testing.T) {
 		svc, err := ResolveKeyed[*TService](p, us)
 		require.NoError(t, err)
 		assert.Equal(t, "us", svc.ID)
-		assert.True(t, c.ContainsKeyed(PtrTypeOf[TService](), eu))
+		assert.True(t, c.ContainsKeyed(reflect.TypeFor[*TService](), eu))
 	})
 
 	t.Run("key_must_be_comparable", func(t *testing.T) {

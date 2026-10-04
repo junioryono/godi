@@ -26,13 +26,13 @@ func TestDescribe(t *testing.T) {
 		require.Len(t, infos, 3)
 
 		withDeps := infos[2]
-		assert.Equal(t, PtrTypeOf[TServiceWithDeps](), withDeps.ServiceType)
+		assert.Equal(t, reflect.TypeFor[*TServiceWithDeps](), withDeps.ServiceType)
 		assert.Equal(t, Scoped, withDeps.Lifetime)
 		assert.Contains(t, withDeps.Constructor, "NewTServiceWithDeps")
-		assert.Contains(t, withDeps.Constructor, "testutil_test.go:")
+		assert.Contains(t, withDeps.Constructor, "collection_test.go:")
 		require.Len(t, withDeps.Dependencies, 2)
-		assert.Equal(t, PtrTypeOf[TService](), withDeps.Dependencies[0].Type)
-		assert.Equal(t, PtrTypeOf[TDependency](), withDeps.Dependencies[1].Type)
+		assert.Equal(t, reflect.TypeFor[*TService](), withDeps.Dependencies[0].Type)
+		assert.Equal(t, reflect.TypeFor[*TDependency](), withDeps.Dependencies[1].Type)
 	})
 
 	t.Run("service_info_stays_comparable", func(t *testing.T) {

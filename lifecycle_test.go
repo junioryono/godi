@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -11,6 +12,39 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TDisposable is a disposable service. A second Close fails, so tests catch
+// double disposal.
+type TDisposable struct {
+	Name     string
+	closed   atomic.Bool
+	mu       sync.Mutex
+	closeErr error
+}
+
+func NewTDisposable() *TDisposable {
+	return &TDisposable{Name: "disposable"}
+}
+
+func (d *TDisposable) Close() error {
+	if d.closed.Swap(true) {
+		return errors.New("already closed")
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.closeErr
+}
+
+func (d *TDisposable) IsClosed() bool {
+	return d.closed.Load()
+}
+
+// SetCloseError sets the error Close returns.
+func (d *TDisposable) SetCloseError(err error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.closeErr = err
+}
 
 // startRecorder collects Start calls in order.
 type startRecorder struct {
