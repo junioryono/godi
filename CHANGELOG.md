@@ -3,7 +3,7 @@
 Notable changes to godi. Release notes for each version are also generated from
 commit messages on GitHub.
 
-## v6.0.0 (unreleased)
+## v6.0.0 (2026-10-04)
 
 A major release at the import path `github.com/junioryono/godi/v6`. See the
 [v5 → v6 guide](docs/guides/v5-to-v6.md) for before/after examples.
