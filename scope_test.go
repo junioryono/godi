@@ -542,26 +542,56 @@ func TestBuiltinServiceInjection(t *testing.T) {
 		assert.Equal(t, scope.ID(), found.ID())
 	})
 
+	// Creating a scope while the constructor is still running could run that
+	// scope's initializers against the constructor's own unfinished output
+	// and deadlock. Found by the Codex review of #66.
+	t.Run("scope_factory_cannot_create_scopes_during_construction", func(t *testing.T) {
+		t.Parallel()
+		type Server struct{}
+		c := NewCollection()
+		c.AddSingleton(func(f ScopeFactory) (*Server, error) {
+			child, err := f.CreateScope(context.Background())
+			if err != nil {
+				return nil, err
+			}
+			_ = child.Close()
+			return &Server{}, nil
+		})
+		c.AddScoped(func(*Server) {}) // an initializer needing the server
+
+		err := resolveWithin(t, func() error {
+			_, buildErr := c.Build()
+			return buildErr
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "store it and create scopes later")
+	})
+
 	t.Run("injects_scope_factory", func(t *testing.T) {
 		t.Parallel()
 		type Worker struct{ Scopes ScopeFactory }
 		c := NewCollection()
 		c.AddScoped(NewTDisposable)
-		c.AddSingleton(func(f ScopeFactory) *Worker { return &Worker{Scopes: f} })
+		c.AddScoped(func(f ScopeFactory) *Worker { return &Worker{Scopes: f} })
 		built, err := c.Build()
 		require.NoError(t, err)
+		t.Cleanup(func() { _ = built.Close() })
+		request, err := built.CreateScope(context.Background())
+		require.NoError(t, err)
 
-		worker, err := Resolve[*Worker](built)
+		worker, err := Resolve[*Worker](request)
 		require.NoError(t, err)
 		child, err := worker.Scopes.CreateScope(context.Background())
 		require.NoError(t, err)
 		d, err := Resolve[*TDisposable](child)
 		require.NoError(t, err)
 
-		// Scopes it creates are children of the constructor's scope (the
-		// root, for a singleton), closed with it.
-		require.NoError(t, built.Close())
+		// Scopes it creates are children of the constructor's scope, closed
+		// with it while the provider stays open.
+		require.NoError(t, request.Close())
 		assert.True(t, d.IsClosed())
+		_, err = Resolve[*TDisposable](NewTestScope(t, built))
+		assert.NoError(t, err, "the provider is still open")
 	})
 
 	t.Run("rejects_provider_and_scope_parameters", func(t *testing.T) {

@@ -212,9 +212,16 @@ func (f *frameResolver) root() *provider { return f.scope.rootProvider }
 // singletons), which are closed with it.
 type scopeFactory struct {
 	scope *scope
+	// frame is the construction it was injected into.
+	frame *resolveFrame
 }
 
 func (f scopeFactory) CreateScope(ctx context.Context) (Scope, error) {
+	// A new scope runs its initializers, which may need the output of the
+	// construction still running: it would wait on itself.
+	if f.frame.ifActive() != nil {
+		return nil, errScopeDuringConstruction
+	}
 	return f.scope.CreateScope(ctx)
 }
 
@@ -924,7 +931,7 @@ func (s *scope) resolve(parent *resolveFrame, key instanceKey, descriptor *descr
 			case resolverType:
 				return &frameResolver{scope: s, frame: parent}, nil
 			case scopeFactoryType:
-				return scopeFactory{scope: s}, nil
+				return scopeFactory{scope: s, frame: parent}, nil
 			case providerType, scopeType:
 				if parent != nil {
 					// A construction asking for the container through
@@ -1534,3 +1541,7 @@ type hiddenScope struct{}
 // errContainerRequest is the cause reported when a constructor asks its
 // injected Resolver for the container itself.
 var errContainerRequest = errors.New("an injected Resolver cannot resolve godi.Provider or godi.Scope; depend on godi.ScopeFactory to create scopes")
+
+// errScopeDuringConstruction is returned by an injected ScopeFactory used
+// before the constructor it was injected into returns.
+var errScopeDuringConstruction = errors.New("an injected ScopeFactory cannot create scopes while its constructor runs; store it and create scopes later")
