@@ -228,7 +228,7 @@ func Start(ctx context.Context, p Provider) error {
 	}
 	for _, s := range root.createdSingletons() {
 		starter, ok := s.instance.(Starter)
-		if !ok {
+		if !ok || s.supplied {
 			continue
 		}
 		if err := ctx.Err(); err != nil {
@@ -285,13 +285,16 @@ func HealthCheck(ctx context.Context, p Provider) error {
 type createdSingleton struct {
 	serviceType reflect.Type
 	instance    any
+	// supplied marks a value registered as an instance: the caller owns its
+	// lifecycle, so Start leaves it alone (HealthCheck still checks it).
+	supplied bool
 }
 
 // recordConstructed adds a constructed singleton (before decoration) to the
 // inventory that Start and HealthCheck act on.
-func (p *provider) recordConstructed(serviceType reflect.Type, instance any) {
+func (p *provider) recordConstructed(serviceType reflect.Type, supplied bool, instance any) {
 	p.constructedMu.Lock()
-	p.constructed = append(p.constructed, createdSingleton{serviceType: serviceType, instance: instance})
+	p.constructed = append(p.constructed, createdSingleton{serviceType: serviceType, instance: instance, supplied: supplied})
 	p.constructedMu.Unlock()
 }
 

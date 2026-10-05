@@ -47,11 +47,11 @@ func TestRegistrationValuesAndKeys(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "eu", svc.ID)
 
-		// "" is no name: it is rejected where a name is required, and
-		// means the unnamed registration in collection lookups.
+		// "" is no name: resolution rejects it, and collection lookups
+		// find nothing under it (not the unnamed registration).
 		_, err = ResolveKeyed[*TService](p, "")
 		require.ErrorIs(t, err, ErrServiceKeyEmpty)
-		assert.True(t, c.ContainsKeyed(reflect.TypeFor[*TService](), ""))
+		assert.False(t, c.ContainsKeyed(reflect.TypeFor[*TService](), ""))
 
 		infos := c.ToSlice()
 		require.Len(t, infos, 2)

@@ -80,13 +80,15 @@ type Collection interface {
 	// Contains checks if a service exists for the type.
 	Contains(serviceType reflect.Type) bool
 
-	// ContainsKeyed checks if a service is registered under name.
+	// ContainsKeyed checks if a service is registered under name. An empty
+	// name names no service: it reports false.
 	ContainsKeyed(serviceType reflect.Type, name string) bool
 
 	// Remove removes all services for a given service type.
 	Remove(serviceType reflect.Type)
 
-	// RemoveKeyed removes the service registered under name.
+	// RemoveKeyed removes the service registered under name. An empty name
+	// names no service: it removes nothing.
 	RemoveKeyed(serviceType reflect.Type, name string)
 
 	// ToSlice returns a read-only snapshot of all registered services for
@@ -642,7 +644,7 @@ func (r *collection) Contains(t reflect.Type) bool {
 
 // ContainsKeyed checks if a service is registered under name.
 func (r *collection) ContainsKeyed(t reflect.Type, name string) bool {
-	if t == nil {
+	if t == nil || name == "" {
 		return false
 	}
 	key := keyOf(name)
@@ -701,7 +703,7 @@ func (r *collection) Remove(t reflect.Type) {
 
 // RemoveKeyed removes the service registered under name.
 func (r *collection) RemoveKeyed(t reflect.Type, name string) {
-	if t == nil {
+	if t == nil || name == "" {
 		return
 	}
 	key := keyOf(name)

@@ -1154,14 +1154,14 @@ func (s *scope) publishValue(parent *resolveFrame, d *descriptor, value any, res
 	if !aliased && len(d.decorators) == 0 {
 		// Common case, kept allocation-free: one undecorated output.
 		if d.Lifetime == Singleton {
-			s.rootProvider.recordConstructed(d.Type, value)
+			s.rootProvider.recordConstructed(d.Type, d.IsInstance, value)
 		}
 		s.setInstance(parent, d, d.instanceKey(), value)
 		return value, nil
 	}
 	if aliased && !hasDecorators(d.siblings()...) {
 		if d.Lifetime == Singleton {
-			s.rootProvider.recordConstructed(d.Type, value)
+			s.rootProvider.recordConstructed(d.Type, d.IsInstance, value)
 		}
 		s.setAliasedInstance(parent, d, d.instanceKey(), value)
 		return value, nil
@@ -1178,7 +1178,7 @@ func (s *scope) publishValue(parent *resolveFrame, d *descriptor, value any, res
 	}
 	primary, err := s.publishOutputs(parent, d, outputs, resolver)
 	if err == nil && aliased && d.Lifetime == Singleton {
-		s.rootProvider.recordConstructed(d.Type, value)
+		s.rootProvider.recordConstructed(d.Type, d.IsInstance, value)
 	}
 	return primary, err
 }
@@ -1243,7 +1243,7 @@ func (s *scope) commitOutput(parent *resolveFrame, out *stagedOutput, baseWrappe
 		// Start and HealthCheck act on the constructed service, not on
 		// decorators' results. (Interface aliases share one constructed
 		// value, recorded once by publishValue.)
-		s.rootProvider.recordConstructed(t.Type, out.layers[0])
+		s.rootProvider.recordConstructed(t.Type, t.IsInstance, out.layers[0])
 	}
 
 	final := len(out.layers) - 1
