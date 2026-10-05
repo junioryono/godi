@@ -763,7 +763,7 @@ func (r *collection) pruneDescriptors(removed map[*descriptor]struct{}) {
 				surviving = append(surviving, sibling)
 			}
 		}
-		d.reg.outputs = surviving
+		d.outputs = surviving
 	}
 }
 
@@ -1000,32 +1000,34 @@ func snapshotRegistrations(
 			continue
 		}
 		clone := *original
-		clone.reg = nil
-		clone.As = append([]any(nil), original.As...)
-		clone.Dependencies = append([]*reflection.Dependency(nil), original.Dependencies...)
-		clone.resultFields = append([]reflection.ResultField(nil), original.resultFields...)
-		clone.paramFields = append([]reflection.ParamField(nil), original.paramFields...)
 		clones[original] = &clone
 		snapshotAll = append(snapshotAll, &clone)
 	}
 
-	// Each registration is cloned once, with the clones of its outputs.
+	// Each registration is cloned once, with the clones of its outputs, so
+	// the provider never shares state with the collection.
 	regClones := make(map[*registration]*registration)
 	for original, clone := range clones {
-		if original.reg == nil {
-			continue
-		}
-		reg, ok := regClones[original.reg]
+		reg, ok := regClones[original.registration]
 		if !ok {
-			reg = &registration{outputs: make([]*descriptor, 0, len(original.reg.outputs))}
-			for _, sibling := range original.reg.outputs {
-				if siblingClone, ok := clones[sibling]; ok {
-					reg.outputs = append(reg.outputs, siblingClone)
+			copied := *original.registration
+			reg = &copied
+			reg.As = append([]any(nil), copied.As...)
+			reg.Dependencies = append([]*reflection.Dependency(nil), copied.Dependencies...)
+			reg.resultFields = append([]reflection.ResultField(nil), copied.resultFields...)
+			reg.paramFields = append([]reflection.ParamField(nil), copied.paramFields...)
+			if copied.linked {
+				originals := original.outputs
+				reg.outputs = make([]*descriptor, 0, len(originals))
+				for _, sibling := range originals {
+					if siblingClone, ok := clones[sibling]; ok {
+						reg.outputs = append(reg.outputs, siblingClone)
+					}
 				}
 			}
-			regClones[original.reg] = reg
+			regClones[original.registration] = reg
 		}
-		clone.reg = reg
+		clone.registration = reg
 	}
 
 	snapshotServices = make(map[registryKey]*descriptor, len(services))
@@ -1303,7 +1305,7 @@ func validateLifetimes(all []*descriptor, services map[registryKey]*descriptor, 
 			continue
 		}
 	dependencies:
-		for _, dep := range d.Dependencies {
+		for _, dep := range d.dependencies() {
 			for _, depDescriptor := range dependencyDescriptors(dep, services, groups) {
 				r := reachScoped(depDescriptor)
 				if r.scoped == nil {
@@ -1357,7 +1359,7 @@ func validateDependencies(all []*descriptor, services map[registryKey]*descripto
 		if d.VoidReturn {
 			serviceType = d.ConstructorType
 		}
-		for _, dep := range d.Dependencies {
+		for _, dep := range d.dependencies() {
 			if dep == nil || dep.Optional || dep.Group != "" {
 				continue
 			}

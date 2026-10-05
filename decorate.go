@@ -27,7 +27,7 @@ type decoration struct {
 	source string
 
 	// injectsContainer reports whether the decorator receives a view of the
-	// container (see descriptor.injectsContainer).
+	// container (see registration.injectsContainer).
 	injectsContainer bool
 }
 
@@ -164,7 +164,7 @@ func attachDecorators(
 		}
 		for _, d := range targets {
 			d.decorators = append(d.decorators[:len(d.decorators):len(d.decorators)], dec)
-			d.Dependencies = append(d.Dependencies[:len(d.Dependencies):len(d.Dependencies)], dec.dependencies...)
+			d.decoratorDeps = append(d.decoratorDeps[:len(d.decoratorDeps):len(d.decoratorDeps)], dec.dependencies...)
 			for _, dep := range dec.dependencies {
 				sources[dep] = dec.source
 			}
@@ -172,7 +172,7 @@ func attachDecorators(
 			// dynamically: its construction needs a frame for cycle
 			// detection.
 			if dec.injectsContainer {
-				d.injectsContainer = true
+				d.decoratorInjectsContainer = true
 			}
 		}
 	}
@@ -243,11 +243,11 @@ func checkDecoratorDependencies(dec *decoration, d *descriptor, services map[reg
 func constructionDependencies(d *descriptor) []*reflection.Dependency {
 	if len(d.siblings()) == 0 || d.isAlias && d.Lifetime == Transient {
 		// Transient aliases are each constructed separately.
-		return d.Dependencies
+		return d.dependencies()
 	}
 	var deps []*reflection.Dependency
 	for _, sibling := range d.siblings() {
-		deps = append(deps, sibling.Dependencies...)
+		deps = append(deps, sibling.dependencies()...)
 	}
 	return deps
 }

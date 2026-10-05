@@ -817,10 +817,7 @@ func (s *scope) ownedByAnyone(v any) bool {
 // registration must produce its own instances — which is why the constructor
 // pointer is NOT a valid key.
 func flightKey(d *descriptor) any {
-	if d.reg != nil {
-		return d.reg
-	}
-	return d
+	return d.registration
 }
 
 // resolveScopedSingleFlight runs createInstance for a Scoped descriptor under
@@ -1053,7 +1050,7 @@ func (s *scope) createInstance(parent *resolveFrame, descriptor *descriptor, fli
 		paramCount = len(descriptor.info.Parameters)
 	}
 	if (paramCount > 0 || len(descriptor.decorators) > 0) &&
-		(s.isRoot || parent != nil || descriptor.injectsContainer) {
+		(s.isRoot || parent != nil || descriptor.resolvesDynamically()) {
 		frame := &resolveFrame{scope: s, parent: parent, descriptor: descriptor, flight: flight}
 		frame.active.Store(true)
 		// The construction lasts until its outputs are decorated and

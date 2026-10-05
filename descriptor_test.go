@@ -255,11 +255,11 @@ func TestDescriptor(t *testing.T) {
 
 		t.Run("nil_type", func(t *testing.T) {
 			t.Parallel()
-			d := &descriptor{
+			d := &descriptor{registration: &registration{
 				Constructor:     reflect.ValueOf(NewTService),
 				ConstructorType: reflect.TypeFor[func() *TService](),
 				Lifetime:        Singleton,
-			}
+			}}
 			err := d.Validate()
 			require.Error(t, err)
 			var valErr *ValidationError
@@ -270,10 +270,12 @@ func TestDescriptor(t *testing.T) {
 		t.Run("invalid_constructor", func(t *testing.T) {
 			t.Parallel()
 			d := &descriptor{
-				Type:            reflect.TypeFor[*TService](),
-				Constructor:     reflect.Value{},
-				ConstructorType: reflect.TypeFor[func() *TService](),
-				Lifetime:        Singleton,
+				Type: reflect.TypeFor[*TService](),
+				registration: &registration{
+					Constructor:     reflect.Value{},
+					ConstructorType: reflect.TypeFor[func() *TService](),
+					Lifetime:        Singleton,
+				},
 			}
 			err := d.Validate()
 			require.Error(t, err)
@@ -283,9 +285,11 @@ func TestDescriptor(t *testing.T) {
 		t.Run("nil_constructor_type", func(t *testing.T) {
 			t.Parallel()
 			d := &descriptor{
-				Type:        reflect.TypeFor[*TService](),
-				Constructor: reflect.ValueOf(NewTService),
-				Lifetime:    Singleton,
+				Type: reflect.TypeFor[*TService](),
+				registration: &registration{
+					Constructor: reflect.ValueOf(NewTService),
+					Lifetime:    Singleton,
+				},
 			}
 			err := d.Validate()
 			require.Error(t, err)

@@ -54,7 +54,7 @@ func describeDescriptor(d *descriptor) ServiceDescription {
 		},
 		Constructor: d.source,
 	}
-	for _, dep := range d.Dependencies {
+	for _, dep := range d.dependencies() {
 		if dep == nil {
 			continue
 		}

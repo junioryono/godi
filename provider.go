@@ -593,7 +593,7 @@ func creationOrder(all []*descriptor, services map[registryKey]*descriptor, grou
 			return
 		}
 		visited[d] = true
-		for _, dep := range d.Dependencies {
+		for _, dep := range d.dependencies() {
 			for _, depDescriptor := range dependencyDescriptors(dep, services, groups) {
 				visit(depDescriptor)
 			}
