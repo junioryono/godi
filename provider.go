@@ -51,6 +51,10 @@ type provider struct {
 	// created on demand.
 	building atomic.Bool
 
+	// built is set once Build has completed, root scope initializers
+	// included. An injected ScopeFactory refuses to create scopes before.
+	built atomic.Bool
+
 	// validateScopes is set by WithScopeValidation. Immutable after build.
 	validateScopes bool
 
@@ -192,7 +196,7 @@ func (p *provider) getGroup(parent *resolveFrame, serviceType reflect.Type, grou
 
 // CreateScope creates a new service scope
 func (p *provider) CreateScope(ctx context.Context) (Scope, error) {
-	s, err := p.createScope(nil, ctx)
+	s, err := p.createScope(nil, ctx, false)
 	if err != nil {
 		return nil, err
 	}
@@ -202,7 +206,10 @@ func (p *provider) CreateScope(ctx context.Context) (Scope, error) {
 // createScope creates a scope: a top-level scope when parent is nil, else a
 // child of parent (which closes it). ctx defaults to the parent's context, or
 // context.Background() for a top-level scope.
-func (p *provider) createScope(parent *scope, ctx context.Context) (*scope, error) {
+// createScope creates a child of parent (nil for the root scope). restricted
+// marks a scope created through an injected ScopeFactory (see
+// scope.restricted).
+func (p *provider) createScope(parent *scope, ctx context.Context, restricted bool) (*scope, error) {
 	if p.disposed.Load() != 0 {
 		return nil, ErrProviderDisposed
 	}
@@ -222,7 +229,7 @@ func (p *provider) createScope(parent *scope, ctx context.Context) (*scope, erro
 
 	// Create scope with cancellable context
 	ctx, cancel := context.WithCancel(ctx)
-	child, err := newScope(p, parent, ctx, cancel)
+	child, err := newScope(p, parent, ctx, cancel, restricted)
 	if err != nil {
 		if parent != nil {
 			return nil, fmt.Errorf("failed to create child scope: %w", err)

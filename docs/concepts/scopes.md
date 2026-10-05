@@ -280,6 +280,9 @@ func (w *Worker) Run(ctx context.Context, job Job) error {
 
 The injected factory creates children of the scope that resolved the
 constructor (the root scope for a singleton), and they are closed with it.
+Create scopes later, as `Run` does here, never from inside a constructor or a
+scoped initializer: a new scope runs its initializers right away, and they can
+wait forever on a construction that is still running.
 A constructor that only needs to resolve services takes a `godi.Resolver`
 instead.
 

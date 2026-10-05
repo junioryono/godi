@@ -19,11 +19,15 @@ import (
 // depends on ScopeFactory rather than on the Provider or Scope: injected, it
 // creates child scopes of the scope resolving the constructor (the root
 // scope for singletons), which are closed with it and, like an injected
-// Resolver, do not resolve the Provider. An injected ScopeFactory refuses to
-// create scopes while the provider builds or while a construction that led
-// to it is still running, because the new scope's initializers could need
-// that construction's output: store it and create scopes later. (A scope
-// created from inside any other constructor can still deadlock that way.)
+// Resolver, do not resolve the Provider.
+//
+// Do not create scopes from inside a constructor or a scoped initializer:
+// a new scope runs its initializers on the calling goroutine, and if they
+// need the output of a construction still running there, they wait on it
+// forever (or, if they create scopes too, recurse). Store the factory and
+// create scopes later, from a request, job or goroutine of your own. As a
+// safety net, an injected ScopeFactory refuses until Build completes, and
+// while a construction that led to it is running; it cannot see every case.
 type ScopeFactory interface {
 	CreateScope(ctx context.Context) (Scope, error)
 }
@@ -237,7 +241,7 @@ func (f scopeFactory) CreateScope(ctx context.Context) (Scope, error) {
 	// construction still running (the one the factory was injected into, one
 	// that resolved it, or any singleton while the provider builds): they
 	// would wait on it forever.
-	if f.scope.rootProvider.building.Load() {
+	if !f.scope.rootProvider.built.Load() {
 		return nil, errScopeDuringConstruction
 	}
 	for frame := f.frame; frame != nil; frame = frame.parent {
@@ -245,11 +249,10 @@ func (f scopeFactory) CreateScope(ctx context.Context) (Scope, error) {
 			return nil, errScopeDuringConstruction
 		}
 	}
-	child, err := f.scope.rootProvider.createScope(f.scope, ctx)
+	child, err := f.scope.rootProvider.createScope(f.scope, ctx, true)
 	if err != nil {
 		return nil, err
 	}
-	child.restricted = true
 	return child, nil
 }
 
@@ -312,11 +315,14 @@ func describeService(d *descriptor) string {
 // to resolve the missing field.
 type absentOutput struct{}
 
-func newScope(rootProvider *provider, parent *scope, ctx context.Context, cancel context.CancelFunc) (*scope, error) {
+func newScope(rootProvider *provider, parent *scope, ctx context.Context, cancel context.CancelFunc, restricted bool) (*scope, error) {
 	s, err := newUninitializedScope(rootProvider, parent, ctx, cancel)
 	if err != nil {
 		return nil, err
 	}
+	// Set before the initializers run: they can already hand the scope's
+	// factory to other goroutines, which create descendants of it.
+	s.restricted = s.restricted || restricted
 
 	if err := s.initializeScopedServices(); err != nil {
 		// Tear down the partially initialized scope: dispose instances
@@ -507,7 +513,7 @@ func (s *scope) getGroup(parent *resolveFrame, serviceType reflect.Type, group s
 // CreateScope creates a child scope, closed with this scope. A nil ctx
 // defaults to this scope's context.
 func (s *scope) CreateScope(ctx context.Context) (Scope, error) {
-	child, err := s.rootProvider.createScope(s, ctx)
+	child, err := s.rootProvider.createScope(s, ctx, false)
 	if err != nil {
 		return nil, err
 	}
@@ -1572,4 +1578,4 @@ var errContainerRequest = errors.New("an injected Resolver cannot resolve godi.P
 
 // errScopeDuringConstruction is returned by an injected ScopeFactory used
 // before the constructor it was injected into returns.
-var errScopeDuringConstruction = errors.New("an injected ScopeFactory cannot create scopes while its constructor runs; store it and create scopes later")
+var errScopeDuringConstruction = errors.New("an injected ScopeFactory cannot create scopes during Build or while a construction that led to it is running; store it and create scopes later")

@@ -605,6 +605,103 @@ func TestBuiltinServiceInjection(t *testing.T) {
 		assert.NoError(t, err, "scopes the application creates are unrestricted")
 	})
 
+	// A scope is restricted before its initializers run, so a scope they
+	// create is too. Found by the third Claude and Codex reviews of #66.
+	t.Run("scopes_created_while_a_restricted_scope_initializes_are_restricted", func(t *testing.T) {
+		t.Parallel()
+		type Holder struct{ Scopes ScopeFactory }
+		type Worker struct{ Scopes ScopeFactory }
+		var once atomic.Bool
+		var grandchildErr error
+		c := NewCollection()
+		c.AddScoped(func(f ScopeFactory) *Holder { return &Holder{Scopes: f} })
+		c.AddScoped(func(h *Holder) {
+			if !once.CompareAndSwap(false, true) {
+				return
+			}
+			grandchild, err := h.Scopes.CreateScope(context.Background())
+			if err != nil {
+				grandchildErr = err
+				return
+			}
+			defer grandchild.Close()
+			_, grandchildErr = Resolve[Provider](grandchild)
+		})
+		c.AddSingleton(func(f ScopeFactory) *Worker { return &Worker{Scopes: f} })
+		built, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = built.Close() })
+
+		worker, err := Resolve[*Worker](built)
+		require.NoError(t, err)
+		child, err := worker.Scopes.CreateScope(context.Background())
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = child.Close() })
+		require.True(t, once.Load(), "the initializer ran")
+		require.Error(t, grandchildErr, "the grandchild must not resolve the Provider")
+	})
+
+	// The background-worker pattern: an initializer hands its factory to a
+	// goroutine, which creates scopes while the initializing scope is still
+	// being set up. Run under -race. Found by the third reviews of #66.
+	t.Run("restriction_is_set_before_initializers_run", func(t *testing.T) {
+		t.Parallel()
+		type Worker struct{ Scopes ScopeFactory }
+		done := make(chan error, 1)
+		var once atomic.Bool
+		c := NewCollection()
+		c.AddScoped(func(f ScopeFactory) {
+			if !once.CompareAndSwap(false, true) {
+				return
+			}
+			go func() {
+				child, err := f.CreateScope(context.Background())
+				if err == nil {
+					_ = child.Close()
+				}
+				done <- err
+			}()
+		})
+		c.AddSingleton(func(f ScopeFactory) *Worker { return &Worker{Scopes: f} })
+		built, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = built.Close() })
+
+		worker, err := Resolve[*Worker](built)
+		require.NoError(t, err)
+		child, err := worker.Scopes.CreateScope(context.Background())
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = child.Close() })
+		<-done
+	})
+
+	// Build includes the root scope's initializers, which run after the
+	// singletons. Found by the third Codex review of #66.
+	t.Run("scope_factory_cannot_create_scopes_until_build_completes", func(t *testing.T) {
+		t.Parallel()
+		type Worker struct{ Scopes ScopeFactory }
+		var once atomic.Bool
+		var createErr error
+		c := NewCollection()
+		c.AddSingleton(func(f ScopeFactory) *Worker { return &Worker{Scopes: f} })
+		c.AddScoped(func(w *Worker) {
+			if !once.CompareAndSwap(false, true) {
+				return
+			}
+			var child Scope
+			child, createErr = w.Scopes.CreateScope(context.Background())
+			if child != nil {
+				_ = child.Close()
+			}
+		})
+		// The root scope runs scoped initializers only without validation.
+		built, err := c.Build(WithScopeValidation(false))
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = built.Close() })
+		require.Error(t, createErr)
+		assert.Contains(t, createErr.Error(), "store it and create scopes later")
+	})
+
 	t.Run("scope_factory_cannot_create_scopes_during_construction", func(t *testing.T) {
 		t.Parallel()
 		type Server struct{}
@@ -1589,7 +1686,7 @@ func TestNewScopeFailureCancelsDerivedContext(t *testing.T) {
 	p := pAny.(*provider)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s, err := newScope(p, nil, ctx, cancel)
+	s, err := newScope(p, nil, ctx, cancel, false)
 	require.Error(t, err)
 	require.Nil(t, s)
 

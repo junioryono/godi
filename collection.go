@@ -335,6 +335,7 @@ func (sc *collection) doBuild(parent, ctx context.Context, options *buildOptions
 		return nil, joinBuildCleanupError(buildErr, p.Close())
 	}
 
+	p.built.Store(true)
 	return p, nil
 }
 
