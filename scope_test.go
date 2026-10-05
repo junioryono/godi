@@ -597,6 +597,21 @@ func TestBuiltinServiceInjection(t *testing.T) {
 	})
 }
 
+// resolveWithin runs resolve, failing the test instead of hanging if it
+// deadlocks.
+func resolveWithin(t *testing.T, resolve func() error) error {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() { done <- resolve() }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(5 * time.Second):
+		t.Fatal("resolution deadlocked")
+		return nil
+	}
+}
+
 // Constructors that resolve through their injected Resolver are
 // outside the static dependency graph, so Build cannot see a cycle there.
 func TestDynamicCircularResolution(t *testing.T) {
@@ -604,19 +619,6 @@ func TestDynamicCircularResolution(t *testing.T) {
 
 	// resolveWithin fails the test instead of hanging when resolution
 	// deadlocks.
-	resolveWithin := func(t *testing.T, resolve func() error) error {
-		t.Helper()
-		done := make(chan error, 1)
-		go func() { done <- resolve() }()
-		select {
-		case err := <-done:
-			return err
-		case <-time.After(5 * time.Second):
-			t.Fatal("resolution deadlocked")
-			return nil
-		}
-	}
-
 	type SelfA struct{}
 	type SelfB struct{}
 

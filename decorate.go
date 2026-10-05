@@ -174,6 +174,11 @@ func attachDecorators(
 			if dec.injectsContainer {
 				d.decoratorInjectsContainer = true
 			}
+			// One construction runs every output's decorators.
+			d.anyDecorated = true
+			if dec.injectsContainer {
+				d.anyDecoratorInjectsContainer = true
+			}
 		}
 	}
 	// Checked once every decorator is attached: a decorator can reach its

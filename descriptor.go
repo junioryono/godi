@@ -125,6 +125,14 @@ type registration struct {
 	// it has several (linked); a single-output registration leaves it nil.
 	outputs []*descriptor
 	linked  bool
+
+	// anyDecorated and anyDecoratorInjectsContainer record, for a
+	// registration whose outputs share one construction, whether some
+	// output is decorated, and whether some decorator receives a view of the
+	// container: one construction runs every output's decorators. Set on a
+	// provider's snapshot at Build.
+	anyDecorated                 bool
+	anyDecoratorInjectsContainer bool
 }
 
 // newDescriptorWithAnalyzer creates a new descriptor using the provided analyzer for caching
@@ -335,11 +343,25 @@ func (d *descriptor) dependencies() []*reflection.Dependency {
 	return append(d.Dependencies[:len(d.Dependencies):len(d.Dependencies)], d.decoratorDeps...)
 }
 
+// sharesConstruction reports whether d's output is produced by a
+// construction that also produces its registration's other outputs.
+// Transient aliases are each constructed separately.
+func (d *descriptor) sharesConstruction() bool {
+	return d.linked && (!d.isAlias || d.Lifetime != Transient)
+}
+
+// constructionDecorated reports whether producing d's output runs a
+// decorator: its own, or another output's in the same construction.
+func (d *descriptor) constructionDecorated() bool {
+	return len(d.decorators) > 0 || d.sharesConstruction() && d.anyDecorated
+}
+
 // resolvesDynamically reports whether producing d's output can resolve
-// services outside the static graph: the constructor or a decorator
-// receives a view of the container.
+// services outside the static graph: the constructor or a decorator run by
+// the construction receives a view of the container.
 func (d *descriptor) resolvesDynamically() bool {
-	return d.injectsContainer || d.decoratorInjectsContainer
+	return d.injectsContainer || d.decoratorInjectsContainer ||
+		d.sharesConstruction() && d.anyDecoratorInjectsContainer
 }
 
 // instanceKey returns the cache key of the instances this descriptor produces.

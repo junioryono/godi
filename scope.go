@@ -1036,7 +1036,7 @@ func (s *scope) createInstance(parent *resolveFrame, descriptor *descriptor, fli
 	if descriptor.info != nil {
 		paramCount = len(descriptor.info.Parameters)
 	}
-	if (paramCount > 0 || len(descriptor.decorators) > 0) &&
+	if (paramCount > 0 || descriptor.constructionDecorated()) &&
 		(s.isRoot || parent != nil || descriptor.resolvesDynamically()) {
 		frame := &resolveFrame{scope: s, parent: parent, descriptor: descriptor, flight: flight}
 		frame.active.Store(true)
