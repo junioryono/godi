@@ -269,14 +269,13 @@ type BuildOption interface {
 }
 
 type buildOptions struct {
-	context        context.Context
-	timeout        time.Duration
-	observer       Observer
-	validateScopes bool
+	context  context.Context
+	timeout  time.Duration
+	observer Observer
 }
 
 func newBuildOptions(opts []BuildOption) buildOptions {
-	options := buildOptions{validateScopes: true}
+	var options buildOptions
 	for _, opt := range opts {
 		if opt != nil {
 			opt.applyBuildOption(&options)
@@ -315,14 +314,4 @@ func WithBuildTimeout(d time.Duration) BuildOption {
 // report to.
 func WithObserver(observer Observer) BuildOption {
 	return buildOptionFunc(func(o *buildOptions) { o.observer = observer })
-}
-
-// WithScopeValidation sets whether resolving a scoped service, directly or
-// through transients, from the provider's root scope fails with
-// ErrScopeRequired. Resolved from the root, a "per-request" service becomes
-// one instance shared by the whole application. With validation on, the root
-// scope also runs no scoped initializers. Validation is on by default; turn
-// it off only for applications that deliberately treat the root as a scope.
-func WithScopeValidation(enabled bool) BuildOption {
-	return buildOptionFunc(func(o *buildOptions) { o.validateScopes = enabled })
 }

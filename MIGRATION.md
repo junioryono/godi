@@ -1,5 +1,13 @@
 # Migrating godi
 
+## v6.0 → v6.1
+
+`godi.WithScopeValidation` and `godi.ErrScopeRequired` are removed: the root
+provider is always a scope, as in v5. Delete `WithScopeValidation(...)` from
+`Build` calls. Code that resolved scoped services only from scopes is
+unaffected; code that relied on `ErrScopeRequired` now gets the root scope's
+instance, and the root scope runs scoped initializers during `Build`.
+
 ## v5 → v6
 
 v6 is a breaking release at a new import path (`github.com/junioryono/godi/v6`).
@@ -10,7 +18,7 @@ The full guide with before/after examples is
 | --- | --- |
 | Import path `/v5` → `/v6` (integrations `/<name>/v6`) | Find-and-replace across your module |
 | **Values registered as instances are not disposed** (silent) | Close them yourself, or register a constructor that returns them |
-| Scope validation is on by default | Resolve scoped services from a scope, or `Build(godi.WithScopeValidation(false))` |
+| `ProviderOptions.ValidateScopes` removed | Nothing: the root provider is a scope, as in v5 |
 | `BuildWithContext`, `BuildWithOptions`, `ProviderOptions` removed | `Build(godi.WithContext(ctx), godi.WithBuildTimeout(d), godi.WithObserver(o))` |
 | Constructors cannot depend on `Provider` or `Scope`; `Scope.Provider()` removed | Depend on `godi.Resolver` or `godi.ScopeFactory` |
 | A constructor's injected `context.Context` carries no scope | Use the injected `godi.Resolver` instead of `FromContext` |

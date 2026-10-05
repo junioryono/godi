@@ -134,19 +134,20 @@ func TestIsService(t *testing.T) {
 		assert.False(t, IsService(wrapper{built}, reflect.TypeFor[*Holder]()))
 	})
 
-	t.Run("agrees_with_validate_scopes", func(t *testing.T) {
+	// The root scope resolves scoped services, so they are services of the
+	// provider as well as of its scopes.
+	t.Run("reports_scoped_services_from_the_root", func(t *testing.T) {
 		t.Parallel()
 		c := NewCollection()
 		c.AddScoped(NewTService)
-		vp, err := c.Build(WithScopeValidation(true))
+		p, err := c.Build()
 		require.NoError(t, err)
-		t.Cleanup(func() { _ = vp.Close() })
-		scope, err := vp.CreateScope(context.Background())
+		t.Cleanup(func() { _ = p.Close() })
+		scope, err := p.CreateScope(context.Background())
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = scope.Close() })
 
-		// Resolving it from the provider fails with ErrScopeRequired.
-		assert.False(t, IsService(vp, reflect.TypeFor[*TService]()))
+		assert.True(t, IsService(p, reflect.TypeFor[*TService]()))
 		assert.True(t, IsService(scope, reflect.TypeFor[*TService]()))
 	})
 }

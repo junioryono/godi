@@ -3,6 +3,22 @@
 Notable changes to godi. Release notes for each version are also generated from
 commit messages on GitHub.
 
+## v6.1.0 (2026-10-05)
+
+### Upgrade notes
+
+- **`WithScopeValidation` and `ErrScopeRequired` are removed; the root provider
+  is always a scope**, as in v5 and in Microsoft.Extensions.DependencyInjection
+  without `ValidateScopes`. A scoped service resolved from the provider (or
+  through a singleton's injected `Resolver`) is the root scope's instance,
+  cached until the provider closes, and the root scope runs scoped
+  initializers during `Build`, so a failing scoped initializer fails `Build`.
+  Delete `WithScopeValidation(...)` from `Build` calls. Removing an API in a
+  minor release is deliberate: v6.0.0 was a day old with no importers outside
+  its author's projects.
+- Singletons still cannot depend on scoped services, directly or through
+  transients: `Build` rejects that whatever the scope.
+
 ## v6.0.0 (2026-10-04)
 
 A major release at the import path `github.com/junioryono/godi/v6`. See the

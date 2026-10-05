@@ -3,7 +3,7 @@ module github.com/junioryono/godi/echo/v6
 go 1.26.0
 
 require (
-	github.com/junioryono/godi/v6 v6.0.0
+	github.com/junioryono/godi/v6 v6.1.0
 	github.com/labstack/echo/v5 v5.4.0
 	github.com/stretchr/testify v1.12.1
 	go.uber.org/goleak v1.3.0

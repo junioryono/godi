@@ -46,7 +46,7 @@ type Collection interface {
 
 	// Build validates the registrations, creates the eager singletons, and
 	// returns the Provider. Options set a parent context, a build timeout,
-	// an observer, and scope validation (see BuildOption).
+	// and an observer (see BuildOption).
 	Build(opts ...BuildOption) (Provider, error)
 
 	// AddModules applies one or more module configurations to the service collection.
@@ -246,7 +246,6 @@ func (sc *collection) doBuild(parent, ctx context.Context, options *buildOptions
 		services:                    services,
 		groups:                      groups,
 		singletonOrder:              singletonsInCreationOrder(allDescriptors, services, groups),
-		validateScopes:              options.validateScopes,
 		descriptors:                 allDescriptors,
 		observer:                    options.observer,
 		analyzer:                    sc.analyzer, // Share analyzer from collection
@@ -302,17 +301,13 @@ func (sc *collection) doBuild(parent, ctx context.Context, options *buildOptions
 
 	// Phase 7: Initialize root-scoped side-effect constructors only after all
 	// singletons exist. Request/child scopes still initialize them in newScope.
-	// With ValidateScopes the root scope holds no scoped services, so it runs
-	// no scoped initializers either.
-	if !p.validateScopes {
-		if err := p.rootScope.initializeScopedServices(); err != nil {
-			buildErr := &BuildError{
-				Phase:   PhaseScopeInitialization,
-				Details: "failed to initialize root scoped services",
-				Cause:   err,
-			}
-			return nil, joinBuildCleanupError(buildErr, p.Close())
+	if err := p.rootScope.initializeScopedServices(); err != nil {
+		buildErr := &BuildError{
+			Phase:   PhaseScopeInitialization,
+			Details: "failed to initialize root scoped services",
+			Cause:   err,
 		}
+		return nil, joinBuildCleanupError(buildErr, p.Close())
 	}
 	if err := ctx.Err(); err != nil {
 		buildErr := &BuildError{
@@ -1258,9 +1253,8 @@ func (r *collection) registerDescriptor(descriptor *descriptor) error {
 // scope's instance for the application's lifetime. Every conflict is
 // reported, in registration order.
 //
-// Transients may depend on scoped services: resolved from a scope, they share
-// that scope's instances. (Resolving them from the root provider is what
-// WithScopeValidation rejects.)
+// Transients may depend on scoped services: they share the instances of the
+// scope they are resolved from (the root scope's, from the provider).
 func validateLifetimes(all []*descriptor, services map[registryKey]*descriptor, groups map[groupID][]*descriptor) error {
 	// scopedReach memoizes, per descriptor, the scoped service reachable
 	// from it through transients only, and the transients on the way.

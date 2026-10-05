@@ -1013,13 +1013,6 @@ func (s *scope) resolve(parent *resolveFrame, key instanceKey, descriptor *descr
 		}
 
 	case Scoped:
-		if s.isRoot && s.rootProvider.validateScopes {
-			return nil, &ResolutionError{
-				ServiceType: key.Type,
-				ServiceKey:  keyName(key.Key),
-				Cause:       ErrScopeRequired,
-			}
-		}
 		if instance, ok := s.getInstance(key); ok {
 			return cachedInstance(key, instance)
 		}

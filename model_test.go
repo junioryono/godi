@@ -777,15 +777,14 @@ type modelRun struct {
 	allowErrors bool
 
 	// runtime
-	p              godi.Provider
-	validateScopes bool
-	res            *resolution
-	scopes         []*modelScope
-	rootID         string
-	singletonNode  map[*modelEntry]*modelNode
-	scopedNode     map[*modelEntry]map[string]*modelNode
-	transientSeen  map[*modelNode]bool
-	regs           []*modelReg
+	p             godi.Provider
+	res           *resolution
+	scopes        []*modelScope
+	rootID        string
+	singletonNode map[*modelEntry]*modelNode
+	scopedNode    map[*modelEntry]map[string]*modelNode
+	transientSeen map[*modelNode]bool
+	regs          []*modelReg
 
 	stats *modelStats
 }
@@ -1566,12 +1565,11 @@ func (r *modelRun) build() bool {
 		r.stats.eagerFails++
 	}
 
-	r.validateScopes = r.chance(30)
 	r.tr.setBuilding(true)
 	rootCtx := context.WithValue(context.Background(), modelScopeKey{}, "root")
-	p, err := r.c.Build(godi.WithScopeValidation(r.validateScopes), godi.WithContext(rootCtx))
+	p, err := r.c.Build(godi.WithContext(rootCtx))
 	r.tr.setBuilding(false)
-	r.logf("Build(ValidateScopes=%v): %v", r.validateScopes, err)
+	r.logf("Build: %v", err)
 
 	if modelValid && eagerOK {
 		if err != nil {
@@ -1785,15 +1783,9 @@ func (r *modelRun) resolveEntry(ms *modelScope, e *modelEntry) {
 	v, err := r.get(res, e)
 	r.logf("%s: err=%v", where, err)
 
-	switch {
-	case ms != nil && ms.closed:
+	if ms != nil && ms.closed {
 		if !errors.Is(err, godi.ErrScopeDisposed) {
 			r.failf("%s: closed scope returned err=%v, want ErrScopeDisposed", where, err)
-		}
-		return
-	case ms == nil && r.validateScopes && e.reg.lifetime == godi.Scoped:
-		if !errors.Is(err, godi.ErrScopeRequired) {
-			r.failf("%s: err=%v, want ErrScopeRequired", where, err)
 		}
 		return
 	}

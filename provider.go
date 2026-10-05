@@ -55,9 +55,6 @@ type provider struct {
 	// included. An injected ScopeFactory refuses to create scopes before.
 	built atomic.Bool
 
-	// validateScopes is set by WithScopeValidation. Immutable after build.
-	validateScopes bool
-
 	// started is set by the first godi.Start.
 	started atomic.Bool
 
