@@ -4,9 +4,15 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/junioryono/godi/v6/internal/reflection"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// newDescriptor builds a descriptor the way Add* does, with its own analyzer.
+func newDescriptor(service any, lifetime Lifetime, opts ...AddOption) (*descriptor, error) {
+	return newDescriptorWithAnalyzer(service, lifetime, reflection.New(), opts...)
+}
 
 func NewTServiceWithError() (*TService, error) {
 	return &TService{ID: "with-error", Value: 1}, nil
@@ -249,25 +255,27 @@ func TestDescriptor(t *testing.T) {
 
 		t.Run("nil_type", func(t *testing.T) {
 			t.Parallel()
-			d := &descriptor{
+			d := &descriptor{registration: &registration{
 				Constructor:     reflect.ValueOf(NewTService),
 				ConstructorType: reflect.TypeFor[func() *TService](),
 				Lifetime:        Singleton,
-			}
+			}}
 			err := d.Validate()
 			require.Error(t, err)
 			var valErr *ValidationError
 			assert.ErrorAs(t, err, &valErr)
-			assert.ErrorIs(t, valErr.Cause, ErrDescriptorNil)
+			assert.ErrorIs(t, valErr.Cause, errDescriptorNil)
 		})
 
 		t.Run("invalid_constructor", func(t *testing.T) {
 			t.Parallel()
 			d := &descriptor{
-				Type:            reflect.TypeFor[*TService](),
-				Constructor:     reflect.Value{},
-				ConstructorType: reflect.TypeFor[func() *TService](),
-				Lifetime:        Singleton,
+				Type: reflect.TypeFor[*TService](),
+				registration: &registration{
+					Constructor:     reflect.Value{},
+					ConstructorType: reflect.TypeFor[func() *TService](),
+					Lifetime:        Singleton,
+				},
 			}
 			err := d.Validate()
 			require.Error(t, err)
@@ -277,9 +285,11 @@ func TestDescriptor(t *testing.T) {
 		t.Run("nil_constructor_type", func(t *testing.T) {
 			t.Parallel()
 			d := &descriptor{
-				Type:        reflect.TypeFor[*TService](),
-				Constructor: reflect.ValueOf(NewTService),
-				Lifetime:    Singleton,
+				Type: reflect.TypeFor[*TService](),
+				registration: &registration{
+					Constructor: reflect.ValueOf(NewTService),
+					Lifetime:    Singleton,
+				},
 			}
 			err := d.Validate()
 			require.Error(t, err)

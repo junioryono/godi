@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/junioryono/godi/v5/internal/reflection"
+	"github.com/junioryono/godi/v6/internal/reflection"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -58,7 +58,7 @@ func TestAnalyzer_AdditionalScenarios(t *testing.T) {
 
 // Test more ParamObjectBuilder scenarios
 func TestParamObjectBuilder_MoreScenarios(t *testing.T) {
-	analyzer := reflection.New()
+	analyzer := reflection.New(reflection.WithNotFound(reflection.NotFoundPolicy))
 	builder := reflection.NewParamObjectBuilder(analyzer)
 
 	resolver := NewTestResolver()

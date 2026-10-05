@@ -1,13 +1,18 @@
 # Fiber Integration
 
-Complete guide for using godi with the [Fiber](https://github.com/gofiber/fiber) web framework, version 2 (`github.com/gofiber/fiber/v2`).
-For Fiber v3, see the [Fiber v3 integration](fiber-v3.md).
+Complete guide for using godi with [Fiber](https://github.com/gofiber/fiber) v3 (`github.com/gofiber/fiber/v3`).
+
+Handlers and options take the `fiber.Ctx` interface. The scope is attached
+with `Ctx.SetContext`, so it is retrieved with `godi.FromContext(c.Context())`.
+Godi v6 supports Fiber v3 only; the Fiber v2 integration was godi v5's
+`github.com/junioryono/godi/fiber/v5` (see
+[Migrating from Fiber v2](#migrating-from-fiber-v2)).
 
 ## Installation
 
 ```bash
-go get github.com/junioryono/godi/v5
-go get github.com/junioryono/godi/fiber/v5
+go get github.com/junioryono/godi/v6
+go get github.com/junioryono/godi/fiber/v6
 ```
 
 ## Quick Start
@@ -16,9 +21,9 @@ go get github.com/junioryono/godi/fiber/v5
 package main
 
 import (
-    "github.com/gofiber/fiber/v2"
-    "github.com/junioryono/godi/v5"
-    godifiber "github.com/junioryono/godi/fiber/v5"
+    "github.com/gofiber/fiber/v3"
+    "github.com/junioryono/godi/v6"
+    godifiber "github.com/junioryono/godi/fiber/v6"
 )
 
 type UserController struct{}
@@ -27,7 +32,7 @@ func NewUserController() *UserController {
     return &UserController{}
 }
 
-func (c *UserController) List(ctx *fiber.Ctx) error {
+func (c *UserController) List(ctx fiber.Ctx) error {
     return ctx.JSON([]string{"alice", "bob"})
 }
 
@@ -48,7 +53,9 @@ func main() {
 
 ## ScopeMiddleware
 
-Creates a request scope for each HTTP request. The scope is attached to the request's `UserContext`, which Fiber resets between requests.
+Creates a request scope for each HTTP request and sets its context as the
+request context (`c.Context()`). Fiber clears it when the pooled `Ctx` is
+released, so a scope never leaks into the next request.
 
 ```go
 app := fiber.New()
@@ -76,16 +83,29 @@ To return errors to outer handlers instead, use
 scope has closed, so the error handler cannot use request-scoped services.
 See the [integration contract](#echo-and-fiber-errors-are-consumed-inside-the-scope).
 
-When the response body is a stream (`c.SendStream`), the scope stays open
-until fasthttp has written the response, because the stream is usually a
-scoped resource.
+### Streamed responses
+
+Fiber writes a streamed body (`c.SendStream`, `c.SendStreamWriter`) after the
+handler chain returns, and the stream is usually a scoped resource. When the
+response is a body stream, the middleware keeps the scope open until fasthttp
+has written the response, then closes it. Fiber v3 still runs on fasthttp,
+which closes request user values that implement `io.Closer` once the
+response is written; the middleware registers the scope close as one.
+
+```go
+app.Get("/export", func(c fiber.Ctx) error {
+    scope, _ := godi.FromContext(c.Context())
+    report := godi.MustResolve[*ReportStream](scope) // scoped io.Reader
+    return c.SendStream(report)                      // scope closes after the write
+})
+```
 
 ### Configuration Options
 
 ```go
 app.Use(godifiber.ScopeMiddleware(provider,
-    // Custom error handler for scope creation and WithMiddleware failures
-    godifiber.WithErrorHandler(func(c *fiber.Ctx, err error) error {
+    // Custom error handler for scope creation failures
+    godifiber.WithErrorHandler(func(c fiber.Ctx, err error) error {
         return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
             "error": "Service unavailable",
         })
@@ -93,8 +113,20 @@ app.Use(godifiber.ScopeMiddleware(provider,
 
     // Custom error handler for WithMiddleware failures
     // (defaults to the error handler above)
-    godifiber.WithMiddlewareErrorHandler(func(c *fiber.Ctx, err error) error {
+    godifiber.WithMiddlewareErrorHandler(func(c fiber.Ctx, err error) error {
         return fiber.ErrUnauthorized
+    }),
+
+    // Custom handler for scope close errors
+    godifiber.WithCloseErrorHandler(func(err error) {
+        log.Printf("Scope close error: %v", err)
+    }),
+
+    // Middleware that runs after scope creation
+    godifiber.WithMiddleware(func(scope godi.Scope, c fiber.Ctx) error {
+        reqCtx := godi.MustResolve[*RequestContext](scope)
+        reqCtx.UserID = c.Get("X-User-ID")
+        return nil
     }),
 
     // Logger for the default handlers (defaults to slog.Default())
@@ -103,18 +135,6 @@ app.Use(godifiber.ScopeMiddleware(provider,
     // Return errors to outer handlers instead of consuming them;
     // Fiber then renders them after the scope closes (default false)
     godifiber.WithErrorPassthrough(false),
-
-    // Custom handler for scope close errors
-    godifiber.WithCloseErrorHandler(func(err error) {
-        log.Printf("Scope close error: %v", err)
-    }),
-
-    // Middleware that runs after scope creation
-    godifiber.WithMiddleware(func(scope godi.Scope, c *fiber.Ctx) error {
-        reqCtx := godi.MustResolve[*RequestContext](scope)
-        reqCtx.UserID = c.Get("X-User-ID")
-        return nil
-    }),
 ))
 ```
 
@@ -124,9 +144,9 @@ Wraps a controller method for type-safe resolution.
 
 ```go
 type UserController interface {
-    List(*fiber.Ctx) error
-    GetByID(*fiber.Ctx) error
-    Create(*fiber.Ctx) error
+    List(fiber.Ctx) error
+    GetByID(fiber.Ctx) error
+    Create(fiber.Ctx) error
 }
 
 app.Get("/users", godifiber.Handle(UserController.List))
@@ -142,7 +162,7 @@ app.Get("/users", godifiber.Handle(UserController.List,
     godifiber.WithPanicRecovery(true),
 
     // Custom panic handler
-    godifiber.WithPanicHandler(func(c *fiber.Ctx, v any) error {
+    godifiber.WithPanicHandler(func(c fiber.Ctx, v any) error {
         log.Printf("Panic: %v", v)
         return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
             "error": "Unexpected error",
@@ -150,14 +170,14 @@ app.Get("/users", godifiber.Handle(UserController.List,
     }),
 
     // Custom scope error handler
-    godifiber.WithScopeErrorHandler(func(c *fiber.Ctx, err error) error {
+    godifiber.WithScopeErrorHandler(func(c fiber.Ctx, err error) error {
         return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
             "error": "Session error",
         })
     }),
 
     // Custom resolution error handler
-    godifiber.WithResolutionErrorHandler(func(c *fiber.Ctx, err error) error {
+    godifiber.WithResolutionErrorHandler(func(c fiber.Ctx, err error) error {
         return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
             "error": "Service unavailable",
         })
@@ -172,168 +192,37 @@ Default handlers log the cause with `log/slog` (the panic handler also logs
 the stack trace) and respond with a generic 500; they never send internal
 error text to the client.
 
-## Complete Example
+## Error Handling
+
+Fiber's own `DefaultErrorHandler` writes `err.Error()` for plain errors. If
+handlers can return internal errors, configure an `ErrorHandler` that maps
+them to a generic response. With the default (consuming) mode it runs while
+the request scope is alive:
 
 ```go
-package main
-
-import (
-    "log"
-    "time"
-
-    "github.com/gofiber/fiber/v2"
-    "github.com/gofiber/fiber/v2/middleware/logger"
-    "github.com/gofiber/fiber/v2/middleware/recover"
-    "github.com/google/uuid"
-    "github.com/junioryono/godi/v5"
-    godifiber "github.com/junioryono/godi/fiber/v5"
-)
-
-// === Services ===
-
-type Logger struct{}
-
-func NewLogger() *Logger { return &Logger{} }
-
-func (l *Logger) Info(msg string, args ...any) {
-    log.Printf("[INFO] "+msg, args...)
-}
-
-type RequestContext struct {
-    ID        string
-    UserID    string
-    StartTime time.Time
-}
-
-func NewRequestContext() *RequestContext {
-    return &RequestContext{
-        ID:        uuid.New().String()[:8],
-        StartTime: time.Now(),
-    }
-}
-
-type User struct {
-    ID   int    `json:"id"`
-    Name string `json:"name"`
-}
-
-type UserService struct {
-    reqCtx *RequestContext
-    logger *Logger
-}
-
-func NewUserService(reqCtx *RequestContext, logger *Logger) *UserService {
-    return &UserService{reqCtx: reqCtx, logger: logger}
-}
-
-func (s *UserService) GetAll() []User {
-    s.logger.Info("[%s] Fetching all users", s.reqCtx.ID)
-    return []User{{ID: 1, Name: "Alice"}, {ID: 2, Name: "Bob"}}
-}
-
-// === Controllers ===
-
-type UserController struct {
-    service *UserService
-    reqCtx  *RequestContext
-}
-
-func NewUserController(service *UserService, reqCtx *RequestContext) *UserController {
-    return &UserController{service: service, reqCtx: reqCtx}
-}
-
-func (c *UserController) List(ctx *fiber.Ctx) error {
-    users := c.service.GetAll()
-    ctx.Set("X-Request-ID", c.reqCtx.ID)
-    return ctx.JSON(fiber.Map{
-        "users":    users,
-        "duration": time.Since(c.reqCtx.StartTime).String(),
-    })
-}
-
-func (c *UserController) GetByID(ctx *fiber.Ctx) error {
-    id := ctx.Params("id")
-    ctx.Set("X-Request-ID", c.reqCtx.ID)
-    return ctx.JSON(User{ID: 1, Name: "User " + id})
-}
-
-// === Main ===
-
-func main() {
-    // Register services
-    services := godi.NewCollection()
-    services.AddSingleton(NewLogger)
-    services.AddScoped(NewRequestContext)
-    services.AddScoped(NewUserService)
-    services.AddScoped(NewUserController)
-
-    // Build provider
-    provider, err := services.Build()
-    if err != nil {
-        log.Fatalf("Failed to build provider: %v", err)
-    }
-    defer provider.Close()
-
-    // Create Fiber app
-    app := fiber.New(fiber.Config{
-        ErrorHandler: func(c *fiber.Ctx, err error) error {
-            return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-                "error": "internal server error",
-            })
-        },
-    })
-
-    // The scope wraps error observation and recovery so they run before close.
-    app.Use(godifiber.ScopeMiddleware(provider,
-        godifiber.WithMiddleware(func(scope godi.Scope, c *fiber.Ctx) error {
-            reqCtx := godi.MustResolve[*RequestContext](scope)
-            reqCtx.UserID = c.Get("X-User-ID")
-            return nil
-        }),
-    ))
-    app.Use(logger.New())
-    app.Use(recover.New())
-
-    // Routes
-    app.Get("/users", godifiber.Handle((*UserController).List))
-    app.Get("/users/:id", godifiber.Handle((*UserController).GetByID))
-
-    // Health check
-    app.Get("/health", func(c *fiber.Ctx) error {
-        return c.SendString("OK")
-    })
-
-    // Start server
-    log.Println("Server starting on :8080")
-    app.Listen(":8080")
-}
+app := fiber.New(fiber.Config{
+    ErrorHandler: func(c fiber.Ctx, err error) error {
+        if fiberErr, ok := errors.AsType[*fiber.Error](err); ok {
+            return c.Status(fiberErr.Code).JSON(fiber.Map{"error": fiberErr.Message})
+        }
+        if scope, scopeErr := godi.FromContext(c.Context()); scopeErr == nil {
+            godi.MustResolve[*RequestLogger](scope).Error("request failed", "error", err)
+        }
+        return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+            "error": "internal server error",
+        })
+    },
+})
 ```
 
-## Route Groups
+If the configured `ErrorHandler` itself fails, the middleware logs that
+failure and renders a generic 500.
 
-Use with Fiber route groups:
-
-```go
-api := app.Group("/api/v1")
-
-users := api.Group("/users")
-users.Get("/", godifiber.Handle((*UserController).List))
-users.Get("/:id", godifiber.Handle((*UserController).GetByID))
-users.Post("/", godifiber.Handle((*UserController).Create))
-
-orders := api.Group("/orders")
-orders.Get("/", godifiber.Handle((*OrderController).List))
-orders.Post("/", godifiber.Handle((*OrderController).Create))
-```
-
-## FromContext Helper
-
-Fiber attaches the scope to the request's `UserContext`. Retrieve it with
-`godi.FromContext`:
+## Accessing Scope Manually
 
 ```go
-app.Get("/custom", func(c *fiber.Ctx) error {
-    scope, err := godi.FromContext(c.UserContext())
+app.Get("/custom", func(c fiber.Ctx) error {
+    scope, err := godi.FromContext(c.Context())
     if err != nil {
         return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
             "error": "No scope",
@@ -341,54 +230,28 @@ app.Get("/custom", func(c *fiber.Ctx) error {
     }
 
     service := godi.MustResolve[*UserService](scope)
-    users := service.GetAll()
-    return c.JSON(users)
+    return c.JSON(service.GetAll())
 })
 ```
 
-## Accessing URL Parameters
+`fiber.Ctx` itself implements `context.Context`, but its values are fasthttp
+user values, not the request context: pass `c.Context()` to
+`godi.FromContext`, not `c`.
 
-Use Fiber's parameter methods in your controllers:
+(migrating-from-fiber-v2)=
 
-```go
-func (c *UserController) GetByID(ctx *fiber.Ctx) error {
-    id := ctx.Params("id")
-    // ...
-}
-```
+## Migrating from Fiber v2
 
-## Request Body Parsing
+Godi v5's `github.com/junioryono/godi/fiber/v5` integrated Fiber v2. To move to
+Fiber v3 with godi v6:
 
-Combine godi with Fiber's body parser:
+1. Replace the imports: `github.com/gofiber/fiber/v2` with `github.com/gofiber/fiber/v3`, and
+   `github.com/junioryono/godi/fiber/v5` with `github.com/junioryono/godi/fiber/v6`.
+2. Change `*fiber.Ctx` to `fiber.Ctx` in controllers and option callbacks.
+3. Replace `godi.FromContext(c.UserContext())` with `godi.FromContext(c.Context())`.
 
-```go
-type CreateUserRequest struct {
-    Name  string `json:"name"`
-    Email string `json:"email"`
-}
-
-func (c *UserController) Create(ctx *fiber.Ctx) error {
-    var req CreateUserRequest
-    if err := ctx.BodyParser(&req); err != nil {
-        return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-            "error": "Invalid request",
-        })
-    }
-
-    user := c.service.Create(req.Name, req.Email)
-    return ctx.Status(fiber.StatusCreated).JSON(user)
-}
-```
-
-## Important: Fiber's Context Handling
-
-Fiber reuses `*fiber.Ctx` between requests for performance. The godi integration handles this correctly by attaching the scope to the request's `UserContext`, which Fiber resets between requests.
-
-```go
-// Retrieve the scope the same way as every other integration:
-scope, err := godi.FromContext(c.UserContext())
-```
+Option names and behavior are unchanged.
 
 ---
 
-**See also:** [Integration contract](#integration-contract) | [Fiber v3 Integration](fiber-v3.md) | [Gin Integration](gin.md) | [Chi Integration](chi.md) | [Echo Integration](echo.md) | [net/http Integration](net-http.md)
+**See also:** [Integration contract](#integration-contract) | [Gin Integration](gin.md) | [Chi Integration](chi.md) | [Echo Integration](echo.md) | [net/http Integration](net-http.md)

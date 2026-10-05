@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/junioryono/godi/v5/internal/reflection"
+	"github.com/junioryono/godi/v6/internal/reflection"
 )
 
 // decoration is one registered decorator.
@@ -26,8 +26,8 @@ type decoration struct {
 	// source names the decorator function and its location.
 	source string
 
-	// injectsContainer reports whether the decorator receives godi.Scope or
-	// godi.Provider.
+	// injectsContainer reports whether the decorator receives a view of the
+	// container (see registration.injectsContainer).
 	injectsContainer bool
 }
 
@@ -58,10 +58,7 @@ type decoration struct {
 // service's own constructor.
 func Decorate(fn any, opts ...AddOption) ModuleOption {
 	return func(c Collection) error {
-		sc, ok := c.(*collection)
-		if !ok {
-			return errUnsupportedCollection("Decorate")
-		}
+		sc := c.impl()
 		dec, err := newDecoration(sc.analyzer, fn, opts)
 		if err != nil {
 			return err
@@ -133,7 +130,10 @@ func newDecoration(analyzer *reflection.Analyzer, fn any, opts []AddOption) (*de
 		dependencies: info.Dependencies()[1:],
 	}
 	for _, param := range info.Parameters[1:] {
-		if param.Key == nil && (param.Type == scopeType || param.Type == providerType || param.Type == contextType) {
+		if err := containerParameterError(param.Type, param.Key, param.Group); err != nil {
+			return nil, invalid("decorator %s %v", fnType, err)
+		}
+		if param.Key == nil && injectsContainer(param.Type) {
 			dec.injectsContainer = true
 		}
 	}
@@ -147,8 +147,8 @@ func newDecoration(analyzer *reflection.Analyzer, fn any, opts []AddOption) (*de
 // dependencies.
 func attachDecorators(
 	decorators []*decoration,
-	services map[TypeKey]*descriptor,
-	groups map[GroupKey][]*descriptor,
+	services map[registryKey]*descriptor,
+	groups map[groupID][]*descriptor,
 ) (sources map[*reflection.Dependency]string, err error) {
 	sources = make(map[*reflection.Dependency]string)
 	var errs []error
@@ -164,7 +164,7 @@ func attachDecorators(
 		}
 		for _, d := range targets {
 			d.decorators = append(d.decorators[:len(d.decorators):len(d.decorators)], dec)
-			d.Dependencies = append(d.Dependencies[:len(d.Dependencies):len(d.Dependencies)], dec.dependencies...)
+			d.decoratorDeps = append(d.decoratorDeps[:len(d.decoratorDeps):len(d.decoratorDeps)], dec.dependencies...)
 			for _, dep := range dec.dependencies {
 				sources[dep] = dec.source
 			}
@@ -172,7 +172,12 @@ func attachDecorators(
 			// dynamically: its construction needs a frame for cycle
 			// detection.
 			if dec.injectsContainer {
-				d.injectsContainer = true
+				d.decoratorInjectsContainer = true
+			}
+			// One construction runs every output's decorators.
+			d.anyDecorated = true
+			if dec.injectsContainer {
+				d.anyDecoratorInjectsContainer = true
 			}
 		}
 	}
@@ -189,11 +194,11 @@ func attachDecorators(
 }
 
 // decoratorTargets returns the descriptors dec decorates.
-func decoratorTargets(dec *decoration, services map[TypeKey]*descriptor, groups map[GroupKey][]*descriptor) []*descriptor {
+func decoratorTargets(dec *decoration, services map[registryKey]*descriptor, groups map[groupID][]*descriptor) []*descriptor {
 	if dec.group != "" {
-		return groups[GroupKey{Type: dec.target, Group: dec.group}]
+		return groups[groupID{Type: dec.target, Group: dec.group}]
 	}
-	if d := services[TypeKey{Type: dec.target, Key: dec.key}]; d != nil {
+	if d := services[registryKey{Type: dec.target, Key: dec.key}]; d != nil {
 		return []*descriptor{d}
 	}
 	return nil
@@ -203,7 +208,7 @@ func decoratorTargets(dec *decoration, services map[TypeKey]*descriptor, groups 
 // or through other services, on an output of d's own constructor: that output
 // is still being produced when the decorator runs, so it could never be
 // resolved.
-func checkDecoratorDependencies(dec *decoration, d *descriptor, services map[TypeKey]*descriptor, groups map[GroupKey][]*descriptor) error {
+func checkDecoratorDependencies(dec *decoration, d *descriptor, services map[registryKey]*descriptor, groups map[groupID][]*descriptor) error {
 	target := flightKey(d)
 	visited := make(map[*descriptor]bool)
 	var reach func(deps []*reflection.Dependency) *descriptor
@@ -241,13 +246,13 @@ func checkDecoratorDependencies(dec *decoration, d *descriptor, services map[Typ
 // outputs of a multi-return or result-object constructor, or the interface
 // aliases of a cached service).
 func constructionDependencies(d *descriptor) []*reflection.Dependency {
-	if len(d.siblings) == 0 || d.isAlias && d.Lifetime == Transient {
+	if len(d.siblings()) == 0 || d.isAlias && d.Lifetime == Transient {
 		// Transient aliases are each constructed separately.
-		return d.Dependencies
+		return d.dependencies()
 	}
 	var deps []*reflection.Dependency
-	for _, sibling := range d.siblings {
-		deps = append(deps, sibling.Dependencies...)
+	for _, sibling := range d.siblings() {
+		deps = append(deps, sibling.dependencies()...)
 	}
 	return deps
 }
@@ -304,7 +309,7 @@ func resolveDecoratorParam(resolver reflection.DependencyResolver, param *reflec
 		return nil, fmt.Errorf("group parameters are not supported in decorators")
 	}
 	if param.Key != nil {
-		return resolver.GetKeyed(param.Type, param.Key)
+		return resolver.GetKeyed(param.Type, keyName(param.Key))
 	}
 	return resolver.Get(param.Type)
 }

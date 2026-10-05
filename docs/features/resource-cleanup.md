@@ -118,15 +118,32 @@ scope.Close()     // Database stays open
 provider.Close()  // Database.Close() called here, once
 ```
 
-### Values You Own: `NoDispose`
+### Values You Own
 
-By default godi disposes everything it hands out, including pre-built values
-passed to `AddSingleton`. Mark values whose lifetime you manage yourself with
+godi disposes only what its constructors create. A value you pass to
+`AddSingleton` was created by you, so you close it:
+
+```go
+db, err := sql.Open("postgres", dsn)
+// ...
+defer db.Close()
+services.AddSingleton(db)  // godi uses it, but never closes it
+```
+
+To hand a value you created to godi, register a constructor that returns it
+instead: `services.AddSingleton(func() *sql.DB { return db })`.
+
+Decorators applied to an instance are not disposed either: a wrapper that
+passes `Close` through would close your value. Ownership is tracked by
+identity, so register disposable values as pointers. A struct value with a
+`Close` method can't be told apart from a copy, so a scoped service that
+returns one adopts and closes it.
+
+The other way around, mark a constructor whose values you manage yourself with
 `godi.NoDispose()`; godi never disposes them, and no scope adopts them either:
 
 ```go
-services.AddSingleton(os.Stdout, godi.NoDispose())
-services.AddSingleton(sharedDB, godi.NoDispose())  // closed by your main()
+services.AddSingleton(openSharedPool, godi.NoDispose())  // closed by your main()
 ```
 
 ### Contexts and Cancellation
@@ -179,7 +196,7 @@ budget, forced with `Close` when it runs out. A plain `Close` of the provider
 prefers `Close()` because a graceful shutdown without a deadline could wait
 forever.
 
-A runnable shutdown with a deadline, showing the disposal order, is the [`ExampleShutdown`](https://pkg.go.dev/github.com/junioryono/godi/v5#example-Shutdown) example in the package documentation (`example_test.go`), verified by `go test`.
+A runnable shutdown with a deadline, showing the disposal order, is the [`ExampleShutdown`](https://pkg.go.dev/github.com/junioryono/godi/v6#example-Shutdown) example in the package documentation (`example_test.go`), verified by `go test`.
 
 ## Disposal Order
 

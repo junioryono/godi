@@ -39,7 +39,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/junioryono/godi/v5"
+	"github.com/junioryono/godi/v6"
 )
 
 // modelDefaultIterations keeps the default run around a second under -race.
@@ -117,9 +117,6 @@ type (
 func (p *modelP0) modelNodeOf() *modelNode { return p.n }
 func (p *modelP1) modelNodeOf() *modelNode { return p.n }
 
-// modelKey is a non-string key registered with godi.Key.
-type modelKey struct{ N int }
-
 type modelType struct {
 	rt       reflect.Type
 	iface    bool
@@ -182,15 +179,17 @@ func (tr *modelTracker) newNode(typ int, reg *modelReg, slot int, scopeID string
 	tr.mu.Lock()
 	defer tr.mu.Unlock()
 	n := &modelNode{
-		id:        len(tr.nodes) + 1,
-		tr:        tr,
-		typ:       typ,
-		reg:       reg,
-		slot:      slot,
-		scopeID:   scopeID,
-		deps:      deps,
-		closable:  modelTypes[typ].closable,
-		noDispose: reg.noDispose,
+		id:       len(tr.nodes) + 1,
+		tr:       tr,
+		typ:      typ,
+		reg:      reg,
+		slot:     slot,
+		scopeID:  scopeID,
+		deps:     deps,
+		closable: modelTypes[typ].closable,
+		// godi never disposes a value registered as an instance: the caller
+		// that created it owns it.
+		noDispose: reg.noDispose || reg.shape == shapeInstance,
 	}
 	tr.nodes = append(tr.nodes, n)
 	return n
@@ -249,12 +248,17 @@ func modelNodeOfValue(v reflect.Value) *modelNode {
 	return v.Interface().(modelNoder).modelNodeOf()
 }
 
+// modelScopeKey tags each scope's context with the model's name for it, so
+// constructors (whose context does not carry the godi scope) can tell which
+// scope they run in.
+type modelScopeKey struct{}
+
 func modelScopeID(ctx context.Context) string {
-	s, err := godi.FromContext(ctx)
-	if err != nil {
-		panic(fmt.Sprintf("constructor context carries no scope: %v", err))
+	id, ok := ctx.Value(modelScopeKey{}).(string)
+	if !ok {
+		panic("constructor context carries no model scope name")
 	}
-	return s.ID()
+	return id
 }
 
 // ---------------------------------------------------------------------------
@@ -296,7 +300,7 @@ type modelReg struct {
 	shape     modelShape
 	outputs   []modelOutput
 	as        []int // interface types (shapeAs)
-	key       any   // godi.Name / godi.Key
+	key       any   // godi.Name (a string), or nil
 	group     string
 	deps      []modelDep
 	inStruct  bool
@@ -366,11 +370,8 @@ func (m *modelRegistry) entriesFor(reg *modelReg) []*modelEntry {
 	default:
 		var out []*modelEntry
 		for slot, o := range reg.outputs {
-			e := &modelEntry{reg: reg, slot: slot, typ: o.typ, group: reg.group}
-			if slot == 0 {
-				e.key = reg.key
-			}
-			out = append(out, e)
+			// A name applies to every output, as a group does.
+			out = append(out, &modelEntry{reg: reg, slot: slot, typ: o.typ, key: reg.key, group: reg.group})
 		}
 		return out
 	}
@@ -939,10 +940,8 @@ func (r *modelRun) genDeps(lifetime godi.Lifetime, maxLevel int) (deps []modelDe
 
 func (r *modelRun) genKeyOption(reg *modelReg) {
 	switch v := r.rng.IntN(100); {
-	case v < 20:
-		reg.key = pick(r, []string{"a", "b"})
 	case v < 26:
-		reg.key = modelKey{N: 1 + r.rng.IntN(2)}
+		reg.key = pick(r, []string{"a", "b"})
 	case v < 38 && reg.shape != shapeMulti:
 		reg.group = pick(r, []string{"g", "h"})
 	}
@@ -1012,11 +1011,8 @@ func (r *modelRun) genReg(lifetime godi.Lifetime, shapes []modelShape) *modelReg
 
 func (r *modelRun) options(reg *modelReg) []godi.AddOption {
 	var opts []godi.AddOption
-	switch key := reg.key.(type) {
-	case string:
+	if key, ok := reg.key.(string); ok {
 		opts = append(opts, godi.Name(key))
-	case modelKey:
-		opts = append(opts, godi.Key(key))
 	}
 	if reg.group != "" {
 		opts = append(opts, godi.Group(reg.group))
@@ -1440,12 +1436,12 @@ func (r *modelRun) opRemove() {
 
 func (r *modelRun) opRemoveKeyed() {
 	typ := r.rng.IntN(len(modelTypes))
-	key := pick(r, []any{"a", "b", modelKey{N: 1}})
+	key := pick(r, []any{"a", "b"})
 	if !r.keepRemoval(typ, key, false) {
 		return
 	}
 	r.logf("RemoveKeyed %v %#v", modelTypes[typ].rt, key)
-	r.c.RemoveKeyed(modelTypes[typ].rt, key)
+	r.c.RemoveKeyed(modelTypes[typ].rt, key.(string))
 	r.m.removeKeyed(typ, key)
 }
 
@@ -1501,11 +1497,8 @@ func (r *modelRun) opDecorate() {
 		}
 	}
 	var opts []godi.AddOption
-	switch key := t.key.(type) {
-	case string:
+	if key, ok := t.key.(string); ok {
 		opts = append(opts, godi.Name(key))
-	case modelKey:
-		opts = append(opts, godi.Key(key))
 	}
 	if t.group != "" {
 		opts = append(opts, godi.Group(t.group))
@@ -1575,7 +1568,8 @@ func (r *modelRun) build() bool {
 
 	r.validateScopes = r.chance(30)
 	r.tr.setBuilding(true)
-	p, err := r.c.BuildWithOptions(&godi.ProviderOptions{ValidateScopes: r.validateScopes})
+	rootCtx := context.WithValue(context.Background(), modelScopeKey{}, "root")
+	p, err := r.c.Build(godi.WithScopeValidation(r.validateScopes), godi.WithContext(rootCtx))
 	r.tr.setBuilding(false)
 	r.logf("Build(ValidateScopes=%v): %v", r.validateScopes, err)
 
@@ -1597,13 +1591,7 @@ func (r *modelRun) build() bool {
 	}
 	r.p = p
 
-	// The root scope's ID, to attribute constructions made in it.
-	ctx, gerr := godi.Resolve[context.Context](p)
-	if gerr != nil {
-		r.failf("resolve context.Context from provider: %v", gerr)
-		return false
-	}
-	r.rootID = modelScopeID(ctx)
+	r.rootID = "root"
 
 	r.tr.mu.Lock()
 	for _, n := range r.tr.nodes {
@@ -1643,17 +1631,19 @@ func (r *modelRun) opCreateScope() {
 	var parent *modelScope
 	var s godi.Scope
 	var err error
+	id := fmt.Sprintf("s%d", len(r.scopes)+1)
+	ctx := context.WithValue(context.Background(), modelScopeKey{}, id)
 	if open := r.openScopes(); len(open) > 0 && r.chance(30) {
 		parent = pick(r, open)
-		s, err = parent.s.CreateScope(context.Background())
+		s, err = parent.s.CreateScope(ctx)
 	} else {
-		s, err = r.p.CreateScope(context.Background())
+		s, err = r.p.CreateScope(ctx)
 	}
 	if err != nil {
 		r.failf("CreateScope: %v", err)
 		return
 	}
-	ms := &modelScope{s: s, id: s.ID(), parent: parent}
+	ms := &modelScope{s: s, id: id, parent: parent}
 	if parent != nil {
 		parent.children = append(parent.children, ms)
 	}
@@ -1720,7 +1710,7 @@ func (r *modelRun) get(res godi.Resolver, e *modelEntry) (any, error) {
 	if e.key == nil {
 		return res.Get(rt)
 	}
-	return res.GetKeyed(rt, e.key)
+	return res.GetKeyed(rt, e.key.(string))
 }
 
 // checkNode checks a resolved value against the model's entry.
@@ -2012,11 +2002,6 @@ func (r *modelRun) checkLifecycle(built bool) {
 		case n.noDispose && n.closes > 0:
 			r.failf("%s is NoDispose but was closed", desc)
 		case !n.closable || n.noDispose:
-		case n.reg.shape == shapeInstance && n.scopeID == "":
-			// An instance is owned once Build publishes it.
-			if built && n.closes == 0 && r.liveAtBuild(n.reg) {
-				r.failf("%s: instance live at Build was not closed", desc)
-			}
 		case n.closes == 0:
 			r.failf("%s was never closed", desc)
 		}
@@ -2059,15 +2044,6 @@ func (r *modelRun) checkLifecycle(built bool) {
 		}
 		reg.mu.Unlock()
 	}
-}
-
-func (r *modelRun) liveAtBuild(reg *modelReg) bool {
-	for _, e := range r.m.order {
-		if e.reg == reg {
-			return !reg.lazy
-		}
-	}
-	return false
 }
 
 // regFails reports whether a construction of reg can fail after running (so

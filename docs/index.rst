@@ -30,6 +30,7 @@
    guides/testing
    guides/error-handling
    guides/migration
+   guides/v5-to-v6
    guides/v4-to-v5
 
 .. toctree::
@@ -56,9 +57,7 @@
    integrations/gin
    integrations/chi
    integrations/echo
-   integrations/echo-v5
    integrations/fiber
-   integrations/fiber-v3
    integrations/net-http
    integrations/huma
 
@@ -68,7 +67,7 @@
    :hidden:
 
    GitHub <https://github.com/junioryono/godi>
-   API Docs <https://pkg.go.dev/github.com/junioryono/godi/v5>
+   API Docs <https://pkg.go.dev/github.com/junioryono/godi/v6>
    Changelog <https://github.com/junioryono/godi/releases>
 
 godi
@@ -115,7 +114,7 @@ Install godi:
 
 .. code-block:: bash
 
-   go get github.com/junioryono/godi/v5
+   go get github.com/junioryono/godi/v6
 
 Create your first container:
 
@@ -125,7 +124,7 @@ Create your first container:
 
    import (
        "fmt"
-       "github.com/junioryono/godi/v5"
+       "github.com/junioryono/godi/v6"
    )
 
    type Logger struct{}
@@ -166,10 +165,8 @@ Quick Links
 
 - :doc:`integrations/gin` - Gin web framework
 - :doc:`integrations/chi` - Chi router
-- :doc:`integrations/echo` - Echo v4 framework
-- :doc:`integrations/echo-v5` - Echo v5 framework
-- :doc:`integrations/fiber` - Fiber v2 framework
-- :doc:`integrations/fiber-v3` - Fiber v3 framework
+- :doc:`integrations/echo` - Echo v5 framework
+- :doc:`integrations/fiber` - Fiber v3 framework
 - :doc:`integrations/net-http` - Standard library
 - :doc:`integrations/huma` - Huma REST API framework
 

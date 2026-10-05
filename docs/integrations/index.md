@@ -7,34 +7,28 @@ middleware creates.
 
 - [net/http](net-http.md)
 - [Chi](chi.md)
-- [Echo v4](echo.md)
-- [Echo v5](echo-v5.md)
-- [Fiber v2](fiber.md)
-- [Fiber v3](fiber-v3.md)
+- [Echo v5](echo.md)
+- [Fiber v3](fiber.md)
 - [Gin](gin.md)
 - [Huma](huma.md)
 
 | Framework | Module                                  | Package name | Retrieve the scope with                     |
 | --------- | --------------------------------------- | ------------ | ------------------------------------------- |
-| net/http  | `github.com/junioryono/godi/http/v5`    | `http`       | `godi.FromContext(r.Context())`             |
-| Chi       | `github.com/junioryono/godi/chi/v5`     | `chi`        | `godi.FromContext(r.Context())`             |
-| Gin       | `github.com/junioryono/godi/gin/v5`     | `gin`        | `godi.FromContext(c.Request.Context())`     |
-| Echo v4   | `github.com/junioryono/godi/echo/v5`    | `echo`       | `godi.FromContext(c.Request().Context())`   |
-| Echo v5   | `github.com/junioryono/godi/echov5/v5`  | `echov5`     | `godi.FromContext(c.Request().Context())`   |
-| Fiber v2  | `github.com/junioryono/godi/fiber/v5`   | `fiber`      | `godi.FromContext(c.UserContext())`         |
-| Fiber v3  | `github.com/junioryono/godi/fiberv3/v5` | `fiberv3`    | `godi.FromContext(c.Context())`             |
-| Huma      | `github.com/junioryono/godi/huma/v5`    | `huma`       | `godi.FromContext(ctx)` in the handler      |
+| net/http  | `github.com/junioryono/godi/http/v6`    | `http`       | `godi.FromContext(r.Context())`             |
+| Chi       | `github.com/junioryono/godi/chi/v6`     | `chi`        | `godi.FromContext(r.Context())`             |
+| Gin       | `github.com/junioryono/godi/gin/v6`     | `gin`        | `godi.FromContext(c.Request.Context())`     |
+| Echo v5   | `github.com/junioryono/godi/echo/v6`    | `echo`       | `godi.FromContext(c.Request().Context())`   |
+| Fiber v3  | `github.com/junioryono/godi/fiber/v6`   | `fiber`      | `godi.FromContext(c.Context())`             |
+| Huma      | `github.com/junioryono/godi/huma/v6`    | `huma`       | `godi.FromContext(ctx)` in the handler      |
 
-The trailing `/v5` in every module path is godi's major version. `echov5/v5`
-is godi v5's integration for Echo v5, and `fiberv3/v5` is the one for Fiber v3.
-The Chi module is a thin facade over the net/http module: its types are
+The trailing `/v6` in every module path is godi's major version. The Chi module is a thin facade over the net/http module: its types are
 aliases of the `godihttp` types.
 
 (integration-contract)=
 
 ## Integration Contract
 
-Every router integration (net/http, Chi, Gin, Echo v4/v5, Fiber v2/v3)
+Every router integration (net/http, Chi, Gin, Echo, Fiber)
 provides the same two pieces and follows the same rules. A shared conformance
 suite (`integrationtests/conformance_test.go`) runs these rules against every
 adapter.

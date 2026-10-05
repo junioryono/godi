@@ -9,8 +9,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/junioryono/godi/v5/internal/graph"
-	"github.com/junioryono/godi/v5/internal/reflection"
+	"github.com/junioryono/godi/v6/internal/graph"
+	"github.com/junioryono/godi/v6/internal/reflection"
 )
 
 // Global atomic counter for fast ID generation (replaces UUID)
@@ -40,18 +40,14 @@ var providerIDCounter atomic.Uint64
 //	}
 //	defer provider.Close()
 type Collection interface {
-	// Build creates a Provider from the registered services
-	// using default options.
-	Build() (Provider, error)
+	// impl seals the interface: only godi implements Collection, so methods
+	// can be added without breaking anyone.
+	impl() *collection
 
-	// BuildWithContext creates a Provider with the given context.
-	// Eager constructors can depend on context.Context and cooperate with
-	// cancellation; the context is also checked throughout construction.
-	BuildWithContext(ctx context.Context) (Provider, error)
-
-	// BuildWithOptions creates a Provider with custom options
-	// for validation and behavior configuration.
-	BuildWithOptions(options *ProviderOptions) (Provider, error)
+	// Build validates the registrations, creates the eager singletons, and
+	// returns the Provider. Options set a parent context, a build timeout,
+	// an observer, and scope validation (see BuildOption).
+	Build(opts ...BuildOption) (Provider, error)
 
 	// AddModules applies one or more module configurations to the service collection.
 	// Modules provide a way to group related service registrations.
@@ -84,14 +80,16 @@ type Collection interface {
 	// Contains checks if a service exists for the type.
 	Contains(serviceType reflect.Type) bool
 
-	// ContainsKeyed checks if a keyed service exists.
-	ContainsKeyed(serviceType reflect.Type, key any) bool
+	// ContainsKeyed checks if a service is registered under name. An empty
+	// name names no service: it reports false.
+	ContainsKeyed(serviceType reflect.Type, name string) bool
 
 	// Remove removes all services for a given service type.
 	Remove(serviceType reflect.Type)
 
-	// RemoveKeyed removes a specific keyed service.
-	RemoveKeyed(serviceType reflect.Type, key any)
+	// RemoveKeyed removes the service registered under name. An empty name
+	// names no service: it removes nothing.
+	RemoveKeyed(serviceType reflect.Type, name string)
 
 	// ToSlice returns a read-only snapshot of all registered services for
 	// inspection and debugging.
@@ -106,10 +104,10 @@ type collection struct {
 	mu sync.RWMutex
 
 	// services stores all non-keyed services by type
-	services map[TypeKey]*descriptor
+	services map[registryKey]*descriptor
 
 	// groups stores services that belong to groups
-	groups map[GroupKey][]*descriptor
+	groups map[groupID][]*descriptor
 
 	// allDescriptors tracks all unique descriptors for efficient iteration
 	allDescriptors []*descriptor
@@ -132,20 +130,30 @@ type collection struct {
 	decorators []*decoration
 }
 
-// TypeKey uniquely identifies a keyed service.
-//
-// Deprecated: TypeKey is an internal registry key that appears in no godi API;
-// it will be unexported in the next major version.
-type TypeKey struct {
+// keyOf converts a service name to a registry key: "" (unnamed) is nil.
+func keyOf(name string) any {
+	if name == "" {
+		return nil
+	}
+	return name
+}
+
+// keyName returns the name a registry key carries, or "" for unnamed
+// services and the keys godi assigns itself (group positions, voidKey).
+func keyName(key any) string {
+	name, _ := key.(string)
+	return name
+}
+
+// registryKey identifies a registration: its service type and key (nil for
+// unkeyed services).
+type registryKey struct {
 	Type reflect.Type
 	Key  any
 }
 
-// GroupKey uniquely identifies a group of services.
-//
-// Deprecated: GroupKey is an internal registry key that appears in no godi
-// API; it will be unexported in the next major version.
-type GroupKey struct {
+// groupID identifies a value group: its member type and name.
+type groupID struct {
 	Type  reflect.Type
 	Group string
 }
@@ -157,12 +165,14 @@ type ServiceInfo struct {
 	// ServiceType is the type the service resolves as.
 	ServiceType reflect.Type
 	// Key is the name for keyed services, or nil.
-	Key any
+	Key string
 	// Group is the value-group name for grouped services, or "".
 	Group string
 	// Lifetime is the service's lifetime (Singleton, Scoped, or Transient).
 	Lifetime Lifetime
 }
+
+func (sc *collection) impl() *collection { return sc }
 
 // NewCollection creates a new empty Collection instance.
 //
@@ -173,53 +183,37 @@ type ServiceInfo struct {
 //	provider, err := collection.Build()
 func NewCollection() Collection {
 	return &collection{
-		services:       make(map[TypeKey]*descriptor, 16), // Pre-size for typical usage
-		groups:         make(map[GroupKey][]*descriptor, 4),
+		services:       make(map[registryKey]*descriptor, 16), // Pre-size for typical usage
+		groups:         make(map[groupID][]*descriptor, 4),
 		allDescriptors: make([]*descriptor, 0, 16),
-		analyzer:       reflection.New(),
+		analyzer:       reflection.New(reflection.WithNotFound(isNotFound)),
 	}
 }
 
-// Build creates a Provider from the registered services using default options.
-func (sc *collection) Build() (Provider, error) {
-	return sc.BuildWithContext(context.Background())
-}
-
-// BuildWithContext creates a Provider with the given cooperative build context.
-// The context is available to eager constructors that depend on context.Context
-// and is checked throughout construction. It also parents the provider's root
-// context, so its values remain visible and its cancellation propagates.
-func (sc *collection) BuildWithContext(ctx context.Context) (Provider, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	return sc.doBuild(ctx, ctx, nil)
-}
-
-// BuildWithOptions creates a Provider configured by options (which may be
-// nil): a parent context, a build timeout, scope validation, and an observer.
-func (sc *collection) BuildWithOptions(options *ProviderOptions) (Provider, error) {
-	parent := context.Background()
-	if options != nil && options.Context != nil {
-		parent = options.Context
+// Build creates a Provider from the registered services.
+func (sc *collection) Build(opts ...BuildOption) (Provider, error) {
+	options := newBuildOptions(opts)
+	parent := options.context
+	if parent == nil {
+		parent = context.Background()
 	}
 	ctx := parent
 
-	// Handle build timeout if specified. The timeout bounds Build only: the
-	// provider's root context is detached from it once Build succeeds.
-	if options != nil && options.BuildTimeout > 0 {
+	// The timeout bounds Build only: the provider's root context is detached
+	// from it once Build succeeds.
+	if options.timeout > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, options.BuildTimeout)
+		ctx, cancel = context.WithTimeout(ctx, options.timeout)
 		defer cancel()
 	}
 
-	return sc.doBuild(parent, ctx, options)
+	return sc.doBuild(parent, ctx, &options)
 }
 
 // doBuild builds a provider. parent becomes the parent of the provider's root
-// context; ctx bounds the build itself and is visible (deadline and
-// cancellation) to constructors that run during Build. options may be nil.
-func (sc *collection) doBuild(parent, ctx context.Context, options *ProviderOptions) (Provider, error) {
+// context; ctx bounds the build itself: constructors that run during Build
+// see its cancellation (and parent's deadline) through the root context.
+func (sc *collection) doBuild(parent, ctx context.Context, options *buildOptions) (Provider, error) {
 	// Check context before starting
 	select {
 	case <-ctx.Done():
@@ -252,9 +246,9 @@ func (sc *collection) doBuild(parent, ctx context.Context, options *ProviderOpti
 		services:                    services,
 		groups:                      groups,
 		singletonOrder:              singletonsInCreationOrder(allDescriptors, services, groups),
-		validateScopes:              options != nil && options.ValidateScopes,
+		validateScopes:              options.validateScopes,
 		descriptors:                 allDescriptors,
-		observer:                    observerOf(options),
+		observer:                    options.observer,
 		analyzer:                    sc.analyzer, // Share analyzer from collection
 		singletonKeys:               make([]instanceKey, 0, len(allDescriptors)),
 		voidReturnScopedDescriptors: make([]*descriptor, 0, voidCount),
@@ -295,8 +289,8 @@ func (sc *collection) doBuild(parent, ctx context.Context, options *ProviderOpti
 	p.rootScope.isRoot = true
 
 	// Phase 6: Create singletons. Eager constructors receive the root scope's
-	// context, which reports the build context's deadline and cancellation
-	// until Build succeeds.
+	// context, which carries parent's deadline and is cancelled with the
+	// build context until Build succeeds.
 	if err := p.createAllSingletonsWithContext(ctx); err != nil {
 		buildErr := &BuildError{
 			Phase:   PhaseSingletonCreation,
@@ -341,14 +335,15 @@ func (sc *collection) doBuild(parent, ctx context.Context, options *ProviderOpti
 		return nil, joinBuildCleanupError(buildErr, p.Close())
 	}
 
+	p.built.Store(true)
 	return p, nil
 }
 
 // buildPlan is a validated, provider-owned snapshot of a collection.
 type buildPlan struct {
 	all      []*descriptor
-	services map[TypeKey]*descriptor
-	groups   map[GroupKey][]*descriptor
+	services map[registryKey]*descriptor
+	groups   map[groupID][]*descriptor
 }
 
 // plan snapshots the collection and validates it (registration errors,
@@ -425,8 +420,8 @@ func (sc *collection) plan(ctx context.Context) (*buildPlan, error) {
 	// Phase 1.5: Resolve group dependencies
 	// Connect group consumers to actual group member nodes in the graph.
 	// Without this, group consumers depend on phantom nodes (Key=nil) that
-	// don't match the real group members (Key=1,2,...), causing incorrect
-	// topological ordering and ErrSingletonNotInitialized during build.
+	// don't match the real group members (Key=1,2,...), hiding cycles that
+	// run through a group.
 	g.ResolveGroupDependencies()
 
 	// Phase 2: Validate graph (cycles detected here, not per-add)
@@ -469,7 +464,7 @@ func (sc *collection) plan(ctx context.Context) (*buildPlan, error) {
 }
 
 // providerContext is the root scope's context. It is cancelled by
-// Provider.Close (or by the BuildWithContext parent). While Build runs it is
+// Provider.Close (or by the WithContext parent). While Build runs it is
 // also cancelled by the build context and reports that context's error, so
 // eager constructors observe a build timeout; once Build succeeds it is
 // detached from the build context, so the timeout cannot cancel the context
@@ -643,26 +638,22 @@ func (r *collection) Contains(t reflect.Type) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	typeKey := TypeKey{Type: t}
+	typeKey := registryKey{Type: t}
 	_, ok := r.services[typeKey]
 	return ok
 }
 
-// ContainsKeyed checks if a keyed service exists
-func (r *collection) ContainsKeyed(t reflect.Type, key any) bool {
-	if t == nil {
+// ContainsKeyed checks if a service is registered under name.
+func (r *collection) ContainsKeyed(t reflect.Type, name string) bool {
+	if t == nil || name == "" {
 		return false
 	}
-	// Value-level comparability: a comparable static type can still wrap a
-	// non-comparable value in an interface field and panic as a map key.
-	if key != nil && !reflect.ValueOf(key).Comparable() {
-		return false
-	}
+	key := keyOf(name)
 
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	typeKey := TypeKey{Type: t, Key: key}
+	typeKey := registryKey{Type: t, Key: key}
 	_, ok := r.services[typeKey]
 	return ok
 }
@@ -677,7 +668,7 @@ func (r *collection) HasGroup(t reflect.Type, group string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	groupKey := GroupKey{Type: t, Group: group}
+	groupKey := groupID{Type: t, Group: group}
 	services, ok := r.groups[groupKey]
 	return ok && len(services) > 0
 }
@@ -711,21 +702,17 @@ func (r *collection) Remove(t reflect.Type) {
 	r.pruneDescriptors(removed)
 }
 
-// RemoveKeyed removes a specific keyed service
-func (r *collection) RemoveKeyed(t reflect.Type, key any) {
-	if t == nil {
+// RemoveKeyed removes the service registered under name.
+func (r *collection) RemoveKeyed(t reflect.Type, name string) {
+	if t == nil || name == "" {
 		return
 	}
-	// Value-level comparability: a comparable static type can still wrap a
-	// non-comparable value in an interface field and panic as a map key.
-	if key != nil && !reflect.ValueOf(key).Comparable() {
-		return
-	}
+	key := keyOf(name)
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	typeKey := TypeKey{Type: t, Key: key}
+	typeKey := registryKey{Type: t, Key: key}
 	d, ok := r.services[typeKey]
 	if !ok {
 		return
@@ -760,11 +747,11 @@ func (r *collection) pruneDescriptors(removed map[*descriptor]struct{}) {
 	// under the removed registration's keys, shadowing any replacement
 	// registered after the removal.
 	for _, d := range r.allDescriptors {
-		if len(d.siblings) == 0 {
+		if len(d.siblings()) == 0 {
 			continue
 		}
 		pruned := false
-		for _, sibling := range d.siblings {
+		for _, sibling := range d.siblings() {
 			if _, ok := removed[sibling]; ok {
 				pruned = true
 				break
@@ -773,15 +760,13 @@ func (r *collection) pruneDescriptors(removed map[*descriptor]struct{}) {
 		if !pruned {
 			continue
 		}
-		surviving := make([]*descriptor, 0, len(d.siblings))
-		for _, sibling := range d.siblings {
+		surviving := make([]*descriptor, 0, len(d.siblings()))
+		for _, sibling := range d.siblings() {
 			if _, ok := removed[sibling]; !ok {
 				surviving = append(surviving, sibling)
 			}
 		}
-		for _, sibling := range surviving {
-			sibling.siblings = surviving
-		}
+		d.outputs = surviving
 	}
 }
 
@@ -802,11 +787,11 @@ func (r *collection) ToSlice() []ServiceInfo {
 
 // serviceInfoKey returns the key a caller can resolve d with, hiding keys
 // godi generated internally (void initializers, group member positions).
-func serviceInfoKey(d *descriptor) any {
+func serviceInfoKey(d *descriptor) string {
 	if d.syntheticKey {
-		return nil
+		return ""
 	}
-	return d.Key
+	return keyName(d.Key)
 }
 
 // Count returns the number of registered services in the collection.
@@ -823,6 +808,8 @@ var (
 		reflect.TypeFor[context.Context](): {},
 		reflect.TypeFor[Provider]():        {},
 		reflect.TypeFor[Scope]():           {},
+		reflect.TypeFor[Resolver]():        {},
+		reflect.TypeFor[ScopeFactory]():    {},
 	}
 )
 
@@ -881,19 +868,6 @@ func (r *collection) addService(service any, lifetime Lifetime, opts ...AddOptio
 	}
 
 	info := descriptor.info
-	if info == nil {
-		// Defensive fallback: a descriptor constructed outside the normal
-		// path won't have info stashed. Re-analyze in that case.
-		var err error
-		info, err = r.analyzer.Analyze(service)
-		if err != nil {
-			return &ReflectionAnalysisError{
-				Constructor: service,
-				Operation:   "analyze",
-				Cause:       err,
-			}
-		}
-	}
 
 	// Handle result objects (Out structs)
 	if info.IsResultObject {
@@ -990,9 +964,7 @@ func (r *collection) registerAliases(d *descriptor, options *addOptions) error {
 		interfaceDescriptors = append(interfaceDescriptors, interfaceDescriptor)
 	}
 
-	for _, interfaceDescriptor := range interfaceDescriptors {
-		interfaceDescriptor.siblings = interfaceDescriptors
-	}
+	link(interfaceDescriptors)
 
 	registered := make([]*descriptor, 0, len(interfaceDescriptors))
 	for _, interfaceDescriptor := range interfaceDescriptors {
@@ -1016,12 +988,12 @@ func (r *collection) registerAliases(d *descriptor, options *addOptions) error {
 // Remove, so those links must be remapped to provider-owned clones.
 func snapshotRegistrations(
 	all []*descriptor,
-	services map[TypeKey]*descriptor,
-	groups map[GroupKey][]*descriptor,
+	services map[registryKey]*descriptor,
+	groups map[groupID][]*descriptor,
 ) (
 	snapshotAll []*descriptor,
-	snapshotServices map[TypeKey]*descriptor,
-	snapshotGroups map[GroupKey][]*descriptor,
+	snapshotServices map[registryKey]*descriptor,
+	snapshotGroups map[groupID][]*descriptor,
 ) {
 	clones := make(map[*descriptor]*descriptor, len(all))
 	snapshotAll = make([]*descriptor, 0, len(all))
@@ -1031,35 +1003,44 @@ func snapshotRegistrations(
 			continue
 		}
 		clone := *original
-		clone.siblings = nil
-		clone.As = append([]any(nil), original.As...)
-		clone.Dependencies = append([]*reflection.Dependency(nil), original.Dependencies...)
-		clone.resultFields = append([]reflection.ResultField(nil), original.resultFields...)
-		clone.paramFields = append([]reflection.ParamField(nil), original.paramFields...)
 		clones[original] = &clone
 		snapshotAll = append(snapshotAll, &clone)
 	}
 
+	// Each registration is cloned once, with the clones of its outputs, so
+	// the provider never shares state with the collection.
+	regClones := make(map[*registration]*registration)
 	for original, clone := range clones {
-		if len(original.siblings) == 0 {
-			continue
-		}
-		clone.siblings = make([]*descriptor, 0, len(original.siblings))
-		for _, sibling := range original.siblings {
-			if siblingClone, ok := clones[sibling]; ok {
-				clone.siblings = append(clone.siblings, siblingClone)
+		reg, ok := regClones[original.registration]
+		if !ok {
+			copied := *original.registration
+			reg = &copied
+			reg.As = append([]any(nil), copied.As...)
+			reg.Dependencies = append([]*reflection.Dependency(nil), copied.Dependencies...)
+			reg.resultFields = append([]reflection.ResultField(nil), copied.resultFields...)
+			reg.paramFields = append([]reflection.ParamField(nil), copied.paramFields...)
+			if copied.linked {
+				originals := original.outputs
+				reg.outputs = make([]*descriptor, 0, len(originals))
+				for _, sibling := range originals {
+					if siblingClone, ok := clones[sibling]; ok {
+						reg.outputs = append(reg.outputs, siblingClone)
+					}
+				}
 			}
+			regClones[original.registration] = reg
 		}
+		clone.registration = reg
 	}
 
-	snapshotServices = make(map[TypeKey]*descriptor, len(services))
+	snapshotServices = make(map[registryKey]*descriptor, len(services))
 	for key, original := range services {
 		if clone, ok := clones[original]; ok {
 			snapshotServices[key] = clone
 		}
 	}
 
-	snapshotGroups = make(map[GroupKey][]*descriptor, len(groups))
+	snapshotGroups = make(map[groupID][]*descriptor, len(groups))
 	for key, originals := range groups {
 		members := make([]*descriptor, 0, len(originals))
 		for _, original := range originals {
@@ -1105,9 +1086,7 @@ func (r *collection) registerResultObjectFields(d *descriptor) error {
 		fieldDescriptors = append(fieldDescriptors, fieldDescriptor)
 	}
 
-	for _, fieldDescriptor := range fieldDescriptors {
-		fieldDescriptor.siblings = fieldDescriptors
-	}
+	link(fieldDescriptors)
 
 	registered := make([]*descriptor, 0, len(fieldDescriptors))
 	for _, fieldDescriptor := range fieldDescriptors {
@@ -1163,16 +1142,13 @@ func (r *collection) registerMultiReturn(d *descriptor, info *reflection.Constru
 	}
 
 	typeDescriptors := make([]*descriptor, 0, len(nonErrorReturns))
-	for i, ret := range nonErrorReturns {
+	for _, ret := range nonErrorReturns {
 		typeDescriptor := d.clone()
 		typeDescriptor.Type = ret.Type
 		typeDescriptor.MultiReturnIndex = ret.Index
 
-		// Apply name/key only to the first return if specified
-		typeDescriptor.Key = nil
-		if options.key() != nil && i == 0 {
-			typeDescriptor.Key = options.key()
-		}
+		// A name or key applies to every output, as a group does.
+		typeDescriptor.Key = options.key()
 
 		typeDescriptors = append(typeDescriptors, typeDescriptor)
 	}
@@ -1180,9 +1156,7 @@ func (r *collection) registerMultiReturn(d *descriptor, info *reflection.Constru
 	// Link the descriptors as siblings: one constructor invocation produces
 	// every return value, so instance creation caches each of them under its
 	// own registration (key or group).
-	for _, typeDescriptor := range typeDescriptors {
-		typeDescriptor.siblings = typeDescriptors
-	}
+	link(typeDescriptors)
 
 	registered := make([]*descriptor, 0, len(typeDescriptors))
 	for _, typeDescriptor := range typeDescriptors {
@@ -1220,7 +1194,7 @@ func (r *collection) unregisterDescriptors(batch []*descriptor) {
 			// Registered as a group member (key and group are mutually
 			// exclusive at registration; the numeric key was assigned by
 			// registerDescriptor).
-			groupKey := GroupKey{Type: descriptor.Type, Group: descriptor.Group}
+			groupKey := groupID{Type: descriptor.Type, Group: descriptor.Group}
 			members := r.groups[groupKey]
 			kept := members[:0]
 			for _, member := range members {
@@ -1236,7 +1210,7 @@ func (r *collection) unregisterDescriptors(batch []*descriptor) {
 			continue
 		}
 
-		key := TypeKey{Type: descriptor.Type, Key: descriptor.Key}
+		key := registryKey{Type: descriptor.Type, Key: descriptor.Key}
 		if r.services[key] == descriptor {
 			delete(r.services, key)
 		}
@@ -1251,7 +1225,7 @@ func (r *collection) unregisterDescriptors(batch []*descriptor) {
 func (r *collection) registerDescriptor(descriptor *descriptor) error {
 	// Register based on type of service
 	if descriptor.Key != nil || descriptor.Group == "" {
-		key := TypeKey{Type: descriptor.Type, Key: descriptor.Key}
+		key := registryKey{Type: descriptor.Type, Key: descriptor.Key}
 		if _, exists := r.services[key]; exists {
 			if descriptor.Key == nil {
 				return &AlreadyRegisteredError{ServiceType: descriptor.Type}
@@ -1265,7 +1239,7 @@ func (r *collection) registerDescriptor(descriptor *descriptor) error {
 
 		r.services[key] = descriptor
 	} else {
-		groupKey := GroupKey{Type: descriptor.Type, Group: descriptor.Group}
+		groupKey := groupID{Type: descriptor.Type, Group: descriptor.Group}
 		r.groups[groupKey] = append(r.groups[groupKey], descriptor)
 
 		// Set a numeric key for group members
@@ -1286,8 +1260,8 @@ func (r *collection) registerDescriptor(descriptor *descriptor) error {
 //
 // Transients may depend on scoped services: resolved from a scope, they share
 // that scope's instances. (Resolving them from the root provider is what
-// ProviderOptions.ValidateScopes rejects.)
-func validateLifetimes(all []*descriptor, services map[TypeKey]*descriptor, groups map[GroupKey][]*descriptor) error {
+// WithScopeValidation rejects.)
+func validateLifetimes(all []*descriptor, services map[registryKey]*descriptor, groups map[groupID][]*descriptor) error {
 	// scopedReach memoizes, per descriptor, the scoped service reachable
 	// from it through transients only, and the transients on the way.
 	type reach struct {
@@ -1323,18 +1297,19 @@ func validateLifetimes(all []*descriptor, services map[TypeKey]*descriptor, grou
 	}
 
 	var errs []error
-	reported := make(map[any]struct{})
+	checked := make(map[*registration]struct{})
 	for _, d := range all {
 		if d == nil || d.Lifetime != Singleton {
 			continue
 		}
-		// Sibling outputs of one constructor share its dependencies.
-		fkey := flightKey(d)
-		if _, done := reported[fkey]; done {
+		// One check per registration, over everything its construction
+		// resolves (the constructor and the decorators of every output).
+		if _, done := checked[d.registration]; done {
 			continue
 		}
+		checked[d.registration] = struct{}{}
 	dependencies:
-		for _, dep := range d.Dependencies {
+		for _, dep := range constructionDependencies(d) {
 			for _, depDescriptor := range dependencyDescriptors(dep, services, groups) {
 				r := reachScoped(depDescriptor)
 				if r.scoped == nil {
@@ -1351,7 +1326,6 @@ func validateLifetimes(all []*descriptor, services map[TypeKey]*descriptor, grou
 					DependencyLifetime: Scoped,
 					Via:                via,
 				})
-				reported[fkey] = struct{}{}
 				break dependencies
 			}
 		}
@@ -1373,7 +1347,7 @@ func dependencySource(d *descriptor, dep *reflection.Dependency, decoratorSource
 	return d.source
 }
 
-func validateDependencies(all []*descriptor, services map[TypeKey]*descriptor, decoratorSources map[*reflection.Dependency]string) error {
+func validateDependencies(all []*descriptor, services map[registryKey]*descriptor, decoratorSources map[*reflection.Dependency]string) error {
 	var errs []error
 	// Descriptors derived from one constructor (multi-return values, result
 	// object fields, interface aliases) share its dependencies: report each
@@ -1388,7 +1362,7 @@ func validateDependencies(all []*descriptor, services map[TypeKey]*descriptor, d
 		if d.VoidReturn {
 			serviceType = d.ConstructorType
 		}
-		for _, dep := range d.Dependencies {
+		for _, dep := range d.dependencies() {
 			if dep == nil || dep.Optional || dep.Group != "" {
 				continue
 			}
@@ -1401,13 +1375,13 @@ func validateDependencies(all []*descriptor, services map[TypeKey]*descriptor, d
 					continue
 				}
 			}
-			if _, ok := services[TypeKey{Type: dep.Type, Key: dep.Key}]; ok {
+			if _, ok := services[registryKey{Type: dep.Type, Key: dep.Key}]; ok {
 				continue
 			}
 			errs = append(errs, &MissingDependencyError{
 				ServiceType:    serviceType,
 				DependencyType: dep.Type,
-				DependencyKey:  dep.Key,
+				DependencyKey:  keyName(dep.Key),
 				Constructor:    dependencySource(d, dep, decoratorSources),
 			})
 		}
@@ -1421,10 +1395,6 @@ func validateDependencies(all []*descriptor, services map[TypeKey]*descriptor, d
 // checks before it creates singletons. Use it in tests so they don't need
 // the infrastructure (databases, servers) that singleton constructors open.
 func Validate(c Collection) error {
-	sc, ok := c.(*collection)
-	if !ok {
-		return errUnsupportedCollection("Validate")
-	}
-	_, err := sc.plan(context.Background())
+	_, err := c.impl().plan(context.Background())
 	return err
 }

@@ -6,7 +6,7 @@ import (
 )
 
 // Observer receives construction and disposal events from a provider and its
-// scopes (ProviderOptions.Observer). Set the callbacks you need; nil ones are
+// scopes (see WithObserver). Set the callbacks you need; nil ones are
 // skipped, and new events may be added as fields. Callbacks are called
 // synchronously on the goroutine doing the work, so they must be safe for
 // concurrent use and should return quickly.
@@ -23,7 +23,7 @@ type Observer struct {
 // ConstructedEvent describes one constructor call.
 type ConstructedEvent struct {
 	ServiceType reflect.Type
-	Key         any
+	Key         string
 	Lifetime    Lifetime
 	// ScopeID is the ID of the scope that ran the constructor (the root
 	// scope for singletons).
@@ -42,12 +42,4 @@ type DisposedEvent struct {
 	ScopeID  string
 	Duration time.Duration
 	Err      error
-}
-
-// observerOf returns the observer configured in options, or nil.
-func observerOf(options *ProviderOptions) Observer {
-	if options == nil {
-		return Observer{}
-	}
-	return options.Observer
 }

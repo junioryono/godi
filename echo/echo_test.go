@@ -7,8 +7,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/junioryono/godi/v5"
-	"github.com/labstack/echo/v4"
+	"github.com/junioryono/godi/v6"
+	"github.com/labstack/echo/v5"
+	"github.com/labstack/echo/v5/middleware"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -26,11 +27,11 @@ func newTestController(svc *testService) *testController {
 	return &testController{Service: svc}
 }
 
-func (c *testController) GetValue(ctx echo.Context) error {
+func (c *testController) GetValue(ctx *echo.Context) error {
 	return ctx.String(http.StatusOK, c.Service.ID)
 }
 
-func (c *testController) Panic(ctx echo.Context) error {
+func (c *testController) Panic(*echo.Context) error {
 	panic("test panic")
 }
 
@@ -49,7 +50,7 @@ func TestScopeMiddleware(t *testing.T) {
 
 		e := echo.New()
 		e.Use(ScopeMiddleware(provider))
-		e.GET("/test", func(c echo.Context) error {
+		e.GET("/test", func(c *echo.Context) error {
 			scope, err := godi.FromContext(c.Request().Context())
 			assert.NoError(t, err)
 
@@ -69,6 +70,32 @@ func TestScopeMiddleware(t *testing.T) {
 		assert.Equal(t, "scoped", resolvedService.ID)
 	})
 
+	t.Run("scope is closed after request", func(t *testing.T) {
+		collection := godi.NewCollection()
+		collection.AddScoped(func() *testService { return &testService{ID: "closed"} })
+
+		provider, err := collection.Build()
+		assert.NoError(t, err)
+		defer provider.Close()
+
+		var requestScope godi.Scope
+		e := echo.New()
+		e.Use(ScopeMiddleware(provider))
+		e.GET("/test", func(c *echo.Context) error {
+			scope, scopeErr := godi.FromContext(c.Request().Context())
+			assert.NoError(t, scopeErr)
+			requestScope = scope
+			return c.NoContent(http.StatusOK)
+		})
+
+		e.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/test", http.NoBody))
+
+		if assert.NotNil(t, requestScope) {
+			_, err = godi.Resolve[*testService](requestScope)
+			assert.ErrorIs(t, err, godi.ErrScopeDisposed)
+		}
+	})
+
 	t.Run("calls error handler on scope creation failure", func(t *testing.T) {
 		errorHandlerCalled := false
 
@@ -79,12 +106,12 @@ func TestScopeMiddleware(t *testing.T) {
 
 		e := echo.New()
 		e.Use(ScopeMiddleware(provider,
-			WithErrorHandler(func(c echo.Context, err error) error {
+			WithErrorHandler(func(c *echo.Context, err error) error {
 				errorHandlerCalled = true
 				return c.NoContent(http.StatusServiceUnavailable)
 			}),
 		))
-		e.GET("/test", func(c echo.Context) error {
+		e.GET("/test", func(c *echo.Context) error {
 			return c.NoContent(http.StatusOK)
 		})
 
@@ -111,16 +138,16 @@ func TestScopeMiddleware(t *testing.T) {
 
 		e := echo.New()
 		e.Use(ScopeMiddleware(provider,
-			WithMiddleware(func(scope godi.Scope, c echo.Context) error {
+			WithMiddleware(func(scope godi.Scope, c *echo.Context) error {
 				mwOrder = append(mwOrder, 1)
 				return nil
 			}),
-			WithMiddleware(func(scope godi.Scope, c echo.Context) error {
+			WithMiddleware(func(scope godi.Scope, c *echo.Context) error {
 				mwOrder = append(mwOrder, 2)
 				return nil
 			}),
 		))
-		e.GET("/test", func(c echo.Context) error {
+		e.GET("/test", func(c *echo.Context) error {
 			return c.NoContent(http.StatusOK)
 		})
 
@@ -147,16 +174,16 @@ func TestScopeMiddleware(t *testing.T) {
 
 		e := echo.New()
 		e.Use(ScopeMiddleware(provider,
-			WithMiddleware(func(scope godi.Scope, c echo.Context) error {
+			WithMiddleware(func(scope godi.Scope, c *echo.Context) error {
 				return expectedErr
 			}),
-			WithErrorHandler(func(c echo.Context, err error) error {
+			WithErrorHandler(func(c *echo.Context, err error) error {
 				errorHandlerCalled = true
 				assert.Equal(t, expectedErr, err)
 				return c.NoContent(http.StatusBadRequest)
 			}),
 		))
-		e.GET("/test", func(c echo.Context) error {
+		e.GET("/test", func(c *echo.Context) error {
 			return c.NoContent(http.StatusOK)
 		})
 
@@ -201,7 +228,7 @@ func TestHandle(t *testing.T) {
 
 		e := echo.New()
 		e.GET("/value", Handle((*testController).GetValue,
-			WithScopeErrorHandler(func(c echo.Context, err error) error {
+			WithScopeErrorHandler(func(c *echo.Context, err error) error {
 				errorHandlerCalled = true
 				return c.JSON(http.StatusInternalServerError, map[string]string{"error": "no scope"})
 			}),
@@ -231,7 +258,7 @@ func TestHandle(t *testing.T) {
 		e := echo.New()
 		e.Use(ScopeMiddleware(provider))
 		e.GET("/value", Handle((*testController).GetValue,
-			WithResolutionErrorHandler(func(c echo.Context, err error) error {
+			WithResolutionErrorHandler(func(c *echo.Context, err error) error {
 				errorHandlerCalled = true
 				return c.NoContent(http.StatusNotFound)
 			}),
@@ -263,7 +290,7 @@ func TestHandle(t *testing.T) {
 		e.Use(ScopeMiddleware(provider))
 		e.GET("/panic", Handle((*testController).Panic,
 			WithPanicRecovery(true),
-			WithPanicHandler(func(c echo.Context, v any) error {
+			WithPanicHandler(func(c *echo.Context, v any) error {
 				panicHandlerCalled = true
 				assert.Equal(t, "test panic", v)
 				return c.NoContent(http.StatusInternalServerError)
@@ -310,7 +337,7 @@ func TestDefaultConfig(t *testing.T) {
 		cfg := defaultConfig()
 
 		e := echo.New()
-		e.GET("/test", func(c echo.Context) error {
+		e.GET("/test", func(c *echo.Context) error {
 			return cfg.ErrorHandler(c, errors.New("test error"))
 		})
 
@@ -320,6 +347,7 @@ func TestDefaultConfig(t *testing.T) {
 		e.ServeHTTP(rec, req)
 
 		assert.Equal(t, http.StatusInternalServerError, rec.Code)
+		assert.NotContains(t, rec.Body.String(), "test error")
 	})
 }
 
@@ -341,6 +369,7 @@ func TestNilOptionsKeepDefaults(t *testing.T) {
 		normalizedCfg = cfg
 	})
 	assert.NotNil(t, normalizedCfg.ErrorHandler)
+	assert.NotNil(t, normalizedCfg.MiddlewareErrorHandler)
 	assert.NotNil(t, normalizedCfg.CloseErrorHandler)
 
 	var normalizedHandlerCfg *HandlerConfig
@@ -371,6 +400,15 @@ func TestNilOptionsKeepDefaults(t *testing.T) {
 	assert.NotNil(t, handlerCfg.ResolutionErrorHandler)
 }
 
+func TestNormalizeDoesNotMutateCallerSlice(t *testing.T) {
+	noop := func(godi.Scope, *echo.Context) error { return nil }
+	shared := []func(godi.Scope, *echo.Context) error{noop, nil, noop}
+
+	ScopeMiddleware(nil, func(cfg *Config) { cfg.Middlewares = shared })
+
+	assert.Nil(t, shared[1], "caller-owned slice was mutated by normalizeConfig")
+}
+
 func TestScopeRemainsAvailableToHTTPErrorHandler(t *testing.T) {
 	collection := godi.NewCollection()
 	collection.AddScoped(func() *testService { return &testService{ID: "error-handler"} })
@@ -381,7 +419,7 @@ func TestScopeRemainsAvailableToHTTPErrorHandler(t *testing.T) {
 	var requestScope godi.Scope
 	errorHandlerCalls := 0
 	e := echo.New()
-	e.HTTPErrorHandler = func(err error, c echo.Context) {
+	e.HTTPErrorHandler = func(c *echo.Context, err error) {
 		errorHandlerCalls++
 		scope, scopeErr := godi.FromContext(c.Request().Context())
 		assert.NoError(t, scopeErr)
@@ -393,7 +431,7 @@ func TestScopeRemainsAvailableToHTTPErrorHandler(t *testing.T) {
 		assert.NoError(t, c.NoContent(http.StatusTeapot))
 	}
 	e.Use(ScopeMiddleware(provider))
-	e.GET("/test", func(echo.Context) error { return errors.New("controller failed") })
+	e.GET("/test", func(*echo.Context) error { return errors.New("controller failed") })
 
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/test", http.NoBody))
@@ -402,6 +440,36 @@ func TestScopeRemainsAvailableToHTTPErrorHandler(t *testing.T) {
 	assert.NotNil(t, requestScope)
 	_, err = godi.Resolve[*testService](requestScope)
 	assert.ErrorIs(t, err, godi.ErrScopeDisposed)
+}
+
+func TestRecoverMiddlewareInsideScopeRendersWhileScopeAlive(t *testing.T) {
+	collection := godi.NewCollection()
+	collection.AddScoped(func() *testService { return &testService{ID: "recover"} })
+	provider, err := collection.Build()
+	assert.NoError(t, err)
+	defer provider.Close()
+
+	errorHandlerSawScope := false
+	e := echo.New()
+	e.HTTPErrorHandler = func(c *echo.Context, err error) {
+		scope, scopeErr := godi.FromContext(c.Request().Context())
+		if scopeErr == nil {
+			_, resolveErr := godi.Resolve[*testService](scope)
+			errorHandlerSawScope = resolveErr == nil
+		}
+		echo.DefaultHTTPErrorHandler(false)(c, err)
+	}
+	// ScopeMiddleware must wrap Recover so the recovered error is rendered
+	// before the request scope closes.
+	e.Use(ScopeMiddleware(provider), middleware.Recover())
+	e.GET("/panic", func(*echo.Context) error { panic("handler exploded") })
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/panic", http.NoBody))
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.NotContains(t, rec.Body.String(), "handler exploded")
+	assert.True(t, errorHandlerSawScope, "panic error handling must run while the scope is alive")
 }
 
 func TestIntegration(t *testing.T) {
@@ -420,12 +488,12 @@ func TestIntegration(t *testing.T) {
 
 		e := echo.New()
 		e.Use(ScopeMiddleware(provider,
-			WithMiddleware(func(scope godi.Scope, c echo.Context) error {
+			WithMiddleware(func(scope godi.Scope, c *echo.Context) error {
 				requestValues["initialized"] = "true"
 				return nil
 			}),
 		))
-		e.GET("/test", Handle(func(ctrl *testController, c echo.Context) error {
+		e.GET("/test", Handle(func(ctrl *testController, c *echo.Context) error {
 			requestValues["service_id"] = ctrl.Service.ID
 			return c.String(http.StatusOK, "OK")
 		}))

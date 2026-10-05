@@ -10,8 +10,8 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
-	godihuma "github.com/junioryono/godi/huma/v5"
-	"github.com/junioryono/godi/v5"
+	godihuma "github.com/junioryono/godi/huma/v6"
+	"github.com/junioryono/godi/v6"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

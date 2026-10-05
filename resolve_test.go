@@ -104,7 +104,7 @@ func TestInvoke(t *testing.T) {
 
 func TestIsService(t *testing.T) {
 	t.Parallel()
-	p := BuildProvider(t, AddSingleton(NewTService), AddScoped(NewTDependency, Name("named")))
+	p := BuildProvider(t, AddSingleton(NewTService), AddSingleton(NewTDependency, Name("named")))
 
 	assert.True(t, IsService(p, reflect.TypeFor[*TService]()))
 	assert.False(t, IsService(p, reflect.TypeFor[*TDependency]()), "only registered under a key")
@@ -113,11 +113,32 @@ func TestIsService(t *testing.T) {
 	assert.True(t, IsService(p, reflect.TypeFor[Scope]()), "the container's own types are services")
 	assert.True(t, IsService(p, reflect.TypeFor[context.Context]()))
 
+	t.Run("agrees_with_an_injected_resolver", func(t *testing.T) {
+		t.Parallel()
+		type Holder struct{ Resolver Resolver }
+		c := NewCollection()
+		c.AddSingleton(func(r Resolver) *Holder { return &Holder{Resolver: r} })
+		built, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = built.Close() })
+		holder, err := Resolve[*Holder](built)
+		require.NoError(t, err)
+
+		assert.True(t, IsService(holder.Resolver, reflect.TypeFor[Resolver]()))
+		assert.False(t, IsService(holder.Resolver, reflect.TypeFor[Provider]()), "an injected Resolver refuses the container")
+		assert.False(t, IsService(resolverOnly{built}, reflect.TypeFor[*Holder]()), "a Resolver godi did not create cannot be inspected")
+
+		// Nor a wrapper embedding a Provider, which would otherwise pass for
+		// one. Found by the second Codex review of #66.
+		type wrapper struct{ Provider }
+		assert.False(t, IsService(wrapper{built}, reflect.TypeFor[*Holder]()))
+	})
+
 	t.Run("agrees_with_validate_scopes", func(t *testing.T) {
 		t.Parallel()
 		c := NewCollection()
 		c.AddScoped(NewTService)
-		vp, err := c.BuildWithOptions(&ProviderOptions{ValidateScopes: true})
+		vp, err := c.Build(WithScopeValidation(true))
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = vp.Close() })
 		scope, err := vp.CreateScope(context.Background())

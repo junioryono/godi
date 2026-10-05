@@ -1,9 +1,10 @@
-// Package fiber provides godi integration for the Fiber web framework
-// (github.com/gofiber/fiber/v2). For Fiber v3, use
-// github.com/junioryono/godi/fiberv3/v5.
+// Package fiber provides godi integration for Fiber v3
+// (github.com/gofiber/fiber/v3).
 //
 // This package provides middleware for creating request-scoped containers
-// and type-safe handler wrappers for resolving controllers.
+// and type-safe handler wrappers for resolving controllers. Handlers take
+// the fiber.Ctx interface. The scope is attached to the request context set with Ctx.SetContext, so it is
+// retrieved with godi.FromContext(c.Context()).
 //
 // Example usage:
 //
@@ -25,8 +26,8 @@ import (
 	"runtime/debug"
 	"sync"
 
-	"github.com/gofiber/fiber/v2"
-	"github.com/junioryono/godi/v5"
+	"github.com/gofiber/fiber/v3"
+	"github.com/junioryono/godi/v6"
 )
 
 // Config holds the configuration for the scope middleware.
@@ -35,11 +36,11 @@ type Config struct {
 	// middleware failures unless MiddlewareErrorHandler is set.
 	// If nil, a default handler that logs the error and returns a generic
 	// 500 Internal Server Error is used.
-	ErrorHandler func(*fiber.Ctx, error) error
+	ErrorHandler func(fiber.Ctx, error) error
 
 	// MiddlewareErrorHandler is called when a function registered with
 	// WithMiddleware returns an error. If nil, ErrorHandler is used.
-	MiddlewareErrorHandler func(*fiber.Ctx, error) error
+	MiddlewareErrorHandler func(fiber.Ctx, error) error
 
 	// CloseErrorHandler is called when scope closing fails.
 	// If nil, errors are logged.
@@ -47,7 +48,7 @@ type Config struct {
 
 	// Middlewares are functions that run after scope creation.
 	// They can be used to initialize request context, set user data, etc.
-	Middlewares []func(godi.Scope, *fiber.Ctx) error
+	Middlewares []func(godi.Scope, fiber.Ctx) error
 
 	// Logger is used by the default handlers. If nil, slog.Default() is used.
 	Logger *slog.Logger
@@ -63,7 +64,7 @@ type Option func(*Config)
 
 // WithErrorHandler sets the error handler for scope creation failures. Unless
 // WithMiddlewareErrorHandler is also used, it handles middleware failures too.
-func WithErrorHandler(h func(*fiber.Ctx, error) error) Option {
+func WithErrorHandler(h func(fiber.Ctx, error) error) Option {
 	return func(c *Config) {
 		if h != nil {
 			c.ErrorHandler = h
@@ -74,7 +75,7 @@ func WithErrorHandler(h func(*fiber.Ctx, error) error) Option {
 // WithMiddlewareErrorHandler sets the error handler for failures returned by
 // functions registered with WithMiddleware, such as authentication checks
 // that respond 401 or 403. Scope creation failures still go to ErrorHandler.
-func WithMiddlewareErrorHandler(h func(*fiber.Ctx, error) error) Option {
+func WithMiddlewareErrorHandler(h func(fiber.Ctx, error) error) Option {
 	return func(c *Config) {
 		if h != nil {
 			c.MiddlewareErrorHandler = h
@@ -93,7 +94,7 @@ func WithCloseErrorHandler(h func(error)) Option {
 
 // WithMiddleware adds a middleware function that runs after scope creation.
 // Multiple middlewares are executed in the order they are added.
-func WithMiddleware(mw func(godi.Scope, *fiber.Ctx) error) Option {
+func WithMiddleware(mw func(godi.Scope, fiber.Ctx) error) Option {
 	return func(c *Config) {
 		if mw != nil {
 			c.Middlewares = append(c.Middlewares, mw)
@@ -136,11 +137,15 @@ func (c *Config) logger() *slog.Logger {
 	return slog.Default()
 }
 
-func (c *Config) defaultErrorHandler(ctx *fiber.Ctx, err error) error {
-	c.logger().Error("failed to set up request scope", "error", err)
+func internalServerError(ctx fiber.Ctx) error {
 	return ctx.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 		"error": "Internal Server Error",
 	})
+}
+
+func (c *Config) defaultErrorHandler(ctx fiber.Ctx, err error) error {
+	c.logger().Error("failed to set up request scope", "error", err)
+	return internalServerError(ctx)
 }
 
 func (c *Config) defaultCloseErrorHandler(err error) {
@@ -166,7 +171,7 @@ func normalizeConfig(c *Config) {
 	}
 	// Copy while filtering nils: reslicing in place would mutate a
 	// caller-owned slice assigned via a custom option.
-	middlewares := make([]func(godi.Scope, *fiber.Ctx) error, 0, len(c.Middlewares))
+	middlewares := make([]func(godi.Scope, fiber.Ctx) error, 0, len(c.Middlewares))
 	for _, middleware := range c.Middlewares {
 		if middleware != nil {
 			middlewares = append(middlewares, middleware)
@@ -176,8 +181,8 @@ func normalizeConfig(c *Config) {
 }
 
 // ScopeMiddleware creates a Fiber middleware that creates a request-scoped
-// container for each request. The scope is attached to the request's
-// UserContext and can be retrieved with godi.FromContext(c.UserContext()).
+// container for each request. The scope's context becomes the request context
+// (Ctx.SetContext) and can be retrieved with godi.FromContext(c.Context()).
 //
 // The scope is automatically closed when the request completes, or, for a
 // streamed response body, once fasthttp has written the response.
@@ -203,8 +208,8 @@ func ScopeMiddleware(provider godi.Provider, opts ...Option) fiber.Handler {
 	}
 	normalizeConfig(cfg)
 
-	return func(c *fiber.Ctx) error {
-		scope, err := provider.CreateScope(c.UserContext())
+	return func(c fiber.Ctx) error {
+		scope, err := provider.CreateScope(c.Context())
 		if err != nil {
 			return cfg.ErrorHandler(c, err)
 		}
@@ -216,9 +221,10 @@ func ScopeMiddleware(provider godi.Provider, opts ...Option) fiber.Handler {
 		}
 
 		// Close via defer so the scope is released even when a handler panics.
-		// A streamed response body (c.SendStream) is written by fasthttp only
-		// after the handler chain returns, and it is typically a scoped
-		// resource, so then the scope is kept open until the response is done.
+		// A streamed response body (c.SendStream, c.SendStreamWriter) is
+		// written by fasthttp only after the handler chain returns, and it is
+		// typically a scoped resource, so then the scope is kept open until
+		// the response is done.
 		defer func() {
 			if c.Response().IsBodyStream() {
 				deferScopeClose(c, closeScope)
@@ -227,11 +233,12 @@ func ScopeMiddleware(provider godi.Provider, opts ...Option) fiber.Handler {
 			closeScope()
 		}()
 
-		// Attach the scope's context as the request's UserContext so it is
-		// reachable via godi.FromContext(c.UserContext()) — the same
-		// context-based access the other integrations use — and so it
-		// propagates to frameworks layered on top (e.g. Huma).
-		c.SetUserContext(scope.Context())
+		// Attach the scope's context as the request context so it is
+		// reachable via godi.FromContext(c.Context()) — the same context-based
+		// access the other integrations use — and so it propagates to
+		// frameworks layered on top (e.g. Huma). Fiber clears it when the
+		// pooled Ctx is released.
+		c.SetContext(scope.Context())
 
 		// Run middlewares
 		for _, mw := range cfg.Middlewares {
@@ -260,14 +267,14 @@ func (s *scopeCloser) Close() error {
 }
 
 // deferScopeClose closes the scope once fasthttp has written the response.
-// fasthttp closes request user values that implement io.Closer when it
-// releases the request, after the response (including a body stream) has been
-// written or the connection failed.
-func deferScopeClose(c *fiber.Ctx, closeScope func()) {
-	c.Context().SetUserValue(scopeCloserKey{}, &scopeCloser{close: closeScope})
+// Fiber v3 still runs on fasthttp, which closes request user values that
+// implement io.Closer when it resets the request: after the response
+// (including a body stream) has been written, or when the connection fails.
+func deferScopeClose(c fiber.Ctx, closeScope func()) {
+	c.RequestCtx().SetUserValue(scopeCloserKey{}, &scopeCloser{close: closeScope})
 }
 
-func (c *Config) dispatchError(ctx *fiber.Ctx, err error) error {
+func (c *Config) dispatchError(ctx fiber.Ctx, err error) error {
 	if err == nil || c.ErrorPassthrough {
 		return err
 	}
@@ -290,13 +297,13 @@ type HandlerConfig struct {
 	// PanicHandler is called when a panic occurs (if PanicRecovery is true).
 	// If nil, a default handler that logs the panic value and stack trace and
 	// returns a generic 500 Internal Server Error is used.
-	PanicHandler func(*fiber.Ctx, any) error
+	PanicHandler func(fiber.Ctx, any) error
 
 	// ScopeErrorHandler is called when scope retrieval fails.
-	ScopeErrorHandler func(*fiber.Ctx, error) error
+	ScopeErrorHandler func(fiber.Ctx, error) error
 
 	// ResolutionErrorHandler is called when service resolution fails.
-	ResolutionErrorHandler func(*fiber.Ctx, error) error
+	ResolutionErrorHandler func(fiber.Ctx, error) error
 
 	// Logger is used by the default handlers. If nil, slog.Default() is used.
 	Logger *slog.Logger
@@ -313,7 +320,7 @@ func WithPanicRecovery(enabled bool) HandlerOption {
 }
 
 // WithPanicHandler sets the handler for panics.
-func WithPanicHandler(h func(*fiber.Ctx, any) error) HandlerOption {
+func WithPanicHandler(h func(fiber.Ctx, any) error) HandlerOption {
 	return func(c *HandlerConfig) {
 		if h != nil {
 			c.PanicHandler = h
@@ -322,7 +329,7 @@ func WithPanicHandler(h func(*fiber.Ctx, any) error) HandlerOption {
 }
 
 // WithScopeErrorHandler sets the error handler for scope retrieval failures.
-func WithScopeErrorHandler(h func(*fiber.Ctx, error) error) HandlerOption {
+func WithScopeErrorHandler(h func(fiber.Ctx, error) error) HandlerOption {
 	return func(c *HandlerConfig) {
 		if h != nil {
 			c.ScopeErrorHandler = h
@@ -331,7 +338,7 @@ func WithScopeErrorHandler(h func(*fiber.Ctx, error) error) HandlerOption {
 }
 
 // WithResolutionErrorHandler sets the error handler for service resolution failures.
-func WithResolutionErrorHandler(h func(*fiber.Ctx, error) error) HandlerOption {
+func WithResolutionErrorHandler(h func(fiber.Ctx, error) error) HandlerOption {
 	return func(c *HandlerConfig) {
 		if h != nil {
 			c.ResolutionErrorHandler = h
@@ -356,23 +363,17 @@ func (c *HandlerConfig) logger() *slog.Logger {
 	return slog.Default()
 }
 
-func internalServerError(ctx *fiber.Ctx) error {
-	return ctx.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-		"error": "Internal Server Error",
-	})
-}
-
-func (c *HandlerConfig) defaultPanicHandler(ctx *fiber.Ctx, v any) error {
+func (c *HandlerConfig) defaultPanicHandler(ctx fiber.Ctx, v any) error {
 	c.logger().Error("panic in handler", "panic", v, "stack", string(debug.Stack()))
 	return internalServerError(ctx)
 }
 
-func (c *HandlerConfig) defaultScopeErrorHandler(ctx *fiber.Ctx, err error) error {
+func (c *HandlerConfig) defaultScopeErrorHandler(ctx fiber.Ctx, err error) error {
 	c.logger().Error("failed to get scope from context", "error", err)
 	return internalServerError(ctx)
 }
 
-func (c *HandlerConfig) defaultResolutionErrorHandler(ctx *fiber.Ctx, err error) error {
+func (c *HandlerConfig) defaultResolutionErrorHandler(ctx fiber.Ctx, err error) error {
 	c.logger().Error("failed to resolve controller", "error", err)
 	return internalServerError(ctx)
 }
@@ -398,18 +399,18 @@ func normalizeHandlerConfig(c *HandlerConfig) {
 }
 
 // Handle wraps a controller method for type-safe resolution from the request scope.
-// The controller type T is resolved from the scope on the request's UserContext.
+// The controller type T is resolved from the scope on the request context.
 //
-// The method signature should be: func(T, *fiber.Ctx) error
+// The method signature should be: func(T, fiber.Ctx) error
 //
 // Example:
 //
 //	type UserController interface {
-//	    GetByID(*fiber.Ctx) error
+//	    GetByID(fiber.Ctx) error
 //	}
 //
 //	app.Get("/users/:id", godifiber.Handle(UserController.GetByID))
-func Handle[T any](method func(T, *fiber.Ctx) error, opts ...HandlerOption) fiber.Handler {
+func Handle[T any](method func(T, fiber.Ctx) error, opts ...HandlerOption) fiber.Handler {
 	cfg := defaultHandlerConfig()
 	for _, opt := range opts {
 		if opt != nil {
@@ -418,7 +419,7 @@ func Handle[T any](method func(T, *fiber.Ctx) error, opts ...HandlerOption) fibe
 	}
 	normalizeHandlerConfig(cfg)
 
-	return func(c *fiber.Ctx) (err error) {
+	return func(c fiber.Ctx) (err error) {
 		if cfg.PanicRecovery {
 			defer func() {
 				if v := recover(); v != nil {
@@ -427,7 +428,7 @@ func Handle[T any](method func(T, *fiber.Ctx) error, opts ...HandlerOption) fibe
 			}()
 		}
 
-		scope, scopeErr := godi.FromContext(c.UserContext())
+		scope, scopeErr := godi.FromContext(c.Context())
 		if scopeErr != nil {
 			return cfg.ScopeErrorHandler(c, scopeErr)
 		}

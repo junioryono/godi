@@ -38,14 +38,14 @@
 // carries the scope, so code under a godi HTTP middleware can resolve with
 // [ResolveFromContext] or [FromContext]. Cancelling the context a scope was
 // created with does not close the scope: cancellation tells the work to stop,
-// and the scope's owner closes it once the work is done. With
-// [ProviderOptions].ValidateScopes, resolving a scoped service from the root
-// provider fails with [ErrScopeRequired] instead of silently caching one
-// instance for the whole application.
+// and the scope's owner closes it once the work is done. Resolving a scoped
+// service from the root provider fails with [ErrScopeRequired] instead of
+// silently caching one instance for the whole application (see
+// [WithScopeValidation]).
 //
 // # Build
 //
-// [Collection.Build] (and BuildWithContext, BuildWithOptions) reports every
+// [Collection.Build] reports every
 // registration error at once, then validates the whole graph before running
 // any constructor: missing dependencies, cycles, lifetime conflicts, and
 // decorators that match no registration. [Validate] runs the same checks
@@ -56,8 +56,10 @@
 //
 // [Resolve], [ResolveKeyed], and [ResolveGroup] (and their Must variants)
 // resolve typed services from any [Resolver] — a Provider, a Scope, or a
-// test double. Constructors and [Invoke] receive context.Context, the
-// current [Scope], or the [Provider] when they ask for them.
+// test double. Constructors, decorators and [Invoke] functions receive a
+// context.Context, a [Resolver] that resolves from the scope running them,
+// or a [ScopeFactory] when they ask for one; they cannot depend on the
+// whole [Provider] or [Scope].
 // [IsService] and [IsKeyedService] check resolvability without constructing.
 //
 // # Disposal
@@ -67,9 +69,10 @@
 // their owner: singletons by the provider, scoped (and transient) values by
 // the scope that created them. Disposal runs in reverse creation order, so
 // consumers are closed before their dependencies, and each value is closed
-// once, by its longest-lived owner. A transient resolved directly from the
-// provider belongs to the caller. [NoDispose] marks values the application
-// owns. [Shutdown] disposes a provider or scope like Close but stops waiting
+// once, by its longest-lived owner. godi disposes only values its
+// constructors create: a value registered as an instance belongs to the
+// caller that created it, and so does a transient resolved directly from the
+// provider. [NoDispose] marks constructed values the application owns. [Shutdown] disposes a provider or scope like Close but stops waiting
 // when its context is done; context-aware resources receive that context.
 //
 // # Modules and composition
@@ -83,7 +86,7 @@
 //
 // # Registration options and features
 //
-//   - [Name] and [Key] register keyed services; [Group] collects several
+//   - [Name] registers named services; [Group] collects several
 //     registrations of one type; [As] registers a service under interfaces.
 //   - [In] parameter objects receive dependencies as struct fields, with
 //     name, group, and optional tags; [Out] result objects provide several
@@ -95,7 +98,7 @@
 //   - [Explain] (or %+v) expands an error with remediation hints, cycle
 //     paths, and constructor stacks; error messages name constructors and
 //     their source locations.
-//   - [ProviderOptions].Observer receives construction and disposal events.
+//   - [WithObserver] receives construction and disposal events.
 //   - [Describe] and [WriteDOT] expose the dependency graph without
 //     constructing anything.
 //
@@ -105,5 +108,5 @@
 // Huma): https://godi.readthedocs.io
 //
 // API reference and runnable examples:
-// https://pkg.go.dev/github.com/junioryono/godi/v5
+// https://pkg.go.dev/github.com/junioryono/godi/v6
 package godi

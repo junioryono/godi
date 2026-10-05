@@ -111,4 +111,6 @@ rediraffe_redirects = {
     "resource-management": "features/resource-cleanup",
     "dependency-resolution": "concepts/how-it-works",
     "service-registration": "getting-started/03-adding-services",
+    "integrations/echo-v5": "integrations/echo",
+    "integrations/fiber-v3": "integrations/fiber",
 }

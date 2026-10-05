@@ -186,7 +186,7 @@ func TestDecorate(t *testing.T) {
 		t.Parallel()
 		c := NewCollection()
 		c.AddScoped(func() greeter { return &baseGreeter{} })
-		c.AddModules(Decorate(func(g greeter, s Scope) (greeter, error) {
+		c.AddModules(Decorate(func(g greeter, s Resolver) (greeter, error) {
 			_, err := Resolve[greeter](s)
 			return g, err
 		}))
@@ -387,6 +387,45 @@ func TestDecorate(t *testing.T) {
 		assert.True(t, first.IsClosed(), "the undecorated sibling must not leak")
 	})
 
+	// One construction produces every output and runs every output's
+	// decorators, whichever output was requested. Found by the reviews of #66.
+	t.Run("a_sibling_decorators_transient_dependency_is_owned", func(t *testing.T) {
+		t.Parallel()
+		var dep *TDisposable
+		c := NewCollection()
+		c.AddSingleton(func() (*TMultiA, *TMultiB) { return &TMultiA{}, &TMultiB{} })
+		c.AddTransient(func() *TDisposable { dep = NewTDisposable(); return dep })
+		// Only *TMultiB is decorated; Build constructs the pair through *TMultiA.
+		c.AddModules(Decorate(func(b *TMultiB, _ *TDisposable) *TMultiB { return b }))
+		p, err := c.Build()
+		require.NoError(t, err)
+
+		require.NoError(t, p.Close())
+		require.NotNil(t, dep)
+		assert.True(t, dep.IsClosed(), "the singleton owns its decorator's transient")
+	})
+
+	t.Run("a_sibling_decorator_resolving_the_construction_reports_a_cycle", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddScoped(func() (*TMultiA, *TMultiB) { return &TMultiA{}, &TMultiB{} })
+		c.AddModules(Decorate(func(b *TMultiB, r Resolver) (*TMultiB, error) {
+			_, err := Resolve[*TMultiA](r)
+			return b, err
+		}))
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+		scope := NewTestScope(t, p)
+
+		err = resolveWithin(t, func() error {
+			_, resolveErr := Resolve[*TMultiA](scope)
+			return resolveErr
+		})
+		var cycle *CircularDependencyError
+		require.ErrorAs(t, err, &cycle)
+	})
+
 	t.Run("a_failing_decorator_dependency_releases_every_produced_output", func(t *testing.T) {
 		t.Parallel()
 		type failing struct{}
@@ -428,7 +467,7 @@ func TestDecorate(t *testing.T) {
 		require.NoError(t, err)
 
 		require.NoError(t, p.Close())
-		assert.True(t, base.IsClosed())
+		assert.False(t, base.IsClosed(), "the caller owns an instance registration")
 		require.NotNil(t, dep)
 		assert.True(t, dep.IsClosed())
 	})

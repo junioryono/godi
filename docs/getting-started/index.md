@@ -40,7 +40,7 @@ import (
     "fmt"
     "log"
 
-    "github.com/junioryono/godi/v5"
+    "github.com/junioryono/godi/v6"
 )
 
 // Your services - normal Go types

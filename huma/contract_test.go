@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	godihuma "github.com/junioryono/godi/huma/v5"
+	godihuma "github.com/junioryono/godi/huma/v6"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

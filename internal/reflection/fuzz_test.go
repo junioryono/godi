@@ -22,8 +22,8 @@ import (
 // referenceTagInfo is an independent statement of the tag rules: optional is
 // on only for "true", name and group are taken verbatim when present, and
 // inject:"-" excludes the field.
-func referenceTagInfo(tag reflect.StructTag) TagInfo {
-	var info TagInfo
+func referenceTagInfo(tag reflect.StructTag) parsedTags {
+	var info parsedTags
 	if v, ok := tag.Lookup("optional"); ok {
 		info.Optional = v == "true"
 	}
@@ -302,7 +302,7 @@ func FuzzAnalyzeGeneratedConstructor(f *testing.F) {
 	f.Fuzz(func(t *testing.T, data []byte) {
 		fnType := genFuncType(data)
 		fn := makeFunc(fnType)
-		a := New()
+		a := New(WithNotFound(NotFoundPolicy))
 
 		info, err := a.Analyze(fn)
 		if err != nil {
@@ -543,7 +543,7 @@ func (fuzzResolver) value(t reflect.Type) (any, error) {
 
 func (r fuzzResolver) Get(t reflect.Type) (any, error) { return r.value(t) }
 
-func (r fuzzResolver) GetKeyed(t reflect.Type, _ any) (any, error) { return r.value(t) }
+func (r fuzzResolver) GetKeyed(t reflect.Type, _ string) (any, error) { return r.value(t) }
 
 func (r fuzzResolver) GetGroup(t reflect.Type, _ string) ([]any, error) {
 	v, err := r.value(t)

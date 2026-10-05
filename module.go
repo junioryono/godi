@@ -41,13 +41,12 @@ func NewModule(name string, builders ...ModuleOption) ModuleOption {
 	return func(s Collection) error {
 		// Attribute registration errors recorded by the builders (whose Add*
 		// calls defer errors to Build) to this module by name.
-		if c, ok := s.(*collection); ok {
-			if !c.markModuleApplied(identity) {
-				return nil
-			}
-			c.pushModule(name)
-			defer c.popModule()
+		c := s.impl()
+		if !c.markModuleApplied(identity) {
+			return nil
 		}
+		c.pushModule(name)
+		defer c.popModule()
 
 		// Execute all builders in order
 		for _, builder := range builders {
@@ -121,9 +120,9 @@ func Remove[T any]() ModuleOption {
 //	    // ... other modules
 //	)
 //	// Any registration errors surface from c.Build().
-func RemoveKeyed[T any](key any) ModuleOption {
+func RemoveKeyed[T any](name string) ModuleOption {
 	return func(c Collection) error {
-		c.RemoveKeyed(reflect.TypeFor[T](), key)
+		c.RemoveKeyed(reflect.TypeFor[T](), name)
 		return nil
 	}
 }
@@ -175,10 +174,7 @@ func TryAddTransient(service any, opts ...AddOption) ModuleOption {
 
 func replaceService(service any, lifetime Lifetime, opts []AddOption) ModuleOption {
 	return func(c Collection) error {
-		sc, ok := c.(*collection)
-		if !ok {
-			return errUnsupportedCollection("Replace")
-		}
+		sc := c.impl()
 		targets, err := sc.registrationTargets(service, lifetime, opts)
 		if err != nil {
 			return err
@@ -209,10 +205,7 @@ func replaceService(service any, lifetime Lifetime, opts []AddOption) ModuleOpti
 
 func tryAddService(service any, lifetime Lifetime, opts []AddOption) ModuleOption {
 	return func(c Collection) error {
-		sc, ok := c.(*collection)
-		if !ok {
-			return errUnsupportedCollection("TryAdd")
-		}
+		sc := c.impl()
 		targets, err := sc.registrationTargets(service, lifetime, opts)
 		if err != nil {
 			return err
@@ -234,7 +227,7 @@ func tryAddService(service any, lifetime Lifetime, opts []AddOption) ModuleOptio
 // registrationTargets returns the registry keys a registration of service
 // with opts would occupy. Group registrations and result objects are not
 // supported by Replace and TryAdd.
-func (sc *collection) registrationTargets(service any, lifetime Lifetime, opts []AddOption) ([]TypeKey, error) {
+func (sc *collection) registrationTargets(service any, lifetime Lifetime, opts []AddOption) ([]registryKey, error) {
 	d, err := newDescriptorWithAnalyzer(service, lifetime, sc.analyzer, opts...)
 	if err != nil {
 		return nil, err
@@ -268,33 +261,27 @@ func (sc *collection) registrationTargets(service any, lifetime Lifetime, opts [
 	}
 
 	if len(options.As) > 0 {
-		targets := make([]TypeKey, 0, len(options.As))
+		targets := make([]registryKey, 0, len(options.As))
 		for _, iface := range options.As {
-			targets = append(targets, TypeKey{Type: reflect.TypeOf(iface).Elem(), Key: d.Key})
+			targets = append(targets, registryKey{Type: reflect.TypeOf(iface).Elem(), Key: d.Key})
 		}
 		return targets, nil
 	}
 
-	var targets []TypeKey
-	first := true
+	var targets []registryKey
 	for _, ret := range d.info.Returns {
 		if ret.IsError {
 			continue
 		}
-		var key any
-		if first {
-			key = d.Key
-		}
-		first = false
-		targets = append(targets, TypeKey{Type: ret.Type, Key: key})
+		targets = append(targets, registryKey{Type: ret.Type, Key: d.Key})
 	}
 	if len(targets) == 0 {
-		targets = append(targets, TypeKey{Type: d.Type, Key: d.Key})
+		targets = append(targets, registryKey{Type: d.Type, Key: d.Key})
 	}
 	return targets, nil
 }
 
-func describeTargets(targets []TypeKey) string {
+func describeTargets(targets []registryKey) string {
 	s := ""
 	for i, t := range targets {
 		if i > 0 {
@@ -306,8 +293,4 @@ func describeTargets(targets []TypeKey) string {
 		}
 	}
 	return s
-}
-
-func errUnsupportedCollection(operation string) error {
-	return fmt.Errorf("godi.%s requires a Collection created by godi.NewCollection", operation)
 }

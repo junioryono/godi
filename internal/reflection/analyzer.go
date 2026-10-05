@@ -1,19 +1,11 @@
 package reflection
 
 import (
-	"errors"
 	"fmt"
 	"reflect"
 	"sync"
 	"sync/atomic"
 )
-
-// ErrServiceNotFound indicates that no provider is registered for a requested
-// type/key. It lives here (rather than in the root package) so the parameter
-// builder can distinguish "not registered" from "registered but failed to
-// construct" without an import cycle. The root package re-exports it as
-// godi.ErrServiceNotFound.
-var ErrServiceNotFound = errors.New("service not found")
 
 type In struct{}
 type Out struct{}
@@ -27,6 +19,9 @@ var (
 // Analyzer performs reflection-based analysis of constructors and types.
 // It caches analysis results for performance.
 type Analyzer struct {
+	// notFound is the WithNotFound policy.
+	notFound func(error) bool
+
 	mu sync.RWMutex
 	// cache keys retain the analyzed function values (and any closure
 	// captures) until Clear is called, trading that retention for correct
@@ -83,8 +78,8 @@ type ReturnInfo struct {
 	IsError bool   // True if this is error type
 }
 
-// TagInfo contains parsed struct tag information.
-type TagInfo struct {
+// parsedTags contains parsed struct tag information.
+type parsedTags struct {
 	Optional bool
 	Name     string
 	Group    string
@@ -131,13 +126,32 @@ type ParamField struct {
 	Index    int // field index in struct
 }
 
+// Option configures an Analyzer.
+type Option func(*Analyzer)
+
+// WithNotFound sets the policy that tells a dependency that is not
+// registered apart from one whose construction failed: an optional In field
+// is left at its zero value only when notFound reports true for the error
+// resolving it. Without a policy, every resolution error propagates.
+func WithNotFound(notFound func(error) bool) Option {
+	return func(a *Analyzer) { a.notFound = notFound }
+}
+
 // New creates a new Analyzer.
-func New() *Analyzer {
+func New(opts ...Option) *Analyzer {
 	a := &Analyzer{
 		cache: make(map[reflect.Value]*ConstructorInfo),
 	}
+	for _, opt := range opts {
+		opt(a)
+	}
 	a.invoker = NewConstructorInvoker(a)
 	return a
+}
+
+// isNotFound applies the WithNotFound policy.
+func (a *Analyzer) isNotFound(err error) bool {
+	return a != nil && a.notFound != nil && a.notFound(err)
 }
 
 // Analyze analyzes a constructor function and extracts dependency information.
@@ -464,16 +478,6 @@ func (a *Analyzer) buildDependencies(info *ConstructorInfo) []*Dependency {
 	return deps
 }
 
-// GetDependencies returns the analyzed dependencies for a constructor.
-func (a *Analyzer) GetDependencies(constructor any) ([]*Dependency, error) {
-	info, err := a.Analyze(constructor)
-	if err != nil {
-		return nil, err
-	}
-
-	return info.dependencies, nil
-}
-
 // Dependencies returns the analyzed dependencies cached on this info value.
 // Use this when you already hold a *ConstructorInfo to avoid the extra
 // Analyze call (and its lock/lookup) that Analyzer.GetDependencies performs.
@@ -481,64 +485,9 @@ func (info *ConstructorInfo) Dependencies() []*Dependency {
 	return info.dependencies
 }
 
-// GetServiceType determines the primary service type from a constructor or instance.
-func (a *Analyzer) GetServiceType(constructor any) (reflect.Type, error) {
-	info, err := a.Analyze(constructor)
-	if err != nil {
-		return nil, err
-	}
-
-	if !info.IsFunc {
-		// For instances, the type is the type of the value
-		return info.Type, nil
-	}
-
-	if len(info.Returns) == 0 {
-		return nil, fmt.Errorf("constructor has no return values")
-	}
-
-	// For result objects, return the Out struct type
-	if info.IsResultObject {
-		return info.Type.Out(0), nil
-	}
-
-	// Return the first non-error return type
-	for _, ret := range info.Returns {
-		if !ret.IsError {
-			return ret.Type, nil
-		}
-	}
-
-	return nil, fmt.Errorf("constructor only returns error")
-}
-
-// GetResultTypes returns all types produced by a constructor (for Out structs or multiple returns).
-func (a *Analyzer) GetResultTypes(constructor any) ([]reflect.Type, error) {
-	info, err := a.Analyze(constructor)
-	if err != nil {
-		return nil, err
-	}
-
-	// For all cases (Out structs, multiple returns, single return),
-	// return all non-error types
-	types := make([]reflect.Type, 0, len(info.Returns))
-	for _, ret := range info.Returns {
-		if !ret.IsError {
-			types = append(types, ret.Type)
-		}
-	}
-
-	// If no types were found and it's not a function, return the instance type
-	if len(types) == 0 && !info.IsFunc {
-		return []reflect.Type{info.Type}, nil
-	}
-
-	return types, nil
-}
-
 // parseFieldTags parses struct field tags for DI-specific annotations.
-func (a *Analyzer) parseFieldTags(tag reflect.StructTag) TagInfo {
-	info := TagInfo{}
+func (a *Analyzer) parseFieldTags(tag reflect.StructTag) parsedTags {
+	info := parsedTags{}
 
 	// Check for optional tag
 	if val, ok := tag.Lookup("optional"); ok {
@@ -582,20 +531,6 @@ func (a *Analyzer) cacheAndReturn(key reflect.Value, info *ConstructorInfo) (*Co
 	a.mu.Unlock()
 
 	return info, nil
-}
-
-// Clear clears the analysis cache.
-func (a *Analyzer) Clear() {
-	a.mu.Lock()
-	a.cache = make(map[reflect.Value]*ConstructorInfo)
-	a.mu.Unlock()
-}
-
-// CacheSize returns the number of cached analyses.
-func (a *Analyzer) CacheSize() int {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	return len(a.cache)
 }
 
 // AnalyzeCalls returns the total number of calls made to Analyze. It is

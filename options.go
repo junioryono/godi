@@ -2,9 +2,11 @@ package godi
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"reflect"
 	"strings"
+	"time"
 )
 
 // An AddOption modifies the default behavior of AddSingleton, AddScoped, and AddTransient.
@@ -14,38 +16,18 @@ type AddOption interface {
 
 type addOptions struct {
 	Name      string
-	Key       any
 	Group     string
 	As        []any
 	NoDispose bool
 	Lazy      bool
 }
 
-// key returns the registration key from godi.Key or godi.Name, or nil.
+// key returns the registration key: the godi.Name, or nil.
 func (o *addOptions) key() any {
-	if o.Key != nil {
-		return o.Key
-	}
-	if o.Name != "" {
-		return o.Name
-	}
-	return nil
+	return keyOf(o.Name)
 }
 
 func (o *addOptions) Validate() error {
-	if o.Key != nil {
-		switch {
-		case o.Name != "":
-			return &ValidationError{Cause: fmt.Errorf("cannot use both godi.Key and godi.Name")}
-		case o.Group != "":
-			return &ValidationError{Cause: fmt.Errorf("cannot use both godi.Key and godi.Group")}
-		case !reflect.ValueOf(o.Key).Comparable():
-			return &ValidationError{Cause: fmt.Errorf("invalid godi.Key(%v): key of type %T is not comparable", o.Key, o.Key)}
-		case !reflect.ValueOf(o.Key).Equal(reflect.ValueOf(o.Key)):
-			// e.g. NaN: comparable, but a lookup could never match it.
-			return &ValidationError{Cause: fmt.Errorf("invalid godi.Key(%v): the key is not equal to itself", o.Key)}
-		}
-	}
 	if o.Group != "" {
 		if o.Name != "" {
 			return &ValidationError{
@@ -103,8 +85,8 @@ func (o *addOptions) Validate() error {
 // Name is an AddOption that registers the value produced by a constructor as
 // a keyed service under the given name. Resolve it with ResolveKeyed or an In
 // field tagged `name:"..."`. For a constructor with several non-error
-// returns, the name applies to the first non-error return only; the other
-// returns are registered without a name.
+// returns, every return is registered under the name (as Group adds every
+// return to the group); give outputs different names with a result object.
 //
 // Given,
 //
@@ -133,29 +115,12 @@ func (o addNameOption) applyAddOption(opt *addOptions) {
 	opt.Name = string(o)
 }
 
-// Key is an AddOption that registers the service under key, which may be any
-// comparable value (a string, an enum constant, a struct). Resolve it with
-// ResolveKeyed or GetKeyed using an equal key. godi.Name(s) is the same as
-// godi.Key(s) for a string s; struct tags (name:"...") can refer to string
-// keys only.
-func Key(key any) AddOption {
-	return addKeyOption{key: key}
-}
-
-type addKeyOption struct{ key any }
-
-func (o addKeyOption) String() string { return fmt.Sprintf("Key(%v)", o.key) }
-
-func (o addKeyOption) applyAddOption(opt *addOptions) {
-	opt.Key = o.key
-}
-
 // Group is an AddOption that adds the values produced by a constructor to the
 // specified group. For a constructor with several non-error returns, every
 // return is added to the group of its own type. Consume a group with
 // ResolveGroup or an In field of slice type tagged `group:"..."`.
 //
-// This option cannot be combined with Name or Key, and cannot be provided for
+// This option cannot be combined with Name, and cannot be provided for
 // constructors which produce result objects.
 func Group(group string) AddOption {
 	return addGroupOption(group)
@@ -213,7 +178,8 @@ func (o addGroupOption) applyAddOption(opt *addOptions) {
 //
 // This option cannot be provided for constructors which produce result
 // objects or have multiple non-error return values, and reserved types
-// (context.Context, godi.Provider, godi.Scope) cannot be registered this way.
+// (context.Context, godi.Provider, godi.Scope, godi.Resolver,
+// godi.ScopeFactory) cannot be registered this way.
 func As[T any]() AddOption {
 	return addAsOption{new(T)}
 }
@@ -257,10 +223,11 @@ func (addLazyOption) applyAddOption(opt *addOptions) {
 	opt.Lazy = true
 }
 
-// NoDispose is an AddOption declaring that the registered service's lifetime
-// is managed outside the container: godi never disposes it. Use it for
-// resources the application shares or closes itself, such as a pre-built
-// *sql.DB or os.Stdout passed to AddSingleton.
+// NoDispose is an AddOption declaring that the values a constructor creates
+// are managed outside the container: godi never disposes them. Use it for a
+// constructor that returns a resource the application shares or closes
+// itself. Values registered as instances (AddSingleton(value)) are never
+// disposed anyway: the caller that created them owns them.
 //
 // A NoDispose value is also never adopted by a scope that merely returns it.
 func NoDispose() AddOption {
@@ -282,10 +249,80 @@ func (addNoDisposeOption) applyAddOption(opt *addOptions) {
 //	type Clock func() time.Time
 //	services.AddSingleton(godi.Instance(Clock(time.Now)))
 //
-// Other values can be passed to AddSingleton directly.
+// Other values can be passed to AddSingleton directly. godi never disposes a
+// value registered as an instance: the caller that created it owns it. To hand
+// ownership to godi, register a constructor that returns the value instead.
 func Instance(v any) any {
 	return instanceValue{value: v}
 }
 
 // instanceValue wraps a value registered through Instance.
 type instanceValue struct{ value any }
+
+// ---------------------------------------------------------------------------
+// Build options
+// ---------------------------------------------------------------------------
+
+// A BuildOption configures Collection.Build.
+type BuildOption interface {
+	applyBuildOption(*buildOptions)
+}
+
+type buildOptions struct {
+	context        context.Context
+	timeout        time.Duration
+	observer       Observer
+	validateScopes bool
+}
+
+func newBuildOptions(opts []BuildOption) buildOptions {
+	options := buildOptions{validateScopes: true}
+	for _, opt := range opts {
+		if opt != nil {
+			opt.applyBuildOption(&options)
+		}
+	}
+	return options
+}
+
+type buildOptionFunc func(*buildOptions)
+
+func (f buildOptionFunc) applyBuildOption(o *buildOptions) { f(o) }
+
+// WithContext sets the parent of the provider's root context: its values are
+// visible to services, and its cancellation propagates to them. It also bounds
+// Build: Build fails if it is cancelled, and constructors that run during
+// Build receive the provider's root context, which carries ctx's values and
+// deadline and is cancelled with it. A WithBuildTimeout cancels it too, but
+// does not appear as its deadline. A nil ctx means context.Background(); the
+// last WithContext wins.
+func WithContext(ctx context.Context) BuildOption {
+	return buildOptionFunc(func(o *buildOptions) { o.context = ctx })
+}
+
+// WithBuildTimeout sets a cooperative deadline for Build. Constructors that
+// accept context.Context can stop promptly when it expires; others cannot be
+// preempted, but an expired deadline is checked after they return and never
+// produces a provider. The deadline bounds Build only: once Build succeeds,
+// the context given to singletons is no longer subject to it. A duration of
+// zero or less means no timeout.
+func WithBuildTimeout(d time.Duration) BuildOption {
+	return buildOptionFunc(func(o *buildOptions) { o.timeout = d })
+}
+
+// WithObserver sets the Observer that receives construction and disposal
+// events, including failures of background cleanup that have no caller to
+// report to.
+func WithObserver(observer Observer) BuildOption {
+	return buildOptionFunc(func(o *buildOptions) { o.observer = observer })
+}
+
+// WithScopeValidation sets whether resolving a scoped service, directly or
+// through transients, from the provider's root scope fails with
+// ErrScopeRequired. Resolved from the root, a "per-request" service becomes
+// one instance shared by the whole application. With validation on, the root
+// scope also runs no scoped initializers. Validation is on by default; turn
+// it off only for applications that deliberately treat the root as a scope.
+func WithScopeValidation(enabled bool) BuildOption {
+	return buildOptionFunc(func(o *buildOptions) { o.validateScopes = enabled })
+}

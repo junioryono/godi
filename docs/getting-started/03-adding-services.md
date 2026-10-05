@@ -72,7 +72,7 @@ package main
 import (
     "fmt"
     "log"
-    "github.com/junioryono/godi/v5"
+    "github.com/junioryono/godi/v6"
 )
 
 // Logger - no dependencies
@@ -160,7 +160,7 @@ Output:
 [APP] Executing: SELECT * FROM users WHERE id = 42
 ```
 
-A runnable program wired the same way is the [`ExampleNewCollection`](https://pkg.go.dev/github.com/junioryono/godi/v5#example-NewCollection) example in the package documentation (`example_test.go`), verified by `go test`.
+A runnable program wired the same way is the [`ExampleNewCollection`](https://pkg.go.dev/github.com/junioryono/godi/v6#example-NewCollection) example in the package documentation (`example_test.go`), verified by `go test`.
 
 ## Constructor Patterns
 

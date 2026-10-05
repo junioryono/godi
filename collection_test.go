@@ -745,7 +745,7 @@ func TestCollectionBuild(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		_, err := c.BuildWithContext(ctx)
+		_, err := c.Build(WithContext(ctx))
 		require.Error(t, err)
 		assert.ErrorIs(t, err, context.Canceled)
 	})
@@ -1120,11 +1120,27 @@ func TestMultiReturnWithName(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, a.N)
 
-	b, err := Resolve[*TMultiB](p)
+	// The name applies to every output, as Group does.
+	b, err := ResolveKeyed[*TMultiB](p, "primary")
 	require.NoError(t, err)
 	assert.Equal(t, 2, b.N)
+	_, err = Resolve[*TMultiB](p)
+	require.ErrorIs(t, err, ErrServiceNotFound, "no output is registered without the name")
 
 	assert.Equal(t, 1, calls, "singleton multi-return constructor must run exactly once")
+
+	t.Run("replace_targets_every_named_output", func(t *testing.T) {
+		t.Parallel()
+		c := NewCollection()
+		c.AddSingleton(func() (*TMultiA, *TMultiB) { return &TMultiA{N: 1}, &TMultiB{N: 2} }, Name("primary"))
+		c.AddModules(ReplaceSingleton(func() (*TMultiA, *TMultiB) { return &TMultiA{N: 3}, &TMultiB{N: 4} }, Name("primary")))
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+		b, err := ResolveKeyed[*TMultiB](p, "primary")
+		require.NoError(t, err)
+		assert.Equal(t, 4, b.N)
+	})
 }
 
 func TestMultiReturnWithGroup(t *testing.T) {
@@ -1246,7 +1262,7 @@ func TestOptionalDependencyErrors(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = p.Close() })
 
-		consumer, err := Resolve[*TOptionalConsumer](p)
+		consumer, err := Resolve[*TOptionalConsumer](NewTestScope(t, p))
 		require.NoError(t, err)
 		assert.Nil(t, consumer.Failing)
 	})
@@ -1286,7 +1302,7 @@ func TestOptionalDependencyErrors(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = p.Close() })
 
-		_, err = Resolve[*TOptionalConsumer](p)
+		_, err = Resolve[*TOptionalConsumer](NewTestScope(t, p))
 		require.Error(t, err, "a registered optional dependency whose constructor fails must propagate the error")
 		assert.Contains(t, err.Error(), "constructor exploded")
 	})
@@ -1491,7 +1507,7 @@ func TestDeferredRegistrationErrors(t *testing.T) {
 
 		var buildErr *BuildError
 		require.ErrorAs(t, err, &buildErr)
-		assert.Equal(t, "registration", buildErr.Phase)
+		assert.Equal(t, PhaseRegistration, buildErr.Phase)
 
 		msg := err.Error()
 		assert.Contains(t, msg, "constructor cannot be nil")
@@ -1569,14 +1585,14 @@ func TestFailedRegistrationRollsBackGroupMember(t *testing.T) {
 	assert.False(t, c.(*collection).HasGroup(reflect.TypeFor[*TService](), "g"))
 }
 
-func TestBuildWithOptions(t *testing.T) {
+func TestBuildOptions(t *testing.T) {
 	t.Parallel()
 
-	t.Run("nil_options_builds", func(t *testing.T) {
+	t.Run("no_options_builds", func(t *testing.T) {
 		t.Parallel()
 		c := NewCollection()
 		c.AddSingleton(NewTService)
-		p, err := c.BuildWithOptions(nil)
+		p, err := c.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = p.Close() })
 
@@ -1585,11 +1601,49 @@ func TestBuildWithOptions(t *testing.T) {
 		assert.NotNil(t, svc)
 	})
 
+	t.Run("nil_option_and_nil_context_are_ignored", func(t *testing.T) {
+		t.Parallel()
+		type CtxHolder struct{ Ctx context.Context }
+		c := NewCollection()
+		c.AddSingleton(func(ctx context.Context) *CtxHolder { return &CtxHolder{Ctx: ctx} })
+		//nolint:staticcheck // a nil context is accepted on purpose
+		p, err := c.Build(nil, WithContext(nil))
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+		holder := RequireResolve[*CtxHolder](t, p)
+		assert.NoError(t, holder.Ctx.Err())
+	})
+
+	t.Run("last_context_wins", func(t *testing.T) {
+		t.Parallel()
+		type marker struct{}
+		type CtxHolder struct{ Ctx context.Context }
+		first := context.WithValue(context.Background(), marker{}, "first")
+		second := context.WithValue(context.Background(), marker{}, "second")
+		c := NewCollection()
+		c.AddSingleton(func(ctx context.Context) *CtxHolder { return &CtxHolder{Ctx: ctx} })
+		p, err := c.Build(WithContext(first), WithContext(second))
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+		assert.Equal(t, "second", RequireResolve[*CtxHolder](t, p).Ctx.Value(marker{}))
+	})
+
+	t.Run("non_positive_timeout_means_none", func(t *testing.T) {
+		t.Parallel()
+		for _, d := range []time.Duration{0, -time.Second} {
+			c := NewCollection()
+			c.AddSingleton(NewTService)
+			p, err := c.Build(WithBuildTimeout(d))
+			require.NoError(t, err, "timeout %v", d)
+			require.NoError(t, p.Close())
+		}
+	})
+
 	t.Run("generous_timeout_builds", func(t *testing.T) {
 		t.Parallel()
 		c := NewCollection()
 		c.AddSingleton(NewTService)
-		p, err := c.BuildWithOptions(&ProviderOptions{BuildTimeout: time.Minute})
+		p, err := c.Build(WithBuildTimeout(time.Minute))
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = p.Close() })
 	})
@@ -1598,7 +1652,7 @@ func TestBuildWithOptions(t *testing.T) {
 		t.Parallel()
 		c := NewCollection()
 		c.AddSingleton(nil)
-		_, err := c.BuildWithOptions(&ProviderOptions{})
+		_, err := c.Build()
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "constructor cannot be nil")
 	})
@@ -1696,6 +1750,20 @@ func TestLifetimeRules(t *testing.T) {
 func TestValidate(t *testing.T) {
 	t.Parallel()
 
+	// Collection is sealed, so a user type can only implement it by
+	// embedding one godi returned, and package functions accept it.
+	t.Run("accepts_a_collection_embedded_in_a_user_type", func(t *testing.T) {
+		t.Parallel()
+		type appCollection struct{ Collection }
+		c := appCollection{NewCollection()}
+		c.AddSingleton(NewTService)
+		c.AddModules(Decorate(func(s *TService) *TService { return s }))
+		assert.NoError(t, Validate(c))
+
+		c.AddScoped(NewTServiceWithDeps) // *TDependency is not registered
+		assert.ErrorIs(t, Validate(c), ErrServiceNotFound)
+	})
+
 	t.Run("checks_wiring_without_constructing", func(t *testing.T) {
 		t.Parallel()
 		constructed := false
@@ -1792,7 +1860,7 @@ func TestBuildOrder(t *testing.T) {
 			c := NewCollection()
 			// Early resolves Late at runtime, so the static graph cannot
 			// order them; Late is registered (and so ordered) after Early.
-			c.AddSingleton(func(p Provider) (*Early, error) {
+			c.AddSingleton(func(p Resolver) (*Early, error) {
 				late, err := Resolve[*TService](p)
 				return &Early{Late: late}, err
 			})
@@ -1822,8 +1890,8 @@ func TestToSliceHidesInternalKeys(t *testing.T) {
 	require.Len(t, infos, 3)
 	// Void initializers get a synthetic key and group members a positional
 	// one; neither is a key a caller can resolve with.
-	assert.Nil(t, infos[0].Key)
-	assert.Nil(t, infos[1].Key)
+	assert.Empty(t, infos[0].Key)
+	assert.Empty(t, infos[1].Key)
 	assert.Equal(t, "services", infos[1].Group)
 	assert.Equal(t, "dep", infos[2].Key)
 }
@@ -1848,7 +1916,7 @@ func TestToSliceServiceInfo(t *testing.T) {
 	}
 
 	require.Contains(t, byLifetime, Singleton)
-	assert.Nil(t, byLifetime[Singleton].Key)
+	assert.Empty(t, byLifetime[Singleton].Key)
 	assert.Empty(t, byLifetime[Singleton].Group)
 
 	require.Contains(t, byLifetime, Scoped)
@@ -1891,7 +1959,7 @@ func TestBuildCancellation(t *testing.T) {
 			return NewTService()
 		})
 
-		p, err := c.BuildWithContext(ctx)
+		p, err := c.Build(WithContext(ctx))
 
 		// Build waits for the non-cooperative constructor and still fails on
 		// the cancellation it cannot deliver mid-flight.
@@ -1914,7 +1982,7 @@ func TestBuildCancellation(t *testing.T) {
 				return nil, ctx.Err()
 			})
 
-			p, err := c.BuildWithOptions(&ProviderOptions{BuildTimeout: 200 * time.Millisecond})
+			p, err := c.Build(WithBuildTimeout(200 * time.Millisecond))
 
 			require.ErrorIs(t, err, context.DeadlineExceeded)
 			assert.Nil(t, p)
@@ -1933,7 +2001,7 @@ func TestBuildCancellation(t *testing.T) {
 			return NewTService()
 		})
 
-		p, err := c.BuildWithContext(ctx)
+		p, err := c.Build(WithContext(ctx))
 		require.ErrorIs(t, err, context.Canceled)
 		assert.Nil(t, p)
 		assert.True(t, resource.IsClosed())
@@ -1954,7 +2022,7 @@ func TestBuildCancellation(t *testing.T) {
 			return NewTService()
 		})
 
-		p, err := c.BuildWithContext(ctx)
+		p, err := c.Build(WithContext(ctx))
 		require.Error(t, err)
 		assert.Nil(t, p)
 		assert.ErrorIs(t, err, context.Canceled)
@@ -1973,16 +2041,13 @@ func TestBuildContext(t *testing.T) {
 
 		c := NewCollection()
 		c.AddSingleton(func(ctx context.Context) (*TService, error) {
-			if _, err := FromContext(ctx); err != nil {
-				return nil, err
-			}
 			if ctx.Value(contextKey{}) != want {
 				return nil, errors.New("build context value was not preserved")
 			}
 			return want, nil
 		})
 
-		p, err := c.BuildWithContext(buildCtx)
+		p, err := c.Build(WithContext(buildCtx))
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = p.Close() })
 	})
@@ -1994,7 +2059,7 @@ func TestBuildContext(t *testing.T) {
 		var readers sync.WaitGroup
 
 		c := NewCollection()
-		c.AddSingleton(func(p Provider) *TService {
+		c.AddSingleton(func(p Resolver) *TService {
 			readers.Go(func() {
 				close(started)
 				for {
@@ -2010,7 +2075,7 @@ func TestBuildContext(t *testing.T) {
 			return NewTService()
 		})
 
-		p, err := c.BuildWithContext(context.Background())
+		p, err := c.Build()
 		close(stop)
 		readers.Wait()
 		require.NoError(t, err)
@@ -2023,7 +2088,7 @@ func TestBuildContext(t *testing.T) {
 		c := NewCollection()
 		c.AddSingleton(func(ctx context.Context) *CtxHolder { return &CtxHolder{Ctx: ctx} })
 
-		p, err := c.BuildWithOptions(&ProviderOptions{BuildTimeout: time.Minute})
+		p, err := c.Build(WithBuildTimeout(time.Minute))
 		require.NoError(t, err)
 		holder, err := Resolve[*CtxHolder](p)
 		require.NoError(t, err)
@@ -2044,9 +2109,9 @@ func TestBuildContext(t *testing.T) {
 		c := NewCollection()
 		c.AddSingleton(func(ctx context.Context) *CtxHolder { return &CtxHolder{Ctx: ctx} })
 
-		// BuildWithContext took a context but no options, and
-		// BuildWithOptions options but no context.
-		p, err := c.BuildWithOptions(&ProviderOptions{Context: parent, BuildTimeout: time.Minute})
+		// A parent context and a build timeout compose: the timeout bounds
+		// Build, the parent the provider.
+		p, err := c.Build(WithContext(parent), WithBuildTimeout(time.Minute))
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = p.Close() })
 		holder, err := Resolve[*CtxHolder](p)
@@ -2071,7 +2136,7 @@ func TestBuildContext(t *testing.T) {
 			return &CtxHolder{Ctx: ctx, BuildTime: deadline, BuildHasDdl: ok}
 		})
 
-		p, err := c.BuildWithOptions(&ProviderOptions{BuildTimeout: time.Minute})
+		p, err := c.Build(WithBuildTimeout(time.Minute))
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = p.Close() })
 		holder, err := Resolve[*CtxHolder](p)
@@ -2088,7 +2153,7 @@ func TestBuildContext(t *testing.T) {
 		t.Parallel()
 		type CtxHolder struct{ Ctx context.Context }
 		c := NewCollection()
-		c.AddScoped(func(ctx context.Context) *CtxHolder { return &CtxHolder{Ctx: ctx} })
+		c.AddTransient(func(ctx context.Context) *CtxHolder { return &CtxHolder{Ctx: ctx} })
 
 		p, err := c.Build()
 		require.NoError(t, err)
@@ -2354,30 +2419,6 @@ func TestUnsupportedConstructorShapes(t *testing.T) {
 		c.AddSingleton(NewTResult, Group("services"))
 		require.Error(t, c.Err())
 	})
-}
-
-func TestCollectionKeyedNonComparableKey(t *testing.T) {
-	t.Parallel()
-
-	c := NewCollection()
-	c.AddSingleton(NewTService, Name("one"))
-
-	// Both a directly non-comparable key and a comparable struct wrapping a
-	// non-comparable value in an interface field (which passes a type-level
-	// comparability check but panics as a map key).
-	keys := []any{
-		[]string{"one"},
-		struct{ V any }{V: []int{1}},
-	}
-	for _, key := range keys {
-		require.NotPanics(t, func() {
-			assert.False(t, c.ContainsKeyed(reflect.TypeFor[*TService](), key))
-		})
-		require.NotPanics(t, func() {
-			c.RemoveKeyed(reflect.TypeFor[*TService](), key)
-		})
-	}
-	assert.Equal(t, 1, c.Count())
 }
 
 func TestTypedNilConstructorResult(t *testing.T) {

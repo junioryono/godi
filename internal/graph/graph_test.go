@@ -1,29 +1,21 @@
-package graph_test
+package graph
 
 import (
 	"fmt"
 	"reflect"
-	"slices"
-	"strings"
-	"sync"
 	"testing"
 
-	"github.com/junioryono/godi/v5/internal/graph"
-	"github.com/junioryono/godi/v5/internal/reflection"
+	"github.com/junioryono/godi/v6/internal/reflection"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-// testSingleton stands in for godi.Singleton in test literals. The graph
-// never reads a provider's lifetime, so its value is irrelevant.
-const testSingleton = 0
-
-// testProvider is a minimal graph.Provider implementation for graph tests,
-// decoupling them from the godi package's concrete descriptor type.
+// testProvider is a minimal Provider, decoupling the graph tests from the
+// godi package's descriptor type.
 type testProvider struct {
 	Type         reflect.Type
 	Key          any
 	Group        string
-	Lifetime     int // unused by the graph; present so existing literals compile
 	Dependencies []*reflection.Dependency
 }
 
@@ -32,1019 +24,244 @@ func (p *testProvider) GetKey() any                               { return p.Key
 func (p *testProvider) GetGroup() string                          { return p.Group }
 func (p *testProvider) GetDependencies() []*reflection.Dependency { return p.Dependencies }
 
-// Test concurrent graph operations
-func TestDependencyGraph_ConcurrentOperations(t *testing.T) {
-	type Service0 struct{}
-	type Service1 struct{}
-	type Service2 struct{}
-	type Service3 struct{}
-	type Service4 struct{}
-	type Service5 struct{}
-	type Service6 struct{}
-	type Service7 struct{}
-	type Service8 struct{}
-	type Service9 struct{}
+type (
+	nodeA         struct{}
+	nodeB         struct{}
+	nodeC         struct{}
+	nodeD         struct{}
+	groupMember   struct{}
+	groupConsumer struct{}
+)
 
-	g := graph.NewDependencyGraph()
+var (
+	typeA        = reflect.TypeFor[nodeA]()
+	typeB        = reflect.TypeFor[nodeB]()
+	typeC        = reflect.TypeFor[nodeC]()
+	typeD        = reflect.TypeFor[nodeD]()
+	memberType   = reflect.TypeFor[groupMember]()
+	consumerType = reflect.TypeFor[groupConsumer]()
+)
 
-	var wg sync.WaitGroup
-	errors := make(chan error, 100)
-
-	types := []reflect.Type{
-		reflect.TypeFor[Service0](),
-		reflect.TypeFor[Service1](),
-		reflect.TypeFor[Service2](),
-		reflect.TypeFor[Service3](),
-		reflect.TypeFor[Service4](),
-		reflect.TypeFor[Service5](),
-		reflect.TypeFor[Service6](),
-		reflect.TypeFor[Service7](),
-		reflect.TypeFor[Service8](),
-		reflect.TypeFor[Service9](),
+func deps(types ...reflect.Type) []*reflection.Dependency {
+	out := make([]*reflection.Dependency, len(types))
+	for i, t := range types {
+		out[i] = &reflection.Dependency{Type: t}
 	}
-
-	// Concurrent additions
-	for i := range 10 {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
-
-			provider := &testProvider{
-				Type:     types[idx],
-				Lifetime: testSingleton,
-				Dependencies: func() []*reflection.Dependency {
-					if idx == 0 {
-						return nil
-					}
-					// Each service depends on the previous one
-					return []*reflection.Dependency{
-						{Type: types[idx-1]},
-					}
-				}(),
-			}
-
-			if err := g.AddProvider(provider); err != nil {
-				errors <- fmt.Errorf("failed to add provider %d: %w", idx, err)
-			}
-		}(i)
-	}
-
-	// Concurrent reads
-	for range 20 {
-		wg.Go(func() {
-
-			// Perform various read operations
-			g.Size()
-			_ = g.DetectCycles()
-
-			// Try topological sort
-			if _, err := g.TopologicalSort(); err != nil { //nolint:staticcheck // error expected in concurrent test
-				// This might fail if graph is being modified
-				// Don't treat as error in concurrent test
-			}
-		})
-	}
-
-	wg.Wait()
-	close(errors)
-
-	for err := range errors {
-		assert.NoError(t, err, "Concurrent operation error")
-	}
-
-	// Final verification
-	assert.Equal(t, 10, g.Size(), "Expected 10 nodes in graph after concurrent operations")
-
-	// Should be acyclic (linear chain)
-	assert.NoError(t, g.DetectCycles(), "Graph should be acyclic")
+	return out
 }
 
-// Test complex cycle detection scenarios
-func TestDependencyGraph_ComplexCycles(t *testing.T) {
+func build(t testing.TB, providers ...*testProvider) *DependencyGraph {
+	t.Helper()
+	g := NewDependencyGraphWithCapacity(len(providers))
+	for _, p := range providers {
+		require.NoError(t, g.AddProviderDeferred(p))
+	}
+	return g
+}
+
+func TestAddProviderDeferred(t *testing.T) {
+	t.Parallel()
+
+	t.Run("rejects_a_nil_provider", func(t *testing.T) {
+		t.Parallel()
+		assert.Error(t, NewDependencyGraphWithCapacity(0).AddProviderDeferred(nil))
+	})
+
+	t.Run("records_nodes_in_insertion_order", func(t *testing.T) {
+		t.Parallel()
+		g := build(t,
+			&testProvider{Type: typeA, Dependencies: deps(typeC, typeB)},
+			&testProvider{Type: typeB},
+		)
+		assert.Equal(t, []NodeKey{{Type: typeA}, {Type: typeC}, {Type: typeB}}, g.order)
+		assert.Equal(t, []NodeKey{{Type: typeC}, {Type: typeB}}, g.edges[NodeKey{Type: typeA}])
+	})
+
+	// Re-registering a key replaces its edges rather than merging in stale
+	// ones from the previous registration.
+	t.Run("replacement_clears_stale_edges", func(t *testing.T) {
+		t.Parallel()
+		g := build(t,
+			&testProvider{Type: typeA, Dependencies: deps(typeB)},
+			&testProvider{Type: typeA},
+		)
+		assert.Empty(t, g.edges[NodeKey{Type: typeA}])
+		assert.NoError(t, g.DetectCycles())
+	})
+}
+
+func TestDetectCycles(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
-		name          string
-		setupGraph    func() (*graph.DependencyGraph, error)
-		expectCycle   bool
-		cycleIncludes []string
+		name      string
+		providers []*testProvider
+		path      []string // nil: no cycle
 	}{
 		{
-			name: "self-cycle",
-			setupGraph: func() (*graph.DependencyGraph, error) {
-				g := graph.NewDependencyGraph()
-				type SelfCycleService struct{}
-				type1 := reflect.TypeFor[SelfCycleService]()
-
-				provider := &testProvider{
-					Type: type1,
-					Dependencies: []*reflection.Dependency{
-						{Type: type1}, // Self dependency
-					},
-				}
-
-				err := g.AddProvider(provider)
-				return g, err
-			},
-			expectCycle:   true,
-			cycleIncludes: []string{"SelfCycleService"},
+			name:      "self_cycle",
+			providers: []*testProvider{{Type: typeA, Dependencies: deps(typeA)}},
+			path:      []string{typeA.String()},
 		},
 		{
-			name: "diamond-no-cycle",
-			setupGraph: func() (*graph.DependencyGraph, error) {
-				g := graph.NewDependencyGraph()
-
-				// Create diamond: A -> B -> D, A -> C -> D
-				type DiamondA struct{}
-				type DiamondB struct{}
-				type DiamondC struct{}
-				type DiamondD struct{}
-				typeA := reflect.TypeFor[DiamondA]()
-				typeB := reflect.TypeFor[DiamondB]()
-				typeC := reflect.TypeFor[DiamondC]()
-				typeD := reflect.TypeFor[DiamondD]()
-
-				providers := []*testProvider{
-					{Type: typeD, Dependencies: nil},
-					{Type: typeB, Dependencies: []*reflection.Dependency{{Type: typeD}}},
-					{Type: typeC, Dependencies: []*reflection.Dependency{{Type: typeD}}},
-					{Type: typeA, Dependencies: []*reflection.Dependency{
-						{Type: typeB},
-						{Type: typeC},
-					}},
-				}
-
-				for _, p := range providers {
-					if err := g.AddProvider(p); err != nil {
-						return g, err
-					}
-				}
-
-				return g, nil
+			name: "diamond_without_cycle",
+			providers: []*testProvider{
+				{Type: typeA, Dependencies: deps(typeB, typeC)},
+				{Type: typeB, Dependencies: deps(typeD)},
+				{Type: typeC, Dependencies: deps(typeD)},
+				{Type: typeD},
 			},
-			expectCycle: false,
 		},
 		{
-			name: "complex-multi-cycle",
-			setupGraph: func() (*graph.DependencyGraph, error) {
-				g := graph.NewDependencyGraph()
-
-				// Create: A -> B -> C -> A (cycle)
-				//         B -> D -> E -> B (another cycle)
-				type CycleA struct{}
-				type CycleB struct{}
-				type CycleC struct{}
-				typeA := reflect.TypeFor[CycleA]()
-				typeB := reflect.TypeFor[CycleB]()
-				typeC := reflect.TypeFor[CycleC]()
-
-				g.AddProvider(&testProvider{
-					Type:         typeB,
-					Dependencies: []*reflection.Dependency{{Type: typeC}},
-				})
-
-				g.AddProvider(&testProvider{
-					Type:         typeC,
-					Dependencies: []*reflection.Dependency{{Type: typeA}},
-				})
-
-				// This should fail
-				err := g.AddProvider(&testProvider{
-					Type:         typeA,
-					Dependencies: []*reflection.Dependency{{Type: typeB}},
-				})
-
-				return g, err
+			name: "three_node_cycle_in_dependency_order",
+			providers: []*testProvider{
+				{Type: typeA, Dependencies: deps(typeB)},
+				{Type: typeB, Dependencies: deps(typeC)},
+				{Type: typeC, Dependencies: deps(typeA)},
 			},
-			expectCycle: true,
+			path: []string{typeA.String(), typeB.String(), typeC.String()},
+		},
+		{
+			name: "cycle_reached_through_an_acyclic_prefix",
+			providers: []*testProvider{
+				{Type: typeD, Dependencies: deps(typeA)},
+				{Type: typeA, Dependencies: deps(typeB)},
+				{Type: typeB, Dependencies: deps(typeA)},
+			},
+			path: []string{typeA.String(), typeB.String()},
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g, err := tt.setupGraph()
-
-			if tt.expectCycle {
-				assert.Error(t, err, "Expected cycle error")
-
-				cErr, ok := err.(*graph.CircularDependencyError)
-				assert.True(t, ok, "Expected CircularDependencyError, got %T: %v", err, err)
-
-				t.Logf("Cycle path: %v", cErr.Path)
-
-				// Verify expected nodes are in cycle
-				for _, expected := range tt.cycleIncludes {
-					found := false
-					for _, node := range cErr.Path {
-						if strings.Contains(node, expected) {
-							found = true
-							break
-						}
-					}
-					assert.True(t, found, "Expected %s in cycle path", expected)
-				}
-			} else {
-				assert.NoError(t, err, "Unexpected error")
-				assert.NoError(t, g.DetectCycles(), "Graph should be acyclic")
+			t.Parallel()
+			err := build(t, tt.providers...).DetectCycles()
+			if tt.path == nil {
+				assert.NoError(t, err)
+				return
 			}
+			cycle, ok := err.(*CircularDependencyError)
+			require.True(t, ok, "got %T: %v", err, err)
+			assert.Equal(t, tt.path, cycle.Path)
 		})
 	}
-}
 
-// Benchmark topological sort performance
-func BenchmarkDependencyGraph_TopologicalSort(b *testing.B) {
-	// Create a large graph
-	g := graph.NewDependencyGraph()
-
-	numNodes := 100
-	types := make([]reflect.Type, numNodes)
-
-	for i := range numNodes {
-		types[i] = reflect.TypeOf(fmt.Sprintf("Service%d", i))
-	}
-
-	// Create a linear chain of dependencies
-	for i := range numNodes {
-		deps := []*reflection.Dependency{}
-		if i > 0 {
-			deps = append(deps, &reflection.Dependency{Type: types[i-1]})
+	// With several cycles, the one reported must not depend on map iteration.
+	t.Run("deterministic", func(t *testing.T) {
+		t.Parallel()
+		report := func() string {
+			err := build(t,
+				&testProvider{Type: typeA, Dependencies: deps(typeB)},
+				&testProvider{Type: typeB, Dependencies: deps(typeA)},
+				&testProvider{Type: typeC, Dependencies: deps(typeD)},
+				&testProvider{Type: typeD, Dependencies: deps(typeC)},
+			).DetectCycles()
+			require.Error(t, err)
+			return err.Error()
 		}
-
-		g.AddProvider(&testProvider{
-			Type:         types[i],
-			Dependencies: deps,
-		})
-	}
-
-	b.ResetTimer()
-
-	for i := 0; i < b.N; i++ {
-		_, err := g.TopologicalSort()
-		assert.NoError(b, err)
-	}
-}
-
-// Test HasNode function
-func TestDependencyGraph_HasNode(t *testing.T) {
-	g := graph.NewDependencyGraph()
-
-	type HasNodeTest struct{}
-	testType := reflect.TypeFor[HasNodeTest]()
-
-	// Check node doesn't exist initially
-	assert.False(t, g.HasNode(testType, nil, ""), "HasNode should return false for non-existent node")
-
-	// Add the node
-	g.AddProvider(&testProvider{
-		Type:         testType,
-		Dependencies: nil,
-	})
-
-	// Check node exists
-	assert.True(t, g.HasNode(testType, nil, ""), "HasNode should return true for existing node")
-
-	// Check with key
-	assert.False(t, g.HasNode(testType, "some-key", ""), "HasNode should return false for non-existent keyed node")
-
-	// Add keyed node
-	g.AddProvider(&testProvider{
-		Type:         testType,
-		Key:          "test-key",
-		Dependencies: nil,
-	})
-
-	// Check keyed node exists
-	assert.True(t, g.HasNode(testType, "test-key", ""), "HasNode should return true for existing keyed node")
-}
-
-// Test NodeKey and Node String methods
-func TestDependencyGraph_StringMethods(t *testing.T) {
-	type StringTest struct{}
-
-	// Test NodeKey.String() without key
-	nodeKey := graph.NodeKey{
-		Type: reflect.TypeFor[StringTest](),
-		Key:  nil,
-	}
-
-	str := nodeKey.String()
-	assert.Contains(t, str, "StringTest", "NodeKey.String() should contain type name")
-
-	// Test NodeKey.String() with key
-	nodeKeyWithKey := graph.NodeKey{
-		Type: reflect.TypeFor[StringTest](),
-		Key:  "test-key",
-	}
-
-	strWithKey := nodeKeyWithKey.String()
-	assert.Contains(t, strWithKey, "StringTest", "NodeKey.String() should contain type name")
-	assert.Contains(t, strWithKey, "test-key", "NodeKey.String() should contain key")
-
-	// Test Node.String()
-	node := &graph.Node{
-		Key:       nodeKey,
-		InDegree:  2,
-		OutDegree: 3,
-	}
-
-	nodeStr := node.String()
-	assert.Contains(t, nodeStr, "StringTest", "Node.String() should contain type name")
-	assert.Contains(t, nodeStr, "in:2", "Node.String() should contain InDegree")
-	assert.Contains(t, nodeStr, "out:3", "Node.String() should contain OutDegree")
-}
-
-// Test CircularDependencyError.Error()
-func TestCircularDependencyError(t *testing.T) {
-	type ErrorTest struct{}
-	testType := reflect.TypeFor[ErrorTest]()
-
-	// Test with empty path
-	err1 := graph.CircularDependencyError{
-		Node: testType.String(),
-		Path: []string{},
-	}
-
-	errStr1 := err1.Error()
-	assert.Contains(t, errStr1, "circular dependency detected", "Error should mention circular dependency")
-	assert.Contains(t, errStr1, "ErrorTest", "Error should contain node type")
-
-	// Test with path
-	err2 := graph.CircularDependencyError{
-		Node: testType.String(),
-		Path: []string{"A", "B", "C"},
-	}
-
-	assert.Equal(t, "circular dependency detected: A -> B -> C -> A", err2.Error())
-	assert.Contains(t, err2.Detail(), "↓", "the detail draws the cycle")
-	assert.Contains(t, fmt.Sprintf("%+v", err2), "A (cycle)", "%+v includes the detail")
-}
-
-// Test edge cases for GetDependencies and GetDependents
-func TestDependencyGraph_GetMethods_NonExistent(t *testing.T) {
-	g := graph.NewDependencyGraph()
-
-	type NonExistent struct{}
-	nonExistentType := reflect.TypeFor[NonExistent]()
-
-	// GetDependencies on non-existent node should return nil
-	deps := g.GetDependencies(nonExistentType, nil, "")
-	assert.Nil(t, deps, "GetDependencies should return nil for non-existent node")
-
-	// GetNode on non-existent node should return nil
-	node := g.GetNode(nonExistentType, nil, "")
-	assert.Nil(t, node, "GetNode should return nil for non-existent node")
-}
-
-// Test nil provider handling
-func TestDependencyGraph_AddProvider_Nil(t *testing.T) {
-	g := graph.NewDependencyGraph()
-
-	err := g.AddProvider(nil)
-	assert.Error(t, err, "AddProvider should return error for nil provider")
-	assert.Contains(t, err.Error(), "nil", "Error should mention nil provider")
-}
-
-// Test cache invalidation
-func TestDependencyGraph_CacheInvalidation(t *testing.T) {
-	// Test types for cache invalidation test
-	type CacheService1 struct{}
-	type CacheService2 struct{}
-
-	g := graph.NewDependencyGraph()
-
-	type1 := reflect.TypeFor[CacheService1]()
-	type2 := reflect.TypeFor[CacheService2]()
-
-	// Add initial provider
-	g.AddProvider(&testProvider{
-		Type:         type1,
-		Dependencies: nil,
-	})
-
-	// Perform topological sort (should cache)
-	sorted1, _ := g.TopologicalSort()
-
-	// Add another provider
-	g.AddProvider(&testProvider{
-		Type:         type2,
-		Dependencies: []*reflection.Dependency{{Type: type1}},
-	})
-
-	// Sort again (cache should be invalidated)
-	sorted2, _ := g.TopologicalSort()
-
-	assert.NotEqual(t, len(sorted1), len(sorted2), "Cache should have been invalidated after adding provider")
-
-	// Multiple sorts without changes should return consistent results
-	sorted3, _ := g.TopologicalSort()
-	sorted4, _ := g.TopologicalSort()
-
-	assert.Equal(t, len(sorted3), len(sorted4), "Cached results should be consistent")
-}
-
-// Test complex scenarios for better coverage
-func TestDependencyGraph_ComplexScenarios(t *testing.T) {
-	t.Run("TopologicalSort with insufficient nodes", func(t *testing.T) {
-		g := graph.NewDependencyGraph()
-
-		type SortA struct{}
-		type SortB struct{}
-
-		typeA := reflect.TypeFor[SortA]()
-		typeB := reflect.TypeFor[SortB]()
-
-		// Add B depending on A, but don't add A as a provider
-		g.AddProvider(&testProvider{
-			Type:         typeB,
-			Dependencies: []*reflection.Dependency{{Type: typeA}},
-		})
-
-		// This creates a node for A without a provider
-		sorted, err := g.TopologicalSort()
-
-		// Should succeed - missing providers are OK in the graph
-		assert.NoError(t, err, "TopologicalSort should handle missing providers")
-
-		// Should have both nodes
-		assert.Len(t, sorted, 2, "Expected 2 nodes in sorted result")
-	})
-
-	t.Run("Complex cycle path finding", func(t *testing.T) {
-		g := graph.NewDependencyGraph()
-
-		type PathA struct{}
-		type PathB struct{}
-		type PathC struct{}
-		type PathD struct{}
-
-		typeA := reflect.TypeFor[PathA]()
-		typeB := reflect.TypeFor[PathB]()
-		typeC := reflect.TypeFor[PathC]()
-		typeD := reflect.TypeFor[PathD]()
-
-		// Create: A -> B -> C -> D -> B (cycle)
-		g.AddProvider(&testProvider{
-			Type:         typeA,
-			Dependencies: []*reflection.Dependency{{Type: typeB}},
-		})
-
-		g.AddProvider(&testProvider{
-			Type:         typeB,
-			Dependencies: []*reflection.Dependency{{Type: typeC}},
-		})
-
-		g.AddProvider(&testProvider{
-			Type:         typeC,
-			Dependencies: []*reflection.Dependency{{Type: typeD}},
-		})
-
-		// This should fail with cycle
-		err := g.AddProvider(&testProvider{
-			Type:         typeD,
-			Dependencies: []*reflection.Dependency{{Type: typeB}},
-		})
-
-		assert.Error(t, err, "Expected cycle error")
-
-		cErr, ok := err.(*graph.CircularDependencyError)
-		assert.True(t, ok, "Expected CircularDependencyError, got %T", err)
-
-		// Path should contain the cycle
-		assert.GreaterOrEqual(t, len(cErr.Path), 2, "Cycle path should have at least 2 nodes")
-	})
-
-	t.Run("DetectCycles with cached results", func(t *testing.T) {
-		g := graph.NewDependencyGraph()
-
-		type CycleTest1 struct{}
-		type CycleTest2 struct{}
-
-		g.AddProvider(&testProvider{
-			Type:         reflect.TypeFor[CycleTest1](),
-			Dependencies: nil,
-		})
-
-		g.AddProvider(&testProvider{
-			Type:         reflect.TypeFor[CycleTest2](),
-			Dependencies: []*reflection.Dependency{{Type: reflect.TypeFor[CycleTest1]()}},
-		})
-
-		// First call - should build cache
-		err1 := g.DetectCycles()
-		assert.NoError(t, err1, "No cycles should be detected")
-
-		// Second call - should use cache
-		err2 := g.DetectCycles()
-		assert.NoError(t, err2, "No cycles should be detected (cached)")
+		first := report()
+		assert.Contains(t, first, typeA.String(), "the first registered cycle is reported")
+		for range 50 {
+			assert.Equal(t, first, report())
+		}
 	})
 }
-
-func TestTopologicalSort_DependencyOrder(t *testing.T) {
-	type ServiceNoDeps struct{}
-	type ServiceWithOneDep struct{}
-	type ServiceWithTwoDeps struct{}
-
-	tests := []struct {
-		name          string
-		setupGraph    func() (*graph.DependencyGraph, error)
-		expectedOrder []string // Expected type names in order
-	}{
-		{
-			name: "simple_chain",
-			setupGraph: func() (*graph.DependencyGraph, error) {
-				g := graph.NewDependencyGraph()
-
-				typeNoDeps := reflect.TypeFor[ServiceNoDeps]()
-				typeWithOneDep := reflect.TypeFor[ServiceWithOneDep]()
-
-				// ServiceNoDeps has no dependencies
-				err := g.AddProvider(&testProvider{
-					Type:         typeNoDeps,
-					Dependencies: nil,
-				})
-				if err != nil {
-					return nil, err
-				}
-
-				// ServiceWithOneDep depends on ServiceNoDeps
-				err = g.AddProvider(&testProvider{
-					Type: typeWithOneDep,
-					Dependencies: []*reflection.Dependency{
-						{Type: typeNoDeps},
-					},
-				})
-				if err != nil {
-					return nil, err
-				}
-
-				return g, nil
-			},
-			expectedOrder: []string{"ServiceNoDeps", "ServiceWithOneDep"},
-		},
-		{
-			name: "complex_dependencies",
-			setupGraph: func() (*graph.DependencyGraph, error) {
-				g := graph.NewDependencyGraph()
-
-				typeNoDeps := reflect.TypeFor[ServiceNoDeps]()
-				typeWithOneDep := reflect.TypeFor[ServiceWithOneDep]()
-				typeWithTwoDeps := reflect.TypeFor[ServiceWithTwoDeps]()
-
-				// ServiceNoDeps has no dependencies
-				err := g.AddProvider(&testProvider{
-					Type:         typeNoDeps,
-					Dependencies: nil,
-				})
-				if err != nil {
-					return nil, err
-				}
-
-				// ServiceWithOneDep depends on ServiceNoDeps
-				err = g.AddProvider(&testProvider{
-					Type: typeWithOneDep,
-					Dependencies: []*reflection.Dependency{
-						{Type: typeNoDeps},
-					},
-				})
-				if err != nil {
-					return nil, err
-				}
-
-				// ServiceWithTwoDeps depends on both ServiceNoDeps and ServiceWithOneDep
-				err = g.AddProvider(&testProvider{
-					Type: typeWithTwoDeps,
-					Dependencies: []*reflection.Dependency{
-						{Type: typeNoDeps},
-						{Type: typeWithOneDep},
-					},
-				})
-				if err != nil {
-					return nil, err
-				}
-
-				return g, nil
-			},
-			expectedOrder: []string{"ServiceNoDeps", "ServiceWithOneDep", "ServiceWithTwoDeps"},
-		},
-		{
-			name: "diamond_dependency",
-			setupGraph: func() (*graph.DependencyGraph, error) {
-				g := graph.NewDependencyGraph()
-
-				// Create diamond: D depends on B and C, both B and C depend on A
-				//     A
-				//    / \
-				//   B   C
-				//    \ /
-				//     D
-
-				type A struct{}
-				type B struct{}
-				type C struct{}
-				type D struct{}
-
-				typeA := reflect.TypeFor[A]()
-				typeB := reflect.TypeFor[B]()
-				typeC := reflect.TypeFor[C]()
-				typeD := reflect.TypeFor[D]()
-
-				// A has no dependencies
-				g.AddProvider(&testProvider{
-					Type:         typeA,
-					Dependencies: nil,
-				})
-
-				// B depends on A
-				g.AddProvider(&testProvider{
-					Type: typeB,
-					Dependencies: []*reflection.Dependency{
-						{Type: typeA},
-					},
-				})
-
-				// C depends on A
-				g.AddProvider(&testProvider{
-					Type: typeC,
-					Dependencies: []*reflection.Dependency{
-						{Type: typeA},
-					},
-				})
-
-				// D depends on B and C
-				g.AddProvider(&testProvider{
-					Type: typeD,
-					Dependencies: []*reflection.Dependency{
-						{Type: typeB},
-						{Type: typeC},
-					},
-				})
-
-				return g, nil
-			},
-			// A must come first, then B and C (in any order), then D
-			expectedOrder: []string{"A", "B|C", "B|C", "D"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			g, err := tt.setupGraph()
-			assert.NoError(t, err, "Failed to setup graph")
-
-			sorted, err := g.TopologicalSort()
-			assert.NoError(t, err, "TopologicalSort should not fail")
-
-			// Extract type names from sorted nodes
-			actualOrder := make([]string, len(sorted))
-			for i, node := range sorted {
-				typeName := node.Key.Type.String()
-				// Extract just the type name (remove package prefix)
-				if idx := len(typeName) - 1; idx >= 0 {
-					for j := idx; j >= 0; j-- {
-						if typeName[j] == '.' {
-							typeName = typeName[j+1:]
-							break
-						}
-					}
-				}
-				actualOrder[i] = typeName
-			}
-
-			// Verify order
-			t.Logf("Expected order: %v", tt.expectedOrder)
-			t.Logf("Actual order:   %v", actualOrder)
-
-			// For simple validation, check specific constraints
-			if tt.name == "simple_chain" {
-				// ServiceNoDeps must come before ServiceWithOneDep
-				noDepsIdx := slices.Index(actualOrder, "ServiceNoDeps")
-				oneDepIdx := slices.Index(actualOrder, "ServiceWithOneDep")
-
-				assert.NotEqual(t, -1, noDepsIdx, "Missing ServiceNoDeps in result")
-				assert.NotEqual(t, -1, oneDepIdx, "Missing ServiceWithOneDep in result")
-				if noDepsIdx != -1 && oneDepIdx != -1 {
-					assert.Less(t, noDepsIdx, oneDepIdx,
-						"ServiceNoDeps (index %d) should come before ServiceWithOneDep (index %d)",
-						noDepsIdx, oneDepIdx)
-				}
-			}
-
-			if tt.name == "complex_dependencies" {
-				// Check ordering: NoDeps < WithOneDep < WithTwoDeps
-				noDepsIdx := slices.Index(actualOrder, "ServiceNoDeps")
-				oneDepIdx := slices.Index(actualOrder, "ServiceWithOneDep")
-				twoDepsIdx := slices.Index(actualOrder, "ServiceWithTwoDeps")
-
-				assert.NotEqual(t, -1, noDepsIdx, "Missing ServiceNoDeps in result")
-				assert.NotEqual(t, -1, oneDepIdx, "Missing ServiceWithOneDep in result")
-				assert.NotEqual(t, -1, twoDepsIdx, "Missing ServiceWithTwoDeps in result")
-
-				if noDepsIdx != -1 && oneDepIdx != -1 && twoDepsIdx != -1 {
-					assert.Less(t, noDepsIdx, oneDepIdx,
-						"ServiceNoDeps (index %d) should come before ServiceWithOneDep (index %d)",
-						noDepsIdx, oneDepIdx)
-					assert.Less(t, noDepsIdx, twoDepsIdx,
-						"ServiceNoDeps (index %d) should come before ServiceWithTwoDeps (index %d)",
-						noDepsIdx, twoDepsIdx)
-					assert.Less(t, oneDepIdx, twoDepsIdx,
-						"ServiceWithOneDep (index %d) should come before ServiceWithTwoDeps (index %d)",
-						oneDepIdx, twoDepsIdx)
-				}
-			}
-
-			if tt.name == "diamond_dependency" {
-				// A must come first, D must come last
-				assert.GreaterOrEqual(t, len(actualOrder), 4, "Expected at least 4 nodes")
-				if len(actualOrder) >= 4 {
-					assert.Equal(t, "A", actualOrder[0], "A should be first")
-					assert.Equal(t, "D", actualOrder[3], "D should be last")
-
-					// B and C should be in positions 1 and 2 (any order)
-					hasB := actualOrder[1] == "B" || actualOrder[2] == "B"
-					hasC := actualOrder[1] == "C" || actualOrder[2] == "C"
-					assert.True(t, hasB && hasC, "B and C should be in middle positions, got %v", actualOrder)
-				}
-			}
-		})
-	}
-}
-
-func TestTopologicalSort_ForDependencyInjection(t *testing.T) {
-	g := graph.NewDependencyGraph()
-
-	// Types from the failing test
-	type ResolutionTestService struct{}
-	type ResolutionServiceWithDep struct{}
-
-	typeTestService := reflect.TypeFor[*ResolutionTestService]()
-	typeServiceWithDep := reflect.TypeFor[*ResolutionServiceWithDep]()
-
-	// Add ResolutionTestService (no dependencies)
-	err := g.AddProvider(&testProvider{
-		Type:         typeTestService,
-		Dependencies: nil,
-		Lifetime:     testSingleton,
-	})
-	assert.NoError(t, err, "Failed to add ResolutionTestService")
-
-	// Add ResolutionServiceWithDep (depends on ResolutionTestService)
-	err = g.AddProvider(&testProvider{
-		Type: typeServiceWithDep,
-		Dependencies: []*reflection.Dependency{
-			{Type: typeTestService},
-		},
-		Lifetime: testSingleton,
-	})
-	assert.NoError(t, err, "Failed to add ResolutionServiceWithDep")
-
-	// Get topological sort
-	sorted, err := g.TopologicalSort()
-	assert.NoError(t, err, "TopologicalSort should not fail")
-
-	// Log the order
-	t.Logf("Topological sort order:")
-	for i, node := range sorted {
-		t.Logf("  %d: Type=%v, Key=%v", i, node.Key.Type, node.Key.Key)
-	}
-
-	// Verify order: ResolutionTestService MUST come before ResolutionServiceWithDep
-	assert.Len(t, sorted, 2, "Expected 2 nodes in sorted result")
-
-	// The first node should be ResolutionTestService (no dependencies)
-	assert.Equal(t, typeTestService, sorted[0].Key.Type, "First node should be ResolutionTestService (no deps)")
-
-	// The second node should be ResolutionServiceWithDep (depends on first)
-	assert.Equal(t, typeServiceWithDep, sorted[1].Key.Type, "Second node should be ResolutionServiceWithDep (has deps)")
-}
-
-// Test types for ResolveGroupDependencies
-type GroupMember struct{}
-type GroupConsumer struct{}
 
 func TestResolveGroupDependencies(t *testing.T) {
-	t.Run("connects consumer to group members", func(t *testing.T) {
-		g := graph.NewDependencyGraph()
+	t.Parallel()
 
-		memberType := reflect.TypeFor[GroupMember]()
-		consumerType := reflect.TypeFor[GroupConsumer]()
+	member := func(key int, group string) *testProvider {
+		return &testProvider{Type: memberType, Key: key, Group: group}
+	}
+	consumerOf := func(dependencies ...*reflection.Dependency) *testProvider {
+		return &testProvider{Type: consumerType, Dependencies: dependencies}
+	}
+	groupDep := func(group string) *reflection.Dependency {
+		return &reflection.Dependency{Type: memberType, Group: group}
+	}
+	consumer := NodeKey{Type: consumerType}
 
-		member1 := &testProvider{
-			Type:     memberType,
-			Key:      1,
-			Group:    "routes",
-			Lifetime: testSingleton,
+	t.Run("connects_consumers_to_members_and_removes_the_placeholder", func(t *testing.T) {
+		t.Parallel()
+		for name, g := range map[string]*DependencyGraph{
+			"members_first":  build(t, member(1, "routes"), member(2, "routes"), consumerOf(groupDep("routes"))),
+			"consumer_first": build(t, consumerOf(groupDep("routes")), member(1, "routes"), member(2, "routes")),
+		} {
+			g.ResolveGroupDependencies()
+			assert.Equal(t, []NodeKey{
+				{Type: memberType, Key: 1, Group: "routes"},
+				{Type: memberType, Key: 2, Group: "routes"},
+			}, g.edges[consumer], name)
+			placeholder := NodeKey{Type: memberType, Group: "routes"}
+			assert.NotContains(t, g.known, placeholder, name)
+			assert.NotContains(t, g.order, placeholder, name)
 		}
-		member2 := &testProvider{
-			Type:     memberType,
-			Key:      2,
-			Group:    "routes",
-			Lifetime: testSingleton,
-		}
-		consumer := &testProvider{
-			Type:     consumerType,
-			Lifetime: testSingleton,
-			Dependencies: []*reflection.Dependency{
-				{Type: memberType, Key: nil, Group: "routes"},
-			},
-		}
-
-		assert.NoError(t, g.AddProviderDeferred(member1))
-		assert.NoError(t, g.AddProviderDeferred(member2))
-		assert.NoError(t, g.AddProviderDeferred(consumer))
-
-		g.ResolveGroupDependencies()
-		assert.NoError(t, g.DetectCycles())
-
-		sorted, err := g.TopologicalSort()
-		assert.NoError(t, err)
-		assert.Len(t, sorted, 3) // 2 members + 1 consumer, phantom removed
-
-		// Find consumer index
-		consumerIdx := -1
-		for i, node := range sorted {
-			if node.Key.Type == consumerType {
-				consumerIdx = i
-			}
-		}
-		assert.NotEqual(t, -1, consumerIdx)
-
-		// All members must come before the consumer
-		for i, node := range sorted {
-			if node.Key.Type == memberType {
-				assert.Less(t, i, consumerIdx,
-					"Group member (Key=%v) should come before consumer", node.Key.Key)
-			}
-		}
-
-		// Phantom node should be gone
-		assert.False(t, g.HasNode(memberType, nil, "routes"))
 	})
 
-	t.Run("handles empty groups", func(t *testing.T) {
-		g := graph.NewDependencyGraph()
-
-		memberType := reflect.TypeFor[GroupMember]()
-		consumerType := reflect.TypeFor[GroupConsumer]()
-
-		consumer := &testProvider{
-			Type:     consumerType,
-			Lifetime: testSingleton,
-			Dependencies: []*reflection.Dependency{
-				{Type: memberType, Key: nil, Group: "empty"},
-			},
-		}
-
-		assert.NoError(t, g.AddProviderDeferred(consumer))
+	t.Run("keeps_other_edges_and_drops_empty_groups", func(t *testing.T) {
+		t.Parallel()
+		plain := reflect.TypeFor[string]()
+		g := build(t,
+			member(1, "a"), member(2, "a"), member(1, "b"),
+			&testProvider{Type: plain},
+			consumerOf(&reflection.Dependency{Type: plain}, groupDep("a"), groupDep("b"), groupDep("missing")),
+		)
 		g.ResolveGroupDependencies()
-		assert.NoError(t, g.DetectCycles())
-
-		sorted, err := g.TopologicalSort()
-		assert.NoError(t, err)
-		assert.Len(t, sorted, 1) // Only the consumer, phantom removed
-
-		// Phantom node should be gone
-		assert.False(t, g.HasNode(memberType, nil, "empty"))
-	})
-
-	t.Run("consumer added before members", func(t *testing.T) {
-		g := graph.NewDependencyGraph()
-
-		memberType := reflect.TypeFor[GroupMember]()
-		consumerType := reflect.TypeFor[GroupConsumer]()
-
-		consumer := &testProvider{
-			Type:     consumerType,
-			Lifetime: testSingleton,
-			Dependencies: []*reflection.Dependency{
-				{Type: memberType, Key: nil, Group: "routes"},
-			},
-		}
-		member1 := &testProvider{
-			Type:     memberType,
-			Key:      1,
-			Group:    "routes",
-			Lifetime: testSingleton,
-		}
-
-		// Consumer added first
-		assert.NoError(t, g.AddProviderDeferred(consumer))
-		assert.NoError(t, g.AddProviderDeferred(member1))
-
-		g.ResolveGroupDependencies()
-		assert.NoError(t, g.DetectCycles())
-
-		sorted, err := g.TopologicalSort()
-		assert.NoError(t, err)
-		assert.Len(t, sorted, 2) // 1 member + 1 consumer
-
-		// Member must come first
-		assert.Equal(t, memberType, sorted[0].Key.Type)
-		assert.Equal(t, consumerType, sorted[1].Key.Type)
-	})
-
-	t.Run("consumer of several groups keeps every edge", func(t *testing.T) {
-		g := graph.NewDependencyGraph()
-
-		memberType := reflect.TypeFor[GroupMember]()
-		consumerType := reflect.TypeFor[GroupConsumer]()
-		plainType := reflect.TypeFor[string]()
-
-		providers := []*testProvider{
-			{Type: memberType, Key: 1, Group: "a", Lifetime: testSingleton},
-			{Type: memberType, Key: 2, Group: "a", Lifetime: testSingleton},
-			{Type: memberType, Key: 1, Group: "b", Lifetime: testSingleton},
-			{Type: plainType, Lifetime: testSingleton},
-			{
-				Type:     consumerType,
-				Lifetime: testSingleton,
-				Dependencies: []*reflection.Dependency{
-					{Type: plainType},
-					{Type: memberType, Group: "a"},
-					{Type: memberType, Group: "b"},
-					{Type: memberType, Group: "missing"},
-				},
-			},
-		}
-		for _, p := range providers {
-			assert.NoError(t, g.AddProviderDeferred(p))
-		}
-
-		g.ResolveGroupDependencies()
-		assert.NoError(t, g.DetectCycles())
-
-		deps := g.GetDependencies(consumerType, nil, "")
-		assert.ElementsMatch(t, []graph.NodeKey{
-			{Type: plainType},
+		assert.Equal(t, []NodeKey{
+			{Type: plain},
 			{Type: memberType, Key: 1, Group: "a"},
 			{Type: memberType, Key: 2, Group: "a"},
 			{Type: memberType, Key: 1, Group: "b"},
-		}, deps)
+		}, g.edges[consumer])
 		for _, group := range []string{"a", "b", "missing"} {
-			assert.False(t, g.HasNode(memberType, nil, group), "phantom for group %q must be removed", group)
+			assert.NotContains(t, g.known, NodeKey{Type: memberType, Group: group})
 		}
 	})
 
-	t.Run("no phantom nodes present", func(t *testing.T) {
-		g := graph.NewDependencyGraph()
+	t.Run("is_a_no_op_without_group_dependencies", func(t *testing.T) {
+		t.Parallel()
+		g := build(t, member(1, "routes"))
+		order := append([]NodeKey(nil), g.order...)
+		g.ResolveGroupDependencies()
+		assert.Equal(t, order, g.order)
+	})
 
-		memberType := reflect.TypeFor[GroupMember]()
-
-		member := &testProvider{
-			Type:     memberType,
-			Key:      1,
-			Group:    "routes",
-			Lifetime: testSingleton,
-		}
-
-		assert.NoError(t, g.AddProviderDeferred(member))
-		g.ResolveGroupDependencies() // Should be a no-op
-		assert.NoError(t, g.DetectCycles())
-
-		sorted, err := g.TopologicalSort()
-		assert.NoError(t, err)
-		assert.Len(t, sorted, 1)
+	// The placeholder hides member edges: only after resolution does a member
+	// that depends on its group's consumer form a cycle.
+	t.Run("exposes_cycles_through_a_group", func(t *testing.T) {
+		t.Parallel()
+		g := build(t,
+			consumerOf(groupDep("routes")),
+			&testProvider{Type: memberType, Key: 1, Group: "routes", Dependencies: deps(consumerType)},
+		)
+		g.ResolveGroupDependencies()
+		assert.Error(t, g.DetectCycles())
 	})
 }
 
-// With several cycles, the one reported must not depend on map iteration.
-func TestDetectCycles_Deterministic(t *testing.T) {
-	type A struct{}
-	type B struct{}
-	type C struct{}
-	type D struct{}
-	typeA, typeB := reflect.TypeFor[A](), reflect.TypeFor[B]()
-	typeC, typeD := reflect.TypeFor[C](), reflect.TypeFor[D]()
+func TestCircularDependencyError(t *testing.T) {
+	t.Parallel()
 
-	report := func() string {
-		g := graph.NewDependencyGraph()
-		providers := []*testProvider{
-			{Type: typeA, Dependencies: []*reflection.Dependency{{Type: typeB}}},
-			{Type: typeB, Dependencies: []*reflection.Dependency{{Type: typeA}}},
-			{Type: typeC, Dependencies: []*reflection.Dependency{{Type: typeD}}},
-			{Type: typeD, Dependencies: []*reflection.Dependency{{Type: typeC}}},
-		}
-		for _, p := range providers {
-			assert.NoError(t, g.AddProviderDeferred(p))
-		}
-		err := g.DetectCycles()
-		if !assert.Error(t, err) {
-			return ""
-		}
-		return err.Error()
-	}
+	withoutPath := &CircularDependencyError{Node: typeA.String()}
+	assert.Equal(t, "circular dependency detected: "+typeA.String()+" -> "+typeA.String(), withoutPath.Error())
 
-	first := report()
-	assert.Contains(t, first, "graph_test.A", "the first registered cycle is reported")
-	for range 50 {
-		assert.Equal(t, first, report())
-	}
+	err := &CircularDependencyError{Node: "A", Path: []string{"A", "B", "C"}}
+	assert.Equal(t, "circular dependency detected: A -> B -> C -> A", err.Error())
+	assert.Contains(t, err.Detail(), "↓", "the detail draws the cycle")
+	assert.Contains(t, fmt.Sprintf("%+v", err), "A (cycle)", "%+v includes the detail")
+	assert.Equal(t, fmt.Sprintf("%q", err.Error()), fmt.Sprintf("%q", err))
+}
+
+func TestNodeKeyString(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, typeA.String(), NodeKey{Type: typeA}.String())
+	assert.Equal(t, typeA.String()+":primary", NodeKey{Type: typeA, Key: "primary"}.String())
+	assert.Equal(t, typeA.String()+":1 [routes]", NodeKey{Type: typeA, Key: 1, Group: "routes"}.String())
 }
 
 // BenchmarkResolveGroupDependencies measures expanding group dependencies when
 // many consumers each depend on their own value group.
 func BenchmarkResolveGroupDependencies(b *testing.B) {
 	const groups = 500
-	memberType := reflect.TypeFor[GroupMember]()
-	consumerType := reflect.TypeFor[GroupConsumer]()
-
 	providers := make([]*testProvider, 0, 2*groups)
 	for i := range groups {
 		group := fmt.Sprintf("g%d", i)
@@ -1060,40 +277,7 @@ func BenchmarkResolveGroupDependencies(b *testing.B) {
 
 	b.ReportAllocs()
 	for b.Loop() {
-		g := graph.NewDependencyGraphWithCapacity(len(providers))
-		for _, p := range providers {
-			if err := g.AddProviderDeferred(p); err != nil {
-				b.Fatal(err)
-			}
-		}
+		g := build(b, providers...)
 		g.ResolveGroupDependencies()
 	}
-}
-
-// AddProviderDeferred must fully replace a node's edges on re-registration,
-// not merge stale edges from a previous registration.
-func TestAddProviderDeferred_ReplacementClearsStaleEdges(t *testing.T) {
-	type ServiceA struct{}
-	type ServiceB struct{}
-
-	g := graph.NewDependencyGraph()
-
-	withDep := &testProvider{
-		Type:     reflect.TypeFor[ServiceA](),
-		Lifetime: testSingleton,
-		Dependencies: []*reflection.Dependency{
-			{Type: reflect.TypeFor[ServiceB]()},
-		},
-	}
-	assert.NoError(t, g.AddProviderDeferred(withDep))
-
-	noDeps := &testProvider{
-		Type:     reflect.TypeFor[ServiceA](),
-		Lifetime: testSingleton,
-	}
-	assert.NoError(t, g.AddProviderDeferred(noDeps))
-	assert.NoError(t, g.DetectCycles())
-
-	deps := g.GetDependencies(reflect.TypeFor[ServiceA](), nil, "")
-	assert.Empty(t, deps, "re-registration with no dependencies must clear stale edges")
 }

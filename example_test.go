@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/junioryono/godi/v5"
+	"github.com/junioryono/godi/v6"
 )
 
 // Types shared by the examples.
@@ -140,31 +140,6 @@ func ExampleName() {
 	replica := godi.MustResolveKeyed[*Cache](provider, "replica")
 	fmt.Println(primary.region, replica.region)
 	// Output: us eu
-}
-
-// Region is a non-string key type.
-type Region int
-
-const (
-	US Region = iota
-	EU
-)
-
-// Key accepts any comparable key, such as an enum constant.
-func ExampleKey() {
-	services := godi.NewCollection()
-	services.AddSingleton(func() *Cache { return &Cache{region: "us"} }, godi.Key(US))
-	services.AddSingleton(func() *Cache { return &Cache{region: "eu"} }, godi.Key(EU))
-
-	provider, err := services.Build()
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-	defer provider.Close()
-
-	fmt.Println(godi.MustResolveKeyed[*Cache](provider, EU).region)
-	// Output: eu
 }
 
 // Handler is the member type of the "routes" group.

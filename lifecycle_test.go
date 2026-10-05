@@ -94,6 +94,23 @@ func TestStart(t *testing.T) {
 		assert.Equal(t, []string{"A", "B"}, rec.order, "dependencies start first")
 	})
 
+	// godi never stops (disposes) an instance, so it does not start one
+	// either: its lifecycle belongs to the caller. Found by the Claude review
+	// of #66.
+	t.Run("leaves_instances_to_the_caller", func(t *testing.T) {
+		t.Parallel()
+		rec := &startRecorder{}
+		c := NewCollection()
+		c.AddSingleton(&startableA{rec: rec})
+		c.AddSingleton(func() *startableB { return &startableB{rec: rec} })
+		p, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = p.Close() })
+
+		require.NoError(t, Start(context.Background(), p))
+		assert.Equal(t, []string{"B"}, rec.order)
+	})
+
 	t.Run("stops_at_the_first_failure", func(t *testing.T) {
 		t.Parallel()
 		rec := &startRecorder{}
@@ -374,6 +391,48 @@ func TestShutdown(t *testing.T) {
 			synctest.Wait()
 			assert.True(t, stuck.closed.Load())
 		})
+	})
+}
+
+// The caller created a value registered as an instance, so the caller closes
+// it; godi disposes only what its constructors create.
+func TestInstanceRegistrationsAreNotDisposed(t *testing.T) {
+	t.Parallel()
+
+	t.Run("instance", func(t *testing.T) {
+		t.Parallel()
+		shared := NewTDisposable()
+		c := NewCollection()
+		c.AddSingleton(shared)
+		p, err := c.Build()
+		require.NoError(t, err)
+
+		require.NoError(t, p.Close())
+		assert.False(t, shared.IsClosed())
+	})
+
+	t.Run("instance_wrapper", func(t *testing.T) {
+		t.Parallel()
+		shared := NewTDisposable()
+		c := NewCollection()
+		c.AddSingleton(Instance(shared))
+		p, err := c.Build()
+		require.NoError(t, err)
+
+		require.NoError(t, p.Close())
+		assert.False(t, shared.IsClosed())
+	})
+
+	t.Run("a_constructor_returning_it_hands_ownership_to_godi", func(t *testing.T) {
+		t.Parallel()
+		shared := NewTDisposable()
+		c := NewCollection()
+		c.AddSingleton(func() *TDisposable { return shared })
+		p, err := c.Build()
+		require.NoError(t, err)
+
+		require.NoError(t, p.Close())
+		assert.True(t, shared.IsClosed())
 	})
 }
 

@@ -9,8 +9,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/junioryono/godi/v5"
-	"github.com/labstack/echo/v4"
+	"github.com/junioryono/godi/v6"
+	"github.com/labstack/echo/v5"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -73,7 +73,7 @@ func echoWith(middleware echo.MiddlewareFunc, handler echo.HandlerFunc) *echo.Ec
 	return e
 }
 
-func ok(c echo.Context) error { return c.NoContent(http.StatusOK) }
+func ok(c *echo.Context) error { return c.NoContent(http.StatusOK) }
 
 func TestContractDefaultScopeErrorIsLoggedAndGeneric(t *testing.T) {
 	logger, logs := newCapturingLogger()
@@ -90,7 +90,7 @@ func TestContractDefaultMiddlewareErrorIsLoggedAndGeneric(t *testing.T) {
 
 	rec := serve(echoWith(ScopeMiddleware(openProvider(t),
 		WithLogger(logger),
-		WithMiddleware(func(godi.Scope, echo.Context) error { return errors.New(internalDetail) }),
+		WithMiddleware(func(godi.Scope, *echo.Context) error { return errors.New(internalDetail) }),
 	), ok))
 
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
@@ -99,8 +99,8 @@ func TestContractDefaultMiddlewareErrorIsLoggedAndGeneric(t *testing.T) {
 }
 
 func TestContractMiddlewareErrorHandler(t *testing.T) {
-	unauthorized := func(echo.Context, error) error { return echo.NewHTTPError(http.StatusUnauthorized, "Unauthorized") }
-	failingAuth := WithMiddleware(func(godi.Scope, echo.Context) error { return errors.New("bad token") })
+	unauthorized := func(*echo.Context, error) error { return echo.ErrUnauthorized }
+	failingAuth := WithMiddleware(func(godi.Scope, *echo.Context) error { return errors.New("bad token") })
 
 	t.Run("handles middleware errors", func(t *testing.T) {
 		rec := serve(echoWith(ScopeMiddleware(openProvider(t), failingAuth, WithMiddlewareErrorHandler(unauthorized)), ok))
@@ -115,7 +115,7 @@ func TestContractMiddlewareErrorHandler(t *testing.T) {
 
 	t.Run("defaults to the configured error handler", func(t *testing.T) {
 		rec := serve(echoWith(ScopeMiddleware(openProvider(t), failingAuth,
-			WithErrorHandler(func(c echo.Context, _ error) error { return c.NoContent(http.StatusTeapot) }),
+			WithErrorHandler(func(c *echo.Context, _ error) error { return c.NoContent(http.StatusTeapot) }),
 		), ok))
 		assert.Equal(t, http.StatusTeapot, rec.Code)
 	})
@@ -172,7 +172,7 @@ func TestContractDefaultPanicHandlerLogsStack(t *testing.T) {
 }
 
 func TestContractPanicRecoveryRepanicsErrAbortHandler(t *testing.T) {
-	handler := Handle(func(*testController, echo.Context) error { panic(http.ErrAbortHandler) }, WithPanicRecovery(true))
+	handler := Handle(func(*testController, *echo.Context) error { panic(http.ErrAbortHandler) }, WithPanicRecovery(true))
 
 	assert.PanicsWithValue(t, http.ErrAbortHandler, func() {
 		serve(echoWith(ScopeMiddleware(openProvider(t)), handler))
@@ -195,7 +195,7 @@ func TestContractDefaultResolutionErrorIsLoggedAndGeneric(t *testing.T) {
 // recordingMiddleware records the error the rest of the chain returns to it.
 func recordingMiddleware(seen *[]error) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			err := next(c)
 			*seen = append(*seen, err)
 			return err
@@ -205,17 +205,18 @@ func recordingMiddleware(seen *[]error) echo.MiddlewareFunc {
 
 func TestContractErrorPassthrough(t *testing.T) {
 	handlerErr := echo.NewHTTPError(http.StatusConflict, "conflict")
+	defaultHandler := echo.DefaultHTTPErrorHandler(false)
 
 	t.Run("consumes downstream errors by default", func(t *testing.T) {
 		var seen []error
 		errorHandlerCalls := 0
 		e := echo.New()
-		e.HTTPErrorHandler = func(err error, c echo.Context) {
+		e.HTTPErrorHandler = func(c *echo.Context, err error) {
 			errorHandlerCalls++
-			e.DefaultHTTPErrorHandler(err, c)
+			defaultHandler(c, err)
 		}
 		e.Use(recordingMiddleware(&seen), ScopeMiddleware(openProvider(t)))
-		e.GET("/test", func(echo.Context) error { return handlerErr })
+		e.GET("/test", func(*echo.Context) error { return handlerErr })
 
 		rec := serve(e)
 
@@ -229,17 +230,17 @@ func TestContractErrorPassthrough(t *testing.T) {
 		errorHandlerCalls := 0
 		var scopeAliveDuringRender bool
 		e := echo.New()
-		e.HTTPErrorHandler = func(err error, c echo.Context) {
+		e.HTTPErrorHandler = func(c *echo.Context, err error) {
 			errorHandlerCalls++
 			scope, scopeErr := godi.FromContext(c.Request().Context())
 			if scopeErr == nil {
 				_, resolveErr := godi.Resolve[*testService](scope)
 				scopeAliveDuringRender = resolveErr == nil
 			}
-			e.DefaultHTTPErrorHandler(err, c)
+			defaultHandler(c, err)
 		}
 		e.Use(recordingMiddleware(&seen), ScopeMiddleware(openProvider(t), WithErrorPassthrough(true)))
-		e.GET("/test", func(echo.Context) error { return handlerErr })
+		e.GET("/test", func(*echo.Context) error { return handlerErr })
 
 		rec := serve(e)
 
@@ -251,12 +252,13 @@ func TestContractErrorPassthrough(t *testing.T) {
 
 	t.Run("returns middleware errors to outer middleware when enabled", func(t *testing.T) {
 		var seen []error
-		e := echoWith(nil, ok)
+		e := echo.New()
 		e.Use(recordingMiddleware(&seen), ScopeMiddleware(openProvider(t),
 			WithErrorPassthrough(true),
-			WithMiddleware(func(godi.Scope, echo.Context) error { return errors.New("bad token") }),
-			WithMiddlewareErrorHandler(func(echo.Context, error) error { return echo.ErrUnauthorized }),
+			WithMiddleware(func(godi.Scope, *echo.Context) error { return errors.New("bad token") }),
+			WithMiddlewareErrorHandler(func(*echo.Context, error) error { return echo.ErrUnauthorized }),
 		))
+		e.GET("/test", ok)
 
 		rec := serve(e)
 

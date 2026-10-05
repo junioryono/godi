@@ -34,7 +34,7 @@ import (
 	"log/slog"
 
 	"github.com/danielgtaylor/huma/v2"
-	"github.com/junioryono/godi/v5"
+	"github.com/junioryono/godi/v6"
 )
 
 // HandlerConfig holds configuration for the Handle wrapper.

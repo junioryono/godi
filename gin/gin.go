@@ -24,7 +24,7 @@ import (
 	"runtime/debug"
 
 	"github.com/gin-gonic/gin"
-	"github.com/junioryono/godi/v5"
+	"github.com/junioryono/godi/v6"
 )
 
 // Config holds the configuration for the scope middleware.

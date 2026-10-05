@@ -3,7 +3,7 @@
 ## Install godi
 
 ```bash
-go get github.com/junioryono/godi/v5
+go get github.com/junioryono/godi/v6
 ```
 
 ## Verify It Works
@@ -15,7 +15,7 @@ package main
 
 import (
     "fmt"
-    "github.com/junioryono/godi/v5"
+    "github.com/junioryono/godi/v6"
 )
 
 func main() {
@@ -48,21 +48,19 @@ If you're using a web framework, install the corresponding integration:
 
 ```bash
 # For Gin
-go get github.com/junioryono/godi/gin/v5
+go get github.com/junioryono/godi/gin/v6
 
 # For Chi
-go get github.com/junioryono/godi/chi/v5
+go get github.com/junioryono/godi/chi/v6
 
-# For Echo v4 / Echo v5
-go get github.com/junioryono/godi/echo/v5
-go get github.com/junioryono/godi/echov5/v5
+# For Echo v5
+go get github.com/junioryono/godi/echo/v6
 
-# For Fiber v2 / Fiber v3
-go get github.com/junioryono/godi/fiber/v5
-go get github.com/junioryono/godi/fiberv3/v5
+# For Fiber v3
+go get github.com/junioryono/godi/fiber/v6
 
 # For net/http
-go get github.com/junioryono/godi/http/v5
+go get github.com/junioryono/godi/http/v6
 ```
 
 ---

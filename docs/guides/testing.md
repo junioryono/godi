@@ -155,7 +155,7 @@ Create reusable test modules:
 // test/modules.go
 package test
 
-import "github.com/junioryono/godi/v5"
+import "github.com/junioryono/godi/v6"
 
 // MockInfrastructureModule provides mocks for all infrastructure
 var MockInfrastructureModule = godi.NewModule("mock-infrastructure",

@@ -268,15 +268,15 @@ constructor main.NewService (service.go:15) failed: circular dependency detected
 ```
 
 **What it means:** A constructor resolved itself, directly or through other
-constructors, via the `godi.Scope` or `godi.Provider` it was injected with.
-`Build` can't see these dynamic resolutions, so the cycle is reported when it
-happens (a `*godi.CircularDependencyError`) instead of deadlocking.
+constructors, via the `godi.Resolver` it was injected with. `Build` can't see
+these dynamic resolutions, so the cycle is reported when it happens (a
+`*godi.CircularDependencyError`) instead of deadlocking.
 
-The injected `Scope`/`Provider` attributes resolutions to the running
-constructor; it is a view of the same scope (same `ID()` and `Context()`), not
-the identical value. After the constructor returns, a stored copy resolves
-without restriction. Resolutions through `godi.FromContext` are not attributed
-to the constructor, so use the injected value inside constructors.
+The injected `Resolver` resolves from the scope running the constructor and
+attributes its resolutions to that constructor. After the constructor returns,
+a stored `Resolver` resolves without that attribution. (A constructor's
+injected `context.Context` carries no scope, so `godi.FromContext` fails
+there: use the `Resolver`.)
 
 **How to fix:** Break the cycle: take the dependency as a constructor
 parameter, or resolve lazily after construction.
@@ -397,29 +397,27 @@ Constructor failures name the function and its source location, for example
 `constructor users.NewService (service.go:42) failed: ...`, and types are
 package-qualified (`*db.Config`).
 
-A runnable `Explain` of a lifetime conflict is the [`ExampleExplain`](https://pkg.go.dev/github.com/junioryono/godi/v5#example-Explain) example in the package documentation (`example_test.go`), verified by `go test`.
+A runnable `Explain` of a lifetime conflict is the [`ExampleExplain`](https://pkg.go.dev/github.com/junioryono/godi/v6#example-Explain) example in the package documentation (`example_test.go`), verified by `go test`.
 
 ### 5. Observe Construction and Disposal
 
-`ProviderOptions.Observer` receives an event for every constructor call and
+`godi.WithObserver` receives an event for every constructor call and
 every disposal, with durations and errors — including cleanup failures of
 values produced after their scope closed, which have no caller to return an
 error to. Set the callbacks you need:
 
 ```go
-provider, err := services.BuildWithOptions(&godi.ProviderOptions{
-    Observer: godi.Observer{
-        Constructed: func(e *godi.ConstructedEvent) {
-            slog.Debug("constructed", "service", e.ServiceType, "scope", e.ScopeID,
-                "took", e.Duration, "err", e.Err)
-        },
-        Disposed: func(e *godi.DisposedEvent) {
-            if e.Err != nil {
-                slog.Warn("cleanup failed", "type", e.Type, "err", e.Err)
-            }
-        },
+provider, err := services.Build(godi.WithObserver(godi.Observer{
+    Constructed: func(e *godi.ConstructedEvent) {
+        slog.Debug("constructed", "service", e.ServiceType, "scope", e.ScopeID,
+            "took", e.Duration, "err", e.Err)
     },
-})
+    Disposed: func(e *godi.DisposedEvent) {
+        if e.Err != nil {
+            slog.Warn("cleanup failed", "type", e.Type, "err", e.Err)
+        }
+    },
+}))
 ```
 
 ### 6. Inspect the Graph

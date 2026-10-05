@@ -6,13 +6,17 @@ import (
 	"reflect"
 	"sync"
 	"sync/atomic"
-	"time"
 
-	"github.com/junioryono/godi/v5/internal/reflection"
+	"github.com/junioryono/godi/v6/internal/reflection"
 )
 
 // Provider is the main dependency injection container interface
 type Provider interface {
+	// root seals the interface: only godi implements Provider and Scope, so
+	// methods can be added without breaking anyone. Code that only resolves
+	// services, and test doubles, should depend on Resolver instead.
+	root() *provider
+
 	Disposable
 
 	// Returns the unique identifier for this provider instance.
@@ -22,7 +26,7 @@ type Provider interface {
 	Get(serviceType reflect.Type) (any, error)
 
 	// Resolves a keyed service of the specified type from the root scope.
-	GetKeyed(serviceType reflect.Type, key any) (any, error)
+	GetKeyed(serviceType reflect.Type, name string) (any, error)
 
 	// Resolves all services of the specified type in a group from the root scope.
 	GetGroup(serviceType reflect.Type, group string) ([]any, error)
@@ -31,54 +35,27 @@ type Provider interface {
 	CreateScope(ctx context.Context) (Scope, error)
 }
 
-type ProviderOptions struct {
-	// BuildTimeout specifies a cooperative deadline for building the provider.
-	// Constructors that accept context.Context can stop promptly when it is
-	// cancelled. Other constructors cannot be preempted, but an expired deadline
-	// is checked after they return and can never produce a successful provider.
-	// The deadline bounds Build only: once Build succeeds, the context given
-	// to singletons is no longer subject to it and is cancelled when the
-	// provider closes.
-	BuildTimeout time.Duration
-
-	// ValidateScopes rejects resolving a scoped service, directly or through
-	// transients, from the provider's root scope (ErrScopeRequired). Resolved
-	// from the root, a "per-request" service becomes one instance shared by
-	// the whole application. With it set, the root scope also runs no scoped
-	// initializers. Recommended; it will be the default in the next major
-	// version.
-	ValidateScopes bool
-
-	// Context is the parent of the provider's root context: its values are
-	// visible to services, and its cancellation propagates (as with
-	// BuildWithContext). It also bounds Build. Defaults to
-	// context.Background().
-	Context context.Context
-
-	// Observer receives construction and disposal events, including
-	// failures of background cleanup that have no caller to report to.
-	// Its methods must be safe for concurrent use and should return
-	// quickly.
-	Observer Observer
-}
-
 // provider is the concrete implementation of Provider
 type provider struct {
 	id string
 
 	// Service registry (immutable after build)
-	services map[TypeKey]*descriptor
-	groups   map[GroupKey][]*descriptor
+	services map[registryKey]*descriptor
+	groups   map[groupID][]*descriptor
 
 	// Singletons in creation order (see creationOrder). Immutable after build.
 	singletonOrder []*descriptor
 
 	// building is true while Build creates singletons: a singleton resolved
-	// before its turn (at runtime, through an injected Provider or Scope)
-	// is then created on demand.
+	// before its turn (at runtime, through an injected Resolver) is then
+	// created on demand.
 	building atomic.Bool
 
-	// validateScopes is ProviderOptions.ValidateScopes. Immutable after build.
+	// built is set once Build has completed, root scope initializers
+	// included. An injected ScopeFactory refuses to create scopes before.
+	built atomic.Bool
+
+	// validateScopes is set by WithScopeValidation. Immutable after build.
 	validateScopes bool
 
 	// started is set by the first godi.Start.
@@ -101,7 +78,7 @@ type provider struct {
 	// Immutable after build.
 	descriptors []*descriptor
 
-	// observer is ProviderOptions.Observer. Immutable after build.
+	// observer is set by WithObserver. Immutable after build.
 	observer Observer
 
 	// Reflection analyzer
@@ -158,9 +135,9 @@ func (p *provider) Get(serviceType reflect.Type) (any, error) {
 	return p.get(nil, serviceType)
 }
 
-// GetKeyed resolves a keyed service from the root scope
-func (p *provider) GetKeyed(serviceType reflect.Type, key any) (any, error) {
-	return p.getKeyed(nil, serviceType, key)
+// GetKeyed resolves the service registered under name from the root scope.
+func (p *provider) GetKeyed(serviceType reflect.Type, name string) (any, error) {
+	return p.getKeyed(nil, serviceType, keyOf(name))
 }
 
 // GetGroup resolves all services in a group from the root scope
@@ -192,7 +169,7 @@ func (p *provider) getKeyed(parent *resolveFrame, serviceType reflect.Type, key 
 	}
 
 	if key == nil {
-		return nil, ErrServiceKeyNil
+		return nil, ErrServiceKeyEmpty
 	}
 
 	return p.rootScope.getKeyed(parent, serviceType, key)
@@ -219,7 +196,7 @@ func (p *provider) getGroup(parent *resolveFrame, serviceType reflect.Type, grou
 
 // CreateScope creates a new service scope
 func (p *provider) CreateScope(ctx context.Context) (Scope, error) {
-	s, err := p.createScope(nil, ctx)
+	s, err := p.createScope(nil, ctx, false)
 	if err != nil {
 		return nil, err
 	}
@@ -229,7 +206,10 @@ func (p *provider) CreateScope(ctx context.Context) (Scope, error) {
 // createScope creates a scope: a top-level scope when parent is nil, else a
 // child of parent (which closes it). ctx defaults to the parent's context, or
 // context.Background() for a top-level scope.
-func (p *provider) createScope(parent *scope, ctx context.Context) (*scope, error) {
+// createScope creates a child of parent (nil for the root scope). restricted
+// marks a scope created through an injected ScopeFactory (see
+// scope.restricted).
+func (p *provider) createScope(parent *scope, ctx context.Context, restricted bool) (*scope, error) {
 	if p.disposed.Load() != 0 {
 		return nil, ErrProviderDisposed
 	}
@@ -249,7 +229,7 @@ func (p *provider) createScope(parent *scope, ctx context.Context) (*scope, erro
 
 	// Create scope with cancellable context
 	ctx, cancel := context.WithCancel(ctx)
-	child, err := newScope(p, parent, ctx, cancel)
+	child, err := newScope(p, parent, ctx, cancel, restricted)
 	if err != nil {
 		if parent != nil {
 			return nil, fmt.Errorf("failed to create child scope: %w", err)
@@ -324,7 +304,7 @@ func (p *provider) shutdown(ctx context.Context) error {
 			return p.closeErr
 		default:
 		}
-		return shutdownIncomplete("provider", ctx)
+		return shutdownIncomplete(DisposalProvider, ctx)
 	}
 }
 
@@ -412,7 +392,7 @@ func (p *provider) teardown(ctx context.Context) error {
 
 	if len(errors) > 0 {
 		return &DisposalError{
-			Context: "provider",
+			Context: DisposalProvider,
 			Errors:  errors,
 		}
 	}
@@ -512,7 +492,7 @@ func (p *provider) findDescriptor(serviceType reflect.Type, key any) *descriptor
 		return nil
 	}
 
-	typeKey := TypeKey{Type: serviceType, Key: key}
+	typeKey := registryKey{Type: serviceType, Key: key}
 	return p.services[typeKey]
 }
 
@@ -545,7 +525,7 @@ func (p *provider) findGroupDescriptors(serviceType reflect.Type, group string) 
 		return nil
 	}
 
-	groupKey := GroupKey{Type: serviceType, Group: group}
+	groupKey := groupID{Type: serviceType, Group: group}
 	return p.groups[groupKey]
 }
 
@@ -554,8 +534,8 @@ func (p *provider) findGroupDescriptors(serviceType reflect.Type, group string) 
 // during the build process.
 func (p *provider) createAllSingletonsWithContext(ctx context.Context) error {
 	// Singletons a constructor resolves at runtime (through an injected
-	// Provider or Scope) are invisible to the static order below; while
-	// building, they are created on demand instead of failing.
+	// Resolver) are invisible to the static order below; while building,
+	// they are created on demand instead of failing.
 	p.building.Store(true)
 	defer p.building.Store(false)
 
@@ -583,7 +563,7 @@ func (p *provider) createAllSingletonsWithContext(ctx context.Context) error {
 		if err != nil && !isOutputNotProvided(err) {
 			return &ResolutionError{
 				ServiceType: descriptor.Type,
-				ServiceKey:  descriptor.Key,
+				ServiceKey:  keyName(descriptor.Key),
 				Cause:       err,
 			}
 		}
@@ -611,7 +591,7 @@ func (p *provider) createAllSingletonsWithContext(ctx context.Context) error {
 // its dependents, and otherwise follows registration order. The order is
 // deterministic, so construction (and reverse disposal) order is the same on
 // every run. The dependency graph must already be known to be acyclic.
-func creationOrder(all []*descriptor, services map[TypeKey]*descriptor, groups map[GroupKey][]*descriptor) []*descriptor {
+func creationOrder(all []*descriptor, services map[registryKey]*descriptor, groups map[groupID][]*descriptor) []*descriptor {
 	order := make([]*descriptor, 0, len(all))
 	visited := make(map[*descriptor]bool, len(all))
 	var visit func(d *descriptor)
@@ -620,7 +600,7 @@ func creationOrder(all []*descriptor, services map[TypeKey]*descriptor, groups m
 			return
 		}
 		visited[d] = true
-		for _, dep := range d.Dependencies {
+		for _, dep := range d.dependencies() {
 			for _, depDescriptor := range dependencyDescriptors(dep, services, groups) {
 				visit(depDescriptor)
 			}
@@ -637,27 +617,34 @@ func creationOrder(all []*descriptor, services map[TypeKey]*descriptor, groups m
 
 // singletonsInCreationOrder returns the eager (non-Lazy) singleton
 // registrations in creation order.
-func singletonsInCreationOrder(all []*descriptor, services map[TypeKey]*descriptor, groups map[GroupKey][]*descriptor) []*descriptor {
+func singletonsInCreationOrder(all []*descriptor, services map[registryKey]*descriptor, groups map[groupID][]*descriptor) []*descriptor {
 	ordered := creationOrder(all, services, groups)
 	singletons := ordered[:0]
+	// One construction per registration: it publishes every output.
+	seen := make(map[*registration]struct{})
 	for _, d := range ordered {
-		if d.Lifetime == Singleton && !d.lazy {
-			singletons = append(singletons, d)
+		if d.Lifetime != Singleton || d.lazy {
+			continue
 		}
+		if _, done := seen[d.registration]; done {
+			continue
+		}
+		seen[d.registration] = struct{}{}
+		singletons = append(singletons, d)
 	}
 	return singletons
 }
 
 // dependencyDescriptors returns the registrations that satisfy dep: every
 // member of a group dependency, else the registration of its type and key.
-func dependencyDescriptors(dep *reflection.Dependency, services map[TypeKey]*descriptor, groups map[GroupKey][]*descriptor) []*descriptor {
+func dependencyDescriptors(dep *reflection.Dependency, services map[registryKey]*descriptor, groups map[groupID][]*descriptor) []*descriptor {
 	if dep == nil {
 		return nil
 	}
 	if dep.Group != "" {
-		return groups[GroupKey{Type: dep.Type, Group: dep.Group}]
+		return groups[groupID{Type: dep.Type, Group: dep.Group}]
 	}
-	if d := services[TypeKey{Type: dep.Type, Key: dep.Key}]; d != nil {
+	if d := services[registryKey{Type: dep.Type, Key: dep.Key}]; d != nil {
 		return []*descriptor{d}
 	}
 	return nil

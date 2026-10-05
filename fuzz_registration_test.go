@@ -47,6 +47,8 @@ var (
 		reflect.TypeFor[context.Context](),
 		reflect.TypeFor[Provider](),
 		reflect.TypeFor[Scope](),
+		reflect.TypeFor[Resolver](),
+		reflect.TypeFor[ScopeFactory](),
 		reflect.TypeFor[func() int](),
 		reflect.TypeFor[fuzzRegError](),
 		reflect.TypeFor[*fuzzRegError](),
@@ -270,7 +272,18 @@ func fuzzStructFields(t, marker reflect.Type) []reflect.StructField {
 }
 
 func fuzzReserved(t reflect.Type) bool {
-	return t == reflect.TypeFor[context.Context]() || t == reflect.TypeFor[Provider]() || t == reflect.TypeFor[Scope]()
+	switch t {
+	case reflect.TypeFor[context.Context](), reflect.TypeFor[Provider](), reflect.TypeFor[Scope](),
+		reflect.TypeFor[Resolver](), reflect.TypeFor[ScopeFactory]():
+		return true
+	}
+	return false
+}
+
+// fuzzContainer reports whether t is the whole container, which constructors
+// may not depend on (they get Resolver and ScopeFactory instead).
+func fuzzContainer(t reflect.Type) bool {
+	return t == reflect.TypeFor[Provider]() || t == reflect.TypeFor[Scope]()
 }
 
 func fuzzCanBeNil(t reflect.Type) bool {
@@ -290,7 +303,7 @@ func fuzzUnsupportedService(t reflect.Type) bool {
 
 // expectAccepted is the oracle: whether registering reg should succeed, given
 // the registry keys already occupied. rule names the rule that rejects it.
-func expectAccepted(reg *fuzzRegistration, occupied map[TypeKey]bool) (ok bool, rule string) {
+func expectAccepted(reg *fuzzRegistration, occupied map[registryKey]bool) (ok bool, rule string) {
 	fn := reg.fnType
 	numOut := fn.NumOut()
 
@@ -350,6 +363,9 @@ func expectAccepted(reg *fuzzRegistration, occupied map[TypeKey]bool) (ok bool, 
 			if tag.group == "" && fuzzUnsupportedService(f.Type) {
 				return false, "chan or unsafe.Pointer dependency"
 			}
+			if tag.name == "" && tag.group == "" && fuzzContainer(f.Type) {
+				return false, "Provider or Scope dependency"
+			}
 		}
 	} else {
 		for in := range fn.Ins() {
@@ -358,6 +374,9 @@ func expectAccepted(reg *fuzzRegistration, occupied map[TypeKey]bool) (ok bool, 
 			}
 			if fuzzUnsupportedService(in) {
 				return false, "chan or unsafe.Pointer dependency"
+			}
+			if fuzzContainer(in) {
+				return false, "Provider or Scope dependency"
 			}
 		}
 	}
@@ -414,15 +433,16 @@ func expectAccepted(reg *fuzzRegistration, occupied map[TypeKey]bool) (ok bool, 
 			if fuzzReserved(t) {
 				return false, "reserved type"
 			}
+			// A name applies to every output, as a group does.
 			o := output{typ: t, group: reg.optGroup}
-			if i == 0 && reg.optName != "" {
+			if reg.optName != "" {
 				o.key = reg.optName
 			}
 			outputs = append(outputs, o)
 		}
 	}
 
-	seen := make(map[TypeKey]bool)
+	seen := make(map[registryKey]bool)
 	for key := range occupied {
 		seen[key] = true
 	}
@@ -430,7 +450,7 @@ func expectAccepted(reg *fuzzRegistration, occupied map[TypeKey]bool) (ok bool, 
 		if o.key == nil && o.group != "" {
 			continue // group members never collide
 		}
-		key := TypeKey{Type: o.typ, Key: o.key}
+		key := registryKey{Type: o.typ, Key: o.key}
 		if seen[key] {
 			return false, "already registered"
 		}
@@ -480,7 +500,7 @@ func FuzzRegistrationValidation(f *testing.F) {
 		reg := decodeRegistration(data)
 
 		c := NewCollection()
-		occupied := map[TypeKey]bool{}
+		occupied := map[registryKey]bool{}
 		if reg.withDeps {
 			c.AddSingleton(&fuzzRegA{})
 			c.AddSingleton(func() fuzzRegLogger { return fuzzRegConsole{} })
@@ -489,9 +509,9 @@ func FuzzRegistrationValidation(f *testing.F) {
 			if err := c.Err(); err != nil {
 				t.Fatalf("registering dependencies: %v", err)
 			}
-			occupied[TypeKey{Type: reflect.TypeFor[*fuzzRegA]()}] = true
-			occupied[TypeKey{Type: reflect.TypeFor[fuzzRegLogger]()}] = true
-			occupied[TypeKey{Type: reflect.TypeFor[*fuzzRegA](), Key: "k"}] = true
+			occupied[registryKey{Type: reflect.TypeFor[*fuzzRegA]()}] = true
+			occupied[registryKey{Type: reflect.TypeFor[fuzzRegLogger]()}] = true
+			occupied[registryKey{Type: reflect.TypeFor[*fuzzRegA](), Key: "k"}] = true
 		}
 
 		var opts []AddOption

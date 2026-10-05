@@ -1,12 +1,18 @@
 # Echo Integration
 
-Complete guide for using godi with the [Echo](https://github.com/labstack/echo) web framework.
+Complete guide for using godi with [Echo](https://github.com/labstack/echo) v5 (`github.com/labstack/echo/v5`).
+
+Handlers and options take `*echo.Context`, and errors are dispatched with Echo
+v5's `HTTPErrorHandler` signature, `func(c *echo.Context, err error)`. Godi v6
+supports Echo v5 only; the Echo v4 integration was godi v5's
+`github.com/junioryono/godi/echo/v5` (see
+[Migrating from Echo v4](#migrating-from-echo-v4)).
 
 ## Installation
 
 ```bash
-go get github.com/junioryono/godi/v5
-go get github.com/junioryono/godi/echo/v5
+go get github.com/junioryono/godi/v6
+go get github.com/junioryono/godi/echo/v6
 ```
 
 ## Quick Start
@@ -17,9 +23,9 @@ package main
 import (
     "net/http"
 
-    "github.com/labstack/echo/v4"
-    "github.com/junioryono/godi/v5"
-    godiecho "github.com/junioryono/godi/echo/v5"
+    "github.com/junioryono/godi/v6"
+    godiecho "github.com/junioryono/godi/echo/v6"
+    "github.com/labstack/echo/v5"
 )
 
 type UserController struct{}
@@ -28,7 +34,7 @@ func NewUserController() *UserController {
     return &UserController{}
 }
 
-func (c *UserController) List(ctx echo.Context) error {
+func (c *UserController) List(ctx *echo.Context) error {
     return ctx.JSON(http.StatusOK, []string{"alice", "bob"})
 }
 
@@ -49,32 +55,49 @@ func main() {
 
 ## ScopeMiddleware
 
-Creates a request scope for each HTTP request.
+Creates a request scope for each HTTP request and attaches it to the request
+context.
 
 ```go
 e := echo.New()
 e.Use(godiecho.ScopeMiddleware(provider))
 ```
 
-The scope middleware dispatches downstream errors through Echo's configured
-`HTTPErrorHandler` before closing the request scope, then consumes the error to
-avoid a second dispatch. Middleware that needs the returned error must be
-registered after the scope middleware so it runs inside the scope. The same
-ordering applies to panic recovery:
+```{important}
+The scope middleware **consumes errors**. It dispatches downstream errors
+(and `WithMiddleware` errors) through Echo's configured `HTTPErrorHandler`
+before closing the request scope, then returns `nil` to avoid a second
+dispatch. Middleware registered *before* `ScopeMiddleware` never sees the
+error.
+```
+
+Register middleware that needs the returned error, including panic recovery
+and request logging, *after* the scope middleware so it runs inside the scope:
 
 ```go
 e.Use(godiecho.ScopeMiddleware(provider))
-e.Use(middleware.Logger())
+e.Use(middleware.RequestLogger())
 e.Use(middleware.Recover())
 ```
+
+To return errors to outer middleware instead, use
+`godiecho.WithErrorPassthrough(true)`. Echo then renders the error after the
+scope has closed, so the error handler cannot use request-scoped services.
+See the [integration contract](#echo-and-fiber-errors-are-consumed-inside-the-scope).
 
 ### Configuration Options
 
 ```go
 e.Use(godiecho.ScopeMiddleware(provider,
-    // Custom error handler for scope creation and WithMiddleware failures
-    godiecho.WithErrorHandler(func(c echo.Context, err error) error {
+    // Custom error handler for scope creation failures
+    godiecho.WithErrorHandler(func(c *echo.Context, err error) error {
         return echo.NewHTTPError(http.StatusServiceUnavailable, "Service unavailable")
+    }),
+
+    // Custom error handler for WithMiddleware failures
+    // (defaults to the error handler above)
+    godiecho.WithMiddlewareErrorHandler(func(c *echo.Context, err error) error {
+        return echo.ErrUnauthorized
     }),
 
     // Custom handler for scope close errors
@@ -83,11 +106,19 @@ e.Use(godiecho.ScopeMiddleware(provider,
     }),
 
     // Middleware that runs after scope creation
-    godiecho.WithMiddleware(func(scope godi.Scope, c echo.Context) error {
+    godiecho.WithMiddleware(func(scope godi.Scope, c *echo.Context) error {
         reqCtx := godi.MustResolve[*RequestContext](scope)
         reqCtx.UserID = c.Request().Header.Get("X-User-ID")
         return nil
     }),
+
+    // Logger for the default handlers (defaults to slog.Default());
+    // Echo v5's own logger is a *slog.Logger
+    godiecho.WithLogger(e.Logger),
+
+    // Return errors to outer middleware instead of consuming them;
+    // Echo then renders them after the scope closes (default false)
+    godiecho.WithErrorPassthrough(false),
 ))
 ```
 
@@ -97,9 +128,9 @@ Wraps a controller method for type-safe resolution.
 
 ```go
 type UserController interface {
-    List(echo.Context) error
-    GetByID(echo.Context) error
-    Create(echo.Context) error
+    List(*echo.Context) error
+    GetByID(*echo.Context) error
+    Create(*echo.Context) error
 }
 
 e.GET("/users", godiecho.Handle(UserController.List))
@@ -115,231 +146,91 @@ e.GET("/users", godiecho.Handle(UserController.List,
     godiecho.WithPanicRecovery(true),
 
     // Custom panic handler
-    godiecho.WithPanicHandler(func(c echo.Context, v any) error {
+    godiecho.WithPanicHandler(func(c *echo.Context, v any) error {
         log.Printf("Panic: %v", v)
         return echo.NewHTTPError(http.StatusInternalServerError, "Unexpected error")
     }),
 
     // Custom scope error handler
-    godiecho.WithScopeErrorHandler(func(c echo.Context, err error) error {
+    godiecho.WithScopeErrorHandler(func(c *echo.Context, err error) error {
         return echo.NewHTTPError(http.StatusInternalServerError, "Session error")
     }),
 
     // Custom resolution error handler
-    godiecho.WithResolutionErrorHandler(func(c echo.Context, err error) error {
+    godiecho.WithResolutionErrorHandler(func(c *echo.Context, err error) error {
         return echo.NewHTTPError(http.StatusServiceUnavailable, "Service unavailable")
     }),
+
+    // Logger for the default handlers (defaults to slog.Default())
+    godiecho.WithHandlerLogger(logger),
 ))
 ```
 
-## Complete Example
+The default panic handler logs the panic value and stack trace, then returns
+a generic 500. A panic with `http.ErrAbortHandler` is re-panicked.
+
+## Error Handling
+
+Default handlers log the cause with `log/slog` and return a generic 500
+`*echo.HTTPError`; they never send internal error text to the client.
+
+In Echo v5 the error handler receives the context first, and the predefined
+errors such as `echo.ErrUnauthorized` are not `*echo.HTTPError` values. Use
+`echo.StatusCode(err)` to read a status from any error:
 
 ```go
-package main
-
-import (
-    "log"
-    "net/http"
-    "time"
-
-    "github.com/labstack/echo/v4"
-    "github.com/labstack/echo/v4/middleware"
-    "github.com/google/uuid"
-    "github.com/junioryono/godi/v5"
-    godiecho "github.com/junioryono/godi/echo/v5"
-)
-
-// === Services ===
-
-type Logger struct{}
-
-func NewLogger() *Logger { return &Logger{} }
-
-func (l *Logger) Info(msg string, args ...any) {
-    log.Printf("[INFO] "+msg, args...)
-}
-
-type RequestContext struct {
-    ID        string
-    UserID    string
-    StartTime time.Time
-}
-
-func NewRequestContext() *RequestContext {
-    return &RequestContext{
-        ID:        uuid.New().String()[:8],
-        StartTime: time.Now(),
+e.HTTPErrorHandler = func(c *echo.Context, err error) {
+    // Runs while the request scope is alive (the default), so scoped
+    // services can be resolved here.
+    if scope, scopeErr := godi.FromContext(c.Request().Context()); scopeErr == nil {
+        godi.MustResolve[*RequestLogger](scope).Error("request failed", "error", err)
     }
-}
-
-type User struct {
-    ID   int    `json:"id"`
-    Name string `json:"name"`
-}
-
-type UserService struct {
-    reqCtx *RequestContext
-    logger *Logger
-}
-
-func NewUserService(reqCtx *RequestContext, logger *Logger) *UserService {
-    return &UserService{reqCtx: reqCtx, logger: logger}
-}
-
-func (s *UserService) GetAll() []User {
-    s.logger.Info("[%s] Fetching all users", s.reqCtx.ID)
-    return []User{{ID: 1, Name: "Alice"}, {ID: 2, Name: "Bob"}}
-}
-
-// === Controllers ===
-
-type UserController struct {
-    service *UserService
-    reqCtx  *RequestContext
-}
-
-func NewUserController(service *UserService, reqCtx *RequestContext) *UserController {
-    return &UserController{service: service, reqCtx: reqCtx}
-}
-
-func (c *UserController) List(ctx echo.Context) error {
-    users := c.service.GetAll()
-    ctx.Response().Header().Set("X-Request-ID", c.reqCtx.ID)
-    return ctx.JSON(http.StatusOK, map[string]any{
-        "users":    users,
-        "duration": time.Since(c.reqCtx.StartTime).String(),
-    })
-}
-
-func (c *UserController) GetByID(ctx echo.Context) error {
-    id := ctx.Param("id")
-    ctx.Response().Header().Set("X-Request-ID", c.reqCtx.ID)
-    return ctx.JSON(http.StatusOK, User{ID: 1, Name: "User " + id})
-}
-
-// === Main ===
-
-func main() {
-    // Register services
-    services := godi.NewCollection()
-    services.AddSingleton(NewLogger)
-    services.AddScoped(NewRequestContext)
-    services.AddScoped(NewUserService)
-    services.AddScoped(NewUserController)
-
-    // Build provider
-    provider, err := services.Build()
-    if err != nil {
-        log.Fatalf("Failed to build provider: %v", err)
-    }
-    defer provider.Close()
-
-    // Create Echo instance
-    e := echo.New()
-
-    // The scope wraps error observation and recovery so they run before close.
-    e.Use(godiecho.ScopeMiddleware(provider,
-        godiecho.WithMiddleware(func(scope godi.Scope, c echo.Context) error {
-            reqCtx := godi.MustResolve[*RequestContext](scope)
-            reqCtx.UserID = c.Request().Header.Get("X-User-ID")
-            return nil
-        }),
-    ))
-    e.Use(middleware.Logger())
-    e.Use(middleware.Recover())
-
-    // Routes
-    e.GET("/users", godiecho.Handle((*UserController).List))
-    e.GET("/users/:id", godiecho.Handle((*UserController).GetByID))
-
-    // Health check
-    e.GET("/health", func(c echo.Context) error {
-        return c.String(http.StatusOK, "OK")
-    })
-
-    // Start server
-    log.Println("Server starting on :8080")
-    e.Start(":8080")
+    echo.DefaultHTTPErrorHandler(false)(c, err)
 }
 ```
 
-## Route Groups
-
-Use with Echo route groups:
-
-```go
-api := e.Group("/api/v1")
-
-users := api.Group("/users")
-users.GET("", godiecho.Handle((*UserController).List))
-users.GET("/:id", godiecho.Handle((*UserController).GetByID))
-users.POST("", godiecho.Handle((*UserController).Create))
-
-orders := api.Group("/orders")
-orders.GET("", godiecho.Handle((*OrderController).List))
-orders.POST("", godiecho.Handle((*OrderController).Create))
-```
-
-## Accessing URL Parameters
-
-Use Echo's parameter methods in your controllers:
+Authentication in a `WithMiddleware` function can respond 401 without
+changing how scope-creation failures are rendered:
 
 ```go
-func (c *UserController) GetByID(ctx echo.Context) error {
-    id := ctx.Param("id")
-    // ...
-}
+e.Use(godiecho.ScopeMiddleware(provider,
+    godiecho.WithMiddleware(func(scope godi.Scope, c *echo.Context) error {
+        return godi.MustResolve[*Session](scope).Authenticate(c.Request())
+    }),
+    godiecho.WithMiddlewareErrorHandler(func(c *echo.Context, err error) error {
+        return echo.ErrUnauthorized
+    }),
+))
 ```
 
 ## Accessing Scope Manually
 
 ```go
-e.GET("/custom", func(c echo.Context) error {
+e.GET("/custom", func(c *echo.Context) error {
     scope, err := godi.FromContext(c.Request().Context())
     if err != nil {
         return echo.NewHTTPError(http.StatusInternalServerError, "No scope")
     }
 
     service := godi.MustResolve[*UserService](scope)
-    users := service.GetAll()
-    return c.JSON(http.StatusOK, users)
+    return c.JSON(http.StatusOK, service.GetAll())
 })
 ```
 
-## Request Binding
+(migrating-from-echo-v4)=
 
-Combine godi with Echo's request binding:
+## Migrating from Echo v4
 
-```go
-type CreateUserRequest struct {
-    Name  string `json:"name" validate:"required"`
-    Email string `json:"email" validate:"required,email"`
-}
+Godi v5's `github.com/junioryono/godi/echo/v5` integrated Echo v4. To move to
+Echo v5 with godi v6:
 
-func (c *UserController) Create(ctx echo.Context) error {
-    var req CreateUserRequest
-    if err := ctx.Bind(&req); err != nil {
-        return echo.NewHTTPError(http.StatusBadRequest, "Invalid request")
-    }
+1. Replace the imports: `github.com/labstack/echo/v4` with `github.com/labstack/echo/v5`, and
+   `github.com/junioryono/godi/echo/v5` with `github.com/junioryono/godi/echo/v6`.
+2. Change `echo.Context` to `*echo.Context` in controllers and option callbacks.
+3. Swap the parameters of a custom `HTTPErrorHandler` to `func(c *echo.Context, err error)`.
 
-    user := c.service.Create(req.Name, req.Email)
-    return ctx.JSON(http.StatusCreated, user)
-}
-```
-
-## Error Handling
-
-Echo uses `echo.HTTPError` for error responses. Resolution errors can contain constructor internals (types, parameters and the wrapped constructor error), so log them server-side and never send them to clients.
-
-```go
-godiecho.WithResolutionErrorHandler(func(c echo.Context, err error) error {
-    slog.ErrorContext(c.Request().Context(), "resolve controller",
-        "path", c.Path(), "error", err)
-    return echo.NewHTTPError(http.StatusServiceUnavailable,
-        "Service temporarily unavailable")
-})
-```
+Option names and behavior are unchanged.
 
 ---
 
-**See also:** [Gin Integration](gin.md) | [Chi Integration](chi.md) | [Fiber Integration](fiber.md) | [net/http Integration](net-http.md)
+**See also:** [Integration contract](#integration-contract) | [Gin Integration](gin.md) | [Chi Integration](chi.md) | [Fiber Integration](fiber.md) | [net/http Integration](net-http.md)

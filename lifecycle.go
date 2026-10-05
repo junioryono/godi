@@ -171,7 +171,7 @@ func (p *provider) disposeObserved(ctx context.Context, v any, scopeID string) e
 
 // shutdownIncomplete reports a shutdown that stopped waiting because ctx was
 // done before cleanup finished.
-func shutdownIncomplete(owner string, ctx context.Context) error {
+func shutdownIncomplete(owner DisposalContext, ctx context.Context) error {
 	return &DisposalError{
 		Context: owner,
 		Errors:  []error{fmt.Errorf("shutdown incomplete, cleanup continues in the background: %w", contextFailure(ctx))},
@@ -215,6 +215,8 @@ type Starter interface {
 // singletons that have not been resolved yet are not created. Start runs at
 // most once per provider. Stop started services by closing the provider
 // (godi.Shutdown with a deadline): disposal runs in reverse creation order.
+// Values registered as instances are left to the caller, who owns their
+// lifecycle: Start does not start them, as Close does not dispose them.
 func Start(ctx context.Context, p Provider) error {
 	root := rootProviderOf(p)
 	if root == nil {
@@ -228,7 +230,7 @@ func Start(ctx context.Context, p Provider) error {
 	}
 	for _, s := range root.createdSingletons() {
 		starter, ok := s.instance.(Starter)
-		if !ok {
+		if !ok || s.supplied {
 			continue
 		}
 		if err := ctx.Err(); err != nil {
@@ -285,13 +287,16 @@ func HealthCheck(ctx context.Context, p Provider) error {
 type createdSingleton struct {
 	serviceType reflect.Type
 	instance    any
+	// supplied marks a value registered as an instance: the caller owns its
+	// lifecycle, so Start leaves it alone (HealthCheck still checks it).
+	supplied bool
 }
 
 // recordConstructed adds a constructed singleton (before decoration) to the
 // inventory that Start and HealthCheck act on.
-func (p *provider) recordConstructed(serviceType reflect.Type, instance any) {
+func (p *provider) recordConstructed(serviceType reflect.Type, supplied bool, instance any) {
 	p.constructedMu.Lock()
-	p.constructed = append(p.constructed, createdSingleton{serviceType: serviceType, instance: instance})
+	p.constructed = append(p.constructed, createdSingleton{serviceType: serviceType, instance: instance, supplied: supplied})
 	p.constructedMu.Unlock()
 }
 

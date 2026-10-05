@@ -1,13 +1,11 @@
 package godi
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -23,13 +21,13 @@ func TestErrors(t *testing.T) {
 
 	t.Run("LifetimeError", func(t *testing.T) {
 		t.Parallel()
-		err := LifetimeError{Value: "invalid"}
+		err := &LifetimeError{Value: "invalid"}
 		assert.Equal(t, "invalid service lifetime: invalid", err.Error())
 	})
 
 	t.Run("LifetimeConflictError", func(t *testing.T) {
 		t.Parallel()
-		err := LifetimeConflictError{
+		err := &LifetimeConflictError{
 			ServiceType:        svcType,
 			ServiceLifetime:    Singleton,
 			DependencyType:     depType,
@@ -45,7 +43,7 @@ func TestErrors(t *testing.T) {
 
 	t.Run("AlreadyRegisteredError", func(t *testing.T) {
 		t.Parallel()
-		err := AlreadyRegisteredError{ServiceType: svcType}
+		err := &AlreadyRegisteredError{ServiceType: svcType}
 		assert.Contains(t, err.Error(), "already registered")
 	})
 
@@ -54,9 +52,8 @@ func TestErrors(t *testing.T) {
 
 		t.Run("without_key", func(t *testing.T) {
 			t.Parallel()
-			err := ResolutionError{
+			err := &ResolutionError{
 				ServiceType: svcType,
-				ServiceKey:  nil,
 				Cause:       ErrServiceNotFound,
 			}
 			errStr := err.Error()
@@ -67,7 +64,7 @@ func TestErrors(t *testing.T) {
 
 		t.Run("with_key", func(t *testing.T) {
 			t.Parallel()
-			err := ResolutionError{
+			err := &ResolutionError{
 				ServiceType: svcType,
 				ServiceKey:  "primary",
 				Cause:       ErrServiceNotFound,
@@ -80,7 +77,7 @@ func TestErrors(t *testing.T) {
 
 		t.Run("other_cause_is_not_reported_as_not_found", func(t *testing.T) {
 			t.Parallel()
-			err := ResolutionError{
+			err := &ResolutionError{
 				ServiceType: svcType,
 				ServiceKey:  "primary",
 				Cause:       baseCause,
@@ -106,7 +103,7 @@ func TestErrors(t *testing.T) {
 
 		t.Run("actionable_message", func(t *testing.T) {
 			t.Parallel()
-			err := ResolutionError{
+			err := &ResolutionError{
 				ServiceType: svcType,
 				Cause:       ErrServiceNotFound,
 			}
@@ -114,21 +111,9 @@ func TestErrors(t *testing.T) {
 		})
 	})
 
-	t.Run("TimeoutError", func(t *testing.T) {
-		t.Parallel()
-		err := TimeoutError{
-			ServiceType: svcType,
-			Timeout:     5 * time.Second,
-		}
-		errStr := err.Error()
-		assert.Contains(t, errStr, "timed out")
-		assert.Contains(t, errStr, "5s")
-		assert.ErrorIs(t, err, context.DeadlineExceeded)
-	})
-
 	t.Run("RegistrationError", func(t *testing.T) {
 		t.Parallel()
-		err := RegistrationError{
+		err := &RegistrationError{
 			ServiceType: svcType,
 			Operation:   "provide",
 			Cause:       baseCause,
@@ -144,14 +129,14 @@ func TestErrors(t *testing.T) {
 
 		t.Run("with_type", func(t *testing.T) {
 			t.Parallel()
-			err := ValidationError{ServiceType: svcType, Cause: baseCause}
+			err := &ValidationError{ServiceType: svcType, Cause: baseCause}
 			assert.Contains(t, err.Error(), "TService")
 			assert.ErrorIs(t, err, baseCause)
 		})
 
 		t.Run("without_type", func(t *testing.T) {
 			t.Parallel()
-			err := ValidationError{ServiceType: nil, Cause: baseCause}
+			err := &ValidationError{ServiceType: nil, Cause: baseCause}
 			assert.Equal(t, baseCause.Error(), err.Error())
 			assert.ErrorIs(t, err, baseCause)
 		})
@@ -159,14 +144,14 @@ func TestErrors(t *testing.T) {
 
 	t.Run("ModuleError", func(t *testing.T) {
 		t.Parallel()
-		err := ModuleError{Module: "TestModule", Cause: baseCause}
+		err := &ModuleError{Module: "TestModule", Cause: baseCause}
 		assert.Contains(t, err.Error(), `module "TestModule"`)
 		assert.ErrorIs(t, err, baseCause)
 	})
 
 	t.Run("TypeMismatchError", func(t *testing.T) {
 		t.Parallel()
-		err := TypeMismatchError{
+		err := &TypeMismatchError{
 			Expected: svcType,
 			Actual:   reflect.TypeFor[string](),
 			Context:  "type assertion",
@@ -178,9 +163,9 @@ func TestErrors(t *testing.T) {
 		assert.Contains(t, errStr, "string")
 	})
 
-	t.Run("ReflectionAnalysisError", func(t *testing.T) {
+	t.Run("reflectionAnalysisError", func(t *testing.T) {
 		t.Parallel()
-		err := ReflectionAnalysisError{
+		err := &reflectionAnalysisError{
 			Constructor: func() *TService { return nil },
 			Operation:   "analyze",
 			Cause:       baseCause,
@@ -191,39 +176,9 @@ func TestErrors(t *testing.T) {
 		assert.ErrorIs(t, err, baseCause)
 	})
 
-	t.Run("GraphOperationError", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("without_key", func(t *testing.T) {
-			t.Parallel()
-			err := GraphOperationError{
-				Operation: "add",
-				NodeType:  svcType,
-				NodeKey:   nil,
-				Cause:     baseCause,
-			}
-			errStr := err.Error()
-			assert.Contains(t, errStr, "graph add failed")
-			assert.NotContains(t, errStr, "[")
-			assert.ErrorIs(t, err, baseCause)
-		})
-
-		t.Run("with_key", func(t *testing.T) {
-			t.Parallel()
-			err := GraphOperationError{
-				Operation: "add",
-				NodeType:  svcType,
-				NodeKey:   "primary",
-				Cause:     baseCause,
-			}
-			assert.Contains(t, err.Error(), "[primary]")
-			assert.ErrorIs(t, err, baseCause)
-		})
-	})
-
 	t.Run("ConstructorInvocationError", func(t *testing.T) {
 		t.Parallel()
-		err := ConstructorInvocationError{
+		err := &ConstructorInvocationError{
 			Constructor: reflect.TypeFor[func(*TService) *TDependency](),
 			Parameters:  []reflect.Type{svcType},
 			Cause:       baseCause,
@@ -236,7 +191,7 @@ func TestErrors(t *testing.T) {
 
 	t.Run("BuildError", func(t *testing.T) {
 		t.Parallel()
-		err := BuildError{
+		err := &BuildError{
 			Phase:   "validation",
 			Details: "circular dependency detected",
 			Cause:   baseCause,
@@ -252,7 +207,7 @@ func TestErrors(t *testing.T) {
 
 		t.Run("single", func(t *testing.T) {
 			t.Parallel()
-			err := DisposalError{
+			err := &DisposalError{
 				Context: "provider",
 				Errors:  []error{errors.New("close failed")},
 			}
@@ -263,7 +218,7 @@ func TestErrors(t *testing.T) {
 
 		t.Run("multiple", func(t *testing.T) {
 			t.Parallel()
-			err := DisposalError{
+			err := &DisposalError{
 				Context: "scope",
 				Errors: []error{
 					errors.New("service1 close failed"),
@@ -410,8 +365,7 @@ func TestErrors(t *testing.T) {
 			&RegistrationError{Cause: baseCause},
 			&ValidationError{Cause: baseCause},
 			&ModuleError{Cause: baseCause},
-			&ReflectionAnalysisError{Cause: baseCause},
-			&GraphOperationError{Cause: baseCause},
+			&reflectionAnalysisError{Cause: baseCause},
 			&ConstructorInvocationError{Cause: baseCause},
 			&BuildError{Cause: baseCause},
 		}
@@ -419,6 +373,39 @@ func TestErrors(t *testing.T) {
 			assert.ErrorIs(t, wrapper, baseCause, "%T should wrap base error", wrapper)
 		}
 	})
+}
+
+// godi returns its errors as pointers, so only the pointer types implement
+// error: errors.As with a value-typed target (&godi.ResolutionError{}) would
+// otherwise compile and silently never match.
+func TestErrorTypesUsePointerReceivers(t *testing.T) {
+	t.Parallel()
+	errorType := reflect.TypeFor[error]()
+	for _, value := range []any{
+		LifetimeError{},
+		LifetimeConflictError{},
+		AlreadyRegisteredError{},
+		CircularDependencyError{},
+		ResolutionError{},
+		MissingDependencyError{},
+		RegistrationError{},
+		ValidationError{},
+		ModuleError{},
+		TypeMismatchError{},
+		ConstructorInvocationError{},
+		ConstructorPanicError{},
+		BuildError{},
+		DisposalError{},
+	} {
+		typ := reflect.TypeOf(value)
+		assert.False(t, typ.Implements(errorType), "%s must not implement error", typ)
+		assert.True(t, reflect.PointerTo(typ).Implements(errorType), "*%s must implement error", typ)
+	}
+
+	wrapped := fmt.Errorf("outer: %w", &ResolutionError{ServiceType: reflect.TypeFor[*TService](), Cause: ErrServiceNotFound})
+	resolutionErr, ok := errors.AsType[*ResolutionError](wrapped)
+	require.True(t, ok)
+	assert.Equal(t, reflect.TypeFor[*TService](), resolutionErr.ServiceType)
 }
 
 func TestFormatType(t *testing.T) {

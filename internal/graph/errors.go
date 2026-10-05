@@ -19,20 +19,20 @@ type CircularDependencyError struct {
 	Path []string
 }
 
-func (e CircularDependencyError) cycle() []string {
+func (e *CircularDependencyError) cycle() []string {
 	if len(e.Path) == 0 {
 		return []string{e.Node}
 	}
 	return e.Path
 }
 
-func (e CircularDependencyError) Error() string {
+func (e *CircularDependencyError) Error() string {
 	cycle := e.cycle()
 	return "circular dependency detected: " + strings.Join(cycle, " -> ") + " -> " + cycle[0]
 }
 
 // Detail draws the cycle and explains how to break it.
-func (e CircularDependencyError) Detail() string {
+func (e *CircularDependencyError) Detail() string {
 	cycle := e.cycle()
 	var b strings.Builder
 	for _, node := range cycle {
@@ -48,7 +48,7 @@ func (e CircularDependencyError) Detail() string {
 }
 
 // Format prints Error, or with %+v the message followed by Detail.
-func (e CircularDependencyError) Format(s fmt.State, verb rune) {
+func (e *CircularDependencyError) Format(s fmt.State, verb rune) {
 	switch {
 	case verb == 'v' && s.Flag('+'):
 		_, _ = io.WriteString(s, e.Error()+"\n\n"+e.Detail())

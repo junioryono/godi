@@ -214,14 +214,14 @@ func TestModule(t *testing.T) {
 			assert.True(t, c.ContainsKeyed(reflect.TypeFor[*TService](), "secondary"))
 		})
 
-		t.Run("nil_key_removes_default", func(t *testing.T) {
+		// An empty name (say, from unset configuration) must not remove the
+		// unnamed registration. Found by the Claude review of #66.
+		t.Run("empty_name_removes_nothing", func(t *testing.T) {
 			t.Parallel()
 			c := NewCollection()
 			c.AddSingleton(NewTService)
+			c.AddModules(RemoveKeyed[*TService](""))
 			assert.True(t, c.Contains(reflect.TypeFor[*TService]()))
-
-			c.AddModules(RemoveKeyed[*TService](nil))
-			assert.False(t, c.Contains(reflect.TypeFor[*TService]()))
 		})
 
 		t.Run("non_existent_is_noop", func(t *testing.T) {

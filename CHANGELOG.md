@@ -3,6 +3,60 @@
 Notable changes to godi. Release notes for each version are also generated from
 commit messages on GitHub.
 
+## v6.0.0 (unreleased)
+
+A major release at the import path `github.com/junioryono/godi/v6`. See the
+[v5 → v6 guide](docs/guides/v5-to-v6.md) for before/after examples.
+
+### Upgrade notes (behavior changes)
+
+- **Values registered as instances (`AddSingleton(value)`, `godi.Instance`)
+  are no longer disposed**: the caller that created them closes them. This is
+  the one silent change. Register a constructor that returns the value to hand
+  it to godi.
+- **Scope validation is on by default**: resolving a scoped service from the
+  root provider fails with `ErrScopeRequired`, and the root scope runs no
+  scoped initializers. `WithScopeValidation(false)` opts out.
+- **Constructors receive `godi.Resolver` and the new `godi.ScopeFactory`**;
+  `Provider` and `Scope` parameters are rejected at registration, and
+  `Scope.Provider()` is removed. An injected `Resolver` refuses `Provider` and
+  `Scope`; a constructor's context carries no scope; an injected
+  `ScopeFactory` cannot create scopes until its constructor returns.
+- **`godi.Start` skips instances**, which godi neither starts nor disposes.
+- **An empty name names no service** in `ContainsKeyed` and `RemoveKeyed`.
+- **`godi.Name` keys every output** of a multi-return constructor.
+- **Error types have pointer receivers**; a value-typed `errors.As` target
+  panics.
+- **`echo` and `fiber` integrate Echo v5 and Fiber v3** (formerly `echov5`
+  and `fiberv3`); the Echo v4 and Fiber v2 integrations are retired.
+
+### Changed
+
+- One `Build(opts ...BuildOption)` with `WithContext`, `WithBuildTimeout`,
+  `WithObserver` and `WithScopeValidation` replaces `BuildWithContext`,
+  `BuildWithOptions` and `ProviderOptions`.
+- Names are the only service keys: `godi.Key` is removed, and keyed APIs and
+  report fields use `string` names. `ErrServiceKeyNil` is `ErrServiceKeyEmpty`.
+- `Collection`, `Provider` and `Scope` are sealed. `Invoke`, `IsService` and
+  `IsKeyedService` take a `Resolver`.
+- `BuildError.Phase` is a `BuildPhase` and `DisposalError.Context` a
+  `DisposalContext`.
+
+### Removed
+
+- `TimeoutError`, `GraphOperationError`, `ProviderOptions`, `godi.Key`,
+  `Scope.Provider()`, `ResolutionError.ServiceNotFound()`.
+- Exported internals: `TypeKey`, `GroupKey`, `ErrDescriptorNil`,
+  `ErrSingletonNotInitialized`, `ReflectionAnalysisError`.
+
+### Internal
+
+- The outputs of one constructor share a registration record, which is their
+  construction identity.
+- Dead code removed from `internal/graph` and `internal/reflection`;
+  `internal/reflection` takes the not-found policy as an option instead of
+  defining `ErrServiceNotFound`.
+
 ## v5.2.0 (2026-10-04)
 
 ### Upgrade notes (behavior changes)

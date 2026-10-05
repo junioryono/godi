@@ -7,10 +7,11 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 
-	"github.com/gofiber/fiber/v2"
-	fiberrecover "github.com/gofiber/fiber/v2/middleware/recover"
-	"github.com/junioryono/godi/v5"
+	"github.com/gofiber/fiber/v3"
+	fiberrecover "github.com/gofiber/fiber/v3/middleware/recover"
+	"github.com/junioryono/godi/v6"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -28,16 +29,16 @@ func newTestController(svc *testService) *testController {
 	return &testController{Service: svc}
 }
 
-func (c *testController) GetValue(ctx *fiber.Ctx) error {
+func (c *testController) GetValue(ctx fiber.Ctx) error {
 	return ctx.SendString(c.Service.ID)
 }
 
-func (c *testController) Panic(ctx *fiber.Ctx) error {
+func (c *testController) Panic(fiber.Ctx) error {
 	panic("test panic")
 }
 
 func TestScopeMiddleware(t *testing.T) {
-	t.Run("creates scope and stores in locals", func(t *testing.T) {
+	t.Run("creates scope and attaches it to the context", func(t *testing.T) {
 		collection := godi.NewCollection()
 		collection.AddScoped(func() *testService {
 			return &testService{ID: "scoped", Value: 42}
@@ -51,44 +52,10 @@ func TestScopeMiddleware(t *testing.T) {
 
 		app := fiber.New()
 		app.Use(ScopeMiddleware(provider))
-		app.Get("/test", func(c *fiber.Ctx) error {
-			scope, scopeErr := godi.FromContext(c.UserContext())
+		app.Get("/test", func(c fiber.Ctx) error {
+			scope, scopeErr := godi.FromContext(c.Context())
 			assert.NoError(t, scopeErr)
 			assert.NotNil(t, scope)
-
-			resolvedService, err = godi.Resolve[*testService](scope)
-			assert.NoError(t, err)
-
-			return c.SendStatus(http.StatusOK)
-		})
-
-		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
-		resp, err := app.Test(req)
-		assert.NoError(t, err)
-		defer resp.Body.Close()
-
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
-		assert.NotNil(t, resolvedService)
-		assert.Equal(t, "scoped", resolvedService.ID)
-	})
-
-	t.Run("scope also available from context", func(t *testing.T) {
-		collection := godi.NewCollection()
-		collection.AddScoped(func() *testService {
-			return &testService{ID: "context-scoped", Value: 100}
-		})
-
-		provider, err := collection.Build()
-		assert.NoError(t, err)
-		defer provider.Close()
-
-		var resolvedService *testService
-
-		app := fiber.New()
-		app.Use(ScopeMiddleware(provider))
-		app.Get("/test", func(c *fiber.Ctx) error {
-			scope, scopeErr := godi.FromContext(c.UserContext())
-			assert.NoError(t, scopeErr)
 
 			var resolveErr error
 			resolvedService, resolveErr = godi.Resolve[*testService](scope)
@@ -103,7 +70,36 @@ func TestScopeMiddleware(t *testing.T) {
 		defer resp.Body.Close()
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
-		assert.Equal(t, "context-scoped", resolvedService.ID)
+		assert.NotNil(t, resolvedService)
+		assert.Equal(t, "scoped", resolvedService.ID)
+	})
+
+	t.Run("scope is closed after request", func(t *testing.T) {
+		collection := godi.NewCollection()
+		collection.AddScoped(func() *testService { return &testService{ID: "closed"} })
+
+		provider, err := collection.Build()
+		assert.NoError(t, err)
+		defer provider.Close()
+
+		var requestScope godi.Scope
+		app := fiber.New()
+		app.Use(ScopeMiddleware(provider))
+		app.Get("/test", func(c fiber.Ctx) error {
+			scope, scopeErr := godi.FromContext(c.Context())
+			assert.NoError(t, scopeErr)
+			requestScope = scope
+			return c.SendStatus(http.StatusOK)
+		})
+
+		resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/test", http.NoBody))
+		assert.NoError(t, err)
+		defer resp.Body.Close()
+
+		if assert.NotNil(t, requestScope) {
+			_, err = godi.Resolve[*testService](requestScope)
+			assert.ErrorIs(t, err, godi.ErrScopeDisposed)
+		}
 	})
 
 	t.Run("calls error handler on scope creation failure", func(t *testing.T) {
@@ -116,12 +112,12 @@ func TestScopeMiddleware(t *testing.T) {
 
 		app := fiber.New()
 		app.Use(ScopeMiddleware(provider,
-			WithErrorHandler(func(c *fiber.Ctx, err error) error {
+			WithErrorHandler(func(c fiber.Ctx, err error) error {
 				errorHandlerCalled = true
 				return c.SendStatus(http.StatusServiceUnavailable)
 			}),
 		))
-		app.Get("/test", func(c *fiber.Ctx) error {
+		app.Get("/test", func(c fiber.Ctx) error {
 			return c.SendStatus(http.StatusOK)
 		})
 
@@ -148,16 +144,16 @@ func TestScopeMiddleware(t *testing.T) {
 
 		app := fiber.New()
 		app.Use(ScopeMiddleware(provider,
-			WithMiddleware(func(scope godi.Scope, c *fiber.Ctx) error {
+			WithMiddleware(func(scope godi.Scope, c fiber.Ctx) error {
 				mwOrder = append(mwOrder, 1)
 				return nil
 			}),
-			WithMiddleware(func(scope godi.Scope, c *fiber.Ctx) error {
+			WithMiddleware(func(scope godi.Scope, c fiber.Ctx) error {
 				mwOrder = append(mwOrder, 2)
 				return nil
 			}),
 		))
-		app.Get("/test", func(c *fiber.Ctx) error {
+		app.Get("/test", func(c fiber.Ctx) error {
 			return c.SendStatus(http.StatusOK)
 		})
 
@@ -184,16 +180,16 @@ func TestScopeMiddleware(t *testing.T) {
 
 		app := fiber.New()
 		app.Use(ScopeMiddleware(provider,
-			WithMiddleware(func(scope godi.Scope, c *fiber.Ctx) error {
+			WithMiddleware(func(scope godi.Scope, c fiber.Ctx) error {
 				return expectedErr
 			}),
-			WithErrorHandler(func(c *fiber.Ctx, err error) error {
+			WithErrorHandler(func(c fiber.Ctx, err error) error {
 				errorHandlerCalled = true
 				assert.Equal(t, expectedErr, err)
 				return c.SendStatus(http.StatusBadRequest)
 			}),
 		))
-		app.Get("/test", func(c *fiber.Ctx) error {
+		app.Get("/test", func(c fiber.Ctx) error {
 			return c.SendStatus(http.StatusOK)
 		})
 
@@ -238,7 +234,7 @@ func TestHandle(t *testing.T) {
 
 		app := fiber.New()
 		app.Get("/value", Handle((*testController).GetValue,
-			WithScopeErrorHandler(func(c *fiber.Ctx, err error) error {
+			WithScopeErrorHandler(func(c fiber.Ctx, err error) error {
 				errorHandlerCalled = true
 				return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "no scope"})
 			}),
@@ -268,7 +264,7 @@ func TestHandle(t *testing.T) {
 		app := fiber.New()
 		app.Use(ScopeMiddleware(provider))
 		app.Get("/value", Handle((*testController).GetValue,
-			WithResolutionErrorHandler(func(c *fiber.Ctx, err error) error {
+			WithResolutionErrorHandler(func(c fiber.Ctx, err error) error {
 				errorHandlerCalled = true
 				return c.SendStatus(http.StatusNotFound)
 			}),
@@ -300,7 +296,7 @@ func TestHandle(t *testing.T) {
 		app.Use(ScopeMiddleware(provider))
 		app.Get("/panic", Handle((*testController).Panic,
 			WithPanicRecovery(true),
-			WithPanicHandler(func(c *fiber.Ctx, v any) error {
+			WithPanicHandler(func(c fiber.Ctx, v any) error {
 				panicHandlerCalled = true
 				assert.Equal(t, "test panic", v)
 				return c.SendStatus(http.StatusInternalServerError)
@@ -317,11 +313,11 @@ func TestHandle(t *testing.T) {
 	})
 }
 
-func TestScopeFromUserContext(t *testing.T) {
-	t.Run("returns nil when no scope", func(t *testing.T) {
+func TestScopeFromContext(t *testing.T) {
+	t.Run("returns an error when no scope", func(t *testing.T) {
 		app := fiber.New()
-		app.Get("/test", func(c *fiber.Ctx) error {
-			scope, scopeErr := godi.FromContext(c.UserContext())
+		app.Get("/test", func(c fiber.Ctx) error {
+			scope, scopeErr := godi.FromContext(c.Context())
 			assert.Error(t, scopeErr)
 			assert.Nil(t, scope)
 			return c.SendStatus(http.StatusOK)
@@ -335,41 +331,43 @@ func TestScopeFromUserContext(t *testing.T) {
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 	})
 
-	t.Run("returns scope when present", func(t *testing.T) {
+	t.Run("does not leak the scope into the next request", func(t *testing.T) {
 		collection := godi.NewCollection()
-		collection.AddScoped(func() *testService {
-			return &testService{ID: "test", Value: 1}
-		})
-
 		provider, err := collection.Build()
 		assert.NoError(t, err)
 		defer provider.Close()
 
-		var scopeFound bool
-
+		scoped := true
 		app := fiber.New()
-		app.Use(ScopeMiddleware(provider))
-		app.Get("/test", func(c *fiber.Ctx) error {
-			scope, scopeErr := godi.FromContext(c.UserContext())
-			scopeFound = scopeErr == nil && scope != nil
+		app.Use(func(c fiber.Ctx) error {
+			if scoped {
+				return ScopeMiddleware(provider)(c)
+			}
+			return c.Next()
+		})
+		var scopeErr error
+		app.Get("/test", func(c fiber.Ctx) error {
+			_, scopeErr = godi.FromContext(c.Context())
 			return c.SendStatus(http.StatusOK)
 		})
 
-		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
-		resp, err := app.Test(req)
-		assert.NoError(t, err)
-		defer resp.Body.Close()
+		for _, withScope := range []bool{true, false} {
+			scoped = withScope
+			resp, testErr := app.Test(httptest.NewRequest(http.MethodGet, "/test", http.NoBody))
+			assert.NoError(t, testErr)
+			resp.Body.Close()
+		}
 
-		assert.True(t, scopeFound)
+		assert.Error(t, scopeErr, "a pooled context must not keep the previous request's scope")
 	})
 }
 
 func TestDefaultConfig(t *testing.T) {
-	t.Run("default error handler returns JSON error", func(t *testing.T) {
+	t.Run("default error handler returns generic JSON error", func(t *testing.T) {
 		cfg := defaultConfig()
 
 		app := fiber.New()
-		app.Get("/test", func(c *fiber.Ctx) error {
+		app.Get("/test", func(c fiber.Ctx) error {
 			return cfg.ErrorHandler(c, errors.New("test error"))
 		})
 
@@ -378,7 +376,9 @@ func TestDefaultConfig(t *testing.T) {
 		assert.NoError(t, err)
 		defer resp.Body.Close()
 
+		body, _ := io.ReadAll(resp.Body)
 		assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+		assert.NotContains(t, string(body), "test error")
 	})
 }
 
@@ -400,6 +400,7 @@ func TestNilOptionsKeepDefaults(t *testing.T) {
 		normalizedCfg = cfg
 	})
 	assert.NotNil(t, normalizedCfg.ErrorHandler)
+	assert.NotNil(t, normalizedCfg.MiddlewareErrorHandler)
 	assert.NotNil(t, normalizedCfg.CloseErrorHandler)
 
 	var normalizedHandlerCfg *HandlerConfig
@@ -430,6 +431,15 @@ func TestNilOptionsKeepDefaults(t *testing.T) {
 	assert.NotNil(t, handlerCfg.ResolutionErrorHandler)
 }
 
+func TestNormalizeDoesNotMutateCallerSlice(t *testing.T) {
+	noop := func(godi.Scope, fiber.Ctx) error { return nil }
+	shared := []func(godi.Scope, fiber.Ctx) error{noop, nil, noop}
+
+	ScopeMiddleware(nil, func(cfg *Config) { cfg.Middlewares = shared })
+
+	assert.Nil(t, shared[1], "caller-owned slice was mutated by normalizeConfig")
+}
+
 func TestScopeRemainsAvailableToErrorHandler(t *testing.T) {
 	collection := godi.NewCollection()
 	collection.AddScoped(func() *testService { return &testService{ID: "error-handler"} })
@@ -439,9 +449,9 @@ func TestScopeRemainsAvailableToErrorHandler(t *testing.T) {
 
 	var requestScope godi.Scope
 	errorHandlerCalls := 0
-	app := fiber.New(fiber.Config{ErrorHandler: func(c *fiber.Ctx, err error) error {
+	app := fiber.New(fiber.Config{ErrorHandler: func(c fiber.Ctx, err error) error {
 		errorHandlerCalls++
-		scope, scopeErr := godi.FromContext(c.UserContext())
+		scope, scopeErr := godi.FromContext(c.Context())
 		assert.NoError(t, scopeErr)
 		requestScope = scope
 		service, resolveErr := godi.Resolve[*testService](scope)
@@ -451,7 +461,7 @@ func TestScopeRemainsAvailableToErrorHandler(t *testing.T) {
 		return c.SendStatus(http.StatusTeapot)
 	}})
 	app.Use(ScopeMiddleware(provider))
-	app.Get("/test", func(*fiber.Ctx) error { return errors.New("controller failed") })
+	app.Get("/test", func(fiber.Ctx) error { return errors.New("controller failed") })
 
 	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/test", http.NoBody))
 	assert.NoError(t, err)
@@ -470,11 +480,12 @@ func TestConfiguredErrorHandlerFailureIsSanitized(t *testing.T) {
 	defer provider.Close()
 
 	const secret = "database-password=correct-horse-battery-staple"
-	app := fiber.New(fiber.Config{ErrorHandler: func(*fiber.Ctx, error) error {
+	logger, logs := newCapturingLogger()
+	app := fiber.New(fiber.Config{ErrorHandler: func(fiber.Ctx, error) error {
 		return errors.New(secret)
 	}})
-	app.Use(ScopeMiddleware(provider))
-	app.Get("/test", func(*fiber.Ctx) error { return errors.New("controller failed") })
+	app.Use(ScopeMiddleware(provider, WithLogger(logger)))
+	app.Get("/test", func(fiber.Ctx) error { return errors.New("controller failed") })
 
 	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/test", http.NoBody))
 	assert.NoError(t, err)
@@ -484,6 +495,7 @@ func TestConfiguredErrorHandlerFailureIsSanitized(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
 	assert.NotContains(t, string(body), secret)
 	assert.Contains(t, string(body), http.StatusText(http.StatusInternalServerError))
+	assert.Contains(t, logs.String(), secret, "the error handler failure must be logged")
 }
 
 func TestIntegration(t *testing.T) {
@@ -502,12 +514,12 @@ func TestIntegration(t *testing.T) {
 
 		app := fiber.New()
 		app.Use(ScopeMiddleware(provider,
-			WithMiddleware(func(scope godi.Scope, c *fiber.Ctx) error {
+			WithMiddleware(func(scope godi.Scope, c fiber.Ctx) error {
 				requestValues["initialized"] = "true"
 				return nil
 			}),
 		))
-		app.Get("/test", Handle(func(ctrl *testController, c *fiber.Ctx) error {
+		app.Get("/test", Handle(func(ctrl *testController, c fiber.Ctx) error {
 			requestValues["service_id"] = ctrl.Service.ID
 			return c.SendString("OK")
 		}))
@@ -524,11 +536,11 @@ func TestIntegration(t *testing.T) {
 }
 
 type testDisposable struct {
-	closed bool
+	closed atomic.Bool
 }
 
 func (d *testDisposable) Close() error {
-	d.closed = true
+	d.closed.Store(true)
 	return errors.New("close failed")
 }
 
@@ -552,8 +564,8 @@ func TestScopeClosedWhenHandlerPanics(t *testing.T) {
 	// the auto-close would eventually dispose the instance anyway.
 	var closeErr error
 	errorHandlerSawScope := false
-	app := fiber.New(fiber.Config{ErrorHandler: func(c *fiber.Ctx, _ error) error {
-		scope, scopeErr := godi.FromContext(c.UserContext())
+	app := fiber.New(fiber.Config{ErrorHandler: func(c fiber.Ctx, _ error) error {
+		scope, scopeErr := godi.FromContext(c.Context())
 		assert.NoError(t, scopeErr)
 		_, resolveErr := godi.Resolve[*testDisposable](scope)
 		errorHandlerSawScope = resolveErr == nil
@@ -565,8 +577,8 @@ func TestScopeClosedWhenHandlerPanics(t *testing.T) {
 		WithCloseErrorHandler(func(err error) { closeErr = err }),
 	))
 	app.Use(fiberrecover.New())
-	app.Get("/panic", func(c *fiber.Ctx) error {
-		scope, scopeErr := godi.FromContext(c.UserContext())
+	app.Get("/panic", func(c fiber.Ctx) error {
+		scope, scopeErr := godi.FromContext(c.Context())
 		assert.NoError(t, scopeErr)
 		_, resolveErr := godi.Resolve[*testDisposable](scope)
 		assert.NoError(t, resolveErr)
@@ -580,9 +592,11 @@ func TestScopeClosedWhenHandlerPanics(t *testing.T) {
 
 	assert.NotNil(t, disposable)
 	assert.Error(t, closeErr, "the middleware itself must close the scope when the handler panics")
-	assert.Contains(t, closeErr.Error(), "close failed")
+	if closeErr != nil {
+		assert.Contains(t, closeErr.Error(), "close failed")
+	}
 	assert.True(t, errorHandlerSawScope, "panic error handling must run while the scope is alive")
-	assert.True(t, disposable.closed, "scope must be closed even when the handler panics")
+	assert.True(t, disposable.closed.Load(), "scope must be closed even when the handler panics")
 }
 
 // streamResource is a scoped reader that cannot be read once closed.
@@ -622,11 +636,11 @@ func TestScopeOutlivesStreamedResponse(t *testing.T) {
 	assert.NoError(t, err)
 	defer provider.Close()
 
-	var closeErr error
+	var closeErr atomic.Pointer[error]
 	app := fiber.New()
-	app.Use(ScopeMiddleware(provider, WithCloseErrorHandler(func(err error) { closeErr = err })))
-	app.Get("/stream", func(c *fiber.Ctx) error {
-		scope, scopeErr := godi.FromContext(c.UserContext())
+	app.Use(ScopeMiddleware(provider, WithCloseErrorHandler(func(err error) { closeErr.Store(&err) })))
+	app.Get("/stream", func(c fiber.Ctx) error {
+		scope, scopeErr := godi.FromContext(c.Context())
 		assert.NoError(t, scopeErr)
 		stream, resolveErr := godi.Resolve[*streamResource](scope)
 		assert.NoError(t, resolveErr)
@@ -644,8 +658,9 @@ func TestScopeOutlivesStreamedResponse(t *testing.T) {
 	body, err := io.ReadAll(resp.Body)
 	assert.NoError(t, err)
 	assert.Equal(t, payload, string(body), "the scope must stay open until the response is streamed")
-	assert.NoError(t, closeErr)
+	assert.Nil(t, closeErr.Load())
 	if assert.NotNil(t, resource) {
-		assert.True(t, resource.closed.Load(), "the scope must be closed once the response is written")
+		assert.Eventually(t, resource.closed.Load, time.Second, 5*time.Millisecond,
+			"the scope must be closed once the response is written")
 	}
 }

@@ -2,7 +2,7 @@
 //
 // Chi uses standard net/http handlers and middleware, so this package is a
 // thin facade over the net/http integration
-// (github.com/junioryono/godi/http/v5): its types are aliases of the godihttp
+// (github.com/junioryono/godi/http/v6): its types are aliases of the godihttp
 // types and its functions delegate to godihttp. Using either package with a
 // Chi router behaves identically; this one exists for discoverability.
 //
@@ -25,8 +25,8 @@ import (
 	"log/slog"
 	"net/http"
 
-	godihttp "github.com/junioryono/godi/http/v5"
-	"github.com/junioryono/godi/v5"
+	godihttp "github.com/junioryono/godi/http/v6"
+	"github.com/junioryono/godi/v6"
 )
 
 // Config holds the configuration for the scope middleware.

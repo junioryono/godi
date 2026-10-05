@@ -37,9 +37,9 @@ The root package `godi` has one file per concept:
 | --- | --- |
 | `collection.go` | `Collection`, `Build`, `Validate`, build-time validation |
 | `module.go` | `ModuleOption`, `NewModule`, `Add*`, `Remove*`, `Replace*`, `TryAdd*` |
-| `options.go` | registration options: `Name`, `Key`, `Group`, `As`, `Lazy`, `NoDispose`, `Instance` |
+| `options.go` | registration options (`Name`, `Key`, `Group`, `As`, `Lazy`, `NoDispose`, `Instance`) and build options (`WithContext`, `WithBuildTimeout`, `WithObserver`, `WithScopeValidation`) |
 | `decorate.go` | `Decorate` |
-| `provider.go`, `scope.go` | the built container: `Provider`, `ProviderOptions`, `Scope`, `FromContext` |
+| `provider.go`, `scope.go` | the built container: `Provider`, `Scope`, `FromContext` |
 | `resolve.go` | `Resolver`, `Resolve*`, `MustResolve*`, `ResolveFromContext`, `Invoke`, `IsService` |
 | `lifecycle.go` | disposal (`Disposable`, `ContextCloser`, `Shutdowner`, `Shutdown`), `Start`, `HealthCheck` |
 | `errors.go` | error types and `Explain` |
@@ -96,7 +96,7 @@ type(optional-scope): imperative description
 
 Allowed types are `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`.
 
-Useful scopes include core packages (`provider`, `collection`, `module`, `lifetime`, `descriptor`, `errors`, `inout`, `scope`, `resolver`), repository concerns (`deps`, `docs`, `benchmarks`, `release`, `security`), and integrations (`http`, `chi`, `echo`, `echov5`, `fiber`, `fiberv3`, `gin`, `huma`, or `integrations` for changes that span several).
+Useful scopes include core packages (`provider`, `collection`, `module`, `lifetime`, `descriptor`, `errors`, `inout`, `scope`, `resolver`), repository concerns (`deps`, `docs`, `benchmarks`, `release`, `security`), and integrations (`http`, `chi`, `echo`, `fiber`, `gin`, `huma`, or `integrations` for changes that span several).
 
 Examples:
 

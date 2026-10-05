@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/junioryono/godi/v5/internal/reflection"
+	"github.com/junioryono/godi/v6/internal/reflection"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -683,7 +683,7 @@ func TestAnalyzer_MultipleReturns(t *testing.T) {
 
 // Test error handling in builders
 func TestParamObjectBuilder_ErrorCases(t *testing.T) {
-	analyzer := reflection.New()
+	analyzer := reflection.New(reflection.WithNotFound(reflection.NotFoundPolicy))
 	builder := reflection.NewParamObjectBuilder(analyzer)
 
 	// Mock resolver that always fails
@@ -1083,7 +1083,7 @@ func (m *mockResolver) Get(t reflect.Type) (any, error) {
 	return reflect.New(t.Elem()).Interface(), nil
 }
 
-func (m *mockResolver) GetKeyed(t reflect.Type, key any) (any, error) {
+func (m *mockResolver) GetKeyed(t reflect.Type, _ string) (any, error) {
 	if m.shouldFail {
 		return nil, m.failError
 	}
