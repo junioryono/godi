@@ -301,7 +301,7 @@ func (sc *collection) doBuild(parent, ctx context.Context, options *buildOptions
 
 	// Phase 7: Initialize root-scoped side-effect constructors only after all
 	// singletons exist. Request/child scopes still initialize them in newScope.
-	if err := p.rootScope.initializeScopedServices(); err != nil {
+	if err := p.rootScope.initializeScopedServices(ctx); err != nil {
 		buildErr := &BuildError{
 			Phase:   PhaseScopeInitialization,
 			Details: "failed to initialize root scoped services",

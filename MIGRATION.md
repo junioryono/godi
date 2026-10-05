@@ -4,9 +4,16 @@
 
 `godi.WithScopeValidation` and `godi.ErrScopeRequired` are removed: the root
 provider is always a scope, as in v5. Delete `WithScopeValidation(...)` from
-`Build` calls. Code that resolved scoped services only from scopes is
-unaffected; code that relied on `ErrScopeRequired` now gets the root scope's
-instance, and the root scope runs scoped initializers during `Build`.
+`Build` calls. Then check:
+
+- **Scoped initializers** (scoped constructors that return nothing or only an
+  error) now also run once in the root scope during `Build`. Their scoped
+  dependencies are created there and live until the provider closes, and an
+  initializer that fails, or needs values only a request scope has, fails
+  `Build`.
+- Code that relied on `ErrScopeRequired` now gets the root scope's instance.
+- `IsService` and `IsKeyedService` report scoped services as resolvable from a
+  `Provider`.
 
 ## v5 → v6
 
@@ -18,7 +25,7 @@ The full guide with before/after examples is
 | --- | --- |
 | Import path `/v5` → `/v6` (integrations `/<name>/v6`) | Find-and-replace across your module |
 | **Values registered as instances are not disposed** (silent) | Close them yourself, or register a constructor that returns them |
-| `ProviderOptions.ValidateScopes` removed | Nothing: the root provider is a scope, as in v5 |
+| `ProviderOptions.ValidateScopes` removed | Resolve per-request services from scopes you create: godi no longer checks it (the root provider is a scope, as in v5) |
 | `BuildWithContext`, `BuildWithOptions`, `ProviderOptions` removed | `Build(godi.WithContext(ctx), godi.WithBuildTimeout(d), godi.WithObserver(o))` |
 | Constructors cannot depend on `Provider` or `Scope`; `Scope.Provider()` removed | Depend on `godi.Resolver` or `godi.ScopeFactory` |
 | A constructor's injected `context.Context` carries no scope | Use the injected `godi.Resolver` instead of `FromContext` |

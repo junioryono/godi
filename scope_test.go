@@ -335,6 +335,70 @@ func TestRootScope(t *testing.T) {
 		require.NoError(t, p.Close())
 		assert.True(t, d.IsClosed())
 	})
+
+	// The provider owns what the root scope creates: a failed Close is not a
+	// singleton's.
+	t.Run("reports_disposal_failures_as_the_providers", func(t *testing.T) {
+		t.Parallel()
+		closeErr := errors.New("close failed")
+		c := NewCollection()
+		c.AddScoped(func() *TDisposable {
+			d := NewTDisposable()
+			d.SetCloseError(closeErr)
+			return d
+		})
+		p, err := c.Build()
+		require.NoError(t, err)
+		_, err = Resolve[*TDisposable](p)
+		require.NoError(t, err)
+
+		err = p.Close()
+		require.ErrorIs(t, err, closeErr)
+		assert.Contains(t, err.Error(), "provider disposable")
+		assert.NotContains(t, err.Error(), "singleton disposable")
+	})
+
+	// A failing initializer fails Build, which disposes what the root scope
+	// had created.
+	t.Run("a_failing_initializer_fails_build", func(t *testing.T) {
+		t.Parallel()
+		initErr := errors.New("init failed")
+		var dep *TDisposable
+		c := NewCollection()
+		c.AddScoped(func() *TDisposable {
+			dep = NewTDisposable()
+			return dep
+		})
+		c.AddScoped(func(*TDisposable) error { return initErr })
+
+		p, err := c.Build()
+		require.Error(t, err)
+		assert.Nil(t, p)
+		assert.ErrorIs(t, err, initErr)
+		buildErr, ok := errors.AsType[*BuildError](err)
+		require.True(t, ok, "want a *BuildError, got %T", err)
+		assert.Equal(t, PhaseScopeInitialization, buildErr.Phase)
+		require.NotNil(t, dep, "the initializer's dependency was created in the root scope")
+		assert.True(t, dep.IsClosed(), "and disposed when Build failed")
+	})
+
+	// Build stops running initializers once its context is cancelled, as it
+	// stops creating singletons.
+	t.Run("stops_initializers_when_build_is_cancelled", func(t *testing.T) {
+		t.Parallel()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		var second atomic.Bool
+		c := NewCollection()
+		c.AddScoped(func() { cancel() })
+		c.AddScoped(func() { second.Store(true) })
+
+		p, err := c.Build(WithContext(ctx))
+		require.Error(t, err)
+		assert.Nil(t, p)
+		assert.ErrorIs(t, err, context.Canceled)
+		assert.False(t, second.Load(), "no initializer runs after the build context is cancelled")
+	})
 }
 
 func TestNestedScopes(t *testing.T) {
@@ -615,34 +679,38 @@ func TestBuiltinServiceInjection(t *testing.T) {
 		t.Parallel()
 		type Holder struct{ Scopes ScopeFactory }
 		type Worker struct{ Scopes ScopeFactory }
-		var once atomic.Bool
-		var grandchildErr error
+		// Armed after Build: the root scope runs the initializer during Build,
+		// and this test is about the restricted scope created later.
+		var armed, once atomic.Bool
+		var createErr, resolveErr error
 		c := NewCollection()
 		c.AddScoped(func(f ScopeFactory) *Holder { return &Holder{Scopes: f} })
 		c.AddScoped(func(h *Holder) {
-			if !once.CompareAndSwap(false, true) {
+			if !armed.Load() || !once.CompareAndSwap(false, true) {
 				return
 			}
 			grandchild, err := h.Scopes.CreateScope(context.Background())
 			if err != nil {
-				grandchildErr = err
+				createErr = err
 				return
 			}
 			defer grandchild.Close()
-			_, grandchildErr = Resolve[Provider](grandchild)
+			_, resolveErr = Resolve[Provider](grandchild)
 		})
 		c.AddSingleton(func(f ScopeFactory) *Worker { return &Worker{Scopes: f} })
 		built, err := c.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = built.Close() })
+		armed.Store(true)
 
 		worker, err := Resolve[*Worker](built)
 		require.NoError(t, err)
 		child, err := worker.Scopes.CreateScope(context.Background())
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = child.Close() })
-		require.True(t, once.Load(), "the initializer ran")
-		require.Error(t, grandchildErr, "the grandchild must not resolve the Provider")
+		require.True(t, once.Load(), "the restricted scope's initializer ran")
+		require.NoError(t, createErr, "the grandchild is created")
+		require.Error(t, resolveErr, "the grandchild must not resolve the Provider")
 	})
 
 	// The background-worker pattern: an initializer hands its factory to a
@@ -652,10 +720,12 @@ func TestBuiltinServiceInjection(t *testing.T) {
 		t.Parallel()
 		type Worker struct{ Scopes ScopeFactory }
 		done := make(chan error, 1)
-		var once atomic.Bool
+		// Armed after Build: the root scope runs the initializer during Build,
+		// and the race is in the restricted scope created later.
+		var armed, once atomic.Bool
 		c := NewCollection()
 		c.AddScoped(func(f ScopeFactory) {
-			if !once.CompareAndSwap(false, true) {
+			if !armed.Load() || !once.CompareAndSwap(false, true) {
 				return
 			}
 			go func() {
@@ -670,13 +740,15 @@ func TestBuiltinServiceInjection(t *testing.T) {
 		built, err := c.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = built.Close() })
+		armed.Store(true)
 
 		worker, err := Resolve[*Worker](built)
 		require.NoError(t, err)
 		child, err := worker.Scopes.CreateScope(context.Background())
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = child.Close() })
-		<-done
+		require.True(t, once.Load(), "the restricted scope's initializer ran")
+		require.NoError(t, <-done, "the worker creates a scope under the restricted one")
 	})
 
 	// Build includes the root scope's initializers, which run after the
