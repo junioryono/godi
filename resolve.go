@@ -250,21 +250,27 @@ func Invoke(r Resolver, fn any) error {
 }
 
 // IsService reports whether serviceType can be resolved (without a key) from
-// p, a Provider or Scope: it is registered, or it is one of the container's
-// own types (context.Context, godi.Provider, godi.Scope). It constructs
-// nothing.
+// r: it is registered, or it is one of the container's own types
+// (context.Context, godi.Resolver, godi.ScopeFactory, and, except through an
+// injected Resolver, godi.Provider and godi.Scope). It constructs nothing.
+// r must be a Provider, a Scope, or a Resolver godi injected; for any other
+// Resolver (a wrapper or test double) it reports false.
 func IsService(r Resolver, serviceType reflect.Type) bool {
 	if serviceType == nil {
 		return false
 	}
 	if _, reserved := reservedTypes[serviceType]; reserved {
-		return true
+		if _, injected := r.(*frameResolver); injected && (serviceType == providerType || serviceType == scopeType) {
+			return false // see frameResolver.Get
+		}
+		return rootProviderOf(r) != nil
 	}
 	return resolvableFrom(r, serviceType, nil)
 }
 
-// IsKeyedService reports whether serviceType is registered under key in p,
-// a Provider or Scope. It constructs nothing.
+// IsKeyedService reports whether serviceType is registered under name and
+// can be resolved from r (see IsService for what r may be). It constructs
+// nothing.
 func IsKeyedService(r Resolver, serviceType reflect.Type, name string) bool {
 	if serviceType == nil || name == "" {
 		return false

@@ -133,6 +133,12 @@ services.AddSingleton(db)  // godi uses it, but never closes it
 To hand a value you created to godi, register a constructor that returns it
 instead: `services.AddSingleton(func() *sql.DB { return db })`.
 
+Decorators applied to an instance are not disposed either: a wrapper that
+passes `Close` through would close your value. Ownership is tracked by
+identity, so register disposable values as pointers. A struct value with a
+`Close` method can't be told apart from a copy, so a scoped service that
+returns one adopts and closes it.
+
 The other way around, mark a constructor whose values you manage yourself with
 `godi.NoDispose()`; godi never disposes them, and no scope adopts them either:
 

@@ -13,6 +13,10 @@ The full guide with before/after examples is
 | Scope validation is on by default | Resolve scoped services from a scope, or `Build(godi.WithScopeValidation(false))` |
 | `BuildWithContext`, `BuildWithOptions`, `ProviderOptions` removed | `Build(godi.WithContext(ctx), godi.WithBuildTimeout(d), godi.WithObserver(o))` |
 | Constructors cannot depend on `Provider` or `Scope`; `Scope.Provider()` removed | Depend on `godi.Resolver` or `godi.ScopeFactory` |
+| A constructor's injected `context.Context` carries no scope | Use the injected `godi.Resolver` instead of `FromContext` |
+| An injected `ScopeFactory` cannot create scopes during its constructor | Store it and create scopes later |
+| `godi.Start` skips values registered as instances | Start them yourself |
+| `""` names no service in `ContainsKeyed`/`RemoveKeyed` | Use `Contains`/`Remove` for unnamed services |
 | `godi.Key` removed; keyed APIs take `name string` | Use `godi.Name`; `ErrServiceKeyNil` is `ErrServiceKeyEmpty` |
 | `godi.Name` keys every output of a multi-return constructor | Resolve the other outputs by name, or use a result object |
 | Error types have pointer receivers | Match with `errors.AsType[*godi.XxxError]`; value-typed `errors.As` targets now panic |
@@ -76,6 +80,6 @@ match individual causes, and module errors carry the module name.
 ```sh
 grep -rl 'junioryono/godi/v4' . | xargs sed -i '' -E 's#junioryono/godi/v4/(http|chi|echo|fiber|gin|huma)#junioryono/godi/\1/v5#g'
 grep -rl 'junioryono/godi/v4' . | xargs sed -i '' 's#junioryono/godi/v4#junioryono/godi/v5#g'
-go get github.com/junioryono/godi/v6@latest
+go get github.com/junioryono/godi/v5@latest
 go mod tidy && go build ./...
 ```

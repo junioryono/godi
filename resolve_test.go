@@ -113,6 +113,22 @@ func TestIsService(t *testing.T) {
 	assert.True(t, IsService(p, reflect.TypeFor[Scope]()), "the container's own types are services")
 	assert.True(t, IsService(p, reflect.TypeFor[context.Context]()))
 
+	t.Run("agrees_with_an_injected_resolver", func(t *testing.T) {
+		t.Parallel()
+		type Holder struct{ Resolver Resolver }
+		c := NewCollection()
+		c.AddSingleton(func(r Resolver) *Holder { return &Holder{Resolver: r} })
+		built, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = built.Close() })
+		holder, err := Resolve[*Holder](built)
+		require.NoError(t, err)
+
+		assert.True(t, IsService(holder.Resolver, reflect.TypeFor[Resolver]()))
+		assert.False(t, IsService(holder.Resolver, reflect.TypeFor[Provider]()), "an injected Resolver refuses the container")
+		assert.False(t, IsService(resolverOnly{built}, reflect.TypeFor[*Holder]()), "a Resolver godi did not create cannot be inspected")
+	})
+
 	t.Run("agrees_with_validate_scopes", func(t *testing.T) {
 		t.Parallel()
 		c := NewCollection()

@@ -215,6 +215,8 @@ type Starter interface {
 // singletons that have not been resolved yet are not created. Start runs at
 // most once per provider. Stop started services by closing the provider
 // (godi.Shutdown with a deadline): disposal runs in reverse creation order.
+// Values registered as instances are left to the caller, who owns their
+// lifecycle: Start does not start them, as Close does not dispose them.
 func Start(ctx context.Context, p Provider) error {
 	root := rootProviderOf(p)
 	if root == nil {

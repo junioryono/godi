@@ -306,8 +306,8 @@ func analyzeService(service any, analyzer *reflection.Analyzer) (unwrapped any, 
 	return service, false, info, nil
 }
 
-// clone returns a shallow copy of the descriptor with the sibling links
-// cleared. Registration paths that derive several descriptors from one
+// clone returns a shallow copy of the descriptor that shares its
+// registration. Registration paths that derive several descriptors from one
 // analyzed constructor (result-object fields, multi-return values, interface
 // bindings) clone the source and override only the fields that differ, so a
 // new descriptor field is inherited by every derived descriptor

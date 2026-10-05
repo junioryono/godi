@@ -19,7 +19,11 @@ A major release at the import path `github.com/junioryono/godi/v6`. See the
   scoped initializers. `WithScopeValidation(false)` opts out.
 - **Constructors receive `godi.Resolver` and the new `godi.ScopeFactory`**;
   `Provider` and `Scope` parameters are rejected at registration, and
-  `Scope.Provider()` is removed.
+  `Scope.Provider()` is removed. An injected `Resolver` refuses `Provider` and
+  `Scope`; a constructor's context carries no scope; an injected
+  `ScopeFactory` cannot create scopes until its constructor returns.
+- **`godi.Start` skips instances**, which godi neither starts nor disposes.
+- **An empty name names no service** in `ContainsKeyed` and `RemoveKeyed`.
 - **`godi.Name` keys every output** of a multi-return constructor.
 - **Error types have pointer receivers**; a value-typed `errors.As` target
   panics.

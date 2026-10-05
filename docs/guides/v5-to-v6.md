@@ -38,6 +38,14 @@ services.AddSingleton(func() *sql.DB { return db })
 
 `godi.NoDispose()` remains for constructors whose values you manage.
 
+Two related rules:
+
+- Results of decorators applied to an instance are not disposed either. A
+  wrapper that passes `Close` through would otherwise close your value.
+  Decorate a constructor instead if a decorator opens resources of its own.
+- `godi.Start` no longer starts instances. godi doesn't stop them, so their
+  whole lifecycle is yours.
+
 ## Scopes are validated by default
 
 Resolving a scoped service from the root provider, directly or through
@@ -88,9 +96,20 @@ func NewManager(p godi.Provider) *Manager { ... godi.MustResolveKeyed[DB](p, "pr
 func NewManager(r godi.Resolver) *Manager { ... godi.MustResolveKeyed[DB](r, "primary") ... }
 ```
 
+Neither view leads back to the container:
+
+- An injected `Resolver` refuses to resolve `godi.Provider` or `godi.Scope`.
+- The `context.Context` injected into a constructor keeps the scope's values
+  but not the scope, so `godi.FromContext` and `godi.ResolveFromContext` fail
+  inside constructors. Use the injected `Resolver`.
+- An injected `ScopeFactory` refuses to create scopes until its constructor
+  returns. The new scope's initializers could need the constructor's own
+  output. Store it and create scopes later.
+
 `Scope.Provider()` is removed. `godi.Invoke`, `godi.IsService` and
 `godi.IsKeyedService` take a `godi.Resolver` (a Provider or Scope still
-works).
+works; `IsService` reports false for Resolver implementations godi didn't
+create).
 
 ## Names are the only keys
 
@@ -107,6 +126,8 @@ tags (`name:"..."`) can also express. Keyed lookups take a name:
 
 The key fields of `ServiceInfo`, `DependencyInfo`, `ConstructedEvent`,
 `ResolutionError` and `MissingDependencyError` are names (`""` when unnamed).
+An empty name names no service: `ContainsKeyed` reports false and
+`RemoveKeyed` removes nothing (in v5 they meant the unnamed registration).
 
 ## godi.Name names every output
 

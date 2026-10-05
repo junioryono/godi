@@ -120,7 +120,7 @@ func (o addNameOption) applyAddOption(opt *addOptions) {
 // return is added to the group of its own type. Consume a group with
 // ResolveGroup or an In field of slice type tagged `group:"..."`.
 //
-// This option cannot be combined with Name or Key, and cannot be provided for
+// This option cannot be combined with Name, and cannot be provided for
 // constructors which produce result objects.
 func Group(group string) AddOption {
 	return addGroupOption(group)
@@ -178,7 +178,8 @@ func (o addGroupOption) applyAddOption(opt *addOptions) {
 //
 // This option cannot be provided for constructors which produce result
 // objects or have multiple non-error return values, and reserved types
-// (context.Context, godi.Provider, godi.Scope) cannot be registered this way.
+// (context.Context, godi.Provider, godi.Scope, godi.Resolver,
+// godi.ScopeFactory) cannot be registered this way.
 func As[T any]() AddOption {
 	return addAsOption{new(T)}
 }
@@ -290,9 +291,10 @@ func (f buildOptionFunc) applyBuildOption(o *buildOptions) { f(o) }
 
 // WithContext sets the parent of the provider's root context: its values are
 // visible to services, and its cancellation propagates to them. It also bounds
-// Build: constructors that run during Build receive it (or the build
-// timeout's context derived from it), and Build fails if it is cancelled.
-// A nil ctx means context.Background(); the last WithContext wins.
+// Build: Build fails if it is cancelled, and constructors that run during
+// Build receive the provider's root context, which is cancelled with it (or
+// when a WithBuildTimeout expires) but reports no deadline. A nil ctx means
+// context.Background(); the last WithContext wins.
 func WithContext(ctx context.Context) BuildOption {
 	return buildOptionFunc(func(o *buildOptions) { o.context = ctx })
 }
