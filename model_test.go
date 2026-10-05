@@ -248,12 +248,17 @@ func modelNodeOfValue(v reflect.Value) *modelNode {
 	return v.Interface().(modelNoder).modelNodeOf()
 }
 
+// modelScopeKey tags each scope's context with the model's name for it, so
+// constructors (whose context does not carry the godi scope) can tell which
+// scope they run in.
+type modelScopeKey struct{}
+
 func modelScopeID(ctx context.Context) string {
-	s, err := godi.FromContext(ctx)
-	if err != nil {
-		panic(fmt.Sprintf("constructor context carries no scope: %v", err))
+	id, ok := ctx.Value(modelScopeKey{}).(string)
+	if !ok {
+		panic("constructor context carries no model scope name")
 	}
-	return s.ID()
+	return id
 }
 
 // ---------------------------------------------------------------------------
@@ -1563,7 +1568,8 @@ func (r *modelRun) build() bool {
 
 	r.validateScopes = r.chance(30)
 	r.tr.setBuilding(true)
-	p, err := r.c.Build(godi.WithScopeValidation(r.validateScopes))
+	rootCtx := context.WithValue(context.Background(), modelScopeKey{}, "root")
+	p, err := r.c.Build(godi.WithScopeValidation(r.validateScopes), godi.WithContext(rootCtx))
 	r.tr.setBuilding(false)
 	r.logf("Build(ValidateScopes=%v): %v", r.validateScopes, err)
 
@@ -1585,13 +1591,7 @@ func (r *modelRun) build() bool {
 	}
 	r.p = p
 
-	// The root scope's ID, to attribute constructions made in it.
-	ctx, gerr := godi.Resolve[context.Context](p)
-	if gerr != nil {
-		r.failf("resolve context.Context from provider: %v", gerr)
-		return false
-	}
-	r.rootID = modelScopeID(ctx)
+	r.rootID = "root"
 
 	r.tr.mu.Lock()
 	for _, n := range r.tr.nodes {
@@ -1631,17 +1631,19 @@ func (r *modelRun) opCreateScope() {
 	var parent *modelScope
 	var s godi.Scope
 	var err error
+	id := fmt.Sprintf("s%d", len(r.scopes)+1)
+	ctx := context.WithValue(context.Background(), modelScopeKey{}, id)
 	if open := r.openScopes(); len(open) > 0 && r.chance(30) {
 		parent = pick(r, open)
-		s, err = parent.s.CreateScope(context.Background())
+		s, err = parent.s.CreateScope(ctx)
 	} else {
-		s, err = r.p.CreateScope(context.Background())
+		s, err = r.p.CreateScope(ctx)
 	}
 	if err != nil {
 		r.failf("CreateScope: %v", err)
 		return
 	}
-	ms := &modelScope{s: s, id: s.ID(), parent: parent}
+	ms := &modelScope{s: s, id: id, parent: parent}
 	if parent != nil {
 		parent.children = append(parent.children, ms)
 	}

@@ -294,8 +294,6 @@ func resolvesFromRoot(r Resolver) bool {
 		return true
 	case *scope:
 		return v.isRoot
-	case *frameScope:
-		return v.isRoot
 	case *frameResolver:
 		return v.scope.isRoot
 	default:

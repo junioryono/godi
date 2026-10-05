@@ -489,6 +489,59 @@ func TestBuiltinServiceInjection(t *testing.T) {
 		assert.ErrorIs(t, err, ErrScopeRequired)
 	})
 
+	// The container itself stays out of reach: through an injected Resolver,
+	// during construction or stored for later, and through the context.
+	t.Run("an_injected_resolver_cannot_reach_the_container", func(t *testing.T) {
+		t.Parallel()
+		type Holder struct{ Resolver Resolver }
+		var duringProvider, duringScope error
+		c := NewCollection()
+		c.AddScoped(func(r Resolver) *Holder {
+			_, duringProvider = Resolve[Provider](r)
+			_, duringScope = Resolve[Scope](r)
+			return &Holder{Resolver: r}
+		})
+		built, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = built.Close() })
+
+		holder, err := Resolve[*Holder](NewTestScope(t, built))
+		require.NoError(t, err)
+		require.Error(t, duringProvider)
+		require.Error(t, duringScope)
+		_, err = Resolve[Provider](holder.Resolver)
+		require.Error(t, err, "a stored Resolver cannot reach the container either")
+		_, err = Resolve[Scope](holder.Resolver)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "godi.ScopeFactory")
+	})
+
+	t.Run("an_injected_context_carries_no_scope", func(t *testing.T) {
+		t.Parallel()
+		type Holder struct{ Ctx context.Context }
+		c := NewCollection()
+		c.AddScoped(func(ctx context.Context) *Holder { return &Holder{Ctx: ctx} })
+		built, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = built.Close() })
+		ctx := context.WithValue(context.Background(), testContextKey("key"), "value")
+		scope, err := built.CreateScope(ctx)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = scope.Close() })
+
+		holder, err := Resolve[*Holder](scope)
+		require.NoError(t, err)
+		assert.Equal(t, "value", holder.Ctx.Value(testContextKey("key")), "the scope's context values stay visible")
+		_, err = FromContext(holder.Ctx)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "godi.Resolver")
+
+		// Code outside constructors still finds the scope in its context.
+		found, err := FromContext(scope.Context())
+		require.NoError(t, err)
+		assert.Equal(t, scope.ID(), found.ID())
+	})
+
 	t.Run("injects_scope_factory", func(t *testing.T) {
 		t.Parallel()
 		type Worker struct{ Scopes ScopeFactory }
@@ -707,26 +760,6 @@ func TestDynamicCircularResolution(t *testing.T) {
 		var cycle *CircularDependencyError
 		assert.True(t, errors.As(results[0], &cycle) || errors.As(results[1], &cycle),
 			"the cycle is reported: %v / %v", results[0], results[1])
-	})
-
-	t.Run("cycle_through_the_injected_context", func(t *testing.T) {
-		t.Parallel()
-		// A resolves B through its context.Context during Build, and B
-		// depends on A: the scope found in the context must carry A's
-		// construction, or B waits on A's own in-progress construction.
-		c := NewCollection()
-		c.AddSingleton(func(ctx context.Context) (*SelfA, error) {
-			_, err := ResolveFromContext[*SelfB](ctx)
-			return &SelfA{}, err
-		})
-		c.AddSingleton(func(*SelfA) *SelfB { return &SelfB{} })
-
-		err := resolveWithin(t, func() error {
-			_, err := c.Build()
-			return err
-		})
-		var cycle *CircularDependencyError
-		require.ErrorAs(t, err, &cycle)
 	})
 
 	t.Run("stored_resolver_is_unrestricted_after_construction", func(t *testing.T) {

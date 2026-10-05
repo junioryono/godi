@@ -2041,9 +2041,6 @@ func TestBuildContext(t *testing.T) {
 
 		c := NewCollection()
 		c.AddSingleton(func(ctx context.Context) (*TService, error) {
-			if _, err := FromContext(ctx); err != nil {
-				return nil, err
-			}
 			if ctx.Value(contextKey{}) != want {
 				return nil, errors.New("build context value was not preserved")
 			}

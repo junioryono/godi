@@ -189,6 +189,11 @@ type frameResolver struct {
 }
 
 func (f *frameResolver) Get(serviceType reflect.Type) (any, error) {
+	if serviceType == providerType || serviceType == scopeType {
+		// Even after the constructor returns: a stored Resolver must not
+		// hand out the container.
+		return nil, &ResolutionError{ServiceType: serviceType, Cause: errContainerRequest}
+	}
 	return f.scope.get(f.frame.ifActive(), serviceType)
 }
 
@@ -211,29 +216,6 @@ type scopeFactory struct {
 
 func (f scopeFactory) CreateScope(ctx context.Context) (Scope, error) {
 	return f.scope.CreateScope(ctx)
-}
-
-// frameScope is the Scope injected into a constructor: the resolving scope,
-// with resolutions made through it attributed to the in-progress
-// construction. A constructor that (directly or indirectly) resolves itself
-// through it gets a CircularDependencyError instead of deadlocking (scoped)
-// or overflowing the stack (transient). After the constructor returns it
-// behaves exactly like the scope.
-type frameScope struct {
-	*scope
-	frame *resolveFrame
-}
-
-func (f *frameScope) Get(serviceType reflect.Type) (any, error) {
-	return f.get(f.frame.ifActive(), serviceType)
-}
-
-func (f *frameScope) GetKeyed(serviceType reflect.Type, name string) (any, error) {
-	return f.getKeyed(f.frame.ifActive(), serviceType, keyOf(name))
-}
-
-func (f *frameScope) GetGroup(serviceType reflect.Type, group string) ([]any, error) {
-	return f.getGroup(f.frame.ifActive(), serviceType, group)
 }
 
 // hasCachedOwner reports whether a construction requested through parent is
@@ -932,21 +914,26 @@ func (s *scope) resolve(parent *resolveFrame, key instanceKey, descriptor *descr
 			switch key.Type {
 			case contextType:
 				if parent != nil {
-					// The scope found in the context (FromContext,
-					// ResolveFromContext) is attributed to the construction,
-					// like an injected Resolver.
-					return context.WithValue(s.context, scopeContextKey{}, &frameScope{scope: s, frame: parent}), nil
+					// A constructor's context keeps the scope's values but
+					// not the scope: FromContext would hand out the
+					// container, which constructors reach only through an
+					// injected Resolver or ScopeFactory.
+					return context.WithValue(s.context, scopeContextKey{}, hiddenScope{}), nil
 				}
 				return s.context, nil
 			case resolverType:
 				return &frameResolver{scope: s, frame: parent}, nil
 			case scopeFactoryType:
 				return scopeFactory{scope: s}, nil
-			case providerType:
-				// Only direct resolutions get here: constructors cannot
-				// depend on Provider or Scope.
-				return s.rootProvider, nil
-			case scopeType:
+			case providerType, scopeType:
+				if parent != nil {
+					// A construction asking for the container through
+					// its Resolver.
+					return nil, &ResolutionError{ServiceType: key.Type, Cause: errContainerRequest}
+				}
+				if key.Type == providerType {
+					return s.rootProvider, nil
+				}
 				return s, nil
 			}
 		}
@@ -1519,7 +1506,14 @@ func FromContext(ctx context.Context) (Scope, error) {
 		}
 	}
 
-	scope, ok := ctx.Value(scopeContextKey{}).(Scope)
+	value := ctx.Value(scopeContextKey{})
+	if _, hidden := value.(hiddenScope); hidden {
+		return nil, &ResolutionError{
+			ServiceType: scopeType,
+			Cause:       errors.New("the context injected into a constructor carries no scope; depend on godi.Resolver to resolve services, or godi.ScopeFactory to create scopes"),
+		}
+	}
+	scope, ok := value.(Scope)
 	if !ok {
 		return nil, &ResolutionError{
 			ServiceType: scopeType,
@@ -1532,3 +1526,11 @@ func FromContext(ctx context.Context) (Scope, error) {
 
 // scopeContextKey is the key used to store scopes in contexts
 type scopeContextKey struct{}
+
+// hiddenScope marks the context injected into a constructor: it carries the
+// scope's values but not the scope (see FromContext).
+type hiddenScope struct{}
+
+// errContainerRequest is the cause reported when a constructor asks its
+// injected Resolver for the container itself.
+var errContainerRequest = errors.New("an injected Resolver cannot resolve godi.Provider or godi.Scope; depend on godi.ScopeFactory to create scopes")
