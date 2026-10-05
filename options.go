@@ -292,9 +292,10 @@ func (f buildOptionFunc) applyBuildOption(o *buildOptions) { f(o) }
 // WithContext sets the parent of the provider's root context: its values are
 // visible to services, and its cancellation propagates to them. It also bounds
 // Build: Build fails if it is cancelled, and constructors that run during
-// Build receive the provider's root context, which is cancelled with it (or
-// when a WithBuildTimeout expires) but reports no deadline. A nil ctx means
-// context.Background(); the last WithContext wins.
+// Build receive the provider's root context, which carries ctx's values and
+// deadline and is cancelled with it. A WithBuildTimeout cancels it too, but
+// does not appear as its deadline. A nil ctx means context.Background(); the
+// last WithContext wins.
 func WithContext(ctx context.Context) BuildOption {
 	return buildOptionFunc(func(o *buildOptions) { o.context = ctx })
 }

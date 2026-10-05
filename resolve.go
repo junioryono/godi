@@ -260,10 +260,17 @@ func IsService(r Resolver, serviceType reflect.Type) bool {
 		return false
 	}
 	if _, reserved := reservedTypes[serviceType]; reserved {
-		if _, injected := r.(*frameResolver); injected && (serviceType == providerType || serviceType == scopeType) {
-			return false // see frameResolver.Get
+		switch v := r.(type) {
+		case *frameResolver:
+			if serviceType == providerType || serviceType == scopeType {
+				return false // see frameResolver.Get
+			}
+		case *scope:
+			if serviceType == providerType && v.restricted {
+				return false // see scope.restricted
+			}
 		}
-		return rootProviderOf(r) != nil
+		return inspectable(r)
 	}
 	return resolvableFrom(r, serviceType, nil)
 }
@@ -282,10 +289,10 @@ func IsKeyedService(r Resolver, serviceType reflect.Type, name string) bool {
 // and can be resolved from p: with ValidateScopes, scoped services cannot be
 // resolved from the root provider.
 func resolvableFrom(r Resolver, serviceType reflect.Type, key any) bool {
-	root := rootProviderOf(r)
-	if root == nil {
+	if !inspectable(r) {
 		return false
 	}
+	root := rootProviderOf(r)
 	d := root.findDescriptor(serviceType, key)
 	if d == nil {
 		return false
@@ -319,3 +326,14 @@ func rootProviderOf(r Resolver) *provider {
 func (p *provider) root() *provider { return p }
 
 func (s *scope) root() *provider { return s.rootProvider }
+
+// inspectable reports whether IsService can answer for r: only godi's own
+// resolvers, not wrappers (which could resolve differently) or test doubles.
+func inspectable(r Resolver) bool {
+	switch r.(type) {
+	case *provider, *scope, *frameResolver:
+		return true
+	default:
+		return false
+	}
+}

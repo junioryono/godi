@@ -102,9 +102,11 @@ Neither view leads back to the container:
 - The `context.Context` injected into a constructor keeps the scope's values
   but not the scope, so `godi.FromContext` and `godi.ResolveFromContext` fail
   inside constructors. Use the injected `Resolver`.
-- An injected `ScopeFactory` refuses to create scopes until its constructor
-  returns. The new scope's initializers could need the constructor's own
-  output. Store it and create scopes later.
+- An injected `ScopeFactory` refuses to create scopes while the provider
+  builds or while a construction that led to it is running: the new scope's
+  initializers could need that construction's output. Store it and create
+  scopes later. Scopes it creates, like the `Resolver`, don't resolve the
+  `Provider`.
 
 `Scope.Provider()` is removed. `godi.Invoke`, `godi.IsService` and
 `godi.IsKeyedService` take a `godi.Resolver` (a Provider or Scope still

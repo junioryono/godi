@@ -127,6 +127,11 @@ func TestIsService(t *testing.T) {
 		assert.True(t, IsService(holder.Resolver, reflect.TypeFor[Resolver]()))
 		assert.False(t, IsService(holder.Resolver, reflect.TypeFor[Provider]()), "an injected Resolver refuses the container")
 		assert.False(t, IsService(resolverOnly{built}, reflect.TypeFor[*Holder]()), "a Resolver godi did not create cannot be inspected")
+
+		// Nor a wrapper embedding a Provider, which would otherwise pass for
+		// one. Found by the second Codex review of #66.
+		type wrapper struct{ Provider }
+		assert.False(t, IsService(wrapper{built}, reflect.TypeFor[*Holder]()))
 	})
 
 	t.Run("agrees_with_validate_scopes", func(t *testing.T) {

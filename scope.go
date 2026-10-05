@@ -18,7 +18,12 @@ import (
 // constructor that creates scopes of its own (a background worker, say)
 // depends on ScopeFactory rather than on the Provider or Scope: injected, it
 // creates child scopes of the scope resolving the constructor (the root
-// scope for singletons), which are closed with it.
+// scope for singletons), which are closed with it and, like an injected
+// Resolver, do not resolve the Provider. An injected ScopeFactory refuses to
+// create scopes while the provider builds or while a construction that led
+// to it is still running, because the new scope's initializers could need
+// that construction's output: store it and create scopes later. (A scope
+// created from inside any other constructor can still deadlock that way.)
 type ScopeFactory interface {
 	CreateScope(ctx context.Context) (Scope, error)
 }
@@ -37,6 +42,11 @@ type scope struct {
 	parentScope  *scope
 	context      context.Context
 	cancel       context.CancelFunc
+
+	// restricted marks a scope created through an injected ScopeFactory, and
+	// its descendants: like the factory's Resolver, it does not lead back to
+	// the Provider.
+	restricted bool
 
 	// isRoot marks the provider's root scope. Its disposables live as long as
 	// the provider, so they are tracked in the provider's creation-ordered
@@ -98,9 +108,9 @@ type resolveFrame struct {
 	parent     *resolveFrame
 	descriptor *descriptor
 
-	// active is true while the constructor runs. A Scope or Provider handed
-	// to the constructor outlives it; once the construction is over,
-	// resolutions through it are no longer part of the construction.
+	// active is true while the constructor runs. A Resolver handed to the
+	// constructor outlives it; once the construction is over, resolutions
+	// through it are no longer part of the construction.
 	active atomic.Bool
 
 	// flight is the single-flight this construction leads, or nil
@@ -189,10 +199,16 @@ type frameResolver struct {
 }
 
 func (f *frameResolver) Get(serviceType reflect.Type) (any, error) {
-	if serviceType == providerType || serviceType == scopeType {
-		// Even after the constructor returns: a stored Resolver must not
-		// hand out the container.
+	// Even after the constructor returns, a stored Resolver must not hand out
+	// the container, directly or through a context carrying the scope.
+	switch serviceType {
+	case providerType, scopeType:
 		return nil, &ResolutionError{ServiceType: serviceType, Cause: errContainerRequest}
+	case contextType:
+		if f.scope.disposed.Load() != 0 {
+			return nil, ErrScopeDisposed
+		}
+		return context.WithValue(f.scope.context, scopeContextKey{}, hiddenScope{}), nil
 	}
 	return f.scope.get(f.frame.ifActive(), serviceType)
 }
@@ -217,12 +233,24 @@ type scopeFactory struct {
 }
 
 func (f scopeFactory) CreateScope(ctx context.Context) (Scope, error) {
-	// A new scope runs its initializers, which may need the output of the
-	// construction still running: it would wait on itself.
-	if f.frame.ifActive() != nil {
+	// A new scope runs its initializers, which may need the output of a
+	// construction still running (the one the factory was injected into, one
+	// that resolved it, or any singleton while the provider builds): they
+	// would wait on it forever.
+	if f.scope.rootProvider.building.Load() {
 		return nil, errScopeDuringConstruction
 	}
-	return f.scope.CreateScope(ctx)
+	for frame := f.frame; frame != nil; frame = frame.parent {
+		if frame.active.Load() {
+			return nil, errScopeDuringConstruction
+		}
+	}
+	child, err := f.scope.rootProvider.createScope(f.scope, ctx)
+	if err != nil {
+		return nil, err
+	}
+	child.restricted = true
+	return child, nil
 }
 
 // hasCachedOwner reports whether a construction requested through parent is
@@ -240,9 +268,8 @@ func hasCachedOwner(s *scope, parent *resolveFrame) bool {
 // checkCycle reports a CircularDependencyError if constructing d in scope s
 // on behalf of parent would re-enter a construction of d (or of a sibling
 // output of the same constructor) that is still in progress in s. Such
-// re-entrance happens only through an injected Resolver (or the scope of an
-// injected context): the static dependency graph is checked for cycles at
-// Build.
+// re-entrance happens only through an injected Resolver: the static
+// dependency graph is checked for cycles at Build.
 func (s *scope) checkCycle(parent *resolveFrame, d *descriptor) error {
 	fkey := flightKey(d)
 	for f := parent; f != nil; f = f.parent {
@@ -328,6 +355,7 @@ func newUninitializedScope(
 		id:           "s" + strconv.FormatUint(scopeNum, 36),
 		rootProvider: rootProvider,
 		parentScope:  parent,
+		restricted:   parent != nil && parent.restricted,
 		cancel:       cancel,
 		instances:    make(map[instanceKey]any, 8), // Pre-size for typical usage
 		closeDone:    make(chan struct{}),
@@ -933,7 +961,7 @@ func (s *scope) resolve(parent *resolveFrame, key instanceKey, descriptor *descr
 			case scopeFactoryType:
 				return scopeFactory{scope: s, frame: parent}, nil
 			case providerType, scopeType:
-				if parent != nil {
+				if parent != nil || key.Type == providerType && s.restricted {
 					// A construction asking for the container through
 					// its Resolver.
 					return nil, &ResolutionError{ServiceType: key.Type, Cause: errContainerRequest}

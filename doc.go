@@ -86,7 +86,7 @@
 //
 // # Registration options and features
 //
-//   - [Name] and [Key] register keyed services; [Group] collects several
+//   - [Name] registers named services; [Group] collects several
 //     registrations of one type; [As] registers a service under interfaces.
 //   - [In] parameter objects receive dependencies as struct fields, with
 //     name, group, and optional tags; [Out] result objects provide several

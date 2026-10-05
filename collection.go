@@ -211,8 +211,8 @@ func (sc *collection) Build(opts ...BuildOption) (Provider, error) {
 }
 
 // doBuild builds a provider. parent becomes the parent of the provider's root
-// context; ctx bounds the build itself and is visible (deadline and
-// cancellation) to constructors that run during Build.
+// context; ctx bounds the build itself: constructors that run during Build
+// see its cancellation (and parent's deadline) through the root context.
 func (sc *collection) doBuild(parent, ctx context.Context, options *buildOptions) (Provider, error) {
 	// Check context before starting
 	select {
@@ -289,8 +289,8 @@ func (sc *collection) doBuild(parent, ctx context.Context, options *buildOptions
 	p.rootScope.isRoot = true
 
 	// Phase 6: Create singletons. Eager constructors receive the root scope's
-	// context, which reports the build context's deadline and cancellation
-	// until Build succeeds.
+	// context, which carries parent's deadline and is cancelled with the
+	// build context until Build succeeds.
 	if err := p.createAllSingletonsWithContext(ctx); err != nil {
 		buildErr := &BuildError{
 			Phase:   PhaseSingletonCreation,

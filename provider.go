@@ -527,8 +527,8 @@ func (p *provider) findGroupDescriptors(serviceType reflect.Type, group string) 
 // during the build process.
 func (p *provider) createAllSingletonsWithContext(ctx context.Context) error {
 	// Singletons a constructor resolves at runtime (through an injected
-	// Provider or Scope) are invisible to the static order below; while
-	// building, they are created on demand instead of failing.
+	// Resolver) are invisible to the static order below; while building,
+	// they are created on demand instead of failing.
 	p.building.Store(true)
 	defer p.building.Store(false)
 

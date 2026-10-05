@@ -273,9 +273,10 @@ these dynamic resolutions, so the cycle is reported when it happens (a
 `*godi.CircularDependencyError`) instead of deadlocking.
 
 The injected `Resolver` resolves from the scope running the constructor and
-attributes its resolutions to that constructor. So does the scope found (with
-`godi.FromContext`) in an injected `context.Context`. After the constructor
-returns, a stored `Resolver` resolves without restriction.
+attributes its resolutions to that constructor. After the constructor returns,
+a stored `Resolver` resolves without that attribution. (A constructor's
+injected `context.Context` carries no scope, so `godi.FromContext` fails
+there: use the `Resolver`.)
 
 **How to fix:** Break the cycle: take the dependency as a constructor
 parameter, or resolve lazily after construction.

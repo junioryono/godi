@@ -514,6 +514,12 @@ func TestBuiltinServiceInjection(t *testing.T) {
 		_, err = Resolve[Scope](holder.Resolver)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "godi.ScopeFactory")
+
+		// Nor through the context it resolves, after construction too.
+		ctx, err := Resolve[context.Context](holder.Resolver)
+		require.NoError(t, err)
+		_, err = FromContext(ctx)
+		require.Error(t, err, "a stored Resolver's context carries no scope")
 	})
 
 	t.Run("an_injected_context_carries_no_scope", func(t *testing.T) {
@@ -545,6 +551,60 @@ func TestBuiltinServiceInjection(t *testing.T) {
 	// Creating a scope while the constructor is still running could run that
 	// scope's initializers against the constructor's own unfinished output
 	// and deadlock. Found by the Codex review of #66.
+	// A factory held by a dependency of the running constructor is caught
+	// too. Found by the second Claude review of #66.
+	t.Run("scope_factory_held_by_a_dependency_cannot_create_scopes_during_construction", func(t *testing.T) {
+		t.Parallel()
+		type Spawner struct{ f ScopeFactory }
+		type Server struct{}
+		c := NewCollection()
+		c.AddTransient(func(f ScopeFactory) *Spawner { return &Spawner{f: f} })
+		c.AddSingleton(func(s *Spawner) (*Server, error) {
+			child, err := s.f.CreateScope(context.Background())
+			if err != nil {
+				return nil, err
+			}
+			_ = child.Close()
+			return &Server{}, nil
+		})
+		c.AddScoped(func(*Server) {})
+
+		err := resolveWithin(t, func() error {
+			_, buildErr := c.Build()
+			return buildErr
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "store it and create scopes later")
+	})
+
+	// A scope created through an injected factory does not lead back to the
+	// root either. Found by the second Claude review of #66.
+	t.Run("scopes_from_an_injected_factory_cannot_reach_the_provider", func(t *testing.T) {
+		t.Parallel()
+		type Worker struct{ Scopes ScopeFactory }
+		c := NewCollection()
+		c.AddSingleton(func(f ScopeFactory) *Worker { return &Worker{Scopes: f} })
+		built, err := c.Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = built.Close() })
+
+		worker, err := Resolve[*Worker](built)
+		require.NoError(t, err)
+		child, err := worker.Scopes.CreateScope(context.Background())
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = child.Close() })
+		_, err = Resolve[Provider](child)
+		require.Error(t, err)
+		grandchild, err := child.CreateScope(context.Background())
+		require.NoError(t, err)
+		_, err = Resolve[Provider](grandchild)
+		require.Error(t, err, "nor through its descendants")
+		require.NoError(t, grandchild.Close())
+
+		_, err = Resolve[Provider](NewTestScope(t, built))
+		assert.NoError(t, err, "scopes the application creates are unrestricted")
+	})
+
 	t.Run("scope_factory_cannot_create_scopes_during_construction", func(t *testing.T) {
 		t.Parallel()
 		type Server struct{}

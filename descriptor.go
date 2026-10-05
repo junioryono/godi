@@ -116,9 +116,9 @@ type registration struct {
 	source string
 
 	// injectsContainer reports whether the constructor receives a view of
-	// the container (godi.Resolver, godi.ScopeFactory, or a context.Context
-	// carrying the scope) and so can resolve services outside the static
-	// dependency graph.
+	// the container (godi.Resolver or godi.ScopeFactory) or a context.Context,
+	// and so needs a frame: a Resolver can resolve outside the static
+	// dependency graph, and a context must be masked.
 	injectsContainer bool
 
 	// outputs lists the registration's live outputs, in output order, when
