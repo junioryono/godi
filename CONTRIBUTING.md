@@ -37,7 +37,7 @@ The root package `godi` has one file per concept:
 | --- | --- |
 | `collection.go` | `Collection`, `Build`, `Validate`, build-time validation |
 | `module.go` | `ModuleOption`, `NewModule`, `Add*`, `Remove*`, `Replace*`, `TryAdd*` |
-| `options.go` | registration options (`Name`, `Key`, `Group`, `As`, `Lazy`, `NoDispose`, `Instance`) and build options (`WithContext`, `WithBuildTimeout`, `WithObserver`, `WithScopeValidation`) |
+| `options.go` | registration options (`Name`, `Key`, `Group`, `As`, `Lazy`, `NoDispose`, `Instance`) and build options (`WithContext`, `WithBuildTimeout`, `WithObserver`) |
 | `decorate.go` | `Decorate` |
 | `provider.go`, `scope.go` | the built container: `Provider`, `Scope`, `FromContext` |
 | `resolve.go` | `Resolver`, `Resolve*`, `MustResolve*`, `ResolveFromContext`, `Invoke`, `IsService` |

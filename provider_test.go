@@ -411,8 +411,7 @@ func TestRootScopeInitializers(t *testing.T) {
 			calls.Add(1)
 		})
 
-		// Only a root scope without scope validation acts as a scope.
-		p, err := c.Build(WithScopeValidation(false))
+		p, err := c.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = p.Close() })
 		assert.Equal(t, int64(1), calls.Load(), "root scope initializer should run during Build")

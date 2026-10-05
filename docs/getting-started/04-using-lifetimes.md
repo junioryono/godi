@@ -183,8 +183,9 @@ A runnable version of the scoped part of this program, including scope disposal,
 
 Scoped and transient services can depend on anything. A singleton cannot depend
 on a scoped service, directly or through transients — godi rejects that at
-build time. Resolve scoped services from a scope, not the provider (see
-[Validating Scopes](#validating-scopes-at-runtime)).
+build time. Resolve per-request services from a scope you create: from the
+provider they are the root scope's single instance (see
+[Scoped Services and the Root Provider](#scoped-services-from-the-root)).
 
 ```go
 // ✓ OK: Scoped can depend on Singleton

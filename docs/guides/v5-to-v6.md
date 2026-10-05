@@ -46,23 +46,13 @@ Two related rules:
 - `godi.Start` no longer starts instances. godi doesn't stop them, so their
   whole lifecycle is yours.
 
-## Scopes are validated by default
+## The root provider is a scope
 
-Resolving a scoped service from the root provider, directly or through
-transients, fails with `godi.ErrScopeRequired`, and the root scope no longer
-runs scoped initializers. Create a scope:
-
-```go
-scope, err := provider.CreateScope(ctx)
-if err != nil {
-    return err
-}
-defer scope.Close()
-svc := godi.MustResolve[*RequestService](scope)
-```
-
-An application that deliberately uses the root as a scope can opt out with
-`services.Build(godi.WithScopeValidation(false))`.
+As in v5, a scoped service resolved from the provider is the root scope's
+instance, cached until the provider closes, and the root scope runs scoped
+initializers during `Build`. v5.2's `ProviderOptions.ValidateScopes` has no v6
+counterpart. (v6.0.0 rejected such resolutions by default with
+`WithScopeValidation`; v6.1.0 removed it.)
 
 ## One Build with options
 
@@ -75,7 +65,7 @@ options to `Build`:
 | `ProviderOptions{BuildTimeout: d}` | `godi.WithBuildTimeout(d)` |
 | `ProviderOptions{Context: ctx}` | `godi.WithContext(ctx)` |
 | `ProviderOptions{Observer: o}` | `godi.WithObserver(o)` |
-| `ProviderOptions{ValidateScopes: true}` | the default; `godi.WithScopeValidation(false)` opts out |
+| `ProviderOptions{ValidateScopes: true}` | removed: the root provider is a scope |
 
 ## Constructors receive Resolver and ScopeFactory
 

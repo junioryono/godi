@@ -6,13 +6,13 @@ require (
 	github.com/danielgtaylor/huma/v2 v2.39.1
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-chi/chi/v5 v5.3.2
-	github.com/junioryono/godi/chi/v6 v6.0.0
-	github.com/junioryono/godi/echo/v6 v6.0.0
-	github.com/junioryono/godi/fiber/v6 v6.0.0
-	github.com/junioryono/godi/gin/v6 v6.0.0
-	github.com/junioryono/godi/http/v6 v6.0.0
-	github.com/junioryono/godi/huma/v6 v6.0.0
-	github.com/junioryono/godi/v6 v6.0.0
+	github.com/junioryono/godi/chi/v6 v6.1.0
+	github.com/junioryono/godi/echo/v6 v6.1.0
+	github.com/junioryono/godi/fiber/v6 v6.1.0
+	github.com/junioryono/godi/gin/v6 v6.1.0
+	github.com/junioryono/godi/http/v6 v6.1.0
+	github.com/junioryono/godi/huma/v6 v6.1.0
+	github.com/junioryono/godi/v6 v6.1.0
 	go.uber.org/goleak v1.3.0
 )
 

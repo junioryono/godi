@@ -55,9 +55,6 @@ type provider struct {
 	// included. An injected ScopeFactory refuses to create scopes before.
 	built atomic.Bool
 
-	// validateScopes is set by WithScopeValidation. Immutable after build.
-	validateScopes bool
-
 	// started is set by the first godi.Start.
 	started atomic.Bool
 
@@ -361,7 +358,7 @@ func (p *provider) teardown(ctx context.Context) error {
 		}
 	}
 
-	// Dispose all singleton disposables.
+	// Dispose what the provider owns: singletons and the root scope's values.
 	// disposableSet is deliberately retained: trackDisposable consults it
 	// after close so a singleton constructed concurrently with Close is
 	// closed eagerly, exactly once, instead of leaking.
@@ -375,7 +372,7 @@ func (p *provider) teardown(ctx context.Context) error {
 	for i := len(disposables) - 1; i >= 0; i-- {
 		if disposables[i] != nil {
 			if err := p.disposeObserved(ctx, disposables[i], ""); err != nil {
-				errors = append(errors, fmt.Errorf("singleton disposable %d: %w", i, err))
+				errors = append(errors, fmt.Errorf("provider disposable %d: %w", i, err))
 			}
 		}
 	}

@@ -28,6 +28,9 @@ import (
 // create scopes later, from a request, job or goroutine of your own. As a
 // safety net, an injected ScopeFactory refuses until Build completes, and
 // while a construction that led to it is running; it cannot see every case.
+// The root scope runs scoped initializers during Build, so a goroutine one of
+// them starts may still find Build running: wait for Build to return (or
+// retry) before creating scopes from it.
 type ScopeFactory interface {
 	CreateScope(ctx context.Context) (Scope, error)
 }
@@ -324,7 +327,7 @@ func newScope(rootProvider *provider, parent *scope, ctx context.Context, cancel
 	// factory to other goroutines, which create descendants of it.
 	s.restricted = s.restricted || restricted
 
-	if err := s.initializeScopedServices(); err != nil {
+	if err := s.initializeScopedServices(ctx); err != nil {
 		// Tear down the partially initialized scope: dispose instances
 		// created by earlier initializers and release the cancellable
 		// context so neither leaks.
@@ -375,8 +378,23 @@ func newUninitializedScope(
 	return s, nil
 }
 
-func (s *scope) initializeScopedServices() error {
+// disposalScopeID is the ScopeID reported for values this scope disposes:
+// "" for the root scope, whose values the provider owns.
+func (s *scope) disposalScopeID() string {
+	if s.isRoot {
+		return ""
+	}
+	return s.id
+}
+
+// initializeScopedServices runs the scope's initializers in registration
+// order. It stops once ctx is cancelled (for the root scope, the build
+// context), as Build stops creating singletons.
+func (s *scope) initializeScopedServices(ctx context.Context) error {
 	for _, descriptor := range s.rootProvider.voidReturnScopedDescriptors {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if _, err := s.createInstance(nil, descriptor, nil); err != nil {
 			return &ResolutionError{
 				ServiceType: descriptor.Type,
@@ -608,7 +626,7 @@ func (s *scope) teardown(ctx context.Context) error {
 	s.disposablesMu.Unlock()
 
 	for i := len(disposables) - 1; i >= 0; i-- {
-		if err := s.rootProvider.disposeObserved(ctx, disposables[i], s.id); err != nil {
+		if err := s.rootProvider.disposeObserved(ctx, disposables[i], s.disposalScopeID()); err != nil {
 			errs = append(errs, fmt.Errorf("failed to dispose scoped instance: %w", err))
 		}
 	}
@@ -713,7 +731,7 @@ func (s *scope) trackProduced(parent *resolveFrame, requested *descriptor, insta
 	case Singleton:
 		s.rootProvider.trackDisposable(instance)
 	case Scoped:
-		s.rootProvider.closeOrphan(s.track(instance, true), s.id)
+		s.rootProvider.closeOrphan(s.track(instance, true), s.disposalScopeID())
 	case Transient:
 		s.trackTransient(parent, instance)
 	}
@@ -738,7 +756,7 @@ func (s *scope) publishScoped(instance any, dispose bool, keys ...instanceKey) {
 	}
 	s.instancesMu.Unlock()
 	// Close outside the lock: Close may resolve from this scope.
-	s.rootProvider.closeOrphan(orphan, s.id)
+	s.rootProvider.closeOrphan(orphan, s.disposalScopeID())
 }
 
 // trackTransient takes ownership of a transient instance's disposal.
@@ -752,7 +770,7 @@ func (s *scope) trackTransient(parent *resolveFrame, instance any) {
 	if s.isRoot && !hasCachedOwner(s, parent) {
 		return
 	}
-	s.rootProvider.closeOrphan(s.track(instance, true), s.id)
+	s.rootProvider.closeOrphan(s.track(instance, true), s.disposalScopeID())
 }
 
 // track takes ownership of instance's disposal if it is disposable. It
@@ -1013,13 +1031,6 @@ func (s *scope) resolve(parent *resolveFrame, key instanceKey, descriptor *descr
 		}
 
 	case Scoped:
-		if s.isRoot && s.rootProvider.validateScopes {
-			return nil, &ResolutionError{
-				ServiceType: key.Type,
-				ServiceKey:  keyName(key.Key),
-				Cause:       ErrScopeRequired,
-			}
-		}
 		if instance, ok := s.getInstance(key); ok {
 			return cachedInstance(key, instance)
 		}
@@ -1339,7 +1350,7 @@ func (s *scope) discardProduced(d *descriptor, value any) {
 	if d.noDispose || !isDisposable(value) || s.ownedByAnyone(value) {
 		return
 	}
-	s.rootProvider.closeOrphan(value, s.id)
+	s.rootProvider.closeOrphan(value, s.disposalScopeID())
 }
 
 // publishResultObject caches every field of a constructed result object (Out
@@ -1480,7 +1491,7 @@ func (s *scope) closeProducedOutputs(requested *descriptor, info *reflection.Con
 			}
 			closed[identity] = struct{}{}
 		}
-		s.rootProvider.closeOrphan(d, s.id)
+		s.rootProvider.closeOrphan(d, s.disposalScopeID())
 	}
 }
 

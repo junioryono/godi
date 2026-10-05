@@ -259,82 +259,145 @@ func TestScopeContextCancellation(t *testing.T) {
 	}
 }
 
-func TestValidateScopes(t *testing.T) {
+// TestRootScope pins that the provider's root scope is a scope: it resolves
+// scoped services, caching them until the provider closes, and runs scoped
+// initializers at Build.
+func TestRootScope(t *testing.T) {
 	t.Parallel()
 
-	type Unit struct{}
+	// Not zero-sized: pointers to zero-sized values may all be equal, which
+	// would make the identity assertions below meaningless.
+	type Unit struct{ _ int }
 	type Handler struct{ Unit *Unit }
-	build := func(t *testing.T, validate bool, register func(Collection)) Provider {
+	build := func(t *testing.T, register func(Collection)) Provider {
 		t.Helper()
 		c := NewCollection()
 		register(c)
-		p, err := c.Build(WithScopeValidation(validate))
+		p, err := c.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = p.Close() })
 		return p
 	}
 
-	t.Run("scoped_from_root_is_rejected", func(t *testing.T) {
+	t.Run("resolves_and_caches_scoped_services", func(t *testing.T) {
 		t.Parallel()
-		p := build(t, true, func(c Collection) { c.AddScoped(func() *Unit { return &Unit{} }) })
+		p := build(t, func(c Collection) { c.AddScoped(func() *Unit { return &Unit{} }) })
 
-		// Resolved from the root, a "per-request" service would be one
-		// instance shared by the whole application.
-		_, err := Resolve[*Unit](p)
-		require.ErrorIs(t, err, ErrScopeRequired)
+		first, err := Resolve[*Unit](p)
+		require.NoError(t, err)
+		again, err := Resolve[*Unit](p)
+		require.NoError(t, err)
+		assert.Same(t, first, again, "the root scope caches its scoped instance")
 
 		scope, err := p.CreateScope(context.Background())
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = scope.Close() })
-		_, err = Resolve[*Unit](scope)
+		inScope, err := Resolve[*Unit](scope)
 		require.NoError(t, err)
+		assert.NotSame(t, first, inScope, "a child scope gets its own instance")
 	})
 
-	t.Run("transient_needing_scoped_from_root_is_rejected", func(t *testing.T) {
+	t.Run("resolves_transients_needing_scoped_services", func(t *testing.T) {
 		t.Parallel()
-		p := build(t, true, func(c Collection) {
+		p := build(t, func(c Collection) {
 			c.AddScoped(func() *Unit { return &Unit{} })
 			c.AddTransient(func(u *Unit) *Handler { return &Handler{Unit: u} })
 		})
-		_, err := Resolve[*Handler](p)
-		require.ErrorIs(t, err, ErrScopeRequired)
+		h, err := Resolve[*Handler](p)
+		require.NoError(t, err)
+		u, err := Resolve[*Unit](p)
+		require.NoError(t, err)
+		assert.Same(t, u, h.Unit)
 	})
 
-	t.Run("root_scope_runs_no_scoped_initializers", func(t *testing.T) {
+	t.Run("runs_scoped_initializers_at_build", func(t *testing.T) {
 		t.Parallel()
 		var runs atomic.Int32
-		p := build(t, true, func(c Collection) { c.AddScoped(func() { runs.Add(1) }) })
-		assert.Zero(t, runs.Load(), "the root scope is not a request scope")
+		p := build(t, func(c Collection) { c.AddScoped(func() { runs.Add(1) }) })
+		assert.Equal(t, int32(1), runs.Load(), "the root scope runs its initializers at Build")
 
 		scope, err := p.CreateScope(context.Background())
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = scope.Close() })
-		assert.Equal(t, int32(1), runs.Load())
+		assert.Equal(t, int32(2), runs.Load(), "and each child scope runs its own")
 	})
 
-	t.Run("on_by_default", func(t *testing.T) {
+	t.Run("disposes_scoped_services_when_the_provider_closes", func(t *testing.T) {
 		t.Parallel()
 		c := NewCollection()
-		c.AddScoped(func() *Unit { return &Unit{} })
+		c.AddScoped(func() *TDisposable { return &TDisposable{} })
 		p, err := c.Build()
 		require.NoError(t, err)
-		t.Cleanup(func() { _ = p.Close() })
-		_, err = Resolve[*Unit](p)
-		require.ErrorIs(t, err, ErrScopeRequired)
+
+		d, err := Resolve[*TDisposable](p)
+		require.NoError(t, err)
+		assert.False(t, d.IsClosed())
+		require.NoError(t, p.Close())
+		assert.True(t, d.IsClosed())
 	})
 
-	// Turned off, the root scope acts as a scope: it resolves scoped services
-	// and runs scoped initializers.
-	t.Run("can_be_turned_off", func(t *testing.T) {
+	// The provider owns what the root scope creates: a failed Close is not a
+	// singleton's.
+	t.Run("reports_disposal_failures_as_the_providers", func(t *testing.T) {
 		t.Parallel()
-		var runs atomic.Int32
-		p := build(t, false, func(c Collection) {
-			c.AddScoped(func() *Unit { return &Unit{} })
-			c.AddScoped(func() { runs.Add(1) })
+		closeErr := errors.New("close failed")
+		c := NewCollection()
+		c.AddScoped(func() *TDisposable {
+			d := NewTDisposable()
+			d.SetCloseError(closeErr)
+			return d
 		})
-		_, err := Resolve[*Unit](p)
+		p, err := c.Build()
 		require.NoError(t, err)
-		assert.Equal(t, int32(1), runs.Load())
+		_, err = Resolve[*TDisposable](p)
+		require.NoError(t, err)
+
+		err = p.Close()
+		require.ErrorIs(t, err, closeErr)
+		assert.Contains(t, err.Error(), "provider disposable")
+		assert.NotContains(t, err.Error(), "singleton disposable")
+	})
+
+	// A failing initializer fails Build, which disposes what the root scope
+	// had created.
+	t.Run("a_failing_initializer_fails_build", func(t *testing.T) {
+		t.Parallel()
+		initErr := errors.New("init failed")
+		var dep *TDisposable
+		c := NewCollection()
+		c.AddScoped(func() *TDisposable {
+			dep = NewTDisposable()
+			return dep
+		})
+		c.AddScoped(func(*TDisposable) error { return initErr })
+
+		p, err := c.Build()
+		require.Error(t, err)
+		assert.Nil(t, p)
+		assert.ErrorIs(t, err, initErr)
+		buildErr, ok := errors.AsType[*BuildError](err)
+		require.True(t, ok, "want a *BuildError, got %T", err)
+		assert.Equal(t, PhaseScopeInitialization, buildErr.Phase)
+		require.NotNil(t, dep, "the initializer's dependency was created in the root scope")
+		assert.True(t, dep.IsClosed(), "and disposed when Build failed")
+	})
+
+	// Build stops running initializers once its context is cancelled, as it
+	// stops creating singletons.
+	t.Run("stops_initializers_when_build_is_cancelled", func(t *testing.T) {
+		t.Parallel()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		var second atomic.Bool
+		c := NewCollection()
+		c.AddScoped(func() { cancel() })
+		c.AddScoped(func() { second.Store(true) })
+
+		p, err := c.Build(WithContext(ctx))
+		require.Error(t, err)
+		assert.Nil(t, p)
+		assert.ErrorIs(t, err, context.Canceled)
+		assert.False(t, second.Load(), "no initializer runs after the build context is cancelled")
 	})
 }
 
@@ -473,7 +536,9 @@ func TestBuiltinServiceInjection(t *testing.T) {
 		assert.False(t, isFactory)
 	})
 
-	t.Run("a_singletons_resolver_cannot_reach_scoped_services", func(t *testing.T) {
+	// A singleton's Resolver resolves from the root scope, so scoped services
+	// it resolves are the root scope's, shared with the provider.
+	t.Run("a_singletons_resolver_resolves_from_the_root_scope", func(t *testing.T) {
 		t.Parallel()
 		type Holder struct{ Resolver Resolver }
 		c := NewCollection()
@@ -485,8 +550,11 @@ func TestBuiltinServiceInjection(t *testing.T) {
 
 		holder, err := Resolve[*Holder](built)
 		require.NoError(t, err)
-		_, err = Resolve[*TScoped](holder.Resolver)
-		assert.ErrorIs(t, err, ErrScopeRequired)
+		viaResolver, err := Resolve[*TScoped](holder.Resolver)
+		require.NoError(t, err)
+		fromRoot, err := Resolve[*TScoped](built)
+		require.NoError(t, err)
+		assert.Same(t, fromRoot, viaResolver)
 	})
 
 	// The container itself stays out of reach: through an injected Resolver,
@@ -611,34 +679,38 @@ func TestBuiltinServiceInjection(t *testing.T) {
 		t.Parallel()
 		type Holder struct{ Scopes ScopeFactory }
 		type Worker struct{ Scopes ScopeFactory }
-		var once atomic.Bool
-		var grandchildErr error
+		// Armed after Build: the root scope runs the initializer during Build,
+		// and this test is about the restricted scope created later.
+		var armed, once atomic.Bool
+		var createErr, resolveErr error
 		c := NewCollection()
 		c.AddScoped(func(f ScopeFactory) *Holder { return &Holder{Scopes: f} })
 		c.AddScoped(func(h *Holder) {
-			if !once.CompareAndSwap(false, true) {
+			if !armed.Load() || !once.CompareAndSwap(false, true) {
 				return
 			}
 			grandchild, err := h.Scopes.CreateScope(context.Background())
 			if err != nil {
-				grandchildErr = err
+				createErr = err
 				return
 			}
 			defer grandchild.Close()
-			_, grandchildErr = Resolve[Provider](grandchild)
+			_, resolveErr = Resolve[Provider](grandchild)
 		})
 		c.AddSingleton(func(f ScopeFactory) *Worker { return &Worker{Scopes: f} })
 		built, err := c.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = built.Close() })
+		armed.Store(true)
 
 		worker, err := Resolve[*Worker](built)
 		require.NoError(t, err)
 		child, err := worker.Scopes.CreateScope(context.Background())
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = child.Close() })
-		require.True(t, once.Load(), "the initializer ran")
-		require.Error(t, grandchildErr, "the grandchild must not resolve the Provider")
+		require.True(t, once.Load(), "the restricted scope's initializer ran")
+		require.NoError(t, createErr, "the grandchild is created")
+		require.Error(t, resolveErr, "the grandchild must not resolve the Provider")
 	})
 
 	// The background-worker pattern: an initializer hands its factory to a
@@ -648,10 +720,12 @@ func TestBuiltinServiceInjection(t *testing.T) {
 		t.Parallel()
 		type Worker struct{ Scopes ScopeFactory }
 		done := make(chan error, 1)
-		var once atomic.Bool
+		// Armed after Build: the root scope runs the initializer during Build,
+		// and the race is in the restricted scope created later.
+		var armed, once atomic.Bool
 		c := NewCollection()
 		c.AddScoped(func(f ScopeFactory) {
-			if !once.CompareAndSwap(false, true) {
+			if !armed.Load() || !once.CompareAndSwap(false, true) {
 				return
 			}
 			go func() {
@@ -666,13 +740,15 @@ func TestBuiltinServiceInjection(t *testing.T) {
 		built, err := c.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = built.Close() })
+		armed.Store(true)
 
 		worker, err := Resolve[*Worker](built)
 		require.NoError(t, err)
 		child, err := worker.Scopes.CreateScope(context.Background())
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = child.Close() })
-		<-done
+		require.True(t, once.Load(), "the restricted scope's initializer ran")
+		require.NoError(t, <-done, "the worker creates a scope under the restricted one")
 	})
 
 	// Build includes the root scope's initializers, which run after the
@@ -694,8 +770,8 @@ func TestBuiltinServiceInjection(t *testing.T) {
 				_ = child.Close()
 			}
 		})
-		// The root scope runs scoped initializers only without validation.
-		built, err := c.Build(WithScopeValidation(false))
+		// The root scope runs scoped initializers at Build.
+		built, err := c.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = built.Close() })
 		require.Error(t, createErr)
@@ -1648,10 +1724,13 @@ func TestScopeInitFailureCleansUpPartialState(t *testing.T) {
 	c.AddScoped(func(d *TDisposable) {
 		captured = d
 	})
-	// Second void-return initializer: fails for every created scope (the
-	// root scope runs no scoped initializers).
+	// Second void-return initializer: succeeds for the root scope, which runs
+	// it at Build, and fails for every scope created after.
 	c.AddScoped(func() error {
 		initCalls++
+		if initCalls == 1 {
+			return nil
+		}
 		return errors.New("init failure")
 	})
 
@@ -1677,8 +1756,15 @@ func TestScopeInitFailureCleansUpPartialState(t *testing.T) {
 func TestNewScopeFailureCancelsDerivedContext(t *testing.T) {
 	t.Parallel()
 
+	// Succeeds for the root scope, which runs it at Build, then fails.
+	var calls atomic.Int32
 	c := NewCollection()
-	c.AddScoped(func() error { return errors.New("init failure") })
+	c.AddScoped(func() error {
+		if calls.Add(1) == 1 {
+			return nil
+		}
+		return errors.New("init failure")
+	})
 
 	pAny, err := c.Build()
 	require.NoError(t, err)

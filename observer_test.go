@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -86,5 +87,41 @@ func TestObserver(t *testing.T) {
 		defer obs.mu.Unlock()
 		require.Len(t, obs.disposed, 1)
 		assert.ErrorIs(t, obs.disposed[0].Err, closeErr)
+	})
+
+	// The provider owns what the root scope creates, so the root scope's
+	// orphans report ScopeID "", as its regular disposals do.
+	t.Run("root_scope_orphans_are_the_providers", func(t *testing.T) {
+		t.Parallel()
+		obs := &recordingObserver{}
+		started := make(chan struct{})
+		release := make(chan struct{})
+		c := NewCollection()
+		c.AddScoped(func() *TDisposable {
+			close(started)
+			<-release
+			return NewTDisposable()
+		})
+		p, err := c.Build(WithObserver(obs.observer()))
+		require.NoError(t, err)
+
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			_, _ = Resolve[*TDisposable](p)
+		}()
+		<-started
+		closed := make(chan error, 1)
+		go func() { closed <- p.Close() }()
+		// Close disposes before the constructor returns, so the value is an orphan.
+		require.Eventually(t, func() bool { return p.(*provider).disposed.Load() != 0 }, time.Second, time.Millisecond)
+		close(release)
+		<-done
+		<-closed
+
+		obs.mu.Lock()
+		defer obs.mu.Unlock()
+		require.Len(t, obs.disposed, 1)
+		assert.Empty(t, obs.disposed[0].ScopeID)
 	})
 }

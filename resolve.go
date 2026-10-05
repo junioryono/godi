@@ -286,32 +286,13 @@ func IsKeyedService(r Resolver, serviceType reflect.Type, name string) bool {
 }
 
 // resolvableFrom reports whether a registration of serviceType and key exists
-// and can be resolved from p: with ValidateScopes, scoped services cannot be
-// resolved from the root provider.
+// and r can be inspected. Every lifetime resolves from every scope, the root
+// included.
 func resolvableFrom(r Resolver, serviceType reflect.Type, key any) bool {
 	if !inspectable(r) {
 		return false
 	}
-	root := rootProviderOf(r)
-	d := root.findDescriptor(serviceType, key)
-	if d == nil {
-		return false
-	}
-	return d.Lifetime != Scoped || !root.validateScopes || !resolvesFromRoot(r)
-}
-
-// resolvesFromRoot reports whether p resolves from the provider's root scope.
-func resolvesFromRoot(r Resolver) bool {
-	switch v := r.(type) {
-	case *provider:
-		return true
-	case *scope:
-		return v.isRoot
-	case *frameResolver:
-		return v.scope.isRoot
-	default:
-		return false
-	}
+	return rootProviderOf(r).findDescriptor(serviceType, key) != nil
 }
 
 // rootProviderOf returns the godi provider behind r, or nil if r is nil or
