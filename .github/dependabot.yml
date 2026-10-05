@@ -141,6 +141,11 @@ updates:
     directory: /docs
     schedule:
       interval: weekly
+    ignore:
+      # Sphinx 9.1 and myst-parser 5.1 require docutils<0.23 (see #42).
+      # Remove once they support docutils 0.23.
+      - dependency-name: docutils
+        versions: [">=0.23"]
     groups:
       documentation:
         patterns: ["*"]
