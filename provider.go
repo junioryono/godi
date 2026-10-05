@@ -613,10 +613,17 @@ func creationOrder(all []*descriptor, services map[registryKey]*descriptor, grou
 func singletonsInCreationOrder(all []*descriptor, services map[registryKey]*descriptor, groups map[groupID][]*descriptor) []*descriptor {
 	ordered := creationOrder(all, services, groups)
 	singletons := ordered[:0]
+	// One construction per registration: it publishes every output.
+	seen := make(map[*registration]struct{})
 	for _, d := range ordered {
-		if d.Lifetime == Singleton && !d.lazy {
-			singletons = append(singletons, d)
+		if d.Lifetime != Singleton || d.lazy {
+			continue
 		}
+		if _, done := seen[d.registration]; done {
+			continue
+		}
+		seen[d.registration] = struct{}{}
+		singletons = append(singletons, d)
 	}
 	return singletons
 }

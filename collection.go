@@ -1294,18 +1294,19 @@ func validateLifetimes(all []*descriptor, services map[registryKey]*descriptor, 
 	}
 
 	var errs []error
-	reported := make(map[any]struct{})
+	checked := make(map[*registration]struct{})
 	for _, d := range all {
 		if d == nil || d.Lifetime != Singleton {
 			continue
 		}
-		// Sibling outputs of one constructor share its dependencies.
-		fkey := flightKey(d)
-		if _, done := reported[fkey]; done {
+		// One check per registration, over everything its construction
+		// resolves (the constructor and the decorators of every output).
+		if _, done := checked[d.registration]; done {
 			continue
 		}
+		checked[d.registration] = struct{}{}
 	dependencies:
-		for _, dep := range d.dependencies() {
+		for _, dep := range constructionDependencies(d) {
 			for _, depDescriptor := range dependencyDescriptors(dep, services, groups) {
 				r := reachScoped(depDescriptor)
 				if r.scoped == nil {
@@ -1322,7 +1323,6 @@ func validateLifetimes(all []*descriptor, services map[registryKey]*descriptor, 
 					DependencyLifetime: Scoped,
 					Via:                via,
 				})
-				reported[fkey] = struct{}{}
 				break dependencies
 			}
 		}
