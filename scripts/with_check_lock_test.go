@@ -154,13 +154,16 @@ func TestWithCheckLock(t *testing.T) {
 	})
 
 	// A second run waits for the first, says so in one line of its own, and
-	// starts only once the first has finished. The first run holds the lock
-	// until the test releases it, and the test releases it only after the second
-	// has said it is waiting, so no amount of load can let the second find the
-	// lock free: the timeouts bound a failure and decide nothing.
+	// starts only once the first has finished, holding the lock itself. The first
+	// run holds the lock until the test releases it, and the test releases it
+	// only after the second has said it is waiting, so no amount of load can let
+	// the second find the lock free: the timeouts bound a failure and decide
+	// nothing. The second's command asks the lock tool whether its lock is held
+	// before reading the first's trace, so a run that skipped the lock, after any
+	// delay, fails.
 	t.Run("ASecondRunWaitsForTheFirst", func(t *testing.T) {
 		t.Parallel()
-		requireLockTool(t)
+		probe := requireLockTool(t)
 
 		dir := t.TempDir()
 		lock := filepath.Join(dir, "gate.lock")
@@ -173,7 +176,9 @@ func TestWithCheckLock(t *testing.T) {
 		releaseAndReap(t, first, release)
 		waitForFile(t, trace, "the first run never started its command")
 
-		second := lockScript(t, lock, "sh", "-c", `cat "$1" > "$2"`, "second", trace, seen)
+		second := lockScript(t, append([]string{lock, "sh", "-c",
+			`trace=$1 seen=$2; shift 2; "$@" 2>/dev/null; [ "$?" -eq 75 ] || exit 7; cat "$trace" > "$seen"`,
+			"second", trace, seen}, probe(lock)...)...)
 		stderr, err := second.StderrPipe()
 		require.NoError(t, err)
 		require.NoError(t, second.Start())
@@ -217,7 +222,7 @@ func TestWithCheckLock(t *testing.T) {
 		case <-time.After(30 * time.Second):
 			require.FailNow(t, "the second run's stderr stayed open 30s after the first was released")
 		}
-		require.NoError(t, second.Wait(), "the second run: %q", said)
+		require.NoError(t, second.Wait(), "the second run, which exits 7 if it ran without the lock: %q", said)
 		require.NoError(t, first.Wait(), "the first run")
 
 		got, err := os.ReadFile(seen)
@@ -248,8 +253,18 @@ func TestWithCheckLock(t *testing.T) {
 		release := filepath.Join(dir, "release")
 		pidFile := filepath.Join(dir, "leftover.pid")
 
-		// Released however the test ends, before anything below can fail.
-		t.Cleanup(func() { _ = os.WriteFile(release, nil, 0o600) })
+		// Released however the test ends, before anything below can fail, and
+		// waited for, so the test leaves no process behind.
+		var pid string
+		t.Cleanup(func() {
+			_ = os.WriteFile(release, nil, 0o600)
+			for deadline := time.Now().Add(10 * time.Second); pid != "" && time.Now().Before(deadline); {
+				if exec.Command("kill", "-0", pid).Run() != nil {
+					return
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+		})
 		out, err := lockScript(t, lock, "sh", "-c", `sh -c "$1" leftover "$2" "$3" > /dev/null 2>&1 &
 echo $! > "$4"`, "leaver", holdUntilReleased, up, release, pidFile).CombinedOutput()
 		require.NoError(t, err, "a run that leaves a child behind: %s", out)
@@ -257,7 +272,7 @@ echo $! > "$4"`, "leaver", holdUntilReleased, up, release, pidFile).CombinedOutp
 
 		raw, err := os.ReadFile(pidFile)
 		require.NoError(t, err)
-		pid := strings.TrimSpace(string(raw))
+		pid = strings.TrimSpace(string(raw))
 
 		// Bounded on its own: a lock the child kept would make this wait.
 		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
@@ -311,13 +326,16 @@ echo $! > "$4"`, "leaver", holdUntilReleased, up, release, pidFile).CombinedOutp
 		}
 	})
 
-	// `make verify` hands the script the shared path whole. With MAKE=echo, so
-	// that GATE_SUBMAKE is echo, the recipe runs the real script around an echo
-	// instead of the gate: this is the Makefile's own line, with an
-	// XDG_CACHE_HOME holding spaces and none of the caller's make settings.
-	t.Run("MakeVerifyTakesTheSharedLock", func(t *testing.T) {
+	// `make verify` and `make verify-ci` hold the shared lock, at the path whole,
+	// while their steps run. MAKE, and so GATE_SUBMAKE, is a helper that asks the
+	// lock tool whether the expected path is held and fails if it is not, so the
+	// recipe runs the real script around the helper instead of the gate: this is
+	// the Makefile's own line, with an XDG_CACHE_HOME holding spaces and none of
+	// the caller's make settings. HOME is temporary too, so that a lock path
+	// taken by mistake is never the machine's shared one.
+	t.Run("MakeVerifyHoldsTheSharedLock", func(t *testing.T) {
 		t.Parallel()
-		requireLockTool(t)
+		probe := requireLockTool(t)
 		if !lookPath("make") {
 			if os.Getenv("CI") != "" {
 				t.Fatal("make is not installed under CI, so the gate's own lock line would go untested")
@@ -327,16 +345,25 @@ echo $! > "$4"`, "leaver", holdUntilReleased, up, release, pidFile).CombinedOutp
 
 		dir := t.TempDir()
 		xdg := filepath.Join(dir, "a cache")
-		cmd := exec.CommandContext(t.Context(), "make", "-C", "..", "--no-print-directory", "MAKE=echo", "verify")
-		// HOME too, so that a lock path taken by mistake is never the machine's
-		// shared one, which another gate may be holding.
-		cmd.Env = makeEnv("HOME="+filepath.Join(dir, "home"), "XDG_CACHE_HOME="+xdg)
+		lock := filepath.Join(xdg, "dev-gate.lock")
 
-		out, err := cmd.CombinedOutput()
-		require.NoError(t, err, "make verify with MAKE=echo: %s", out)
-		assert.Contains(t, string(out), "verify-unlocked", "the recipe did not run its steps' target under the script")
-		_, err = os.Stat(filepath.Join(xdg, "dev-gate.lock"))
-		assert.NoError(t, err, "make verify did not take the shared lock under an XDG_CACHE_HOME with spaces: %s", out)
+		var quoted []string
+		for _, arg := range probe(lock) {
+			quoted = append(quoted, "'"+arg+"'")
+		}
+		helper := filepath.Join(dir, "submake")
+		require.NoError(t, os.WriteFile(helper, []byte("#!/bin/sh\n"+strings.Join(quoted, " ")+
+			"\n[ \"$?\" -eq 75 ] || { echo \"the shared lock was not held\" >&2; exit 7; }\necho \"held: $*\"\n"), 0o700))
+
+		for _, target := range []string{"verify", "verify-ci"} {
+			cmd := exec.CommandContext(t.Context(), "make", "-C", "..", "--no-print-directory", "MAKE="+helper, target)
+			cmd.Env = makeEnv("HOME="+filepath.Join(dir, "home"), "XDG_CACHE_HOME="+xdg)
+
+			out, err := cmd.CombinedOutput()
+			require.NoError(t, err, "make %s: %s", target, out)
+			assert.Contains(t, string(out), "held: --no-print-directory "+target+"-unlocked",
+				"make %s did not run its steps' target holding the shared lock", target)
+		}
 	})
 
 	// A lock that cannot be made is a courtesy lost, not a gate: the command
