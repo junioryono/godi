@@ -85,11 +85,13 @@ func lockScript(t *testing.T, args ...string) *exec.Cmd {
 	return exec.CommandContext(t.Context(), script, args...)
 }
 
-// holdUntilReleased is shell that writes "held" to $1, then waits until $2
-// exists. It never gives up and succeeds: past its two-minute watchdog, or once
-// $1 is gone because the test's temporary directory was removed, it exits 9, so
-// a test whose release never came fails rather than seeing the lock come free.
-const holdUntilReleased = `echo held > "$1"
+// holdUntilReleased is shell that writes its pid to $1.pid and "held" to $1,
+// then waits until $2 exists. It never gives up and succeeds: past its
+// two-minute watchdog, or once $1 is gone because the test's temporary directory
+// was removed, it exits 9, so a test whose release never came fails rather than
+// seeing the lock come free.
+const holdUntilReleased = `echo $$ > "$1.pid"
+echo held > "$1"
 i=0
 while [ ! -e "$2" ]; do
 	i=$((i + 1))
@@ -99,20 +101,48 @@ done
 `
 
 // releaseAndReap releases a holder, when release is not empty, and reaps cmd if
-// the test ends before it does, so no holder outlives its test. The test's
-// context is cancelled first, which kills the lock tool; the release ends the
-// shell the lock tool was running.
-func releaseAndReap(t *testing.T, cmd *exec.Cmd, release string) {
+// the test ends before it does. The test's context is cancelled first, which
+// kills the lock tool but not the shell it was running, so when held names the
+// holder's $1 the cleanup also waits for that shell to exit.
+func releaseAndReap(t *testing.T, cmd *exec.Cmd, release, held string) {
 	t.Helper()
 	t.Cleanup(func() {
-		if cmd.ProcessState != nil {
-			return
-		}
 		if release != "" {
 			_ = os.WriteFile(release, nil, 0o600)
 		}
-		_ = cmd.Wait()
+		if cmd.ProcessState == nil {
+			_ = cmd.Wait()
+		}
+		if held != "" {
+			awaitHolderExit(t, held)
+		}
 	})
+}
+
+// awaitHolderExit waits for the holder that wrote held.pid to exit after its
+// release, so no holder outlives its test. One still alive ten seconds later is
+// killed, and the test fails: its cleanup did not end it.
+func awaitHolderExit(t *testing.T, held string) {
+	t.Helper()
+
+	raw, err := os.ReadFile(held + ".pid")
+	if err != nil {
+		return // the holder never started
+	}
+	pid := strings.TrimSpace(string(raw))
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
+		if exec.Command("kill", "-0", pid).Run() != nil {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	_ = exec.Command("kill", "-9", pid).Run()
+	t.Errorf("the holder %s was still running ten seconds after its release, and was killed", pid)
+}
+
+// shellQuote quotes s as one word for sh.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // waitForFile polls until path exists, failing with msg after ten seconds.
@@ -158,9 +188,10 @@ func TestWithCheckLock(t *testing.T) {
 	// run holds the lock until the test releases it, and the test releases it
 	// only after the second has said it is waiting, so no amount of load can let
 	// the second find the lock free: the timeouts bound a failure and decide
-	// nothing. The second's command asks the lock tool whether its lock is held
-	// before reading the first's trace, so a run that skipped the lock, after any
-	// delay, fails.
+	// nothing. The second's command reads the first's trace and then asks the
+	// lock tool whether its lock is held: a run that started before the first
+	// finished reads half a trace, and one that started after it without the
+	// lock finds the lock free, so skipping the lock fails after any delay.
 	t.Run("ASecondRunWaitsForTheFirst", func(t *testing.T) {
 		t.Parallel()
 		probe := requireLockTool(t)
@@ -173,16 +204,16 @@ func TestWithCheckLock(t *testing.T) {
 
 		first := lockScript(t, lock, "sh", "-c", holdUntilReleased+`echo done >> "$1"`, "first", trace, release)
 		require.NoError(t, first.Start())
-		releaseAndReap(t, first, release)
+		releaseAndReap(t, first, release, trace)
 		waitForFile(t, trace, "the first run never started its command")
 
 		second := lockScript(t, append([]string{lock, "sh", "-c",
-			`trace=$1 seen=$2; shift 2; "$@" 2>/dev/null; [ "$?" -eq 75 ] || exit 7; cat "$trace" > "$seen"`,
+			`trace=$1 seen=$2; shift 2; cat "$trace" > "$seen"; "$@" 2>/dev/null; [ "$?" -eq 75 ] || exit 7`,
 			"second", trace, seen}, probe(lock)...)...)
 		stderr, err := second.StderrPipe()
 		require.NoError(t, err)
 		require.NoError(t, second.Start())
-		releaseAndReap(t, second, "")
+		releaseAndReap(t, second, "", "")
 
 		// Both channels are buffered for the one value each ever carries, so the
 		// reader never blocks on a test that stopped listening.
@@ -251,28 +282,21 @@ func TestWithCheckLock(t *testing.T) {
 		lock := filepath.Join(dir, "gate.lock")
 		up := filepath.Join(dir, "up")
 		release := filepath.Join(dir, "release")
-		pidFile := filepath.Join(dir, "leftover.pid")
 
 		// Released however the test ends, before anything below can fail, and
 		// waited for, so the test leaves no process behind.
-		var pid string
 		t.Cleanup(func() {
 			_ = os.WriteFile(release, nil, 0o600)
-			for deadline := time.Now().Add(10 * time.Second); pid != "" && time.Now().Before(deadline); {
-				if exec.Command("kill", "-0", pid).Run() != nil {
-					return
-				}
-				time.Sleep(20 * time.Millisecond)
-			}
+			awaitHolderExit(t, up)
 		})
-		out, err := lockScript(t, lock, "sh", "-c", `sh -c "$1" leftover "$2" "$3" > /dev/null 2>&1 &
-echo $! > "$4"`, "leaver", holdUntilReleased, up, release, pidFile).CombinedOutput()
+		out, err := lockScript(t, lock, "sh", "-c", `sh -c "$1" leftover "$2" "$3" > /dev/null 2>&1 &`,
+			"leaver", holdUntilReleased, up, release).CombinedOutput()
 		require.NoError(t, err, "a run that leaves a child behind: %s", out)
 		waitForFile(t, up, "the leftover child never started")
 
-		raw, err := os.ReadFile(pidFile)
+		raw, err := os.ReadFile(up + ".pid")
 		require.NoError(t, err)
-		pid = strings.TrimSpace(string(raw))
+		pid := strings.TrimSpace(string(raw))
 
 		// Bounded on its own: a lock the child kept would make this wait.
 		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
@@ -349,14 +373,14 @@ echo $! > "$4"`, "leaver", holdUntilReleased, up, release, pidFile).CombinedOutp
 
 		var quoted []string
 		for _, arg := range probe(lock) {
-			quoted = append(quoted, "'"+arg+"'")
+			quoted = append(quoted, shellQuote(arg))
 		}
 		helper := filepath.Join(dir, "submake")
 		require.NoError(t, os.WriteFile(helper, []byte("#!/bin/sh\n"+strings.Join(quoted, " ")+
 			"\n[ \"$?\" -eq 75 ] || { echo \"the shared lock was not held\" >&2; exit 7; }\necho \"held: $*\"\n"), 0o700))
 
 		for _, target := range []string{"verify", "verify-ci"} {
-			cmd := exec.CommandContext(t.Context(), "make", "-C", "..", "--no-print-directory", "MAKE="+helper, target)
+			cmd := exec.CommandContext(t.Context(), "make", "-C", "..", "--no-print-directory", "MAKE=sh "+shellQuote(helper), target)
 			cmd.Env = makeEnv("HOME="+filepath.Join(dir, "home"), "XDG_CACHE_HOME="+xdg)
 
 			out, err := cmd.CombinedOutput()
