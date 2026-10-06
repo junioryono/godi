@@ -20,6 +20,15 @@ fi
 lock=$1
 shift
 
+# The lock's directory is made here, quoted, so a path holding spaces is one
+# path, and a directory that cannot be made still ends in the command running,
+# unlocked and saying so.
+dir=$(dirname -- "$lock")
+if ! mkdir -p -- "$dir" 2>/dev/null; then
+	echo "with-check-lock: could not create $dir, so this run is not serialised with others" >&2
+	exec "$@"
+fi
+
 # The probe runs `true` under a lock it cannot wait for, so its status is the
 # lock tool's own answer and never the command's: 0 free, 75 held, anything
 # else a lock that could not be taken at all.
@@ -30,7 +39,9 @@ if command -v lockf >/dev/null 2>&1; then
 elif command -v flock >/dev/null 2>&1; then
 	flock -n -E 75 "$lock" true 2>/dev/null
 	probe=$?
-	held="flock"
+	# -o closes the locked descriptor before the command runs, so a process the
+	# command leaves behind cannot go on holding the lock after it exits.
+	held="flock -o"
 else
 	echo "with-check-lock: neither lockf nor flock is installed, so this run is not serialised with others" >&2
 	exec "$@"
