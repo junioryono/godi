@@ -25,8 +25,9 @@ ACTIONLINT_BIN := $(TOOLS_BIN)/actionlint-$(ACTIONLINT_VERSION)
 # as the machine's load moved, but 205s at the utility QoS and 485s at background
 # QoS, which throttle disk I/O as well as CPU. Override either on the command
 # line (`make verify TEST_PARALLEL= NICE=` lifts both, and still takes the lock
-# below). Under CI both are forced empty, whatever the environment says, and the
-# recipes $(strip) the command so that it is then CI's byte for byte.
+# below). Under CI, NICE and the -p flag are forced empty whatever the environment
+# or command line says, and the recipes $(strip) the command so that it is then
+# CI's byte for byte.
 ifeq ($(CI),)
 TEST_PARALLEL ?= 4
 NICE ?= nice -n 10
@@ -39,35 +40,48 @@ endif
 # One gate at a time per machine, across projects: `verify` and `verify-ci` take
 # this lock and a run waits for whichever gate holds it (see
 # scripts/with-check-lock.sh). The path is shared with other repositories' gates
-# on purpose, per user, so XDG_CACHE_HOME counts only when it is absolute: a
-# relative one would give every checkout a lock of its own. It is a courtesy, not
-# a gate: without a lock tool, or a lock that cannot be taken, the run goes ahead
-# and says so.
-GATE_LOCK ?= $(or $(filter /%,$(XDG_CACHE_HOME)),$(HOME)/.cache)/dev-gate.lock
+# on purpose, per user, so XDG_CACHE_HOME counts only when it is absolute (tested
+# on its first word, so a path holding spaces stays one path): a relative one
+# would give every checkout a lock of its own. It is a courtesy, not a gate:
+# without a lock tool, or a lock that cannot be made, the run goes ahead and says
+# so.
+GATE_LOCK ?= $(if $(filter /%,$(firstword $(XDG_CACHE_HOME))),$(XDG_CACHE_HOME),$(HOME)/.cache)/dev-gate.lock
 
 # A dry run (-n), a question (-q) or a touch (-t) runs no step, so it takes no
-# lock: GNU make runs a recipe line naming $(MAKE) even under -n, and the lock
-# would make `make -n verify` wait behind a whole gate to print commands. The
-# short flags are not always MAKEFLAGS's first word (measured on GNU Make 3.81:
-# `-n` gives "n", `--no-print-directory -s -n` gives " --no-print-directory -sn",
-# and `GATE_LOCK=/tmp/x` alone gives "GATE_LOCK=/tmp/x"), so the flags are read
-# from the words before the first variable assignment or "--", and only from a
-# word made of nothing but make's short-flag letters and an optional leading "-".
-MAKE_FLAG_LETTERS := B d e i I j k l L n p q r R s S t v w
-make_flags_before_vars = $(if $1,$(if $(or $(filter --,$(firstword $1)),$(findstring =,$(firstword $1))),,$(firstword $1) $(call make_flags_before_vars,$(wordlist 2,$(words $1),$1))))
+# lock and goes straight to the steps, as `make -n verify` always did: GNU make
+# runs a recipe line naming $(MAKE) even under -n, so a locked recipe would make
+# a dry run wait behind a whole gate, and under -q the sub-make's "not up to
+# date" would turn into an error. The decision is made when the Makefile is read.
+# The short flags are not always MAKEFLAGS's first word (measured on GNU Make
+# 3.81: `-n` gives "n", `--no-print-directory -s -n` gives
+# " --no-print-directory -sn"; GNU Make 4.x puts them first and may add "-Idir"
+# words and, after "--", variable assignments), so the flags are read from the
+# first word that is neither a long option nor past the first "--" or
+# assignment, and only when that word is made of nothing but the letters of
+# make's argument-free short options and an optional leading "-". Any other
+# shape counts as a real run and takes the lock: a dry run that waits is
+# harmless, a real gate that skips the lock is not.
+MAKE_NOARG_FLAG_LETTERS := B d e i k L n p q r R s S t v w
+make_words_before_vars = $(if $1,$(if $(or $(filter --,$(firstword $1)),$(findstring =,$(firstword $1))),,$(firstword $1) $(call make_words_before_vars,$(wordlist 2,$(words $1),$1))))
 make_drop_letters = $(if $2,$(call make_drop_letters,$(subst $(firstword $2),,$1),$(wordlist 2,$(words $2),$2)),$1)
-make_flag_words = $(foreach w,$(call make_flags_before_vars,$1),$(if $(filter-out -,$(call make_drop_letters,$(w),$(MAKE_FLAG_LETTERS))),,$(w)))
-MAKE_RUNS_NOTHING = $(strip $(foreach flag,n q t,$(findstring $(flag),$(call make_flag_words,$(MAKEFLAGS)))))
+make_short_flags = $(foreach w,$(firstword $(filter-out --%,$(call make_words_before_vars,$1))),$(if $(filter-out -,$(call make_drop_letters,$(w),$(MAKE_NOARG_FLAG_LETTERS))),,$(w)))
+MAKE_RUNS_NOTHING := $(strip $(foreach flag,n q t,$(findstring $(flag),$(call make_short_flags,$(MAKEFLAGS)))))
 
 .PHONY: verify verify-unlocked verify-ci verify-ci-unlocked module-check floor-check dependency-check workflow-check format-check tidy-check build vet test test-cover lint docs benchmark published-check security vulncheck tool-updates prepare-release release-smoke tools clean
 
+ifeq ($(MAKE_RUNS_NOTHING),)
 verify:
-	$(if $(MAKE_RUNS_NOTHING),$(MAKE) --no-print-directory verify-unlocked,@scripts/with-check-lock.sh "$(GATE_LOCK)" $(MAKE) --no-print-directory verify-unlocked)
-
-verify-unlocked: module-check floor-check dependency-check workflow-check format-check tidy-check build vet test lint
+	@scripts/with-check-lock.sh "$(GATE_LOCK)" $(MAKE) --no-print-directory verify-unlocked
 
 verify-ci:
-	$(if $(MAKE_RUNS_NOTHING),$(MAKE) --no-print-directory verify-ci-unlocked,@scripts/with-check-lock.sh "$(GATE_LOCK)" $(MAKE) --no-print-directory verify-ci-unlocked)
+	@scripts/with-check-lock.sh "$(GATE_LOCK)" $(MAKE) --no-print-directory verify-ci-unlocked
+else
+verify: verify-unlocked
+
+verify-ci: verify-ci-unlocked
+endif
+
+verify-unlocked: module-check floor-check dependency-check workflow-check format-check tidy-check build vet test lint
 
 verify-ci-unlocked: verify-unlocked test-cover docs published-check security
 
