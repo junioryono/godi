@@ -13,11 +13,45 @@ GOSEC_BIN := $(TOOLS_BIN)/gosec-$(GOSEC_VERSION)
 GOVULNCHECK_BIN := $(TOOLS_BIN)/govulncheck-$(GOVULNCHECK_VERSION)
 ACTIONLINT_BIN := $(TOOLS_BIN)/actionlint-$(ACTIONLINT_VERSION)
 
-.PHONY: verify verify-ci module-check floor-check dependency-check workflow-check format-check tidy-check build vet test test-cover lint docs benchmark published-check security vulncheck tool-updates prepare-release release-smoke tools clean
+# A local gate shares the machine with everything else on it; CI's runs as it
+# always did. Measured in a sibling Go project on a 12-core, 32 GiB Mac on
+# 2026-10-05: `go test -race ./...` at go's default -p (one package per CPU)
+# peaked at 3.36 GiB resident over 96 processes, and several gates at once pushed
+# swap to 39 GiB, stalling DNS and the VPN client. At -p 4 the same step peaked
+# at 0.99 GiB over 56 processes and finished sooner (2049s against 2299s). So
+# outside CI each module's race tests run at most TEST_PARALLEL packages at once,
+# and the test and lint steps run under nice. nice rather than macOS's
+# taskpolicy: a package took 37s under nice -n 10 and 27s to 119s unprioritised
+# as the machine's load moved, but 205s at the utility QoS and 485s at background
+# QoS, which throttle disk I/O as well as CPU. Override either on the command
+# line (`make verify TEST_PARALLEL= NICE=`); CI sets CI, so neither applies there,
+# and the recipes $(strip) the command so that it is then CI's byte for byte.
+ifeq ($(CI),)
+TEST_PARALLEL ?= 4
+NICE ?= nice -n 10
+endif
+GO_TEST_P := $(if $(TEST_PARALLEL),-p $(TEST_PARALLEL))
 
-verify: module-check floor-check dependency-check workflow-check format-check tidy-check build vet test lint
+# One gate at a time per machine, across projects: `verify` and `verify-ci` take
+# this lock and a run waits for whichever gate holds it (see
+# scripts/with-check-lock.sh). The path is shared with other repositories' gates
+# on purpose. It is a courtesy, not a gate: without a lock tool the run goes
+# ahead and says so.
+GATE_LOCK ?= $(or $(XDG_CACHE_HOME),$(HOME)/.cache)/dev-gate.lock
 
-verify-ci: verify test-cover docs published-check security
+.PHONY: verify verify-unlocked verify-ci verify-ci-unlocked module-check floor-check dependency-check workflow-check format-check tidy-check build vet test test-cover lint docs benchmark published-check security vulncheck tool-updates prepare-release release-smoke tools clean
+
+verify:
+	@mkdir -p "$(dir $(GATE_LOCK))"
+	@scripts/with-check-lock.sh "$(GATE_LOCK)" $(MAKE) --no-print-directory verify-unlocked
+
+verify-unlocked: module-check floor-check dependency-check workflow-check format-check tidy-check build vet test lint
+
+verify-ci:
+	@mkdir -p "$(dir $(GATE_LOCK))"
+	@scripts/with-check-lock.sh "$(GATE_LOCK)" $(MAKE) --no-print-directory verify-ci-unlocked
+
+verify-ci-unlocked: verify-unlocked test-cover docs published-check security
 
 module-check:
 	@scripts/check-modules.sh
@@ -45,13 +79,13 @@ vet:
 	@scripts/for-each-module.sh go vet ./...
 
 test:
-	@scripts/for-each-module.sh go test -race ./...
+	@$(strip $(NICE) scripts/for-each-module.sh go test -race $(GO_TEST_P) ./...)
 
 test-cover:
 	@scripts/check-coverage.sh
 
 lint: $(GOLANGCI_LINT_BIN)
-	@scripts/for-each-module.sh "$(GOLANGCI_LINT_BIN)" run ./...
+	@$(strip $(NICE) scripts/for-each-module.sh "$(GOLANGCI_LINT_BIN)" run ./...)
 
 docs:
 	@build_dir=$$(mktemp -d); \

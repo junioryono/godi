@@ -75,6 +75,8 @@ make tool-updates     # report pinned tools and the Go toolchain with newer rele
 
 Run `make verify` during development. Before opening or updating a pull request, run `make verify-ci`; it composes the same coverage, docs, candidate-release, and security targets required by CI. CI additionally runs root tests on Linux, macOS, and Windows, and module tests on every supported Go release.
 
+`make verify` and `make verify-ci` share the machine with everything else on it. They take a machine-wide lock at `${XDG_CACHE_HOME:-$HOME/.cache}/dev-gate.lock`, which other repositories' gates use too, so a second gate waits for the first and says so once (`scripts/with-check-lock.sh`; `make verify-unlocked` and `make verify-ci-unlocked` run the same steps without it). Outside CI the race tests run at most `TEST_PARALLEL` packages at once (default 4, passed to every module's `go test` as `-p`), and the test and lint steps run under `NICE` (default `nice -n 10`). Override either on the command line, for example `make verify TEST_PARALLEL= NICE=`. When the `CI` environment variable is set, neither applies and the commands are exactly CI's.
+
 ## Making Changes
 
 - Use `gofmt` and standard Go conventions.
