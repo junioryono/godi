@@ -48,33 +48,40 @@ endif
 GATE_LOCK ?= $(if $(filter /%,$(firstword $(XDG_CACHE_HOME))),$(XDG_CACHE_HOME),$(HOME)/.cache)/dev-gate.lock
 
 # A dry run (-n), a question (-q) or a touch (-t) runs no step, so it takes no
-# lock and goes straight to the steps, as `make -n verify` always did: GNU make
-# runs a recipe line naming $(MAKE) even under -n, so a locked recipe would make
-# a dry run wait behind a whole gate, and under -q the sub-make's "not up to
-# date" would turn into an error. The decision is made when the Makefile is read.
-# The short flags are not always MAKEFLAGS's first word (measured on GNU Make
-# 3.81: `-n` gives "n", `--no-print-directory -s -n` gives
-# " --no-print-directory -sn"; GNU Make 4.x puts them first and may add "-Idir"
-# words and, after "--", variable assignments), so the flags are read from the
-# first word that is neither a long option nor past the first "--" or
-# assignment, and only when that word is made of nothing but the letters of
-# make's argument-free short options and an optional leading "-". Any other
-# shape counts as a real run and takes the lock: a dry run that waits is
-# harmless, a real gate that skips the lock is not.
+# lock and goes straight to the steps, as `make -n verify` always did. Two parts
+# keep it so. First, the locked recipe reaches make through GATE_SUBMAKE rather
+# than naming $(MAKE): GNU make runs a line naming $(MAKE) even under -n, -q and
+# -t, and does not treat a line that reaches it through another variable as
+# recursive (measured on GNU Make 3.81 and 4.4.1), so under any of those modes
+# the locked recipe is printed or skipped, never run. Second, when the Makefile
+# is read and those flags can be seen, verify and verify-ci become plain
+# prerequisites of the steps, so a dry run lists the steps and `make -q verify`
+# answers as it did. The short flags are not always MAKEFLAGS's first word
+# (measured on GNU Make 3.81: `-n` gives "n", `-I dir -n` gives "nI dir",
+# `--no-print-directory -s -n` gives " --no-print-directory -sn"; GNU Make 4.x
+# may add "-Idir" words and, after "--", variable assignments), so they are read
+# from the words before the first "--" or assignment: from the first word when it
+# has no leading "-" and is made of make's short-option letters, or otherwise
+# from the first single-dash word after the long options, when it is made of the
+# letters of make's argument-free options. Any other shape reads as a real run
+# and takes the lock.
+GATE_SUBMAKE = $(MAKE)
+MAKE_FLAG_LETTERS := b B C d e f h i I j k l L m n o O p q r R s S t v w W
 MAKE_NOARG_FLAG_LETTERS := B d e i k L n p q r R s S t v w
 make_words_before_vars = $(if $1,$(if $(or $(filter --,$(firstword $1)),$(findstring =,$(firstword $1))),,$(firstword $1) $(call make_words_before_vars,$(wordlist 2,$(words $1),$1))))
 make_drop_letters = $(if $2,$(call make_drop_letters,$(subst $(firstword $2),,$1),$(wordlist 2,$(words $2),$2)),$1)
-make_short_flags = $(foreach w,$(firstword $(filter-out --%,$(call make_words_before_vars,$1))),$(if $(filter-out -,$(call make_drop_letters,$(w),$(MAKE_NOARG_FLAG_LETTERS))),,$(w)))
-MAKE_RUNS_NOTHING := $(strip $(foreach flag,n q t,$(findstring $(flag),$(call make_short_flags,$(MAKEFLAGS)))))
+make_only_letters = $(if $(filter-out -,$(call make_drop_letters,$1,$2)),,$1)
+make_short_flags = $(if $(filter -%,$(firstword $1)),$(call make_only_letters,$(firstword $(filter -%,$(filter-out --%,$1))),$(MAKE_NOARG_FLAG_LETTERS)),$(call make_only_letters,$(firstword $1),$(MAKE_FLAG_LETTERS)))
+MAKE_RUNS_NOTHING := $(strip $(foreach flag,n q t,$(findstring $(flag),$(call make_short_flags,$(call make_words_before_vars,$(MAKEFLAGS))))))
 
 .PHONY: verify verify-unlocked verify-ci verify-ci-unlocked module-check floor-check dependency-check workflow-check format-check tidy-check build vet test test-cover lint docs benchmark published-check security vulncheck tool-updates prepare-release release-smoke tools clean
 
 ifeq ($(MAKE_RUNS_NOTHING),)
 verify:
-	@scripts/with-check-lock.sh "$(GATE_LOCK)" $(MAKE) --no-print-directory verify-unlocked
+	@scripts/with-check-lock.sh "$(GATE_LOCK)" $(GATE_SUBMAKE) --no-print-directory verify-unlocked
 
 verify-ci:
-	@scripts/with-check-lock.sh "$(GATE_LOCK)" $(MAKE) --no-print-directory verify-ci-unlocked
+	@scripts/with-check-lock.sh "$(GATE_LOCK)" $(GATE_SUBMAKE) --no-print-directory verify-ci-unlocked
 else
 verify: verify-unlocked
 

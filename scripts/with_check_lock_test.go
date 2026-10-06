@@ -110,8 +110,10 @@ func TestWithCheckLock(t *testing.T) {
 	// starts only once the first has finished. The first run holds the lock
 	// until the test releases it, and the test releases it only after the second
 	// has said it is waiting, so load cannot let the second find the lock free.
-	// The first run gives up on its own after 120s, longer than every wait below
-	// put together, only so that a failed test leaves nothing running for long.
+	// Killing the lock tool leaves its shell running, so the shell also stops
+	// once its trace file is gone, which is when a test that ended early removes
+	// its temporary directory; it gives up on its own after 120s, longer than
+	// every wait below put together, only should the test process itself die.
 	t.Run("ASecondRunWaitsForTheFirst", func(t *testing.T) {
 		t.Parallel()
 		requireLockTool(t)
@@ -124,7 +126,7 @@ func TestWithCheckLock(t *testing.T) {
 
 		first := lockScript(t, lock, "sh", "-c", `echo held > "$1"
 i=0
-while [ ! -e "$2" ] && [ "$i" -lt 2400 ]; do sleep 0.05; i=$((i + 1)); done
+while [ ! -e "$2" ] && [ -e "$1" ] && [ "$i" -lt 2400 ]; do sleep 0.05; i=$((i + 1)); done
 echo done >> "$1"`, "first", trace, release)
 		require.NoError(t, first.Start())
 		reap(t, first)
