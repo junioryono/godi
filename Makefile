@@ -38,14 +38,13 @@ override GO_TEST_P :=
 endif
 
 # One gate at a time per machine, across projects: `verify` and `verify-ci` take
-# this lock and a run waits for whichever gate holds it (see
-# scripts/with-check-lock.sh). The path is shared with other repositories' gates
-# on purpose, per user, so XDG_CACHE_HOME counts only when it is absolute (tested
-# on its first word, so a path holding spaces stays one path): a relative one
-# would give every checkout a lock of its own. It is a courtesy, not a gate:
-# without a lock tool, or a lock that cannot be made, the run goes ahead and says
-# so.
-GATE_LOCK ?= $(if $(filter /%,$(firstword $(XDG_CACHE_HOME))),$(XDG_CACHE_HOME),$(HOME)/.cache)/dev-gate.lock
+# a lock and a run waits for whichever gate holds it (see
+# scripts/with-check-lock.sh). Left empty, GATE_LOCK means the path every
+# repository's gate shares, which the script works out in the shell: make's word
+# functions would split an XDG_CACHE_HOME holding spaces into another path. It is
+# a courtesy, not a gate: without a lock tool, or a lock that cannot be made, the
+# run goes ahead and says so.
+GATE_LOCK ?=
 
 # A dry run (-n), a question (-q) or a touch (-t) runs no step, so it takes no
 # lock and goes straight to the steps, as `make -n verify` always did. Two parts
@@ -57,21 +56,25 @@ GATE_LOCK ?= $(if $(filter /%,$(firstword $(XDG_CACHE_HOME))),$(XDG_CACHE_HOME),
 # is read and those flags can be seen, verify and verify-ci become plain
 # prerequisites of the steps, so a dry run lists the steps and `make -q verify`
 # answers as it did. The short flags are not always MAKEFLAGS's first word
-# (measured on GNU Make 3.81: `-n` gives "n", `-I dir -n` gives "nI dir",
+# (measured on GNU Make 3.81: `-n` gives "n", `-n -I dir` gives "nI dir",
 # `--no-print-directory -s -n` gives " --no-print-directory -sn"; GNU Make 4.x
-# may add "-Idir" words and, after "--", variable assignments), so they are read
-# from the words before the first "--" or assignment: from the first word when it
-# has no leading "-" and is made of make's short-option letters, or otherwise
-# from the first single-dash word after the long options, when it is made of the
-# letters of make's argument-free options. Any other shape reads as a real run
-# and takes the lock.
+# puts them first and may add "-Idir" words and, after "--", assignments), so
+# they are read from the words before the first "--" or assignment: from the
+# first word when it has no leading "-", or else from the first word after the
+# long options make itself writes, when that word has one leading "-". Either
+# way the word must be argument-free option letters followed only by letters of
+# options that take an argument, the shape make writes; any other shape, such as
+# a hand-written MAKEFLAGS make would never produce, reads as a real run and
+# takes the lock.
 GATE_SUBMAKE = $(MAKE)
-MAKE_FLAG_LETTERS := b B C d e f h i I j k l L m n o O p q r R s S t v w W
-MAKE_NOARG_FLAG_LETTERS := B d e i k L n p q r R s S t v w
+MAKE_NOARG_FLAG_LETTERS := b B d e h i k L m n p q r R s S t v w
+MAKE_ARG_FLAG_LETTERS := C f I j l o O W
+MAKE_WRITTEN_LONG_OPTIONS := --no-print-directory --print-directory --warn-undefined-variables --trace --no-silent
 make_words_before_vars = $(if $1,$(if $(or $(filter --,$(firstword $1)),$(findstring =,$(firstword $1))),,$(firstword $1) $(call make_words_before_vars,$(wordlist 2,$(words $1),$1))))
 make_drop_letters = $(if $2,$(call make_drop_letters,$(subst $(firstword $2),,$1),$(wordlist 2,$(words $2),$2)),$1)
-make_only_letters = $(if $(filter-out -,$(call make_drop_letters,$1,$2)),,$1)
-make_short_flags = $(if $(filter -%,$(firstword $1)),$(call make_only_letters,$(firstword $(filter -%,$(filter-out --%,$1))),$(MAKE_NOARG_FLAG_LETTERS)),$(call make_only_letters,$(firstword $1),$(MAKE_FLAG_LETTERS)))
+make_after_long_options = $(if $(filter --%,$(firstword $1)),$(if $(filter $(MAKE_WRITTEN_LONG_OPTIONS),$(firstword $1)),$(call make_after_long_options,$(wordlist 2,$(words $1),$1))),$(filter -%,$(firstword $1)))
+make_flag_bundle = $(if $(call make_drop_letters,$1,$(MAKE_NOARG_FLAG_LETTERS) $(MAKE_ARG_FLAG_LETTERS)),,$(if $(filter $(call make_drop_letters,$1,$(MAKE_ARG_FLAG_LETTERS))%,$1),$1))
+make_short_flags = $(call make_flag_bundle,$(patsubst -%,%,$(if $(filter -%,$(firstword $1)),$(call make_after_long_options,$1),$(firstword $1))))
 MAKE_RUNS_NOTHING := $(strip $(foreach flag,n q t,$(findstring $(flag),$(call make_short_flags,$(call make_words_before_vars,$(MAKEFLAGS))))))
 
 .PHONY: verify verify-unlocked verify-ci verify-ci-unlocked module-check floor-check dependency-check workflow-check format-check tidy-check build vet test test-cover lint docs benchmark published-check security vulncheck tool-updates prepare-release release-smoke tools clean

@@ -1,10 +1,15 @@
 #!/bin/sh
 # with-check-lock.sh LOCKFILE COMMAND [ARG...]
 #
-# Runs COMMAND holding an exclusive lock on LOCKFILE, so two `make verify` runs
-# on one machine, from two sessions, two worktrees or two repositories sharing the
-# lock file, take turns instead of starving the machine together. A second run
-# waits for the first and says so once; the exit status is COMMAND's own.
+# Runs COMMAND holding an exclusive lock on LOCKFILE, so two gates on one
+# machine, from two sessions, worktrees or repositories, take turns instead of
+# starving the machine together. A second run waits for the first and says so
+# once; the exit status is COMMAND's own.
+#
+# An empty LOCKFILE means the lock every repository's gate shares:
+# $XDG_CACHE_HOME/dev-gate.lock when XDG_CACHE_HOME is absolute, otherwise
+# $HOME/.cache/dev-gate.lock. It is worked out here, in the shell, because
+# make's word functions split a value holding spaces.
 #
 # macOS ships lockf(1) and no flock(1); Linux ships flock(1) and no lockf(1). The
 # lock is a courtesy to the rest of the machine and never a gate, so a lock that
@@ -19,6 +24,13 @@ fi
 
 lock=$1
 shift
+
+if [ -z "$lock" ]; then
+	case "${XDG_CACHE_HOME-}" in
+	/*) lock=$XDG_CACHE_HOME/dev-gate.lock ;;
+	*) lock=$HOME/.cache/dev-gate.lock ;;
+	esac
+fi
 
 # The lock's directory is made here, quoted, so a path holding spaces is one
 # path, and a directory that cannot be made still ends in the command running,
