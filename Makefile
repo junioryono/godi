@@ -126,8 +126,11 @@ test:
 test-cover:
 	@scripts/check-coverage.sh
 
+# golangci-lint keeps a machine-wide lock of its own and by default exits with an
+# error when another run holds it, so a lint another project ran outside the gate
+# lock would fail this gate; --allow-serial-runners waits for that lock instead.
 lint: $(GOLANGCI_LINT_BIN)
-	@$(strip $(NICE) scripts/for-each-module.sh "$(GOLANGCI_LINT_BIN)" run ./...)
+	@$(strip $(NICE) scripts/for-each-module.sh "$(GOLANGCI_LINT_BIN)" run --allow-serial-runners ./...)
 
 docs:
 	@build_dir=$$(mktemp -d); \
