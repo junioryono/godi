@@ -713,36 +713,24 @@ func TestWithCheckLock(t *testing.T) {
 		assert.Equal(t, 128+int(syscall.SIGTERM), exitCode(t, err), "a command ended by SIGTERM under dash; output: %s", out)
 	})
 
-	// And the same under a lock tool that reports a signalled child as 70, with
-	// dash as sh, on every platform: the stand-in is this test binary acting as
-	// macOS lockf does (see TestFakeLockfProcess), so the rule is held wherever
-	// util-linux flock, which reports 128+n itself, would hide it. It fails the
-	// line without the trailing exit only under a dash that runs the subshell in
-	// place, as macOS's does; Debian's and Ubuntu's dash 0.5.12 fork it (measured
-	// 2026-10-07). dash is required under CI, where a skip would report success
-	// for the case nothing ran.
+	// And the same under a lock tool that reports a signalled child as 70, on
+	// every platform: the stand-in is this test binary acting as macOS lockf does
+	// (see TestFakeLockfProcess), so a command exec'd straight under the lock tool
+	// is caught on Linux too, where util-linux flock reports 128+n itself and
+	// nothing else would see it. It runs under the default sh and needs no dash;
+	// it does not catch a missing exit after the subshell, which only macOS's
+	// dash exposes (see the dash case above).
 	t.Run("ASignalledCommandIsNotReportedAsTheLockToolsFailure", func(t *testing.T) {
 		t.Parallel()
 
-		dash, err := exec.LookPath("dash")
-		if err != nil {
-			if os.Getenv("CI") != "" {
-				t.Fatalf("no dash under CI (%v), so the case dash breaks would go untested", err)
-			}
-			t.Skipf("no dash: %v", err)
-		}
 		self, err := os.Executable()
 		require.NoError(t, err, "find this test binary")
-
-		bin := t.TempDir()
-		require.NoError(t, forkSafeWriteFile(filepath.Join(bin, "lockf"),
-			[]byte("#!/bin/sh\nexec \"$FAKE_LOCKF_BINARY\" -test.run='^TestFakeLockfProcess$' -- \"$@\"\n"), 0o700),
-			"write the stand-in lockf")
-		require.NoError(t, os.Symlink(dash, filepath.Join(bin, "sh")), "put dash on PATH as sh")
+		path := fakeTools(t, map[string]string{
+			"lockf": "#!/bin/sh\nexec \"$FAKE_LOCKF_BINARY\" -test.run='^TestFakeLockfProcess$' -- \"$@\"\n",
+		})
 
 		cmd := boundedLockScript(t, filepath.Join(t.TempDir(), "gate.lock"), "sh", "-c", `kill -TERM $$`)
-		cmd.Env = scriptEnv("PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
-			"FAKE_LOCKF=1", "FAKE_LOCKF_BINARY="+self)
+		cmd.Env = scriptEnv(path, "FAKE_LOCKF=1", "FAKE_LOCKF_BINARY="+self)
 		out, err := cmd.CombinedOutput()
 		assert.Equal(t, 128+int(syscall.SIGTERM), exitCode(t, err),
 			"a command ended by SIGTERM under a lock tool reporting signalled children as 70; output: %s", out)

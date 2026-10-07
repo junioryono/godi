@@ -208,11 +208,12 @@ holding="${DEV_GATE_LOCK_HELD-}${DEV_GATE_LOCK_HELD:+$nl}$$:$lock"
 # it, so a command ended by a signal reports the shell's 128+n (macOS lockf
 # reports any signalled child as 70); the child execs it, so a program is never
 # swapped for a shell builtin of the same name. The exit after the subshell
-# keeps the child a child: dash runs a subshell that is the last command of
-# `sh -c` in place, which puts the command straight back under lockf (measured
-# 2026-10-07, dash as sh: 70 without it, 143 with it). $held is one of the two literal spellings above, split
-# on purpose; the inner script's $1 and $@ are its own, so they stay in single
-# quotes.
+# keeps the child a child: macOS's /bin/dash runs a subshell that is the last
+# command of `sh -c` in place, which puts the command straight back under lockf
+# (measured 2026-10-07 with it as sh: 70 without the exit, 143 with it; Ubuntu
+# 24.04's dash forks either way). $held is one of the two literal spellings
+# above, split on purpose; the inner script's $1 and $@ are its own, so they
+# stay in single quotes.
 # shellcheck disable=SC2086,SC2016
 if DEV_GATE_LOCK_HELD=$holding $held "$lock" sh -c 'rm -f -- "$1" || exit; shift; (exec "$@"); exit' with-check-lock "$started" "$@"; then
 	status=0
