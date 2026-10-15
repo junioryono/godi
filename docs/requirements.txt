@@ -1,6 +1,6 @@
 Babel==2.18.0
 Jinja2==3.1.6
-MarkupSafe==3.0.3
+MarkupSafe==3.0.4
 Pygments==2.21.0
 Sphinx==9.1.0
 certifi==2026.7.22
@@ -12,7 +12,7 @@ imagesize==2.0.1
 myst-parser==5.1.0 
 packaging==26.3
 pyparsing==3.3.3
-pytz==2026.4
+pytz==2026.5
 requests==2.34.2
 snowballstemmer==3.1.1
 sphinx-rtd-theme==3.1.0
