@@ -809,7 +809,7 @@ func TestCollectionBuild(t *testing.T) {
 		select {
 		case err := <-done:
 			require.NoError(t, err)
-		case <-time.After(5 * time.Second):
+		case <-time.After(hangGuard):
 			t.Fatal("Build deadlocked: it held the collection lock while running constructors")
 		}
 	})

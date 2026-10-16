@@ -368,7 +368,7 @@ func ExampleShutdown() {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	if err := godi.Shutdown(ctx, provider); err != nil {
 		fmt.Println(err)

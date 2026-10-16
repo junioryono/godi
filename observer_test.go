@@ -114,7 +114,7 @@ func TestObserver(t *testing.T) {
 		closed := make(chan error, 1)
 		go func() { closed <- p.Close() }()
 		// Close disposes before the constructor returns, so the value is an orphan.
-		require.Eventually(t, func() bool { return p.(*provider).disposed.Load() != 0 }, time.Second, time.Millisecond)
+		require.Eventually(t, func() bool { return p.(*provider).disposed.Load() != 0 }, hangGuard, time.Millisecond)
 		close(release)
 		<-done
 		<-closed

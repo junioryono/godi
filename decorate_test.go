@@ -206,7 +206,7 @@ func TestDecorate(t *testing.T) {
 		case err := <-done:
 			var cycle *CircularDependencyError
 			require.ErrorAs(t, err, &cycle)
-		case <-time.After(5 * time.Second):
+		case <-time.After(hangGuard):
 			t.Fatal("deadlocked: the decorator's Scope was not part of the construction")
 		}
 	})

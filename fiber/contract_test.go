@@ -66,7 +66,7 @@ type response struct {
 
 func serve(t *testing.T, app *fiber.App) response {
 	t.Helper()
-	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/test", http.NoBody))
+	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/test", http.NoBody), testConfig)
 	if !assert.NoError(t, err) {
 		return response{}
 	}

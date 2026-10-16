@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -729,11 +730,24 @@ func TestBuiltinServiceInjection(t *testing.T) {
 				return
 			}
 			go func() {
-				child, err := f.CreateScope(context.Background())
-				if err == nil {
-					_ = child.Close()
+				// The factory refuses while the initializer it was injected into
+				// is still running, and this goroutine can be scheduled before
+				// that returns, so it asks again until the initializer has
+				// returned. Retrying adds no ordering with the scope's setup,
+				// which is what the race detector judges.
+				deadline := time.Now().Add(hangGuard)
+				for {
+					child, err := f.CreateScope(context.Background())
+					if errors.Is(err, errScopeDuringConstruction) && time.Now().Before(deadline) {
+						runtime.Gosched()
+						continue
+					}
+					if err == nil {
+						_ = child.Close()
+					}
+					done <- err
+					return
 				}
-				done <- err
 			}()
 		})
 		c.AddSingleton(func(f ScopeFactory) *Worker { return &Worker{Scopes: f} })
@@ -860,6 +874,13 @@ func TestBuiltinServiceInjection(t *testing.T) {
 	})
 }
 
+// hangGuard bounds a wait whose failure is a wait that never ends: a
+// deadlock, or a close that never happens. It is a failure deadline, never a
+// condition: what the test waits for takes microseconds or never happens, so
+// it is a minute rather than a few seconds, which a loaded machine running
+// the race detector can spend between two steps of a correct run.
+const hangGuard = time.Minute
+
 // resolveWithin runs resolve, failing the test instead of hanging if it
 // deadlocks.
 func resolveWithin(t *testing.T, resolve func() error) error {
@@ -869,7 +890,7 @@ func resolveWithin(t *testing.T, resolve func() error) error {
 	select {
 	case err := <-done:
 		return err
-	case <-time.After(5 * time.Second):
+	case <-time.After(hangGuard):
 		t.Fatal("resolution deadlocked")
 		return nil
 	}
@@ -1018,7 +1039,7 @@ func TestDynamicCircularResolution(t *testing.T) {
 			select {
 			case err := <-ch:
 				results = append(results, err)
-			case <-time.After(5 * time.Second):
+			case <-time.After(hangGuard):
 				t.Fatal("deadlocked: each goroutine waits on the other's construction")
 			}
 		}
@@ -1053,39 +1074,56 @@ func TestDynamicCircularResolution(t *testing.T) {
 
 	t.Run("concurrent_resolution_is_not_a_cycle", func(t *testing.T) {
 		t.Parallel()
-		started := make(chan struct{})
-		release := make(chan struct{})
-		c := NewCollection()
-		c.AddScoped(func(s Resolver) *SelfA {
-			close(started)
-			<-release
-			return &SelfA{}
+		synctest.Test(t, func(t *testing.T) {
+			started := make(chan struct{})
+			release := make(chan struct{})
+			c := NewCollection()
+			c.AddScoped(func(s Resolver) *SelfA {
+				close(started)
+				<-release
+				return &SelfA{}
+			})
+			p, err := c.Build()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = p.Close() })
+			scope, err := p.CreateScope(context.Background())
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = scope.Close() })
+
+			first := make(chan *SelfA, 1)
+			go func() {
+				a, _ := Resolve[*SelfA](scope)
+				first <- a
+			}()
+			<-started
+			second := make(chan *SelfA, 1)
+			go func() {
+				a, _ := Resolve[*SelfA](scope)
+				second <- a
+			}()
+			// Once every goroutine is durably blocked, the second is waiting
+			// on the first's construction; released any earlier, it could
+			// find the instance cached and never wait at all.
+			synctest.Wait()
+			var early *SelfA
+			waited := true
+			select {
+			case early = <-second:
+				waited = false
+			default:
+			}
+			// Released before any assertion, so a failure leaves no goroutine
+			// blocked in the bubble.
+			close(release)
+			a1 := <-first
+			require.True(t, waited, "the second resolution returned (%v) while the construction it shares was running", early)
+
+			// Another goroutine waiting on the in-flight construction is not
+			// re-entrance: it shares the single instance.
+			a2 := <-second
+			require.NotNil(t, a1)
+			assert.Same(t, a1, a2)
 		})
-		p, err := c.Build()
-		require.NoError(t, err)
-		t.Cleanup(func() { _ = p.Close() })
-		scope, err := p.CreateScope(context.Background())
-		require.NoError(t, err)
-		t.Cleanup(func() { _ = scope.Close() })
-
-		first := make(chan *SelfA, 1)
-		go func() {
-			a, _ := Resolve[*SelfA](scope)
-			first <- a
-		}()
-		<-started
-		second := make(chan *SelfA, 1)
-		go func() {
-			a, _ := Resolve[*SelfA](scope)
-			second <- a
-		}()
-		close(release)
-
-		// Another goroutine waiting on the in-flight construction is not
-		// re-entrance: it shares the single instance.
-		a1, a2 := <-first, <-second
-		require.NotNil(t, a1)
-		assert.Same(t, a1, a2)
 	})
 }
 

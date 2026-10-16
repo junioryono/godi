@@ -15,6 +15,16 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// hangGuard bounds a request or a wait whose failure is one that never ends.
+// It is a failure deadline, never a condition: App.Test's default of one
+// second is a time a correct request can take on a loaded machine running the
+// race detector.
+const hangGuard = time.Minute
+
+// testConfig is App.Test's configuration for every request here: a request
+// that never completes still fails, and a slow one does not.
+var testConfig = fiber.TestConfig{Timeout: hangGuard, FailOnTimeout: true}
+
 // Test types
 type testService struct {
 	ID    string
@@ -65,7 +75,7 @@ func TestScopeMiddleware(t *testing.T) {
 		})
 
 		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
-		resp, err := app.Test(req)
+		resp, err := app.Test(req, testConfig)
 		assert.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -92,7 +102,7 @@ func TestScopeMiddleware(t *testing.T) {
 			return c.SendStatus(http.StatusOK)
 		})
 
-		resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/test", http.NoBody))
+		resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/test", http.NoBody), testConfig)
 		assert.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -122,7 +132,7 @@ func TestScopeMiddleware(t *testing.T) {
 		})
 
 		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
-		resp, err := app.Test(req)
+		resp, err := app.Test(req, testConfig)
 		assert.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -158,7 +168,7 @@ func TestScopeMiddleware(t *testing.T) {
 		})
 
 		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
-		resp, err := app.Test(req)
+		resp, err := app.Test(req, testConfig)
 		assert.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -194,7 +204,7 @@ func TestScopeMiddleware(t *testing.T) {
 		})
 
 		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
-		resp, err := app.Test(req)
+		resp, err := app.Test(req, testConfig)
 		assert.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -220,7 +230,7 @@ func TestHandle(t *testing.T) {
 		app.Get("/value", Handle((*testController).GetValue))
 
 		req := httptest.NewRequest(http.MethodGet, "/value", http.NoBody)
-		resp, err := app.Test(req)
+		resp, err := app.Test(req, testConfig)
 		assert.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -241,7 +251,7 @@ func TestHandle(t *testing.T) {
 		))
 
 		req := httptest.NewRequest(http.MethodGet, "/value", http.NoBody)
-		resp, err := app.Test(req)
+		resp, err := app.Test(req, testConfig)
 		assert.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -271,7 +281,7 @@ func TestHandle(t *testing.T) {
 		))
 
 		req := httptest.NewRequest(http.MethodGet, "/value", http.NoBody)
-		resp, err := app.Test(req)
+		resp, err := app.Test(req, testConfig)
 		assert.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -304,7 +314,7 @@ func TestHandle(t *testing.T) {
 		))
 
 		req := httptest.NewRequest(http.MethodGet, "/panic", http.NoBody)
-		resp, err := app.Test(req)
+		resp, err := app.Test(req, testConfig)
 		assert.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -324,7 +334,7 @@ func TestScopeFromContext(t *testing.T) {
 		})
 
 		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
-		resp, err := app.Test(req)
+		resp, err := app.Test(req, testConfig)
 		assert.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -353,7 +363,7 @@ func TestScopeFromContext(t *testing.T) {
 
 		for _, withScope := range []bool{true, false} {
 			scoped = withScope
-			resp, testErr := app.Test(httptest.NewRequest(http.MethodGet, "/test", http.NoBody))
+			resp, testErr := app.Test(httptest.NewRequest(http.MethodGet, "/test", http.NoBody), testConfig)
 			assert.NoError(t, testErr)
 			resp.Body.Close()
 		}
@@ -372,7 +382,7 @@ func TestDefaultConfig(t *testing.T) {
 		})
 
 		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
-		resp, err := app.Test(req)
+		resp, err := app.Test(req, testConfig)
 		assert.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -463,7 +473,7 @@ func TestScopeRemainsAvailableToErrorHandler(t *testing.T) {
 	app.Use(ScopeMiddleware(provider))
 	app.Get("/test", func(fiber.Ctx) error { return errors.New("controller failed") })
 
-	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/test", http.NoBody))
+	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/test", http.NoBody), testConfig)
 	assert.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusTeapot, resp.StatusCode)
@@ -487,7 +497,7 @@ func TestConfiguredErrorHandlerFailureIsSanitized(t *testing.T) {
 	app.Use(ScopeMiddleware(provider, WithLogger(logger)))
 	app.Get("/test", func(fiber.Ctx) error { return errors.New("controller failed") })
 
-	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/test", http.NoBody))
+	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/test", http.NoBody), testConfig)
 	assert.NoError(t, err)
 	defer resp.Body.Close()
 	body, readErr := io.ReadAll(resp.Body)
@@ -525,7 +535,7 @@ func TestIntegration(t *testing.T) {
 		}))
 
 		req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
-		resp, err := app.Test(req)
+		resp, err := app.Test(req, testConfig)
 		assert.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -586,7 +596,7 @@ func TestScopeClosedWhenHandlerPanics(t *testing.T) {
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/panic", http.NoBody)
-	resp, err := app.Test(req)
+	resp, err := app.Test(req, testConfig)
 	assert.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -644,12 +654,14 @@ func TestScopeOutlivesStreamedResponse(t *testing.T) {
 		assert.NoError(t, scopeErr)
 		stream, resolveErr := godi.Resolve[*streamResource](scope)
 		assert.NoError(t, resolveErr)
-		// Fiber writes the stream after the handler chain returns.
-		return c.SendStream(stream)
+		// Fiber writes the stream after the handler chain returns. fasthttp
+		// closes a body stream that is an io.Closer itself, so the stream is
+		// handed over as a plain reader: only the scope can close it.
+		return c.SendStream(struct{ io.Reader }{stream})
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/stream", http.NoBody)
-	resp, err := app.Test(req)
+	resp, err := app.Test(req, testConfig)
 	if !assert.NoError(t, err, "the scope must stay open until the response is streamed") {
 		return
 	}
@@ -660,7 +672,7 @@ func TestScopeOutlivesStreamedResponse(t *testing.T) {
 	assert.Equal(t, payload, string(body), "the scope must stay open until the response is streamed")
 	assert.Nil(t, closeErr.Load())
 	if assert.NotNil(t, resource) {
-		assert.Eventually(t, resource.closed.Load, time.Second, 5*time.Millisecond,
+		assert.Eventually(t, resource.closed.Load, hangGuard, 5*time.Millisecond,
 			"the scope must be closed once the response is written")
 	}
 }
