@@ -83,6 +83,11 @@ func TestClaudeGuardHook(t *testing.T) {
 
 	root, err := filepath.Abs("..")
 	require.NoError(t, err)
+	// The main checkout every worktree of this repository shares; this test
+	// may run in one of those worktrees.
+	common, err := exec.CommandContext(t.Context(), "git", "-C", root, "rev-parse", "--path-format=absolute", "--git-common-dir").Output()
+	require.NoError(t, err)
+	home := filepath.Join(filepath.Dir(strings.TrimSpace(string(common))), ".claude", "worktrees")
 
 	const gate, worktree = "make verify", ".claude/worktrees/"
 	// checkout is a main checkout's path for the worktree cases: this test may
@@ -136,6 +141,8 @@ func TestClaudeGuardHook(t *testing.T) {
 		{name: "worktree beside the repository", command: "git worktree add ../godi-work -b junior-oct15-x origin/main", dir: checkout, refuses: worktree},
 		{name: "worktree in /tmp", command: "git worktree add /tmp/godi-work origin/main", refuses: worktree},
 		{name: "worktree through -C", command: "git -C .. worktree add elsewhere", dir: checkout + "/http", refuses: worktree},
+		{name: "worktree under a module's own .claude", command: "git worktree add .claude/worktrees/review", dir: "http", refuses: worktree},
+		{name: "worktree under another .claude/worktrees", command: "git worktree add /tmp/.claude/worktrees/review", refuses: worktree},
 		{name: "full checks do not lift the worktree rule", command: "git worktree add ../w", dir: checkout, env: []string{"CLAUDE_FULL_CHECKS=1"}, refuses: worktree},
 
 		// What a session runs while working.
@@ -153,12 +160,15 @@ func TestClaudeGuardHook(t *testing.T) {
 		{name: "vet", command: "go vet ./..."},
 		{name: "lint of packages", command: "golangci-lint run --allow-serial-runners . ./internal/graph"},
 		{name: "the lint version", command: "golangci-lint version"},
-		{name: "a worktree under .claude/worktrees", command: "git worktree add .claude/worktrees/x -b junior-oct15-x origin/main", dir: checkout},
+		{name: "a worktree in the main checkout's .claude/worktrees", command: "git worktree add " + home + "/x -b junior-oct15-x origin/main", dir: "http"},
+		{name: "a worktree under .claude/worktrees where git cannot tell", command: "git worktree add .claude/worktrees/x -b junior-oct15-x origin/main", dir: checkout},
 		{name: "a worktree in a scratchpad", command: "git worktree add /private/tmp/claude-501/p/s/scratchpad/wt origin/main"},
 		{name: "the worktree list", command: "git worktree list"},
 		{name: "a gate named in an argument", command: "echo 'go test ./...' && grep -n 'make verify-full' Makefile"},
 		{name: "a gate in a heredoc", command: "cat > notes.txt <<'EOF'\ngo test -race ./...\nmake verify-full\nEOF"},
 		{name: "a gate in a comment", command: "go build ./... # then go test ./..."},
+		{name: "a comment after one package's race tests", command: "go test -race -run TestScope . # focused check"},
+		{name: "a # inside quotes is no comment", command: "git log --format='%h #%s' -1 && go test ."},
 		{name: "a line it cannot parse", command: "go test \"./..."},
 
 		// The hook's own environment.

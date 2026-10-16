@@ -18,9 +18,11 @@ kernel panic on 2026-10-15:
     module.
 `make verify` checks what changed instead, and CI runs the rest.
 
-Also refused: `git worktree add` to a path outside some .claude/worktrees/ or a
-Claude scratchpad, because worktrees beside the repository or in /tmp are
-forgotten and pile up.
+Also refused: `git worktree add` to a path that is not directly under the main
+checkout's .claude/worktrees/ (git names the main checkout; where it cannot,
+any .claude/worktrees/ will do) or in a Claude scratchpad, because worktrees
+beside the repository, inside another worktree or in /tmp are forgotten and
+pile up.
 
 CLAUDE_FULL_CHECKS=1 in the hook's own environment, which is the one Claude Code
 was started with, lifts the gate refusals; the same assignment written in front
@@ -33,6 +35,7 @@ import json
 import os
 import re
 import shlex
+import subprocess
 import sys
 
 GATE_ADVICE = (
@@ -116,13 +119,42 @@ def strip_heredocs(text):
     return "\n".join(out)
 
 
+def strip_comments(text):
+    """Drop comments: from a # that starts a word outside quotes to the end of
+    its line."""
+    out, quote, i, n = [], None, 0, len(text)
+    while i < n:
+        c = text[i]
+        if quote:
+            out.append(c)
+            if c == "\\" and quote == '"' and i + 1 < n:
+                out.append(text[i + 1])
+                i += 1
+            elif c == quote:
+                quote = None
+        elif c == "\\" and i + 1 < n:
+            out.append(text[i : i + 2])
+            i += 1
+        elif c in "'\"":
+            quote = c
+            out.append(c)
+        elif c == "#" and (i == 0 or text[i - 1] in " \t\n;&|()"):
+            while i < n and text[i] != "\n":
+                i += 1
+            continue
+        else:
+            out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def simple_commands(text):
     """The command line as a list of events: a simple command's words, or "("
     and ")" where a subshell opens and closes."""
-    lexer = shlex.shlex(strip_heredocs(text).replace("\\\n", ""), posix=True, punctuation_chars=SEPARATORS)
+    text = strip_comments(strip_heredocs(text).replace("\\\n", ""))
+    lexer = shlex.shlex(text, posix=True, punctuation_chars=SEPARATORS)
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
-    # No commenters: a comment's words follow a "#" word, which is no program.
     lexer.commenters = ""
     out, current = [], []
     for word in lexer:
@@ -370,8 +402,24 @@ def judge_gate(words, cwd):
         judge_golangci(words, cwd)
 
 
+def main_checkout(repo):
+    """The main checkout of the repository repo is in, or None when git cannot
+    say: the parent of the common git directory every worktree shares."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    try:
+        run = subprocess.run(["git", "-C", repo, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                             capture_output=True, text=True, timeout=5, env=env, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    common = run.stdout.strip()
+    if run.returncode != 0 or os.path.basename(common) != ".git":
+        return None
+    return os.path.dirname(common)
+
+
 def worktree_home(path):
-    """True when path is inside some .claude/worktrees/ or a Claude scratchpad."""
+    """True when path is inside some .claude/worktrees/ or a Claude scratchpad:
+    the rule where git cannot name the main checkout."""
     parts = path.split(os.sep)
     for i in range(len(parts) - 2):
         if parts[i] == ".claude" and parts[i + 1] == "worktrees" and parts[i + 2]:
@@ -405,11 +453,20 @@ def judge_worktree_add(words, cwd):
     if not path:
         return
     lexical = os.path.normpath(os.path.join(repo, os.path.expanduser(path)))
-    if worktree_home(lexical) or worktree_home(os.path.realpath(lexical)):
+    if SCRATCHPAD.fullmatch(lexical) or SCRATCHPAD.fullmatch(os.path.realpath(lexical)):
         return
-    refuse(f"godi hook: {path} is outside .claude/worktrees/. Worktrees live under the main checkout's "
-           ".claude/worktrees/ (or a Claude scratchpad), never beside the repository or in /tmp: "
-           "`git worktree add .claude/worktrees/<name> -b <branch> origin/main`.")
+    main = main_checkout(repo)
+    if main is None:
+        if worktree_home(lexical) or worktree_home(os.path.realpath(lexical)):
+            return
+        home = "the main checkout's .claude/worktrees"
+    else:
+        home = os.path.join(main, ".claude", "worktrees")
+        if os.path.realpath(os.path.dirname(lexical)) == os.path.realpath(home):
+            return
+    refuse(f"godi hook: {path} is not in {home}/. Worktrees live directly under the main checkout's "
+           ".claude/worktrees/ (or in a Claude scratchpad), never beside the repository, inside another "
+           f"worktree or in /tmp: `git worktree add {home}/<name> -b <branch> origin/main`.")
 
 
 def judge(payload):

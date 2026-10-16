@@ -15,7 +15,7 @@ Verify what you changed, locally and narrowly; CI runs the full gate on every pu
 
 ## Worktrees
 
-Make worktrees under the main checkout's `.claude/worktrees/`, never beside the repository in `../` and never in `/tmp`: `git worktree add .claude/worktrees/<name> -b <branch> origin/main`. The hook refuses any other place.
+Make worktrees directly under the main checkout's `.claude/worktrees/`, never beside the repository in `../`, never inside another worktree and never in `/tmp`: from the main checkout, `git worktree add .claude/worktrees/<name> -b <branch> origin/main`. The hook refuses any other place.
 
 ## Finding code
 

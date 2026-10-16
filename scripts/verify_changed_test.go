@@ -90,7 +90,9 @@ func runVerify(t *testing.T, dir string, env ...string) (status int, out, calls 
 
 	cmd := exec.CommandContext(t.Context(), script)
 	cmd.Dir = dir
-	cmd.Env = append(gitlessEnv(), path, "VERIFY_CALLS="+log, "GOLANGCI_LINT=", "GOMAXPROCS=")
+	// Every variable the script reads starts empty, whatever the caller set:
+	// a VERIFY_BASE meant for this checkout names nothing in the fixture's.
+	cmd.Env = append(gitlessEnv(), path, "VERIFY_CALLS="+log, "VERIFY_BASE=", "GOLANGCI_LINT=", "ACTIONLINT=", "GOMAXPROCS=")
 	cmd.Env = append(cmd.Env, env...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
