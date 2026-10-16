@@ -122,7 +122,9 @@ def strip_heredocs(text):
 def strip_comments(text):
     """Drop comments: from a # that starts a word outside quotes to the end of
     its line."""
-    out, quote, i, n = [], None, 0, len(text)
+    # word_start is whether the next character starts a word: true after an
+    # unquoted, unescaped blank or operator, never after an escaped one.
+    out, quote, i, n, word_start = [], None, 0, len(text), True
     while i < n:
         c = text[i]
         if quote:
@@ -132,18 +134,22 @@ def strip_comments(text):
                 i += 1
             elif c == quote:
                 quote = None
+            word_start = False
         elif c == "\\" and i + 1 < n:
             out.append(text[i : i + 2])
             i += 1
+            word_start = False
         elif c in "'\"":
             quote = c
             out.append(c)
-        elif c == "#" and (i == 0 or text[i - 1] in " \t\n;&|()"):
+            word_start = False
+        elif c == "#" and word_start:
             while i < n and text[i] != "\n":
                 i += 1
             continue
         else:
             out.append(c)
+            word_start = c in " \t\n;&|()"
         i += 1
     return "".join(out)
 
