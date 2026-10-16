@@ -234,7 +234,7 @@ func buildFiber(t *testing.T, provider godi.Provider, opts conformanceOptions) c
 	}, godifiber.WithPanicRecovery(true), godifiber.WithHandlerLogger(quietLogger)))
 	app.Get("/missing", godifiber.Handle(func(*unregisteredController, fiber.Ctx) error { return nil },
 		godifiber.WithHandlerLogger(quietLogger)))
-	return testRunner(t, func(req *http.Request) (*http.Response, error) { return app.Test(req) })
+	return testRunner(t, func(req *http.Request) (*http.Response, error) { return app.Test(req, fiberTestConfig) })
 }
 
 func conformanceTargets() []conformanceTarget {

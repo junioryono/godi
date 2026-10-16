@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -729,11 +730,24 @@ func TestBuiltinServiceInjection(t *testing.T) {
 				return
 			}
 			go func() {
-				child, err := f.CreateScope(context.Background())
-				if err == nil {
-					_ = child.Close()
+				// The factory refuses while the initializer it was injected into
+				// is still running, and this goroutine can be scheduled before
+				// that returns, so it asks again until the initializer has
+				// returned. Retrying adds no ordering with the scope's setup,
+				// which is what the race detector judges.
+				deadline := time.Now().Add(hangGuard)
+				for {
+					child, err := f.CreateScope(context.Background())
+					if errors.Is(err, errScopeDuringConstruction) && time.Now().Before(deadline) {
+						runtime.Gosched()
+						continue
+					}
+					if err == nil {
+						_ = child.Close()
+					}
+					done <- err
+					return
 				}
-				done <- err
 			}()
 		})
 		c.AddSingleton(func(f ScopeFactory) *Worker { return &Worker{Scopes: f} })
@@ -860,6 +874,13 @@ func TestBuiltinServiceInjection(t *testing.T) {
 	})
 }
 
+// hangGuard bounds a wait whose failure is a wait that never ends: a
+// deadlock, or a close that never happens. It is a failure deadline, never a
+// condition: what the test waits for takes microseconds or never happens, so
+// it is a minute rather than a few seconds, which a loaded machine running
+// the race detector can spend between two steps of a correct run.
+const hangGuard = time.Minute
+
 // resolveWithin runs resolve, failing the test instead of hanging if it
 // deadlocks.
 func resolveWithin(t *testing.T, resolve func() error) error {
@@ -869,7 +890,7 @@ func resolveWithin(t *testing.T, resolve func() error) error {
 	select {
 	case err := <-done:
 		return err
-	case <-time.After(5 * time.Second):
+	case <-time.After(hangGuard):
 		t.Fatal("resolution deadlocked")
 		return nil
 	}
@@ -1018,7 +1039,7 @@ func TestDynamicCircularResolution(t *testing.T) {
 			select {
 			case err := <-ch:
 				results = append(results, err)
-			case <-time.After(5 * time.Second):
+			case <-time.After(hangGuard):
 				t.Fatal("deadlocked: each goroutine waits on the other's construction")
 			}
 		}

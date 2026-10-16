@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
@@ -144,13 +145,19 @@ func runEcho(t *testing.T, provider godi.Provider, req *http.Request) (status in
 	return recorder.Code, recorder.Body.String()
 }
 
+// fiberTestConfig is App.Test's configuration for every Fiber request here.
+// App.Test's default fails a request after one second, a time a correct
+// request can take on a loaded machine running the race detector; a request
+// that never completes still fails, after a minute.
+var fiberTestConfig = fiber.TestConfig{Timeout: time.Minute, FailOnTimeout: true}
+
 func runFiber(t *testing.T, provider godi.Provider, req *http.Request) (status int, body string) {
 	t.Helper()
 	app := fiber.New()
 	app.Use(godifiber.ScopeMiddleware(provider))
 	registerGreeting(humafiber.New(app, huma.DefaultConfig("Integration", "1.0.0")))
 
-	response, err := app.Test(req)
+	response, err := app.Test(req, fiberTestConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
