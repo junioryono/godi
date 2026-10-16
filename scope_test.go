@@ -1074,39 +1074,56 @@ func TestDynamicCircularResolution(t *testing.T) {
 
 	t.Run("concurrent_resolution_is_not_a_cycle", func(t *testing.T) {
 		t.Parallel()
-		started := make(chan struct{})
-		release := make(chan struct{})
-		c := NewCollection()
-		c.AddScoped(func(s Resolver) *SelfA {
-			close(started)
-			<-release
-			return &SelfA{}
+		synctest.Test(t, func(t *testing.T) {
+			started := make(chan struct{})
+			release := make(chan struct{})
+			c := NewCollection()
+			c.AddScoped(func(s Resolver) *SelfA {
+				close(started)
+				<-release
+				return &SelfA{}
+			})
+			p, err := c.Build()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = p.Close() })
+			scope, err := p.CreateScope(context.Background())
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = scope.Close() })
+
+			first := make(chan *SelfA, 1)
+			go func() {
+				a, _ := Resolve[*SelfA](scope)
+				first <- a
+			}()
+			<-started
+			second := make(chan *SelfA, 1)
+			go func() {
+				a, _ := Resolve[*SelfA](scope)
+				second <- a
+			}()
+			// Once every goroutine is durably blocked, the second is waiting
+			// on the first's construction; released any earlier, it could
+			// find the instance cached and never wait at all.
+			synctest.Wait()
+			var early *SelfA
+			waited := true
+			select {
+			case early = <-second:
+				waited = false
+			default:
+			}
+			// Released before any assertion, so a failure leaves no goroutine
+			// blocked in the bubble.
+			close(release)
+			a1 := <-first
+			require.True(t, waited, "the second resolution returned (%v) while the construction it shares was running", early)
+
+			// Another goroutine waiting on the in-flight construction is not
+			// re-entrance: it shares the single instance.
+			a2 := <-second
+			require.NotNil(t, a1)
+			assert.Same(t, a1, a2)
 		})
-		p, err := c.Build()
-		require.NoError(t, err)
-		t.Cleanup(func() { _ = p.Close() })
-		scope, err := p.CreateScope(context.Background())
-		require.NoError(t, err)
-		t.Cleanup(func() { _ = scope.Close() })
-
-		first := make(chan *SelfA, 1)
-		go func() {
-			a, _ := Resolve[*SelfA](scope)
-			first <- a
-		}()
-		<-started
-		second := make(chan *SelfA, 1)
-		go func() {
-			a, _ := Resolve[*SelfA](scope)
-			second <- a
-		}()
-		close(release)
-
-		// Another goroutine waiting on the in-flight construction is not
-		// re-entrance: it shares the single instance.
-		a1, a2 := <-first, <-second
-		require.NotNil(t, a1)
-		assert.Same(t, a1, a2)
 	})
 }
 
