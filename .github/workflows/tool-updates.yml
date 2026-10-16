@@ -54,7 +54,7 @@ jobs:
               echo
               cat report.md
               echo
-              echo "Update the pins in \`Makefile\` / \`.go-version\`, then run \`make verify\`. See CONTRIBUTING.md (Tooling Updates)."
+              echo "Update the pins in \`Makefile\` / \`.go-version\`, then run \`make verify-full\`. See CONTRIBUTING.md (Tooling Updates)."
             } > body.md
             if [[ -n "$existing" ]]; then
               gh issue edit "$existing" --repo "$GITHUB_REPOSITORY" --body-file body.md
