@@ -72,7 +72,7 @@ scripts/check-release-floors.sh "$version" >/dev/null
 cat <<EOF
 
 Release floors now require $version. Next steps:
-  1. make verify
+  1. make verify-full
   2. commit: git commit -am "chore(release): prepare $version"
   3. open a pull request and merge it to main
   4. run the Tag workflow on main with version $version

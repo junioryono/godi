@@ -62,3 +62,7 @@ build/
 *.tmp
 *.temp
 *.sarif
+
+# Claude Code: worktrees and personal settings
+.claude/worktrees/
+.claude/settings.local.json

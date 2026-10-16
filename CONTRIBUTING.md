@@ -10,13 +10,13 @@ Requirements:
 - Python 3.13 for the documentation build
 - GNU Make, Bash, and `zip` (used by `make published-check`)
 
-Clone your fork, install the pinned Go development tools, and run the same verification entry point used by CI:
+Clone your fork, install the pinned Go development tools, and run the full local gate once:
 
 ```bash
 git clone https://github.com/your-username/godi.git
 cd godi
 make tools
-make verify
+make verify-full
 ```
 
 `make tools` installs version-pinned binaries under `.tools/bin`; Make invokes
@@ -62,7 +62,8 @@ Two modules are never released:
 ## Verification Commands
 
 ```bash
-make verify           # inventory, release floors, formatting, tidy, build, vet, race tests, lint
+make verify           # what this checkout changed: gofmt, build, and vet, tests (no -race) and lint of the changed packages
+make verify-full      # inventory, release floors, formatting, tidy, build, vet, race tests, lint, in every module
 make verify-ci        # reproduce all required CI checks, including slower checks
 make test-cover       # enforce the coverage floor for all runtime modules
 make docs             # build Sphinx docs with warnings treated as errors
@@ -73,9 +74,9 @@ make benchmark        # emit raw results plus reproducibility metadata
 make tool-updates     # report pinned tools and the Go toolchain with newer releases
 ```
 
-Run `make verify` during development. Before opening or updating a pull request, run `make verify-ci`; it composes the same coverage, docs, candidate-release, and security targets required by CI. CI additionally runs root tests on Linux, macOS, and Windows, and module tests on every supported Go release.
+Run `make verify` (the default goal) while working. It reads what changed against the merge base with `origin/main` (`VERIFY_BASE` names another base), including staged, unstaged and untracked files, and for each module a change is in runs gofmt on the changed files, `go build ./...`, and `go vet`, `go test` (no `-race`, `-p 2`, `GOMAXPROCS=4`) and golangci-lint (`--allow-serial-runners`) on the changed packages only (`scripts/verify-changed.sh`). A changed workflow also runs actionlint and the action-pinning check. It exits 2, never 0, when it cannot find the merge base. CI runs the full gate on every push. To reproduce it, `make verify-full` runs every module's checks with the race detector, and `make verify-ci` adds the same coverage, docs, candidate-release, and security targets CI requires. CI additionally runs root tests on Linux, macOS, and Windows, and module tests on every supported Go release.
 
-`make verify` and `make verify-ci` share the machine with everything else on it. They take a lock at `${XDG_CACHE_HOME:-$HOME/.cache}/dev-gate.lock` (`XDG_CACHE_HOME` counts only when it is an absolute path), which other repositories' gates use too, so one user's gates take turns across projects and a second gate waits for the first, saying so (`scripts/with-check-lock.sh`; `make verify-unlocked` and `make verify-ci-unlocked` run the same steps without it, and a dry run, question or touch such as `make -n verify` takes no lock). A gate run inside another gate that holds the same lock, directly or through another lock, runs under it instead of waiting for its own ancestor: the script hands its command `DEV_GATE_LOCK_HELD`, and an entry counts only while the run holding it is an ancestor. The lock is a courtesy, not a guarantee: when no lock tool is installed, neither an absolute `XDG_CACHE_HOME` nor `HOME` is set, the lock's directory cannot be made, the lock path is not a regular file or holds a newline, the lock cannot be taken, or the process tree cannot be read to tell whether an ancestor holds the lock, the gate runs once anyway and says it is not serialised. Outside CI the race tests run at most `TEST_PARALLEL` packages at once (default 4, passed to every module's `go test` as `-p`), and the test and lint steps run under `NICE` (default `nice -n 10`). The lint step passes `--allow-serial-runners`, so golangci-lint waits for its own machine-wide lock instead of failing when another project's lint holds it. `make verify TEST_PARALLEL= NICE=` lifts both limits but still takes the lock. When the `CI` environment variable is set, neither applies, whatever the environment or command line says: the test and lint commands carry no `nice` and no `-p`.
+`make verify-full` and `make verify-ci` share the machine with everything else on it. They take a lock at `${XDG_CACHE_HOME:-$HOME/.cache}/dev-gate.lock` (`XDG_CACHE_HOME` counts only when it is an absolute path), which other repositories' gates use too, so one user's gates take turns across projects and a second gate waits for the first, saying so (`scripts/with-check-lock.sh`; `make verify-full-unlocked` and `make verify-ci-unlocked` run the same steps without it, and a dry run, question or touch such as `make -n verify-full` takes no lock; `make verify` takes none, being a few packages' work). A gate run inside another gate that holds the same lock, directly or through another lock, runs under it instead of waiting for its own ancestor: the script hands its command `DEV_GATE_LOCK_HELD`, and an entry counts only while the run holding it is an ancestor. The lock is a courtesy, not a guarantee: when no lock tool is installed, neither an absolute `XDG_CACHE_HOME` nor `HOME` is set, the lock's directory cannot be made, the lock path is not a regular file or holds a newline, the lock cannot be taken, or the process tree cannot be read to tell whether an ancestor holds the lock, the gate runs once anyway and says it is not serialised. Outside CI the race tests run at most `TEST_PARALLEL` packages at once (default 4, passed to every module's `go test` as `-p`), and the test and lint steps run under `NICE` (default `nice -n 10`). The lint step passes `--allow-serial-runners`, so golangci-lint waits for its own machine-wide lock instead of failing when another project's lint holds it. `make verify-full TEST_PARALLEL= NICE=` lifts both limits but still takes the lock. When the `CI` environment variable is set, neither applies, whatever the environment or command line says: the test and lint commands carry no `nice` and no `-p`.
 
 ## Making Changes
 
@@ -147,7 +148,7 @@ added in the same release.
 
    ```bash
    make prepare-release VERSION=vX.Y.Z
-   make verify
+   make verify-full
    ```
 
    `scripts/prepare-release.sh` raises every `require github.com/junioryono/godi/...`
@@ -214,9 +215,9 @@ job summary, or dispatch the workflow on a branch, and compare
 Dependabot updates Go modules, documentation dependencies, and GitHub Actions.
 It cannot see the `*_VERSION` tool pins in the `Makefile` or `.go-version`;
 `make tool-updates` and the weekly `Tool Updates` workflow report those. Bump
-the pin, run `make tools verify`, and open a `chore(deps)` pull request.
+the pin, run `make tools verify-full`, and open a `chore(deps)` pull request.
 
-Some integration modules build on another one (`chi` is a facade over `http`). Such a module develops against the sibling source through a `replace => ../<module>` directive, which `make verify` checks (`scripts/sibling-requires.sh` lists these requirements). Like every godi requirement, the sibling's is raised to the release version by `make prepare-release`.
+Some integration modules build on another one (`chi` is a facade over `http`). Such a module develops against the sibling source through a `replace => ../<module>` directive, which `make verify-full` checks (`scripts/sibling-requires.sh` lists these requirements). Like every godi requirement, the sibling's is raised to the release version by `make prepare-release`.
 
 ## Reporting Security Issues
 

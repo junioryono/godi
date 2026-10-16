@@ -140,7 +140,7 @@ func inGroup(cmd *exec.Cmd) {
 }
 
 // scriptEnv is this process's environment, without the variable naming the
-// locks an enclosing gate holds (this may run inside `make verify`, and a test's
+// locks an enclosing gate holds (this may run inside `make verify-full`, and a test's
 // run of the script must not take that gate's lock for its ancestor's), plus
 // extra, which replaces a variable of the same name.
 func scriptEnv(extra ...string) []string {
@@ -371,7 +371,7 @@ func runOnceUnlocked(t *testing.T, tmp string, extra ...string) string {
 func TestWithCheckLock(t *testing.T) {
 	t.Parallel()
 
-	// The command's exit status is the script's, so `make verify` failing under
+	// The command's exit status is the script's, so `make verify-full` failing under
 	// the lock still fails, and a command that failed is not run again unlocked.
 	t.Run("ReturnsTheCommandsStatus", func(t *testing.T) {
 		t.Parallel()
@@ -893,7 +893,7 @@ func TestWithCheckLock(t *testing.T) {
 		assert.Contains(t, string(out), "nor HOME is set, so this run is not serialised with others")
 	})
 
-	// `make verify` and `make verify-ci` hold the shared lock, at the path whole,
+	// `make verify-full` and `make verify-ci` hold the shared lock, at the path whole,
 	// while their steps run. MAKE, and so GATE_SUBMAKE, is a helper that asks the
 	// lock tool whether the expected path is held and fails if it is not, so the
 	// recipe runs the real script around the helper instead of the gate: this is
@@ -917,7 +917,7 @@ func TestWithCheckLock(t *testing.T) {
 		require.NoError(t, forkSafeWriteFile(helper, []byte("#!/bin/sh\n"+strings.Join(quoted, " ")+
 			"\n[ \"$?\" -eq 75 ] || { echo \"the shared lock was not held\" >&2; exit 7; }\necho \"held: $*\"\n"), 0o700))
 
-		for _, target := range []string{"verify", "verify-ci"} {
+		for _, target := range []string{"verify-full", "verify-ci"} {
 			ctx, cancel := context.WithTimeout(t.Context(), processGuard)
 			cmd := exec.CommandContext(ctx, "make", "-C", "..", "--no-print-directory", "MAKE=sh "+shellQuote(helper), target)
 			cmd.Env = makeEnv("HOME="+filepath.Join(dir, "home"), "XDG_CACHE_HOME="+xdg)
@@ -931,7 +931,7 @@ func TestWithCheckLock(t *testing.T) {
 		}
 	})
 
-	// A dry run takes no lock: `make -n verify` waits for nothing while another
+	// A dry run takes no lock: `make -n verify-full` waits for nothing while another
 	// gate holds the lock. When the Makefile can see the -n it lists the steps.
 	// GNU Make 3.81 keeps an inherited MAKEFLAGS=e and hides the command line's
 	// -n from the Makefile, which then chooses the locked recipe; that recipe
@@ -955,7 +955,7 @@ func TestWithCheckLock(t *testing.T) {
 			"hidden from the Makefile": {env: []string{"MAKEFLAGS=e"}},
 		} {
 			ctx, cancel := context.WithTimeout(t.Context(), processGuard)
-			cmd := exec.CommandContext(ctx, "make", "-C", "..", "-n", "verify", "GATE_LOCK="+lock)
+			cmd := exec.CommandContext(ctx, "make", "-C", "..", "-n", "verify-full", "GATE_LOCK="+lock)
 			cmd.Env = makeEnv(tc.env...)
 			// Killing make alone would leave the script and the lock tool, its
 			// grandchildren, waiting for the lock and starting the steps once the
@@ -964,11 +964,11 @@ func TestWithCheckLock(t *testing.T) {
 
 			out, err := cmd.CombinedOutput()
 			cancel()
-			require.NoError(t, err, "%s: make -n verify while the lock is held: %s", name, out)
-			assert.NotContains(t, string(out), "waiting", "%s: make -n verify waited for the lock", name)
+			require.NoError(t, err, "%s: make -n verify-full while the lock is held: %s", name, out)
+			assert.NotContains(t, string(out), "waiting", "%s: make -n verify-full waited for the lock", name)
 			if tc.listsSteps {
 				assert.Contains(t, string(out), "scripts/for-each-module.sh go test -race",
-					"%s: make -n verify did not list the steps", name)
+					"%s: make -n verify-full did not list the steps", name)
 			}
 		}
 	})
@@ -995,15 +995,15 @@ func TestWithCheckLock(t *testing.T) {
 			lock := filepath.Join(t.TempDir(), "tmp", "override.lock")
 
 			ctx, cancel := context.WithTimeout(t.Context(), processGuard)
-			cmd := exec.CommandContext(ctx, "make", "NICE=nice -n 10", "TEST_PARALLEL=2", "MAKE=make -n", "GATE_LOCK="+lock, "verify")
+			cmd := exec.CommandContext(ctx, "make", "NICE=nice -n 10", "TEST_PARALLEL=2", "MAKE=make -n", "GATE_LOCK="+lock, "verify-full")
 			cmd.Dir = ".."
 			cmd.Env = makeEnv("CI=" + tc.ci)
 			inGroup(cmd)
 
 			out, err := cmd.CombinedOutput()
 			cancel()
-			require.NoError(t, err, "%s: make verify with overrides: %s", name, out)
-			assert.FileExists(t, lock, "%s: make verify with overrides on the command line did not take the lock", name)
+			require.NoError(t, err, "%s: make verify-full with overrides: %s", name, out)
+			assert.FileExists(t, lock, "%s: make verify-full with overrides on the command line did not take the lock", name)
 
 			m := goTest.FindStringSubmatch(string(out))
 			require.NotNil(t, m, "%s: the sub-make printed no race test line: %s", name, out)
