@@ -105,12 +105,23 @@ func lockScript(t *testing.T, args ...string) *exec.Cmd {
 	return cmd
 }
 
+// processGuard bounds every wait here whose failure is a wait that never ends:
+// a run blocked on a lock, a holder or a leftover that never exits, a file
+// that never appears. It is a failure deadline, never a condition: each test
+// releases what a run waits for before waiting on the run, so a correct run
+// ends however long the machine takes to start a shell, a lock tool and make,
+// and a run that never ends is still waiting at the guard. It is a minute, not
+// the ten to thirty seconds it was, because starting processes can take that
+// long on a loaded machine: a sibling project measured a two-second start
+// taking 12.68 s under a full local gate (2026-10).
+const processGuard = time.Minute
+
 // boundedLockScript is lockScript for a run whose failure is a wait that never
-// ends: it runs in a process group of its own, killed whole after twenty
-// seconds or when the test ends.
+// ends: it runs in a process group of its own, killed whole after processGuard
+// or when the test ends.
 func boundedLockScript(t *testing.T, args ...string) *exec.Cmd {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), processGuard)
 	t.Cleanup(cancel)
 	cmd := exec.CommandContext(ctx, scriptPath(t), args...)
 	cmd.Env = scriptEnv()
@@ -198,15 +209,17 @@ func fakeTools(t *testing.T, fakes map[string]string) string {
 
 // holdUntilReleased is shell that writes its pid to $1.pid and "held" to $1,
 // then waits until $2 exists. It never gives up and succeeds: past its
-// two-minute watchdog, or once $1 is gone because the test's temporary directory
+// ten-minute watchdog, or once $1 is gone because the test's temporary directory
 // was removed, it exits 9, so a test whose release never came fails rather than
-// seeing the lock come free.
+// seeing the lock come free. The watchdog is ten minutes, well past the few
+// processGuard waits a test can spend before its release, so it never expires
+// under a correct run however loaded the machine.
 const holdUntilReleased = `echo $$ > "$1.pid"
 echo held > "$1"
 i=0
 while [ ! -e "$2" ]; do
 	i=$((i + 1))
-	if [ "$i" -gt 2400 ] || [ ! -e "$1" ]; then exit 9; fi
+	if [ "$i" -gt 12000 ] || [ ! -e "$1" ]; then exit 9; fi
 	sleep 0.05
 done
 `
@@ -214,7 +227,7 @@ done
 // holderContext is the context a lock holder runs under: not the test's, which
 // is cancelled before cleanup runs and would kill the lock tool and orphan the
 // holder's shell, but one cleanup cancels only after releaseAndReap has
-// released the holder and given it ten seconds to finish.
+// released the holder and given it processGuard to finish.
 func holderContext(t *testing.T) context.Context {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.WithoutCancel(t.Context()))
@@ -240,7 +253,7 @@ func startHolder(t *testing.T, lock, trace, release string) *exec.Cmd {
 
 // releaseAndReap releases a holder and reaps it if the test ends before it
 // does, so no holder outlives its test. Registered after holderContext's
-// cancel, it runs before it. One still running ten seconds after its release
+// cancel, it runs before it. One still running processGuard after its release
 // is killed with its whole group, and the test fails.
 func releaseAndReap(t *testing.T, cmd *exec.Cmd, release string) {
 	t.Helper()
@@ -256,8 +269,8 @@ func releaseAndReap(t *testing.T, cmd *exec.Cmd, release string) {
 		go func() { done <- cmd.Wait() }()
 		select {
 		case <-done:
-		case <-time.After(10 * time.Second):
-			t.Errorf("the holder did not finish within 10s of its release, and was killed")
+		case <-time.After(processGuard):
+			t.Errorf("the holder did not finish within %s of its release, and was killed", processGuard)
 			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 			<-done
 		}
@@ -290,7 +303,7 @@ func recordTakes(t *testing.T) (env []string, takes string) {
 }
 
 // awaitLeftoverExit waits for the process whose pid is in pidFile to exit after
-// its release, so no process outlives its test. One still alive ten seconds
+// its release, so no process outlives its test. One still alive processGuard
 // later is killed with its process group, and the test fails.
 func awaitLeftoverExit(t *testing.T, pidFile string, group int) {
 	t.Helper()
@@ -304,14 +317,14 @@ func awaitLeftoverExit(t *testing.T, pidFile string, group int) {
 		t.Errorf("%s holds %q, not a pid", pidFile, raw)
 		return
 	}
-	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
+	for deadline := time.Now().Add(processGuard); time.Now().Before(deadline); {
 		if syscall.Kill(pid, 0) != nil {
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	_ = syscall.Kill(-group, syscall.SIGKILL)
-	t.Errorf("the leftover %d was still running ten seconds after its release, and was killed", pid)
+	t.Errorf("the leftover %d was still running %s after its release, and was killed", pid, processGuard)
 }
 
 // shellQuote quotes s as one word for sh.
@@ -319,13 +332,13 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// waitForFile polls until path exists, failing with msg after ten seconds.
+// waitForFile polls until path exists, failing with msg after processGuard.
 func waitForFile(t *testing.T, path, msg string) {
 	t.Helper()
 	require.Eventually(t, func() bool {
 		_, err := os.Stat(path)
 		return err == nil
-	}, 10*time.Second, 20*time.Millisecond, msg)
+	}, processGuard, 20*time.Millisecond, msg)
 }
 
 // runOnceUnlocked runs a command that records its runs and exits 5 under the
@@ -435,8 +448,8 @@ func TestWithCheckLock(t *testing.T) {
 		select {
 		case _, ok := <-firstLine:
 			require.True(t, ok, "the second run ended without saying it was waiting")
-		case <-time.After(30 * time.Second):
-			require.FailNow(t, "the second run said nothing in 30s")
+		case <-time.After(processGuard):
+			require.FailNow(t, "the second run said nothing in "+processGuard.String())
 		}
 
 		// Saying it waits is not waiting: the second run must be waiting in the
@@ -450,8 +463,8 @@ func TestWithCheckLock(t *testing.T) {
 		var said []string
 		select {
 		case said = <-allLines:
-		case <-time.After(30 * time.Second):
-			require.FailNow(t, "the second run's stderr stayed open 30s after the first was released")
+		case <-time.After(processGuard):
+			require.FailNow(t, "the second run's stderr stayed open "+processGuard.String()+" after the first was released")
 		}
 		require.NoError(t, second.Wait(), "the second run, which exits 7 if it ran without the lock: %q", said)
 		require.NoError(t, first.Wait(), "the first run")
@@ -905,7 +918,7 @@ func TestWithCheckLock(t *testing.T) {
 			"\n[ \"$?\" -eq 75 ] || { echo \"the shared lock was not held\" >&2; exit 7; }\necho \"held: $*\"\n"), 0o700))
 
 		for _, target := range []string{"verify", "verify-ci"} {
-			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), processGuard)
 			cmd := exec.CommandContext(ctx, "make", "-C", "..", "--no-print-directory", "MAKE=sh "+shellQuote(helper), target)
 			cmd.Env = makeEnv("HOME="+filepath.Join(dir, "home"), "XDG_CACHE_HOME="+xdg)
 			inGroup(cmd)
@@ -941,7 +954,7 @@ func TestWithCheckLock(t *testing.T) {
 			"seen by the Makefile":     {listsSteps: true},
 			"hidden from the Makefile": {env: []string{"MAKEFLAGS=e"}},
 		} {
-			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), processGuard)
 			cmd := exec.CommandContext(ctx, "make", "-C", "..", "-n", "verify", "GATE_LOCK="+lock)
 			cmd.Env = makeEnv(tc.env...)
 			// Killing make alone would leave the script and the lock tool, its
@@ -981,7 +994,7 @@ func TestWithCheckLock(t *testing.T) {
 		} {
 			lock := filepath.Join(t.TempDir(), "tmp", "override.lock")
 
-			ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), processGuard)
 			cmd := exec.CommandContext(ctx, "make", "NICE=nice -n 10", "TEST_PARALLEL=2", "MAKE=make -n", "GATE_LOCK="+lock, "verify")
 			cmd.Dir = ".."
 			cmd.Env = makeEnv("CI=" + tc.ci)
